@@ -4,11 +4,12 @@ from .utils import get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGVertexException
 from ..keeper_dag.crypto import urlsafe_str_to_bytes
-from ..keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag.types import PamGraphId
+from .types import DiscoveryObject
 import os
 import importlib
 import time
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..keeper_dag.vertex import DAGVertex
@@ -58,6 +59,8 @@ class Infrastructure:
             self.agent += "; " + agent
 
         self.conn = get_connection(logger=logger, **kwargs)
+
+        self._cache: Optional[Dict] = None
 
     @property
     def dag(self) -> DAG:
@@ -123,6 +126,12 @@ class Infrastructure:
         Clean up resources held by this Infrastructure instance.
         Releases the DAG instance and connection to prevent memory leaks.
         """
+        if self._cache:
+            for v in self._cache.values():
+                v["vertex"] = None
+                v["content"] = None
+            self._cache.clear()
+
         if self._dag is not None:
             self._dag = None
         self.conn = None
@@ -149,6 +158,86 @@ class Infrastructure:
         ts = time.time()
         self._dag.save(delta_graph=delta_graph)
         self.logger.debug(f"infrastructure took {time.time()-ts} secs to save")
+
+    def cache_objects(self):
+
+        self.logger.debug(f"building id to infrastructure cache")
+
+        self._cache = {}
+
+        def _cache(v: DAGVertex, parent_content: Optional[DiscoveryObject] = None):
+            c = DiscoveryObject.get_discovery_object(v)
+            key = c.object_type_value.lower() + c.id.lower()
+            self._cache[key] = {
+                "key": key,
+                "uid": v.uid,
+                "parent_uid": parent_content.uid if parent_content else None,
+                "vertex": v,
+                "content": c,
+                "was_found": False,
+                "could_login": True,
+                "is_new": False,
+                "md5": c.md5
+            }
+
+            for next_v in v.has_vertices():
+                _cache(next_v, c)
+
+        if self.has_discovery_data:
+            ts = time.time()
+            _cache(self.get_configuration, None)
+            self.logger.info(f"  infrastructure cache build time: {time.time()-ts} seconds")
+        else:
+            self.logger.info(f"  no infrastructure data to cache")
+
+    def get_cache_info(self, object_type_value: str, object_id: str) -> Dict:
+        return self._cache.get(object_type_value.lower() + object_id.lower())
+
+    def get_cache_info_by_key(self, key: str) -> Dict:
+        return self._cache.get(key.lower())
+
+    def get_missing_cache_list(self, uid: Optional[str] = None) -> List[str]:
+        not_found_list = []
+        for k, v in self._cache.items():
+            if not v["is_new"] and not v["was_found"]:
+                if uid is None or uid == v["uid"] or uid == v["parent_uid"]:
+                    not_found_list.append(k)
+        return not_found_list
+
+    def add_info_to_cache(self, vertex: DAGVertex, content: DiscoveryObject, parent_vertex: Optional[DAGVertex] = None):
+        if self._cache is None:
+            self._cache = {}
+
+        key = content.object_type_value.lower() + content.id.lower()
+        self._cache[key] = {
+            "key": key,
+            "uid": vertex.uid,
+            "parent_uid": parent_vertex.uid if parent_vertex else None,
+            "vertex": vertex,
+            "content": content,
+            "was_found": True,
+            "could_login": True,
+            "is_new": True,
+            "md5": content.md5
+        }
+
+    def update_cache_info(self, info: Dict):
+        key = info["key"]
+        self._cache[key] = info
+
+    def find_content(self, query: Dict, ignore_case: bool = False) -> Optional[DAGVertex]:
+        """
+        Find the vertex that matches the query.
+
+        Will only find one.
+        If it does not match, return None
+        If matches on more, return None
+        """
+
+        vertices = self.dag.search_content(query=query, ignore_case=ignore_case)
+        if len(vertices) != 1:
+            return None
+        return vertices[0]
 
     def to_dot(self, graph_format: str = "svg", show_hex_uid: bool = False,
                show_version: bool = True, show_only_active_vertices: bool = False,

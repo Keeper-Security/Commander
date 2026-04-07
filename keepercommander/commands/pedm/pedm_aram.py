@@ -25,6 +25,7 @@ class PedmReportCommand(base.GroupCommandNew):
         self.register_command_new(PedmColumnReportCommand(), 'column', 'c')
         self.register_command_new(PedmEventReportCommand(), 'event', 'e')
         self.register_command_new(PedmEventSummaryReportCommand(), 'summary', 's')
+        self.register_command_new(PedmValueReportCommand(), 'value', 'v')
 
 
 @dataclass
@@ -716,3 +717,50 @@ class PedmPolicyUsageReportCommand(base.ArgparseCommand):
                 rows.append([policy_uid, agent_uid])
 
         return report_utils.dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+
+
+class PedmValueReportCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='report value', description='Look up audit event values by UID',
+                                         parents=[base.report_output_parser])
+        parser.add_argument('uid', nargs='+', help='Value UID')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        enterprise = context.enterprise
+        tree_key = enterprise['unencrypted_tree_key']
+        encrypted_ec_private_key = utils.base64_url_decode(enterprise['keys']['ecc_encrypted_private_key'])
+        ec_private_key = crypto.load_ec_private_key(crypto.decrypt_aes_v2(encrypted_ec_private_key, tree_key))
+
+        uids = kwargs.get('uid')
+        if not isinstance(uids, list):
+            uids = [str(uids)]
+
+        coll_rq = pedm_pb2.AuditCollectionRequest()
+        coll_rq.valueUid.extend([utils.base64_url_decode(x) for x in uids])
+        coll_rs = api.execute_router(context,
+            'pedm/get_audit_collections', coll_rq, rs_type=pedm_pb2.AuditCollectionResponse)
+        assert coll_rs is not None
+
+        results: List[Dict[str, Any]] = []
+        for v in coll_rs.values:
+            value_uid = utils.base64_url_encode(v.valueUid)
+            field_name = v.collectionName
+            try:
+                decrypted = crypto.decrypt_ec(v.encryptedData, ec_private_key).decode('utf-8')
+            except Exception:
+                decrypted = '<decryption error>'
+            results.append({'uid': value_uid, 'field': field_name, 'value': decrypted})
+
+        if kwargs.get('format') == 'json':
+            for r in results:
+                try:
+                    r['value'] = json.loads(r['value'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return json.dumps(results, indent=2)
+
+        rows = [[r['uid'], r['field'], r['value']] for r in results]
+        headers = [report_utils.field_to_title(x) for x in ('uid', 'field', 'value')]
+        return report_utils.dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'),
+                                             row_number=True)

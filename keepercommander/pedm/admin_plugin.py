@@ -4,7 +4,7 @@ import abc
 import datetime
 import json
 import logging
-from typing import List, Optional, Set, Iterable, Tuple, Dict, Any, cast
+from typing import List, Optional, Set, Iterable, Tuple, Dict, Any, cast, Union
 
 from ..params import KeeperParams
 from . import admin_storage, admin_types
@@ -311,13 +311,16 @@ class PedmPlugin(IPedmAdmin):
         collections: List[admin_types.PedmCollection] = []
         for collection_dto in get_collections():
             try:
-                collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
+                if 1000 <= collection_dto.collection_type < 2000:
+                    collection_value = collection_dto.data.decode('utf-8')
+                else:
+                    collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
                 collection_data = json.loads(collection_value)
                 collection = admin_types.PedmCollection(
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data=collection_data, created=collection_dto.created)
             except Exception as e:
-                self.logger.info('Collection "%s" load error: %s', collection_dto.collection_uid, e)
+                self.logger.error('Collection "%s" load error: %s', collection_dto.collection_uid, e)
                 collection = admin_types.PedmCollection(
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data={}, created=collection_dto.created)
@@ -529,9 +532,10 @@ class PedmPlugin(IPedmAdmin):
             rq_link.collectionUid.extend(collections)
             rq.setCollection.append(rq_link)
 
-        status_rs = api.execute_router(self.params, rq, 'pedm/set_policy_collections', rs_type=pedm_pb2.PedmStatusResponse)
+        status_rs = api.execute_router(self.params, 'pedm/set_policy_collections', rq, rs_type=pedm_pb2.PedmStatusResponse)
         self._need_sync = True
-        assert status_rs is not None
+        if status_rs is None:
+            return admin_types.ModifyStatus(add=[], update=[], remove=[])
         return admin_types.ModifyStatus.from_proto(status_rs)
 
     def modify_policies(self, *,
@@ -669,6 +673,8 @@ class PedmPlugin(IPedmAdmin):
                         add_collections: Optional[Iterable[admin_types.CollectionData]] = None,
                         update_collections: Optional[Iterable[admin_types.CollectionData]] = None,
                         remove_collections: Optional[Iterable[str]] = None) -> admin_types.ModifyStatus:
+
+        status = admin_types.ModifyStatus(add=[], update=[], remove=[])
         to_add: List[pedm_pb2.CollectionValue] = []
         to_update: List[pedm_pb2.CollectionValue] = []
         if add_collections is not None:
@@ -712,7 +718,6 @@ class PedmPlugin(IPedmAdmin):
             for collection_uid in remove_collections:
                 to_remove.append(utils.base64_url_decode(collection_uid))
 
-        status = admin_types.ModifyStatus(add=[], update=[], remove=[])
         while len(to_add) > 0 or len(to_update) > 0 or len(to_remove) > 0:
             crq = pedm_pb2.CollectionRequest()
             if len(to_add) > 0:
@@ -754,16 +759,26 @@ class PedmPlugin(IPedmAdmin):
             yield admin_types.CollectionLinkData(collection_link=collection_link, link_data=ld.linkData)
 
     def set_collection_links(
-            self, *, set_links: Optional[Iterable[admin_types.CollectionLink]] = None,
+            self, *, set_links: Optional[Iterable[Union[admin_types.CollectionLink, admin_types.CollectionLinkData]]] = None,
             unset_links: Optional[Iterable[admin_types.CollectionLink]] = None
     ) -> admin_types.ModifyStatus:
         clrq = pedm_pb2.SetCollectionLinkRequest()
         if set_links is not None:
             for coll in set_links:
+                link: admin_types.CollectionLink
+                link_data: Optional[bytes]
+                if isinstance(coll, admin_types.CollectionLinkData):
+                    link = coll.collection_link
+                    link_data = coll.link_data
+                else:
+                    link = coll
+                    link_data = None
                 cln = pedm_pb2.CollectionLinkData()
-                cln.collectionUid = utils.base64_url_decode(coll.collection_uid)
-                cln.linkUid = utils.base64_url_decode(coll.link_uid)
-                cln.linkType = coll.link_type     # type: ignore
+                cln.collectionUid = utils.base64_url_decode(link.collection_uid)
+                cln.linkUid = utils.base64_url_decode(link.link_uid)
+                cln.linkType = link.link_type     # type: ignore
+                if link_data:
+                    cln.linkData = link_data
                 clrq.addCollection.append(cln)
 
         if unset_links is not None:

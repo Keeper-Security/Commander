@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, Optional, List
 
 from rich.markup import escape as rich_escape
 
+from ..debug import debug_log as _debug_log
+
 if TYPE_CHECKING:
     from textual.events import Key
     from textual.widgets import Tree
-    from .._supershell_impl import SuperShellApp
+    from ..app import SuperShellApp
 
 
 class KeyHandler(ABC):
@@ -141,117 +143,230 @@ class CommandModeHandler(KeyHandler):
 
 
 class ShellInputHandler(KeyHandler):
-    """Handles input when shell pane is visible and active."""
+    """Placeholder for shell input key handling.
+
+    Note: All key handling is now done by ShellInputTextArea itself,
+    including Tab/Shift+Tab focus cycling. This handler is kept for
+    potential future use but currently does not handle any keys.
+    """
 
     def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        # Handle Enter key whenever shell pane is visible (even if not actively focused on input)
-        if app.shell_pane_visible and event.key == "enter":
-            return True
-        return app.shell_pane_visible and app.shell_input_active
+        # ShellInputTextArea handles all keys directly
+        return False
 
     def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        tree = app.query_one("#folder_tree")
+        return False
 
-        if event.key == "ctrl+d":
-            app._close_shell_pane()
-            self._stop_event(event)
-            return True
 
-        if event.key == "enter":
-            # Ensure shell input is active when Enter is pressed
-            if not app.shell_input_active:
-                app.shell_input_active = True
-                app._update_shell_input_display()
-            # Execute command (even if empty, to show new prompt)
-            app._execute_shell_command(app.shell_input_text)
-            app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
+class ShellPaneCloseHandler(KeyHandler):
+    """Handles Ctrl+D to close shell when not focused on shell output (which uses Ctrl+D for page down)."""
 
-        if event.key == "backspace":
-            if app.shell_input_text:
-                app.shell_input_text = app.shell_input_text[:-1]
-                app._update_shell_input_display()
-            self._stop_event(event)
-            return True
+    def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        if not (app.shell_pane_visible and event.key == "ctrl+d"):
+            return False
+        # Don't intercept Ctrl+D when shell output has focus (it's used for page down there)
+        try:
+            from textual.widgets import TextArea
+            shell_output = app.query_one("#shell_output_content", TextArea)
+            if shell_output.has_focus:
+                return False
+        except Exception:
+            pass
+        return True
 
-        if event.key == "ctrl+u":
-            # Ctrl+U clears the input line (like bash)
-            app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
+    def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        app._close_shell_pane()
+        self._stop_event(event)
+        return True
 
-        if event.key == "escape":
-            app.shell_input_active = False
-            tree.focus()
-            app._update_shell_input_display()
-            app._update_status("Shell open | Tab to cycle | press Enter in shell to run commands")
-            self._stop_event(event)
-            return True
 
-        if event.key == "tab":
-            # Shell → Search input
-            app.shell_input_active = False
-            app._update_shell_input_display()
-            app.search_input_active = True
-            tree.add_class("search-input-active")
-            app._update_search_display(perform_search=False)
-            app._update_status("Type to search | Tab to tree | Ctrl+U to clear")
-            self._stop_event(event)
-            return True
+class ShellCopyHandler(KeyHandler):
+    """Handles Ctrl+C/Cmd+C to copy selected text, Ctrl+Shift+C/Cmd+Shift+C to copy all shell output."""
 
-        if event.key == "shift+tab":
-            # Shell → Detail pane
-            from textual.containers import VerticalScroll
-            app.shell_input_active = False
-            app._update_shell_input_display()
-            detail_scroll = app.query_one("#record_detail", VerticalScroll)
-            detail_scroll.focus()
-            app._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
-            self._stop_event(event)
-            return True
+    # Keys that trigger copy selected text
+    COPY_KEYS = ("ctrl+c", "cmd+c")
+    # Keys that trigger copy all output
+    COPY_ALL_KEYS = ("ctrl+shift+c", "cmd+shift+c")
 
-        if event.key == "up":
-            if app.shell_command_history:
-                if app.shell_history_index < len(app.shell_command_history) - 1:
-                    app.shell_history_index += 1
-                    app.shell_input_text = app.shell_command_history[-(app.shell_history_index + 1)]
-                    app._update_shell_input_display()
-            self._stop_event(event)
-            return True
+    def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        all_copy_keys = self.COPY_KEYS + self.COPY_ALL_KEYS
+        result = app.shell_pane_visible and event.key in all_copy_keys
+        _debug_log(f"ShellCopyHandler.can_handle: shell_visible={app.shell_pane_visible} "
+                   f"key={event.key!r} result={result}")
+        return result
 
-        if event.key == "down":
-            if app.shell_history_index > 0:
-                app.shell_history_index -= 1
-                app.shell_input_text = app.shell_command_history[-(app.shell_history_index + 1)]
-            elif app.shell_history_index == 0:
-                app.shell_history_index = -1
-                app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
+    def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        _debug_log(f"ShellCopyHandler.handle: key={event.key!r}")
+        import pyperclip
 
-        if event.character and event.character.isprintable():
-            app.shell_input_text += event.character
-            app._update_shell_input_display()
+        # Ctrl+C or Cmd+C: Copy selected text from TextArea
+        if event.key in self.COPY_KEYS:
+            try:
+                from textual.widgets import TextArea
+                shell_output = app.query_one("#shell_output_content", TextArea)
+                selected = shell_output.selected_text
+                _debug_log(f"ShellCopyHandler.handle: selected_text={selected!r}")
+
+                if selected and selected.strip():
+                    pyperclip.copy(selected)
+                    preview = selected[:40] + ('...' if len(selected) > 40 else '')
+                    preview = preview.replace('\n', ' ')
+                    app.notify(f"Copied: {preview}", severity="information")
+                    _debug_log(f"ShellCopyHandler.handle: Copied selected text")
+                    self._stop_event(event)
+                    return True
+                else:
+                    _debug_log(f"ShellCopyHandler.handle: No text selected, not handling")
+                    return False  # Let event propagate if nothing selected
+            except Exception as e:
+                _debug_log(f"ShellCopyHandler.handle: Error getting selection: {e}")
+                return False
+
+        # Ctrl+Shift+C or Cmd+Shift+C: Copy all shell output
+        if event.key in self.COPY_ALL_KEYS:
+            import re
+            lines = []
+            _debug_log(f"ShellCopyHandler.handle: shell_history has {len(app.shell_history)} entries")
+            for cmd, output in app.shell_history:
+                lines.append(f"> {cmd}")
+                if output.strip():
+                    lines.append(output)
+                    lines.append("")
+
+            raw_text = '\n'.join(lines)
+            clean_text = re.sub(r'\x1b\[[0-9;]*m', '', raw_text)
+            clean_text = re.sub(r'\[[^\]]*\]', '', clean_text)
+
+            if clean_text.strip():
+                try:
+                    pyperclip.copy(clean_text.strip())
+                    app.notify("All shell output copied", severity="information")
+                    _debug_log(f"ShellCopyHandler.handle: Copied all output")
+                except Exception as e:
+                    _debug_log(f"ShellCopyHandler.handle: Copy failed: {e}")
+                    app.notify("Copy failed", severity="warning")
+            else:
+                app.notify("No output to copy", severity="information")
+
             self._stop_event(event)
             return True
 
         return False
 
 
-class ShellPaneCloseHandler(KeyHandler):
-    """Handles Ctrl+D to close shell even when not focused on input."""
+class ShellOutputHandler(KeyHandler):
+    """Handles keyboard events when shell output pane has focus.
+
+    Provides vim-style scrolling (j/k, Ctrl+d/u) and Tab cycling
+    when the terminal output pane is focused.
+    """
 
     def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        return app.shell_pane_visible and event.key == "ctrl+d"
+        if not app.shell_pane_visible:
+            return False
+        try:
+            from textual.widgets import TextArea
+            shell_output = app.query_one("#shell_output_content", TextArea)
+            return shell_output.has_focus
+        except Exception:
+            return False
 
     def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        app._close_shell_pane()
-        self._stop_event(event)
-        return True
+        from textual.widgets import Tree, TextArea
+        from textual.containers import VerticalScroll
+
+        try:
+            shell_output = app.query_one("#shell_output_content", TextArea)
+        except Exception:
+            return False
+
+        # Tab cycles to Shell Input
+        if event.key == "tab":
+            app.shell_input_active = True
+            try:
+                shell_input = app.query_one("#shell_input_area")
+                shell_input.focus()
+            except Exception:
+                pass
+            app._update_status("Shell input | Tab to search | Shift+Tab to output")
+            self._stop_event(event)
+            return True
+
+        # Shift+Tab cycles to Detail pane
+        if event.key == "shift+tab":
+            detail_scroll = app.query_one("#record_detail", VerticalScroll)
+            detail_scroll.focus()
+            app._update_status("Detail pane | Tab to shell output | Shift+Tab to tree")
+            self._stop_event(event)
+            return True
+
+        # Escape goes back to tree
+        if event.key == "escape":
+            tree = app.query_one("#folder_tree", Tree)
+            tree.focus()
+            app._update_status("Navigate with j/k | Tab to detail | ? for help")
+            self._stop_event(event)
+            return True
+
+        # Vim-style scrolling: j = down, k = up
+        if event.key == "j" or event.key == "down":
+            shell_output.scroll_relative(y=1)
+            self._stop_event(event)
+            return True
+
+        if event.key == "k" or event.key == "up":
+            shell_output.scroll_relative(y=-1)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+D = half page down
+        if event.key == "ctrl+d":
+            shell_output.scroll_relative(y=10)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+U = half page up
+        if event.key == "ctrl+u":
+            shell_output.scroll_relative(y=-10)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+F = full page down (vim)
+        if event.key == "ctrl+f":
+            shell_output.scroll_relative(y=20)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+B = full page up (vim)
+        if event.key == "ctrl+b":
+            shell_output.scroll_relative(y=-20)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+E = scroll down one line (vim)
+        if event.key == "ctrl+e":
+            shell_output.scroll_relative(y=1)
+            self._stop_event(event)
+            return True
+
+        # Ctrl+Y = scroll up one line (vim)
+        if event.key == "ctrl+y":
+            shell_output.scroll_relative(y=-1)
+            self._stop_event(event)
+            return True
+
+        # g = go to top, G = go to bottom
+        if event.key == "g":
+            shell_output.scroll_home()
+            self._stop_event(event)
+            return True
+
+        if event.character == "G":
+            shell_output.scroll_end()
+            self._stop_event(event)
+            return True
+
+        return False
 
 
 class SearchInputTabHandler(KeyHandler):
@@ -270,9 +385,13 @@ class SearchInputTabHandler(KeyHandler):
 
         app.search_input_active = False
         tree.remove_class("search-input-active")
+        search_bar = app.query_one("#search_bar")
+        search_bar.remove_class("search-active")
 
         if app.search_input_text:
-            search_display.update(rich_escape(app.search_input_text))
+            # Escape all brackets (rich_escape only escapes matched pairs)
+            escaped = app.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+            search_display.update(escaped)
         else:
             search_display.update("[dim]Search...[/dim]")
 
@@ -281,11 +400,15 @@ class SearchInputTabHandler(KeyHandler):
             tree.focus()
             app._update_status("Navigate with j/k | Tab to detail | ? for help")
         else:
-            # Shift+Tab: Search input → Shell (if visible) or Detail pane
+            # Shift+Tab: Search input → Shell Input (if visible) or Detail pane
             if app.shell_pane_visible:
                 app.shell_input_active = True
-                app._update_shell_input_display()
-                app._update_status("Shell | Shift+Tab to detail | Tab to search")
+                try:
+                    shell_input = app.query_one("#shell_input_area")
+                    shell_input.focus()
+                except Exception:
+                    pass
+                app._update_status("Shell input | Tab to search | Shift+Tab to output")
             else:
                 detail_scroll.focus()
                 app._update_status("Detail pane | Tab to search | Shift+Tab to tree")
@@ -310,14 +433,20 @@ class DetailPaneHandler(KeyHandler):
         detail_scroll = app.query_one("#record_detail", VerticalScroll)
 
         if event.key == "tab":
-            # Detail pane → Shell (if visible) or Search input
+            # Detail pane → Shell Output (if visible) or Search input
             if app.shell_pane_visible:
-                app.shell_input_active = True
-                app._update_shell_input_display()
-                app._update_status("Shell | Tab to search | Shift+Tab to detail")
+                try:
+                    from textual.widgets import TextArea
+                    shell_output = app.query_one("#shell_output_content", TextArea)
+                    shell_output.focus()
+                except Exception:
+                    pass
+                app._update_status("Shell output | j/k to scroll | Tab to input | Shift+Tab to detail")
             else:
                 app.search_input_active = True
                 tree.add_class("search-input-active")
+                search_bar = app.query_one("#search_bar")
+                search_bar.add_class("search-active")
                 app._update_search_display(perform_search=False)
                 app._update_status("Type to search | Tab to tree | Ctrl+U to clear")
             self._stop_event(event)
@@ -410,7 +539,10 @@ class SearchBarTreeNavigationHandler(KeyHandler):
         # Tab switches to detail pane
         if event.key == "tab":
             detail_scroll.focus()
-            app._update_status("Detail pane | Tab to search | Shift+Tab to tree")
+            if app.shell_pane_visible:
+                app._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
+            else:
+                app._update_status("Detail pane | Tab to search | Shift+Tab to tree")
             self._stop_event(event)
             return True
 
@@ -418,6 +550,8 @@ class SearchBarTreeNavigationHandler(KeyHandler):
         if event.key == "shift+tab":
             app.search_input_active = True
             tree.add_class("search-input-active")
+            search_bar = app.query_one("#search_bar")
+            search_bar.add_class("search-active")
             app._update_search_display(perform_search=False)
             app._update_status("Type to search | Tab to tree | Ctrl+U to clear")
             self._stop_event(event)
@@ -427,6 +561,8 @@ class SearchBarTreeNavigationHandler(KeyHandler):
         if event.key == "slash":
             app.search_input_active = True
             tree.add_class("search-input-active")
+            search_bar = app.query_one("#search_bar")
+            search_bar.add_class("search-active")
             app._update_search_display(perform_search=False)
             self._stop_event(event)
             return True
@@ -459,6 +595,8 @@ class SearchInputHandler(KeyHandler):
         if event.key == "slash" and not app.search_input_active:
             app.search_input_active = True
             tree.add_class("search-input-active")
+            search_bar = app.query_one("#search_bar")
+            search_bar.add_class("search-active")
             app._update_search_display(perform_search=False)
             self._stop_event(event)
             return True
@@ -468,6 +606,8 @@ class SearchInputHandler(KeyHandler):
             app.search_input_text = ""
             app.search_input_active = False
             tree.remove_class("search-input-active")
+            search_bar = app.query_one("#search_bar")
+            search_bar.remove_class("search-active")
             app._perform_live_search("")
 
             search_display = app.query_one("#search_display")
@@ -489,10 +629,14 @@ class SearchInputHandler(KeyHandler):
             # Move focus to tree to navigate results (only when typing in search)
             app.search_input_active = False
             tree.remove_class("search-input-active")
+            search_bar = app.query_one("#search_bar")
+            search_bar.remove_class("search-active")
 
             search_display = app.query_one("#search_display")
             if app.search_input_text:
-                search_display.update(rich_escape(app.search_input_text))
+                # Escape all brackets (rich_escape only escapes matched pairs)
+                escaped = app.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+                search_display.update(escaped)
             else:
                 search_display.update("[dim]Search...[/dim]")
 
@@ -503,7 +647,7 @@ class SearchInputHandler(KeyHandler):
             self._stop_event(event)
             return True
 
-        if event.key == "backspace":
+        if event.key == "backspace" and app.search_input_active:
             if app.search_input_text:
                 app.search_input_text = app.search_input_text[:-1]
                 app._update_search_display()
@@ -585,6 +729,8 @@ class KeyboardDispatcher:
             CommandModeHandler(),
             ShellInputHandler(),
             ShellPaneCloseHandler(),
+            ShellCopyHandler(),
+            ShellOutputHandler(),
 
             # Tab cycling handlers
             SearchInputTabHandler(),
@@ -610,9 +756,14 @@ class KeyboardDispatcher:
             True if the event was handled
         """
         for handler in self.handlers:
-            if handler.can_handle(event, app):
-                if handler.handle(event, app):
+            can_handle = handler.can_handle(event, app)
+            if can_handle:
+                _debug_log(f"DISPATCH: {handler.__class__.__name__} can_handle=True for key={event.key!r}")
+                result = handler.handle(event, app)
+                _debug_log(f"DISPATCH: {handler.__class__.__name__} handle returned {result}")
+                if result:
                     return True
+        _debug_log(f"DISPATCH: No handler for key={event.key!r}")
         return False
 
 

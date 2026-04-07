@@ -306,6 +306,10 @@ def _get_secret_by_uid_or_title(secrets_manager, record_identifier):
 def download_config(ksm_config_path, ksm_token, record_identifier, output_path):
     """
     Download config.json from KSM record.
+
+    Tries file attachments first.  If no config.json attachment exists
+    (e.g. the account has no file storage plan), falls back to the
+    ``config_json`` custom field written by the setup commands.
     
     Args:
         ksm_config_path (str): Path to KSM config file (optional)
@@ -344,15 +348,24 @@ def download_config(ksm_config_path, ksm_token, record_identifier, output_path):
         if not secret:
             return False
         
-        # Find config.json attachment
+        # Try file attachment first
         for file in secret.files:
             if file.name.lower() == 'config.json':
-                # Ensure output directory exists
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 file.save_file(output_path, True)
                 return True
         
-        print("ERROR: config.json attachment not found in record")
+        # Fallback: check for config_json custom field
+        config_value = secret.custom_field('config_json', single=True)
+        if config_value:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(config_value)
+            os.chmod(output_path, 0o600)
+            print("config.json restored from custom field")
+            return True
+
+        print("ERROR: config.json not found as attachment or custom field in record")
         return False
         
     except Exception as e:

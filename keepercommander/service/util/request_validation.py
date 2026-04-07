@@ -67,8 +67,8 @@ class RequestValidator:
         # Check if command contains FILEDATA placeholder and request has filedata
         if "FILEDATA" in command and "filedata" in request_data:
             filedata = request_data.get("filedata")
-            if not isinstance(filedata, dict):
-                logger.warning("filedata must be a JSON object")
+            if not isinstance(filedata, (dict, list)):
+                logger.warning("filedata must be a JSON object or array")
                 return processed_command, temp_files
             
             try:

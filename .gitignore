@@ -2,6 +2,7 @@
 .DS_Store
 *.iml
 .cache/
+.cursor/
 venv/
 *.json
 *.pyc
@@ -19,3 +20,9 @@ dr-logs
 CLAUDE.md
 AGENTS.md
 keeper_db.sqlite
+__pycache__/
+.keeper-memory-mcp/
+.mcp/
+tests/*_results/
+tests/*.log
+tests/compliance_test.env

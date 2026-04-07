@@ -70,6 +70,19 @@ from ..commands.helpers.timeout import parse_timeout, format_timeout
 from ..commands import email_commands
 from ..email_service import EmailSender, build_onboarding_email
 from keepercommander.commands.pam.user_facade import PamUserRecordFacade
+from keepercommander.commands.register import ShareRecordCommand
+from keepercommander.commands.pam.pam_dto import (
+    GatewayAction,
+    GatewayActionRmCreateUser, GatewayActionRmCreateUserInputs,
+    GatewayActionRmAddUserToGroup, GatewayActionRmAddUserToGroupInputs,
+    GatewayActionRmDeleteUser, GatewayActionRmDeleteUserInputs,
+)
+from keepercommander.commands.pam.router_helper import (
+    router_send_action_to_gateway,
+    router_get_connected_gateways,
+    get_response_payload,
+)
+from keepercommander.proto import pam_pb2
 from keepercommander.commands.pam.config_facades import PamConfigurationRecordFacade
 
 # =============================================================================
@@ -95,6 +108,12 @@ config_group.add_argument(
     '--config-base64',
     dest='config_base64',
     help='Base64-encoded YAML configuration content (for API/Service Mode usage)'
+)
+
+credential_provision_parser.add_argument(
+    '-c', '--pam-config',
+    dest='pam_config',
+    help='PAM Configuration record UID (determines which Gateway to use)'
 )
 
 credential_provision_parser.add_argument(
@@ -127,6 +146,46 @@ def register_command_info(aliases, command_info):
     command_info['credential-provision'] = 'Automate PAM User credential provisioning'
 
 # =============================================================================
+# Username Template Engine (KC-1035)
+# =============================================================================
+
+def resolve_username_template(template, user_data):
+    """Resolve a username template using user data fields.
+
+    Supported variables:
+        {first_name}    - Full first name (e.g., "Felipe")
+        {last_name}     - Full last name (e.g., "Dias")
+        {first_initial} - First character of first name (e.g., "f")
+        {last_initial}  - First character of last name (e.g., "d")
+        {email_prefix}  - Part before @ in personal_email (e.g., "fdias")
+
+    Args:
+        template: String with {variable} placeholders (e.g., "{first_initial}{last_name}.adm")
+        user_data: Dict with keys: first_name, last_name, personal_email
+
+    Returns:
+        Resolved string, lowercased (e.g., "fdias.adm")
+    """
+    first_name = user_data.get('first_name', '')
+    last_name = user_data.get('last_name', '')
+    email = user_data.get('personal_email', '')
+
+    replacements = {
+        'first_name': first_name,
+        'last_name': last_name,
+        'first_initial': first_name[0] if first_name else '',
+        'last_initial': last_name[0] if last_name else '',
+        'email_prefix': email.split('@')[0] if '@' in email else email,
+    }
+
+    result = template
+    for key, value in replacements.items():
+        result = result.replace('{' + key + '}', value)
+
+    return result.lower()
+
+
+# =============================================================================
 # Main Command Class
 # =============================================================================
 
@@ -137,6 +196,11 @@ class ProvisioningState:
         self.pam_user_uid = None
         self.dag_link_created = False
         self.folder_created = None
+        # KC-1035: AD user creation tracking for rollback
+        self.ad_user_created = False
+        self.ad_username = None
+        self.ad_config_uid = None
+        self.ad_gateway_uid = None
 
 class CredentialProvisionCommand(Command):
     """
@@ -179,6 +243,7 @@ class CredentialProvisionCommand(Command):
 
         config_path = kwargs.get('config')
         config_base64 = kwargs.get('config_base64')
+        pam_config_arg = kwargs.get('pam_config')
         dry_run = kwargs.get('dry_run', False)
         output_format = kwargs.get('output', 'text')
 
@@ -198,6 +263,13 @@ class CredentialProvisionCommand(Command):
                     'credential-provision',
                     'Either --config or --config-base64 is required'
                 )
+            # Set pam_config_uid from CLI arg -c, or fall back to YAML value
+            if 'account' not in config:
+                config['account'] = {}
+            if pam_config_arg:
+                config['account']['pam_config_uid'] = pam_config_arg
+            # If neither -c nor YAML pam_config_uid provided, validation will catch it
+
             validation_errors = self._validate_config(params, config)
 
             if validation_errors:
@@ -242,6 +314,29 @@ class CredentialProvisionCommand(Command):
                     logging.error('Make sure you have access to this PAM Configuration')
                 raise CommandError('credential-provision', error_msg)
 
+            # Resolve username template if provided (KC-1035)
+            # Must happen before system-specific validation and dry-run
+            if config['account'].get('username_template') and not config['account'].get('username'):
+                resolved = resolve_username_template(
+                    config['account']['username_template'],
+                    config['user']
+                )
+                if not resolved or not resolved.strip() or not resolved.strip('.'):
+                    raise CommandError(
+                        'credential-provision',
+                        f'Username template resolved to invalid value: "{resolved}"\n'
+                        f'Template: {config["account"]["username_template"]}\n'
+                        f'Check that user.first_name and user.last_name are not empty.'
+                    )
+                config['account']['username'] = resolved
+                if output_format == 'text':
+                    logging.info(f'Resolved username: {resolved}')
+
+                # Also resolve distinguished_name if it contains template variables
+                dn = config['account'].get('distinguished_name', '')
+                if '{username}' in dn:
+                    config['account']['distinguished_name'] = dn.replace('{username}', resolved)
+
             # Validate system-specific fields based on PAM type
             system_errors = self._validate_system_specific_fields(config, pam_config_record, params)
 
@@ -270,8 +365,11 @@ class CredentialProvisionCommand(Command):
 
             # Execute provisioning
             state = ProvisioningState()
+            has_delivery = 'delivery' in config
+            has_email = 'email' in config
 
             try:
+
                 # Check for duplicates
                 if self._check_duplicate(config, params):
                     error_msg = f'Duplicate PAM User already exists for username: {config["account"]["username"]}'
@@ -282,10 +380,31 @@ class CredentialProvisionCommand(Command):
                         logging.error(error_msg)
                     raise CommandError('credential-provision', error_msg)
 
-                # Generate password and create PAM User
-                password = self._generate_password(config['pam']['rotation']['password_complexity'])
+                # Generate password
+                password = self._generate_password(config['rotation']['password_complexity'])
+
+                # Create AD user via Gateway if AD-specific fields are present (KC-1035)
+                ad_groups = config['account'].get('ad_groups', [])
+                has_ad_config = config['account'].get('distinguished_name') or ad_groups
+                if has_ad_config:
+                    self._create_ad_user_via_gateway(config, password, params, state)
+                    if output_format == 'text':
+                        logging.info(f'✅ AD user created: {config["account"]["username"]}')
+
+                    # Add to AD groups
+                    if ad_groups:
+                        self._add_ad_user_to_groups_via_gateway(
+                            config, params, state.ad_gateway_uid
+                        )
+                        if output_format == 'text':
+                            logging.info(f'✅ Added to AD groups: {", ".join(ad_groups)}')
+
+                # Create PAM User record
                 pam_user_uid = self._create_pam_user(config, password, params)
                 state.pam_user_uid = pam_user_uid
+
+                if output_format == 'text':
+                    logging.info(f'✅ PAM User record created: {pam_user_uid}')
 
                 # Link to PAM Configuration and configure rotation
                 self._create_dag_link(pam_user_uid, config['account']['pam_config_uid'], params)
@@ -293,7 +412,7 @@ class CredentialProvisionCommand(Command):
                 self._configure_rotation(pam_user_uid, config, params)
 
                 if output_format == 'text':
-                    logging.info('✅ PAM User created and linked')
+                    logging.info('✅ Rotation configured')
 
                 # Perform immediate rotation if configured
                 rotation_success = self._rotate_immediately(pam_user_uid, config, params)
@@ -301,28 +420,49 @@ class CredentialProvisionCommand(Command):
                 if output_format == 'text':
                     logging.info('✅ Password rotation submitted')
 
-                # Generate share URL for PAM User (shares source of truth, not a copy)
-                share_url = self._generate_share_url(pam_user_uid, config, params)
+                # Delivery: direct share or one-time share URL + email
+                share_url = None
+                share_success = False
+                email_success = False
 
-                if output_format == 'text':
-                    logging.info('✅ Share URL generated for PAM User')
+                # Direct share (if delivery section present)
+                if has_delivery:
+                    share_success = self._share_directly(pam_user_uid, config, params)
+                    if output_format == 'text':
+                        share_to = config['delivery']['share_to']
+                        if share_success:
+                            logging.info(f'✅ Record shared to {share_to}')
+                        else:
+                            logging.warning(f'⚠️  Direct share to {share_to} failed — share manually')
 
-                # Send welcome email
-                email_success = self._send_email(config, share_url, params)
+                # Email delivery (if email section present)
+                if has_email:
+                    share_url = self._generate_share_url(pam_user_uid, config, params)
+                    if output_format == 'text':
+                        logging.info('✅ Share URL generated for PAM User')
+                    email_success = self._send_email(config, share_url, params)
+                    if output_format == 'text':
+                        logging.info('✅ Email with one-time share sent')
 
-                if output_format == 'text':
-                    logging.info('✅ Email with one-time share sent')
-                else:
+                if not has_delivery and not has_email:
+                    if output_format == 'text':
+                        logging.info('✅ Record created (no delivery configured)')
+
+                if output_format == 'json':
                     result = {
                         'success': True,
                         'pam_user_uid': pam_user_uid,
-                        'share_url': share_url,
                         'username': config['account']['username'],
                         'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
                         'rotation_status': 'synced' if rotation_success else 'scheduled',
-                        'email_status': 'sent' if email_success else 'failed',
                         'message': 'Credential provisioning complete'
                     }
+                    if has_delivery:
+                        result['share_status'] = 'shared' if share_success else 'failed'
+                        result['shared_to'] = config['delivery']['share_to']
+                    if has_email:
+                        result['share_url'] = share_url
+                        result['email_status'] = 'sent' if email_success else 'failed'
                     print(json.dumps(result, indent=2))
 
             except CommandError as e:
@@ -478,7 +618,7 @@ class CredentialProvisionCommand(Command):
         errors = []
 
         # Validate required top-level sections
-        required_sections = ['user', 'account', 'pam', 'email']
+        required_sections = ['user', 'account', 'rotation']
         for section in required_sections:
             if section not in config:
                 errors.append(f'Missing required section: {section}')
@@ -490,8 +630,15 @@ class CredentialProvisionCommand(Command):
         # Validate each section
         errors.extend(self._validate_user_section(config.get('user', {})))
         errors.extend(self._validate_account_section(config.get('account', {})))
-        errors.extend(self._validate_pam_section(config.get('pam', {})))
-        errors.extend(self._validate_email_section(params, config.get('email', {})))
+        errors.extend(self._validate_rotation_section(config.get('rotation', {})))
+
+        # Validate delivery section if present (vault sharing)
+        if 'delivery' in config:
+            errors.extend(self._validate_delivery_section(config['delivery']))
+
+        # Validate email section if present (email delivery)
+        if 'email' in config:
+            errors.extend(self._validate_email_section(params, config.get('email', {})))
 
         # Validate optional vault section
         if 'vault' in config:
@@ -500,6 +647,26 @@ class CredentialProvisionCommand(Command):
         # Validate optional managed_company section (MSP scenarios)
         if 'managed_company' in config:
             errors.extend(self._validate_mc_context(params, config['managed_company']))
+
+        # Validate: transfer_ownership/remove_from_service_vault are incompatible with rotation
+        has_rotation = bool(config.get('rotation', {}).get('schedule'))
+        transfer = config.get('delivery', {}).get('transfer_ownership', False)
+        remove = config.get('delivery', {}).get('remove_from_service_vault', False)
+        if has_rotation and (transfer or remove):
+            if transfer:
+                errors.append(
+                    'delivery.transfer_ownership is incompatible with rotation.\n'
+                    '    Transferring ownership moves the record out of the Gateway\'s control,\n'
+                    '    which prevents password rotation. Remove transfer_ownership or remove\n'
+                    '    the rotation schedule.'
+                )
+            if remove:
+                errors.append(
+                    'delivery.remove_from_service_vault is incompatible with rotation.\n'
+                    '    Removing the record from the service vault removes Gateway access,\n'
+                    '    which prevents password rotation. Remove remove_from_service_vault\n'
+                    '    or remove the rotation schedule.'
+                )
 
         return errors
 
@@ -534,9 +701,9 @@ class CredentialProvisionCommand(Command):
         """Validate account section (target system credentials)."""
         errors = []
 
-        # Required fields
-        if not account.get('username'):
-            errors.append('account.username is required')
+        # Either username or username_template is required
+        if not account.get('username') and not account.get('username_template'):
+            errors.append('account.username or account.username_template is required')
 
         if not account.get('pam_config_uid'):
             errors.append('account.pam_config_uid is required')
@@ -552,35 +719,28 @@ class CredentialProvisionCommand(Command):
 
         return errors
 
-    def _validate_pam_section(self, pam: Dict[str, Any]) -> List[str]:
-        """Validate PAM section (rotation configuration)."""
+    def _validate_rotation_section(self, rotation: Dict[str, Any]) -> List[str]:
+        """Validate rotation section (schedule and password complexity)."""
         errors = []
 
-        # Validate rotation subsection
-        rotation = pam.get('rotation', {})
-        if not rotation:
-            errors.append('pam.rotation section is required')
-            return errors
-
-        # Required rotation fields
         if not rotation.get('schedule'):
-            errors.append('pam.rotation.schedule is required (CRON format)')
+            errors.append('rotation.schedule is required (CRON format)')
         else:
             schedule = rotation['schedule']
             if validate_cron_expression and not validate_cron_expression(schedule, for_rotation=True)[0]:
                 errors.append(
-                    f'pam.rotation.schedule has invalid CRON format: {schedule}\n'
+                    f'rotation.schedule has invalid CRON format: {schedule}\n'
                     f'    Expected 6 fields: seconds minute hour day month day-of-week\n'
                     f'    Example: "0 0 3 * * ?" (Daily at 3:00:00 AM)'
                 )
 
         if not rotation.get('password_complexity'):
-            errors.append('pam.rotation.password_complexity is required')
+            errors.append('rotation.password_complexity is required')
         else:
             complexity = rotation['password_complexity']
             if not self._is_valid_complexity(complexity):
                 errors.append(
-                    f'pam.rotation.password_complexity has invalid format: {complexity}\n'
+                    f'rotation.password_complexity has invalid format: {complexity}\n'
                     f'    Expected: "length,upper,lower,digit,special"\n'
                     f'    Example: "32,5,5,5,5"'
                 )
@@ -613,6 +773,25 @@ class CredentialProvisionCommand(Command):
                 f'    Examples: "7d", "24h", "60mi"\n'
                 f'    Note: Use "mi" for minutes, not "m"'
             )
+
+        return errors
+
+    def _validate_delivery_section(self, delivery: Dict[str, Any]) -> List[str]:
+        """Validate delivery section (KC-1035: direct vault sharing)."""
+        errors = []
+
+        share_to = delivery.get('share_to')
+        if not share_to:
+            errors.append('delivery.share_to is required')
+        elif not utils.is_email(share_to):
+            errors.append(f'delivery.share_to must be a valid email: {share_to}')
+
+            # Validate optional permissions
+            permissions = delivery.get('permissions', {})
+            if permissions:
+                for key in ('can_edit', 'can_share'):
+                    if key in permissions and not isinstance(permissions[key], bool):
+                        errors.append(f'delivery.permissions.{key} must be a boolean')
 
         return errors
 
@@ -704,7 +883,7 @@ class CredentialProvisionCommand(Command):
         """
         user = config.get('user', {})
         account = config.get('account', {})
-        pam = config.get('pam', {})
+        rotation = config.get('rotation', {})
         email_config = config.get('email', {})
         vault_config = config.get('vault', {})
 
@@ -726,7 +905,7 @@ class CredentialProvisionCommand(Command):
                     'Generate secure password (complexity requirements applied)',
                     f'Create PAM User: {redacted_username}',
                     f'Link PAM User to PAM Config: {account.get("pam_config_uid")}',
-                    f'Configure rotation: {pam.get("rotation", {}).get("schedule")}',
+                    f'Configure rotation: {rotation.get("schedule")}',
                     'Submit immediate rotation',
                     f'Generate share URL for PAM User (expiry: {email_config.get("share_url_expiry", "7d")})',
                     f'Send email to: {redacted_email}'
@@ -756,7 +935,7 @@ class CredentialProvisionCommand(Command):
             print(f'     Folder: {vault_config.get("folder", default_folder)}')
             print(f'  4. Link to PAM Config: {account.get("pam_config_uid")[:20]}...')
             print(f'  5. Configure rotation')
-            print(f'     Schedule: {pam.get("rotation", {}).get("schedule")}')
+            print(f'     Schedule: {rotation.get("schedule")}')
             print(f'  6. Submit immediate rotation')
             print(f'  7. Generate one-time share URL for PAM User')
             print(f'     Expiry: {email_config.get("share_url_expiry", "7d")}')
@@ -1025,7 +1204,7 @@ class CredentialProvisionCommand(Command):
         facade.managed = True
 
         # Set title (custom or auto-generated)
-        pam_title = config.get('pam', {}).get('pam_user_title')
+        pam_title = config.get('rotation', {}).get('pam_user_title')
         if pam_title:
             pam_user.title = pam_title
         else:
@@ -1059,6 +1238,24 @@ class CredentialProvisionCommand(Command):
                 'text',
                 dn,
                 'Distinguished Name'
+            ))
+
+        # KC-1035: Owner metadata for deprovision support
+        delivery = config.get('delivery', {})
+        if delivery.get('method') == 'direct_share' and delivery.get('share_to'):
+            custom_fields.append(vault.TypedField.new_field(
+                'text',
+                delivery['share_to'],
+                'Owner Email'
+            ))
+
+        # KC-1035: AD groups metadata
+        ad_groups = config['account'].get('ad_groups', [])
+        if ad_groups:
+            custom_fields.append(vault.TypedField.new_field(
+                'text',
+                ', '.join(ad_groups),
+                'AD Groups'
             ))
 
         if custom_fields:
@@ -1301,7 +1498,7 @@ class CredentialProvisionCommand(Command):
             CommandError: If rotation configuration fails
         """
 
-        rotation_config = config['pam']['rotation']
+        rotation_config = config['rotation']
         pam_config_uid = config['account']['pam_config_uid']
 
         # Check if rotation commands are available (Python 3.8+)
@@ -1386,6 +1583,356 @@ class CredentialProvisionCommand(Command):
             logging.warning(f'⚠️  Immediate rotation failed: {e}')
             logging.warning(f'   Password will sync on next scheduled rotation')
             return False  # Graceful degradation
+
+    # =========================================================================
+    # AD User Creation via Gateway (KC-1035)
+    # =========================================================================
+
+    def _get_gateway_uid_for_config(self, pam_config_uid: str, params: KeeperParams) -> Optional[str]:
+        """Find the connected Gateway UID for a PAM Configuration.
+
+        Looks up the gateway associated with the specific PAM Config, then
+        verifies it is online. Falls back to the controllerUid field on the
+        PAM Configuration record if the API call is unavailable.
+        """
+        from ..commands.pam.config_helper import configuration_controller_get
+
+        gateway_uid = None
+
+        # First: try reading controllerUid from the PAM Configuration record
+        try:
+            pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
+            if pam_config_record:
+                field = pam_config_record.get_typed_field('pamResources')
+                value = field.get_default_value(dict)
+                if value:
+                    gateway_uid = value.get('controllerUid', '') or ''
+        except Exception as e:
+            logging.debug(f'Failed to read gateway UID from PAM Config record: {e}')
+
+        # Fallback: ask the server for the controller associated with this config
+        if not gateway_uid:
+            try:
+                config_uid_bytes = utils.base64_url_decode(pam_config_uid)
+                controller = configuration_controller_get(params, config_uid_bytes)
+                if controller and controller.controllerUid:
+                    gateway_uid = utils.base64_url_encode(controller.controllerUid)
+            except Exception as e:
+                logging.debug(f'Failed to get controller from API: {e}')
+
+        if not gateway_uid:
+            return None
+
+        # Verify the gateway is actually online
+        try:
+            online = router_get_connected_gateways(params)
+            if online:
+                connected_uids = [utils.base64_url_encode(c.controllerUid) for c in online.controllers]
+                if gateway_uid not in connected_uids:
+                    logging.warning(f'Gateway {gateway_uid} is associated with PAM Config but not online')
+                    return None
+        except Exception as e:
+            logging.debug(f'Failed to verify gateway online status: {e}')
+
+        return gateway_uid
+
+    def _create_ad_user_via_gateway(
+        self,
+        config: Dict[str, Any],
+        password: str,
+        params: KeeperParams,
+        state: 'ProvisioningState'
+    ) -> bool:
+        """
+        Create AD user via Gateway's rm-create-user action (KC-1035).
+
+        Sends the create-user action to the PAM Gateway which calls
+        ActiveDirectory.create_user() via LDAP.
+
+        Args:
+            config: YAML config with account section
+            password: Generated password for the new AD user
+            params: KeeperParams session
+            state: ProvisioningState for rollback tracking
+
+        Returns:
+            True if AD user created successfully
+
+        Raises:
+            CommandError: If AD user creation fails (critical failure)
+        """
+        username = config['account']['username']
+        pam_config_uid = config['account']['pam_config_uid']
+
+        gateway_uid = self._get_gateway_uid_for_config(pam_config_uid, params)
+        if not gateway_uid:
+            raise CommandError('credential-provision', 'No connected Gateway found for PAM Configuration')
+
+        # Store for rollback
+        state.ad_config_uid = pam_config_uid
+        state.ad_gateway_uid = gateway_uid
+        state.ad_username = username
+
+        # Send the full DN as the user field if available — the Gateway's
+        # ActiveDirectory.create_user() detects DN format and uses it to place
+        # the user in the correct OU (see active_directory.py lines 2118-2132)
+        dn = config['account'].get('distinguished_name', '')
+        user_value = dn if dn else username
+
+        # Encrypt user and password with PAM Config record key — the Gateway
+        # decrypts them via rm.decrypt_content() which does base64_decode → AES-GCM decrypt
+        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
+        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(user_value.encode(), record_key)).decode()
+        encrypted_password = base64.b64encode(crypto.encrypt_aes_v2(password.encode(), record_key)).decode()
+
+        # Build and send rm-create-user action
+        resource_uid = config['account'].get('directory_uid')
+        action_inputs = GatewayActionRmCreateUserInputs(
+            configuration_uid=pam_config_uid,
+            user=encrypted_user,
+            password=encrypted_password,
+            resource_uid=resource_uid,
+        )
+        conversation_id = GatewayAction.generate_conversation_id()
+
+        try:
+            router_response = router_send_action_to_gateway(
+                params=params,
+                gateway_action=GatewayActionRmCreateUser(
+                    inputs=action_inputs,
+                    conversation_id=conversation_id,
+                    gateway_destination=gateway_uid
+                ),
+                message_type=pam_pb2.CMT_GENERAL,
+                is_streaming=False,
+                destination_gateway_uid_str=gateway_uid
+            )
+        except Exception as e:
+            raise CommandError('credential-provision', f'Gateway communication failed: {e}')
+
+        if router_response is None:
+            raise CommandError('credential-provision', 'No response from Gateway for AD user creation')
+
+        try:
+            payload = get_response_payload(router_response)
+        except Exception as e:
+            raise CommandError('credential-provision', f'Failed to parse Gateway response: {e}')
+
+        # Gateway response structure: payload = {data: {success, error, ...}, is_ok, ...}
+        data = payload.get('data', {}) if payload else {}
+        if not data or not data.get('success', False):
+            error = data.get('error', 'Unknown error') if data else 'Empty response'
+            raise CommandError('credential-provision', f'AD user creation failed: {error}')
+
+        state.ad_user_created = True
+        return True
+
+    def _add_ad_user_to_groups_via_gateway(
+        self,
+        config: Dict[str, Any],
+        params: KeeperParams,
+        gateway_uid: str
+    ) -> None:
+        """
+        Add AD user to groups via Gateway's rm-add-user-to-group action (KC-1035).
+
+        Args:
+            config: YAML config with account.ad_groups list
+            params: KeeperParams session
+            gateway_uid: Connected Gateway UID
+        """
+        username = config['account']['username']
+        pam_config_uid = config['account']['pam_config_uid']
+        resource_uid = config['account'].get('directory_uid')
+        groups = config['account'].get('ad_groups', [])
+
+        # Encrypt username with PAM Config record key
+        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
+        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(username.encode(), record_key)).decode()
+
+        for group in groups:
+            action_inputs = GatewayActionRmAddUserToGroupInputs(
+                configuration_uid=pam_config_uid,
+                user=encrypted_user,
+                group_id=group,
+                resource_uid=resource_uid,
+            )
+            conversation_id = GatewayAction.generate_conversation_id()
+
+            try:
+                router_response = router_send_action_to_gateway(
+                    params=params,
+                    gateway_action=GatewayActionRmAddUserToGroup(
+                        inputs=action_inputs,
+                        conversation_id=conversation_id,
+                        gateway_destination=gateway_uid
+                    ),
+                    message_type=pam_pb2.CMT_GENERAL,
+                    is_streaming=False,
+                    destination_gateway_uid_str=gateway_uid
+                )
+
+                payload = get_response_payload(router_response) if router_response else None
+                data = payload.get('data', {}) if payload else {}
+                if data and not data.get('success', False):
+                    error = data.get('error', 'Unknown error')
+                    logging.warning(f'   Failed to add {username} to group {group}: {error}')
+                else:
+                    logging.info(f'   Added {username} to AD group: {group}')
+
+            except Exception as e:
+                logging.warning(f'   Failed to add {username} to group {group}: {e}')
+
+    def _delete_ad_user_via_gateway(self, state: 'ProvisioningState', params: KeeperParams) -> None:
+        """Delete AD user via Gateway for rollback (KC-1035)."""
+        if not state.ad_user_created or not state.ad_username:
+            return
+
+        try:
+            action_inputs = GatewayActionRmDeleteUserInputs(
+                configuration_uid=state.ad_config_uid,
+                user=state.ad_username,
+            )
+            conversation_id = GatewayAction.generate_conversation_id()
+
+            router_send_action_to_gateway(
+                params=params,
+                gateway_action=GatewayActionRmDeleteUser(
+                    inputs=action_inputs,
+                    conversation_id=conversation_id,
+                    gateway_destination=state.ad_gateway_uid
+                ),
+                message_type=pam_pb2.CMT_GENERAL,
+                is_streaming=False,
+                destination_gateway_uid_str=state.ad_gateway_uid
+            )
+            logging.info(f'Rolled back AD user: {state.ad_username}')
+        except Exception as e:
+            logging.error(f'Failed to rollback AD user {state.ad_username}: {e}')
+            logging.error('Manual cleanup may be required in Active Directory')
+
+    def _share_directly(
+        self,
+        pam_user_uid: str,
+        config: Dict[str, Any],
+        params: KeeperParams
+    ) -> bool:
+        """
+        Share PAM User record directly to a user's vault (KC-1035).
+
+        Uses ShareRecordCommand to grant vault-to-vault access. The recipient
+        sees the record in their vault with the current password, including
+        updates after rotation.
+
+        Args:
+            pam_user_uid: UID of PAM User record to share
+            config: YAML configuration with delivery section
+            params: KeeperParams session
+
+        Returns:
+            True if shared successfully, False on failure (non-critical)
+        """
+        delivery = config.get('delivery', {})
+        share_to = delivery.get('share_to')
+        permissions = delivery.get('permissions', {})
+        can_edit = permissions.get('can_edit', False)
+        can_share = permissions.get('can_share', False)
+
+        transfer_ownership = delivery.get('transfer_ownership', False)
+
+        try:
+            # Sync vault to ensure the new record is available
+            api.sync_down(params)
+
+            # Step 1: Share the record to the target user's vault
+            share_kwargs = {
+                'record': pam_user_uid,
+                'email': [share_to],
+                'action': 'grant',
+                'can_edit': can_edit,
+                'can_share': can_share,
+            }
+            rq = ShareRecordCommand.prep_request(params, share_kwargs)
+            if rq is None:
+                logging.warning(f'Share invitation sent to {share_to} — share will complete when accepted')
+                return True
+            ShareRecordCommand.send_requests(params, [rq])
+
+            # Step 2: Transfer ownership if configured
+            if transfer_ownership:
+                api.sync_down(params)
+                transfer_kwargs = {
+                    'record': pam_user_uid,
+                    'email': [share_to],
+                    'action': 'owner',
+                }
+                rq = ShareRecordCommand.prep_request(params, transfer_kwargs)
+                if rq:
+                    ShareRecordCommand.send_requests(params, [rq])
+                    logging.info(f'Ownership transferred to {share_to}')
+
+                # Step 3: Remove record from service vault if configured
+                # Uses pre_delete + delete (two-step) to unlink from folder without deleting for new owner
+                remove_after = delivery.get('remove_from_service_vault', False)
+                if remove_after:
+                    try:
+                        api.sync_down(params)
+                        # Find which folders contain this record and unlink from all of them
+                        unlink_objects = []
+                        for folder_uid, record_uids in params.subfolder_record_cache.items():
+                            if pam_user_uid in record_uids:
+                                folder = params.folder_cache.get(folder_uid) if folder_uid else params.root_folder
+                                del_obj = {
+                                    'delete_resolution': 'unlink',
+                                    'object_uid': pam_user_uid,
+                                    'object_type': 'record',
+                                }
+                                if hasattr(folder, 'type'):
+                                    if folder.type in {'user_folder', 'root'}:
+                                        del_obj['from_type'] = 'user_folder'
+                                        if folder_uid:
+                                            del_obj['from_uid'] = folder_uid
+                                    else:
+                                        del_obj['from_type'] = 'shared_folder_folder'
+                                        del_obj['from_uid'] = folder_uid
+                                else:
+                                    del_obj['from_type'] = 'user_folder'
+                                    if folder_uid:
+                                        del_obj['from_uid'] = folder_uid
+                                unlink_objects.append(del_obj)
+
+                        if unlink_objects:
+                            # Step 1: pre_delete — get the deletion token
+                            rq = {
+                                'command': 'pre_delete',
+                                'objects': unlink_objects
+                            }
+                            rs = api.communicate(params, rq)
+                            if rs.get('result') == 'success':
+                                pdr = rs.get('pre_delete_response', {})
+                                if 'pre_delete_token' in pdr:
+                                    # Step 2: delete — execute with the token
+                                    rq2 = {
+                                        'command': 'delete',
+                                        'pre_delete_token': pdr['pre_delete_token']
+                                    }
+                                    api.communicate(params, rq2)
+                                    logging.info(f'Record removed from service vault')
+                                else:
+                                    logging.warning(f'No pre_delete_token in response')
+                            else:
+                                logging.warning(f'pre_delete failed: {rs}')
+                        else:
+                            logging.info(f'Record not found in service vault folders')
+                    except Exception as rev_e:
+                        logging.warning(f'Failed to remove record from service vault: {rev_e}')
+
+            return True
+
+        except Exception as e:
+            logging.warning(f'Direct share to {share_to} failed: {e}')
+            logging.warning('The PAM User record was created successfully. Share manually if needed.')
+            return False
 
     def _generate_share_url(
         self,
@@ -1603,12 +2150,23 @@ class CredentialProvisionCommand(Command):
 
         logging.warning('Rolling back provisioning changes')
 
+        # Rollback in LIFO order (reverse of creation order: AD first, then PAM User)
+
+        # 1. Delete PAM User record first (created after AD user)
         if state.pam_user_uid:
             try:
                 api.delete_record(params, state.pam_user_uid)
             except Exception as e:
                 rollback_errors.append(f'PAM User: {e}')
                 logging.error(f'Rollback failed for PAM User: {e}')
+
+        # 2. Delete AD user last (created before PAM User)
+        if state.ad_user_created:
+            try:
+                self._delete_ad_user_via_gateway(state, params)
+            except Exception as e:
+                rollback_errors.append(f'AD User ({state.ad_username}): {e}')
+                logging.error(f'Rollback failed for AD User: {e}')
 
         if rollback_errors:
             logging.error('Rollback completed with errors - manual cleanup may be required')
@@ -1781,10 +2339,13 @@ class CredentialProvisionCommand(Command):
         # Unknown PAM Type
         # ===================================================================
         else:
-            logging.warning('')
-            logging.warning(f'⚠️  Unknown or unsupported PAM system type: "{pam_type}"')
-            logging.warning('    Using generic validation only')
-            logging.warning('    Supported types: Active Directory, Azure AD, AWS IAM')
-            logging.warning('')
+            # Skip warning when resource_uid is provided — the resource record
+            # determines AD behavior, not the config type
+            if not config['account'].get('directory_uid'):
+                logging.warning('')
+                logging.warning(f'⚠️  Unknown or unsupported PAM system type: "{pam_type}"')
+                logging.warning('    Using generic validation only')
+                logging.warning('    Supported types: Active Directory, Azure AD, AWS IAM')
+                logging.warning('')
 
         return errors

@@ -1,8 +1,8 @@
 """
 Keeper SuperShell - A full-screen terminal UI for Keeper vault
 
-This is the implementation file during refactoring. Code is being
-gradually migrated to the supershell/ package.
+This module contains the main SuperShellApp class, which is the Textual
+application for the vault browser TUI.
 """
 
 import logging
@@ -16,16 +16,24 @@ import time
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-import pyperclip
 from rich.markup import escape as rich_escape
 
-# Import from refactored modules
-from .supershell.themes import COLOR_THEMES
-from .supershell.utils import load_preferences, save_preferences, strip_ansi_codes
-from .supershell.widgets import ClickableDetailLine, ClickableField, ClickableRecordUID
-from .supershell.state import VaultData, UIState, ThemeState, SelectionState
-from .supershell.data import load_vault_data, search_records
-from .supershell.renderers import (
+# Import from package modules
+from .debug import debug_log as _debug_log
+from .themes import COLOR_THEMES
+from .themes.css import BASE_CSS
+from .utils import load_preferences, save_preferences, strip_ansi_codes
+from .widgets import (
+    ClickableDetailLine,
+    ClickableField,
+    ClickableRecordUID,
+    AutoCopyTextArea,
+    safe_copy_to_clipboard,
+    ShellInputTextArea,
+)
+from .state import VaultData, UIState, ThemeState, SelectionState
+from .data import load_vault_data, search_records
+from .renderers import (
     is_sensitive_field as is_sensitive_field_name,
     mask_passwords_in_json,
     strip_field_type_prefix,
@@ -34,12 +42,12 @@ from .supershell.renderers import (
     FIELD_TYPE_PREFIXES,
     TYPE_FRIENDLY_NAMES,
 )
-from .supershell.handlers import keyboard_dispatcher
-from .supershell.screens import PreferencesScreen, HelpScreen
+from .handlers import keyboard_dispatcher
+from .screens import PreferencesScreen, HelpScreen
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button
+from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button, TextArea
 from textual.binding import Binding
 from textual.screen import Screen, ModalScreen
 from textual.reactive import reactive
@@ -47,19 +55,13 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
-from textual.events import Click, MouseDown, Paste
+from textual.events import Click, MouseDown, MouseUp, MouseMove, Paste
 
-from ..commands.base import Command
-
-# Widget classes are now imported from .supershell.widgets at the top of this file
-
-from ..commands.record import RecordGetUidCommand, ClipboardCommand
-from ..display import bcolors
-from .. import vault
-from .. import utils
-
-
-# Screen classes imported from .supershell.screens
+from ..base import Command
+from ..record import RecordGetUidCommand, ClipboardCommand
+from ...display import bcolors
+from ... import vault
+from ... import utils
 
 class SuperShellApp(App):
     """The Keeper SuperShell TUI application"""
@@ -71,267 +73,8 @@ class SuperShellApp(App):
     PAGE_DOWN_NODES = 10         # Number of nodes to move for half-page down
     PAGE_DOWN_FULL_NODES = 20    # Number of nodes to move for full-page down
 
-    # _strip_ansi_codes is now imported from .supershell.utils
-
-    CSS = """
-    Screen {
-        background: #000000;
-    }
-
-    Input {
-        background: #111111;
-        color: #ffffff;
-    }
-
-    Input > .input--content {
-        color: #ffffff;
-    }
-
-    Input > .input--placeholder {
-        color: #666666;
-    }
-
-    Input > .input--cursor {
-        color: #ffffff;
-        text-style: reverse;
-    }
-
-    Input:focus {
-        border: solid #888888;
-    }
-
-    Input:focus > .input--content {
-        color: #ffffff;
-    }
-
-    #search_bar {
-        dock: top;
-        height: 3;
-        width: 100%;
-        background: #222222;
-        border: solid #666666;
-    }
-
-    #search_display {
-        width: 35%;
-        background: #222222;
-        color: #ffffff;
-        padding: 0 2;
-        height: 3;
-    }
-
-    #search_results_label {
-        width: 15%;
-        color: #aaaaaa;
-        text-align: right;
-        padding: 0 2;
-        height: 3;
-        background: #222222;
-    }
-
-    #user_info {
-        width: auto;
-        height: 3;
-        background: #222222;
-        color: #888888;
-        padding: 0 1;
-    }
-
-    #device_status_info {
-        width: auto;
-        height: 3;
-        background: #222222;
-        color: #888888;
-        padding: 0 2;
-        text-align: right;
-    }
-
-    .clickable-info:hover {
-        background: #333333;
-    }
-
-    #main_container {
-        height: 100%;
-        background: #000000;
-    }
-
-    #folder_panel {
-        width: 50%;
-        border-right: thick #666666;
-        padding: 1;
-        background: #000000;
-    }
-
-    #folder_tree {
-        height: 100%;
-        background: #000000;
-    }
-
-    #record_panel {
-        width: 50%;
-        padding: 1;
-        background: #000000;
-    }
-
-    #record_detail {
-        height: 100%;
-        overflow-y: auto;
-        padding: 1;
-        background: #000000;
-    }
-
-    #detail_content {
-        background: #000000;
-        color: #ffffff;
-    }
-
-    Tree {
-        background: #000000;
-        color: #ffffff;
-    }
-
-    Tree > .tree--guides {
-        color: #444444;
-    }
-
-    Tree > .tree--toggle {
-        /* Hide expand/collapse icons - nodes still expand/collapse on click */
-        width: 0;
-    }
-
-    Tree > .tree--cursor {
-        /* Selected row - neutral background that works with all color themes */
-        background: #333333;
-        text-style: bold;
-    }
-
-    Tree > .tree--highlight {
-        /* Hover row - subtle background, different from selection */
-        background: #1a1a1a;
-    }
-
-    Tree > .tree--highlight-line {
-        background: #1a1a1a;
-    }
-
-    /* Hide tree selection when search input is active */
-    Tree.search-input-active > .tree--cursor {
-        background: transparent;
-        text-style: none;
-    }
-
-    Tree.search-input-active > .tree--highlight {
-        background: transparent;
-    }
-
-    DataTable {
-        background: #000000;
-        color: #ffffff;
-    }
-
-    DataTable > .datatable--cursor {
-        background: #444444;
-        color: #ffffff;
-        text-style: bold;
-    }
-
-    DataTable > .datatable--header {
-        background: #222222;
-        color: #ffffff;
-        text-style: bold;
-    }
-
-    Static {
-        background: #000000;
-        color: #ffffff;
-    }
-
-    VerticalScroll {
-        background: #000000;
-    }
-
-    #record_detail:focus {
-        background: #0a0a0a;
-        border: solid #333333;
-    }
-
-    #record_detail:focus-within {
-        background: #0a0a0a;
-    }
-
-    #status_bar {
-        dock: bottom;
-        height: 1;
-        background: #000000;
-        color: #aaaaaa;
-        padding: 0 2;
-    }
-
-    #shortcuts_bar {
-        dock: bottom;
-        height: 2;
-        background: #111111;
-        color: #888888;
-        padding: 0 1;
-        border-top: solid #333333;
-    }
-
-    /* Content area wrapper for shell pane visibility control */
-    #content_area {
-        height: 100%;
-        width: 100%;
-    }
-
-    /* When shell is visible, compress main container to top half */
-    #content_area.shell-visible #main_container {
-        height: 50%;
-    }
-
-    /* Shell pane - hidden by default */
-    #shell_pane {
-        display: none;
-        height: 50%;
-        width: 100%;
-        border-top: thick #666666;
-        background: #000000;
-    }
-
-    /* Show shell pane when class is added */
-    #content_area.shell-visible #shell_pane {
-        display: block;
-    }
-
-    #shell_header {
-        height: 1;
-        background: #222222;
-        color: #00ff00;
-        padding: 0 1;
-        border-bottom: solid #333333;
-    }
-
-    #shell_output {
-        height: 1fr;
-        overflow-y: auto;
-        padding: 0 1;
-        background: #000000;
-    }
-
-    #shell_output_content {
-        background: #000000;
-        color: #ffffff;
-    }
-
-    #shell_input_line {
-        height: 1;
-        background: #111111;
-        color: #00ff00;
-        padding: 0 1;
-    }
-
-    #shell_pane:focus-within #shell_input_line {
-        background: #1a1a2e;
-    }
-    """
+    # CSS is imported from supershell.themes.css
+    CSS = BASE_CSS
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=False),
@@ -400,6 +143,7 @@ class SuperShellApp(App):
         self.shell_input_active = False
         self.shell_command_history = []  # For up/down arrow navigation
         self.shell_history_index = -1
+        # Shell output uses TextArea widget with built-in selection support
         # Load color theme from preferences
         prefs = load_preferences()
         self.color_theme = prefs.get('color_theme', 'green')
@@ -459,9 +203,19 @@ class SuperShellApp(App):
             
             # Update header info (email/username colors)
             self._update_header_info_display()
-            
+
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
+
+            # Update shell output selection color theme
+            try:
+                shell_output = self.query_one("#shell_output_content")
+                # Remove old theme classes and add new one
+                for old_theme in COLOR_THEMES.keys():
+                    shell_output.remove_class(f"theme-{old_theme}")
+                shell_output.add_class(f"theme-{theme_name}")
+            except Exception:
+                pass  # Shell pane might not exist yet
 
     def notify(self, message, *, title="", severity="information", timeout=1.5):
         """Override notify to use faster timeout (default 1.5s instead of 5s)"""
@@ -547,9 +301,12 @@ class SuperShellApp(App):
             # Shell pane - hidden by default, shown when :command or Ctrl+\ pressed
             with Vertical(id="shell_pane"):
                 yield Static("", id="shell_header")
-                with VerticalScroll(id="shell_output"):
-                    yield Static("", id="shell_output_content")
-                yield Static("", id="shell_input_line")
+                # AutoCopyTextArea auto-copies selected text on mouse release
+                yield AutoCopyTextArea("", id="shell_output_content", read_only=True, classes=f"theme-{self.color_theme}")
+                # Shell input line with prompt and TextArea
+                with Horizontal(id="shell_input_container"):
+                    yield Static("❯ ", id="shell_prompt")
+                    yield ShellInputTextArea(self, "", id="shell_input_area")
 
         # Status bar at very bottom
         yield Static("", id="status_bar")
@@ -570,7 +327,7 @@ class SuperShellApp(App):
 
         # Sync vault data if needed
         if not hasattr(self.params, 'record_cache') or not self.params.record_cache:
-            from .utils import SyncDownCommand
+            from ..utils import SyncDownCommand
             try:
                 logging.debug("Syncing vault data...")
                 SyncDownCommand().execute(self.params)
@@ -850,7 +607,7 @@ class SuperShellApp(App):
     def _load_device_info(self):
         """Load device info using the 'this-device' command"""
         try:
-            from .utils import ThisDeviceCommand
+            from ..utils import ThisDeviceCommand
 
             # Call get_device_info directly - returns dict without printing
             return ThisDeviceCommand.get_device_info(self.params)
@@ -862,8 +619,8 @@ class SuperShellApp(App):
     def _load_whoami_info(self):
         """Load whoami info using the 'whoami' command"""
         try:
-            from .utils import WhoamiCommand
-            from .. import constants
+            from ..utils import WhoamiCommand
+            from ... import constants
             import datetime
 
             # Call get_whoami_info directly - returns dict without printing
@@ -1809,8 +1566,8 @@ class SuperShellApp(App):
             # Only fetch DAG data for pamUser records (requires PAM infrastructure)
             if is_pam_user:
                 try:
-                    from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-                    from .tunnel.port_forward.TunnelGraph import TunnelDAG
+                    from keepercommander.commands.tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+                    from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
                     from keeper_dag.edge import EdgeType
 
                     encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(self.params)
@@ -2884,8 +2641,9 @@ class SuperShellApp(App):
         t = self.theme_colors
         
         try:
-            from ..proto import APIRequest_pb2, enterprise_pb2
-            from .. import api, utils
+            from keepercommander.proto import APIRequest_pb2, enterprise_pb2
+            from keepercommander import api
+            from keepercommander.commands import utils
             import json
             
             record = self.records[app_uid]
@@ -3100,42 +2858,65 @@ class SuperShellApp(App):
     @on(Click, "#search_bar, #search_display")
     def on_search_bar_click(self, event: Click) -> None:
         """Activate search mode when search bar is clicked"""
+        _debug_log(f"CLICK: search_bar x={event.x} y={event.y} button={event.button} "
+                   f"shift={event.shift} ctrl={event.ctrl} meta={event.meta}")
         tree = self.query_one("#folder_tree", Tree)
+
+        # Deactivate shell input if it was active
+        if self.shell_input_active:
+            self.shell_input_active = False
+            try:
+                shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+                shell_input.blur()  # Remove focus from shell input
+            except Exception:
+                pass
+
         self.search_input_active = True
         tree.add_class("search-input-active")
+        search_bar = self.query_one("#search_bar")
+        search_bar.add_class("search-active")
+        tree.focus()  # Focus tree so keyboard events go to search handler
         self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
         event.stop()
+        _debug_log(f"CLICK: search_bar -> stopped")
 
     @on(Click, "#user_info")
     def on_user_info_click(self, event: Click) -> None:
         """Show whoami info when user info is clicked"""
+        _debug_log(f"CLICK: user_info x={event.x} y={event.y}")
         self._display_whoami_info()
         event.stop()
+        _debug_log(f"CLICK: user_info -> stopped")
 
     @on(Click, "#device_status_info")
     def on_device_status_click(self, event: Click) -> None:
         """Show device info when Stay Logged In / Logout section is clicked"""
+        _debug_log(f"CLICK: device_status_info x={event.x} y={event.y}")
         self._display_device_info()
         event.stop()
+        _debug_log(f"CLICK: device_status_info -> stopped")
 
-    @on(Click, "#shell_pane, #shell_output, #shell_output_content, #shell_input_line, #shell_header")
+    @on(Click, "#shell_pane, #shell_input_area, #shell_header")
     def on_shell_pane_click(self, event: Click) -> None:
-        """Handle clicks in shell pane - activate shell input and stop propagation.
+        """Handle clicks in shell pane (not output area) - activate shell input."""
+        _debug_log(f"CLICK: shell_pane x={event.x} y={event.y} button={event.button}")
 
-        This prevents clicks in the shell pane from bubbling up and triggering
-        expensive operations in other parts of the UI.
-        Note: Native terminal text selection requires Shift+click (terminal-dependent).
-        """
+        # Normal click - activate and focus shell input
         if self.shell_pane_visible:
-            # Activate shell input when clicking anywhere in shell pane
-            if not self.shell_input_active:
-                self.shell_input_active = True
-                self._update_shell_input_display()
+            self.shell_input_active = True
+            try:
+                shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+                shell_input.focus()
+            except Exception:
+                pass
         event.stop()
+        _debug_log(f"CLICK: shell_pane -> stopped")
 
     def on_paste(self, event: Paste) -> None:
         """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
+        _debug_log(f"PASTE: text={event.text!r} shell_input_active={self.shell_input_active}")
+        # Shell input TextArea handles its own paste - don't interfere
         if self.search_input_active and event.text:
             # Append pasted text to search input (strip newlines)
             pasted_text = event.text.replace('\n', ' ').replace('\r', '')
@@ -3151,10 +2932,14 @@ class SuperShellApp(App):
             self.search_input_active = False
             tree = self.query_one("#folder_tree", Tree)
             tree.remove_class("search-input-active")
+            search_bar = self.query_one("#search_bar")
+            search_bar.remove_class("search-active")
             # Update search display to remove cursor
             search_display = self.query_one("#search_display", Static)
             if self.search_input_text:
-                search_display.update(rich_escape(self.search_input_text))
+                # Escape all brackets (rich_escape only escapes matched pairs)
+                escaped = self.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+                search_display.update(escaped)
             else:
                 search_display.update("[dim]Search... (Tab or /)[/dim]")
 
@@ -3247,7 +3032,10 @@ class SuperShellApp(App):
             # Update display with blinking cursor at end
             if self.search_input_text:
                 # Show text with blinking cursor (escape special chars for Rich markup)
-                display_text = f"> {rich_escape(self.search_input_text)}[blink]▎[/blink]"
+                # Note: rich_escape() only escapes matched bracket pairs [x], not standalone [
+                # So we manually escape all brackets to be safe
+                escaped_text = self.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+                display_text = f"> {escaped_text}[blink]▎[/blink]"
             else:
                 # Show prompt with blinking cursor (ready to type)
                 display_text = "> [blink]▎[/blink]"
@@ -3278,7 +3066,9 @@ class SuperShellApp(App):
 
         except Exception as e:
             logging.error(f"Error in _update_search_display: {e}", exc_info=True)
-            self._update_status(f"ERROR: {str(e)}")
+            # Escape the error message to avoid Rich markup parsing issues
+            error_msg = str(e).replace('[', '\\[').replace(']', '\\]')
+            self._update_status(f"ERROR: {error_msg}")
 
     def on_key(self, event):
         """Handle keyboard events using the dispatcher pattern.
@@ -3286,8 +3076,14 @@ class SuperShellApp(App):
         Keyboard handling is delegated to specialized handlers in
         supershell/handlers/keyboard.py for better organization and testing.
         """
+        _debug_log(f"KEY: key={event.key!r} char={event.character!r} "
+                   f"shell_visible={self.shell_pane_visible} shell_input_active={self.shell_input_active} "
+                   f"search_active={self.search_input_active}")
+
         # Dispatch to the keyboard handler chain
-        if keyboard_dispatcher.dispatch(event, self):
+        handled = keyboard_dispatcher.dispatch(event, self)
+        _debug_log(f"KEY: handled={handled}")
+        if handled:
             return
 
         # Event was not handled by any handler - let it propagate
@@ -3379,19 +3175,32 @@ class SuperShellApp(App):
 
         self.shell_pane_visible = True
         self.shell_input_active = True
-        self.shell_input_text = ""
+        self.shell_input_text = ""  # Keep for compatibility
+        self._shell_executing = False  # Track if command is executing
 
-        # Update shell header with theme colors
+        # Update shell header with theme colors and prompt
         self._update_shell_header()
 
-        # Initialize the input display
-        self._update_shell_input_display()
+        # Initialize the prompt with green ❯
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update("[green]❯[/green] ")
+        except Exception:
+            pass
+
+        # Focus the input TextArea
+        try:
+            shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+            shell_input.focus()
+            shell_input.clear()
+        except Exception:
+            pass
 
         # If a command was provided, execute it immediately
         if command:
-            self._execute_shell_command(command)
+            self._execute_shell_command_async(command)
 
-        self._update_status("Shell open | Enter to run | quit/q/Ctrl+D to close")
+        self._update_status("Shell open | Enter to run | Up/Down for history | Ctrl+D to close")
 
     def _close_shell_pane(self):
         """Close the shell pane and return to normal view"""
@@ -3403,11 +3212,175 @@ class SuperShellApp(App):
         self.shell_input_text = ""
         self.shell_history_index = -1
 
+        # Clear the input TextArea
+        try:
+            shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+            shell_input.clear()
+        except Exception:
+            pass
+
         # Focus tree
         tree = self.query_one("#folder_tree", Tree)
         tree.focus()
 
         self._update_status("Navigate with j/k | / to search | ? for help")
+
+    def _execute_shell_command_async(self, command: str):
+        """Execute a command asynchronously with loading indicator."""
+        # Show spinner in prompt
+        self._start_shell_spinner()
+
+        # Run the command in a worker thread
+        self.run_worker(
+            lambda: self._execute_shell_command_worker(command),
+            name="shell_command",
+            exclusive=True,
+            thread=True
+        )
+
+    def _start_shell_spinner(self):
+        """Start the spinner animation in the shell prompt."""
+        self._shell_spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self._shell_spinner_index = 0
+        self._shell_executing = True
+
+        # Update prompt to show first spinner frame
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update(f"[yellow]{self._shell_spinner_frames[0]}[/yellow] ")
+        except Exception:
+            pass
+
+        # Start timer for animation
+        self._shell_spinner_timer = self.set_interval(0.1, self._animate_shell_spinner)
+
+    def _animate_shell_spinner(self):
+        """Animate the shell spinner."""
+        if not self._shell_executing:
+            return
+
+        self._shell_spinner_index = (self._shell_spinner_index + 1) % len(self._shell_spinner_frames)
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update(f"[yellow]{self._shell_spinner_frames[self._shell_spinner_index]}[/yellow] ")
+        except Exception:
+            pass
+
+    def _stop_shell_spinner(self):
+        """Stop the spinner and restore the prompt."""
+        self._shell_executing = False
+        if hasattr(self, '_shell_spinner_timer') and self._shell_spinner_timer:
+            self._shell_spinner_timer.stop()
+            self._shell_spinner_timer = None
+
+        # Restore normal prompt
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update("[green]❯[/green] ")
+        except Exception:
+            pass
+
+    def _execute_shell_command_worker(self, command: str):
+        """Worker function that executes the command and returns the result."""
+        command = command.strip()
+
+        # Handle quit commands
+        if command.lower() in ('quit', 'q', 'exit'):
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._close_shell_pane)
+            return
+
+        # Block supershell inside supershell
+        cmd_name = command.split()[0].lower() if command.split() else ''
+        if cmd_name in ('supershell', 'ss'):
+            self.shell_history.append((command, "[yellow]Cannot run supershell inside supershell[/yellow]"))
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._update_shell_output_display)
+            self.call_from_thread(self._scroll_shell_to_bottom)
+            return
+
+        # Handle clear command
+        if command.lower() == 'clear':
+            self.shell_history = []
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._update_shell_output_display)
+            return
+
+        # Add to command history for up/down navigation
+        if command and (not self.shell_command_history or
+                        self.shell_command_history[-1] != command):
+            self.shell_command_history.append(command)
+        self.shell_history_index = -1
+
+        # Capture stdout/stderr for command execution
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        log_buffer = io.StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+
+        # Create a temporary logging handler to capture log output
+        log_handler = logging.StreamHandler(log_buffer)
+        log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
+
+        try:
+            sys.stdout = stdout_buffer
+            sys.stderr = stderr_buffer
+
+            # Execute via cli.do_command
+            from ...cli import do_command
+            result = do_command(self.params, command)
+            # Some commands return output (e.g., JSON format) instead of printing
+            if result is not None:
+                print(result)
+
+        except Exception as e:
+            stderr_buffer.write(f"Error: {str(e)}\n")
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            root_logger.removeHandler(log_handler)
+
+        # Get output
+        output = stdout_buffer.getvalue()
+        errors = stderr_buffer.getvalue()
+        log_output = log_buffer.getvalue()
+
+        # Strip ANSI codes
+        output = strip_ansi_codes(output)
+        errors = strip_ansi_codes(errors)
+        log_output = strip_ansi_codes(log_output)
+
+        # Combine output (stdout first, then log output, then errors)
+        full_output = output.rstrip()
+        if log_output.strip():
+            if full_output:
+                full_output += "\n"
+            full_output += log_output.rstrip()
+        if errors:
+            if full_output:
+                full_output += "\n"
+            full_output += f"[red]{rich_escape(errors.rstrip())}[/red]"
+
+        # Add to history
+        self.shell_history.append((command, full_output))
+
+        # Stop spinner and update display on the main thread
+        self.call_from_thread(self._stop_shell_spinner)
+        self.call_from_thread(self._update_shell_output_display)
+        self.call_from_thread(self._scroll_shell_to_bottom)
+
+    def _scroll_shell_to_bottom(self):
+        """Scroll shell output to bottom."""
+        try:
+            shell_output = self.query_one("#shell_output_content", TextArea)
+            shell_output.action_cursor_line_end()
+            shell_output.scroll_end(animate=False)
+        except Exception:
+            pass
 
     def _execute_shell_command(self, command: str):
         """Execute a Keeper command in the shell pane and display output"""
@@ -3436,35 +3409,55 @@ class SuperShellApp(App):
         # Capture stdout/stderr for command execution
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
+        log_buffer = io.StringIO()
         old_stdout = sys.stdout
         old_stderr = sys.stderr
+
+        # Create a temporary logging handler to capture log output
+        log_handler = logging.StreamHandler(log_buffer)
+        log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
 
         try:
             sys.stdout = stdout_buffer
             sys.stderr = stderr_buffer
 
             # Execute via cli.do_command
-            from ..cli import do_command
-            do_command(self.params, command)
+            from ...cli import do_command
+            result = do_command(self.params, command)
+            # Some commands return output (e.g., JSON format) instead of printing
+            if result is not None:
+                print(result)
 
         except Exception as e:
             stderr_buffer.write(f"Error: {str(e)}\n")
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            root_logger.removeHandler(log_handler)
 
         # Get output
         output = stdout_buffer.getvalue()
         errors = stderr_buffer.getvalue()
+        log_output = log_buffer.getvalue()
 
         # Strip ANSI codes
         output = strip_ansi_codes(output)
         errors = strip_ansi_codes(errors)
+        log_output = strip_ansi_codes(log_output)
 
-        # Combine output
+        # Combine output (stdout first, then log output, then errors)
         full_output = output.rstrip()
+        if log_output.strip():
+            if full_output:
+                full_output += "\n"
+            full_output += log_output.rstrip()
         if errors:
-            full_output += f"\n[red]{rich_escape(errors.rstrip())}[/red]"
+            if full_output:
+                full_output += "\n"
+            full_output += f"[red]{rich_escape(errors.rstrip())}[/red]"
 
         # Add to history
         self.shell_history.append((command, full_output))
@@ -3475,52 +3468,47 @@ class SuperShellApp(App):
         # Scroll to bottom (defer to ensure content is rendered)
         def scroll_to_bottom():
             try:
-                shell_output = self.query_one("#shell_output", VerticalScroll)
+                shell_output = self.query_one("#shell_output_content", TextArea)
+                # Move cursor to end to scroll to bottom
+                shell_output.action_cursor_line_end()
                 shell_output.scroll_end(animate=False)
             except Exception:
                 pass
         self.call_after_refresh(scroll_to_bottom)
 
     def _update_shell_output_display(self):
-        """Update the shell output area with command history"""
+        """Update the shell output area with command history (using TextArea for selection support)"""
         try:
-            shell_output_content = self.query_one("#shell_output_content", Static)
+            shell_output_content = self.query_one("#shell_output_content", TextArea)
         except Exception:
             return
 
-        t = self.theme_colors
         lines = []
 
         for cmd, output in self.shell_history:
-            # Show prompt and command
+            # Show prompt and command (plain text - TextArea doesn't support Rich markup)
             prompt = self._get_shell_prompt()
-            lines.append(f"[{t['primary']}]{prompt}[/{t['primary']}]{rich_escape(cmd)}")
+            lines.append(f"{prompt}{cmd}")
             # Show output (with blank line separator only if there's output)
             if output.strip():
-                lines.append(output)
+                # Strip Rich markup tags from output, but preserve JSON arrays
+                # Rich tags look like [red], [/bold], [#ffffff], [bold red] - start with letter, /, or #
+                # JSON arrays contain quotes, braces, colons, etc.
+                plain_output = re.sub(r'\[/?[a-zA-Z#][a-zA-Z0-9_ #]*\]', '', output)
+                lines.append(plain_output)
                 lines.append("")  # Blank line after output
 
-        shell_output_content.update("\n".join(lines))
+        # TextArea uses .text property, not .update()
+        shell_output_content.text = "\n".join(lines)
+        _debug_log(f"_update_shell_output_display: updated TextArea with {len(lines)} lines")
 
     def _update_shell_input_display(self):
-        """Update the shell input line with prompt and current input text"""
-        try:
-            shell_input = self.query_one("#shell_input_line", Static)
-        except Exception:
-            return
+        """Legacy method - now a no-op since ShellInputTextArea handles its own display.
 
-        t = self.theme_colors
-        prompt = self._get_shell_prompt()
-
-        if self.shell_input_active:
-            cursor = "[reverse] [/reverse]"
-        else:
-            cursor = ""
-
-        shell_input.update(
-            f"[{t['primary']}]{prompt}[/{t['primary']}]"
-            f"{rich_escape(self.shell_input_text)}{cursor}"
-        )
+        Kept for compatibility with any code that might still call it.
+        The prompt is now shown in the shell header via _update_shell_header().
+        """
+        pass
 
     def _get_shell_prompt(self) -> str:
         """Get the shell prompt based on current folder context"""
@@ -3537,19 +3525,20 @@ class SuperShellApp(App):
         return "My Vault> "
 
     def _update_shell_header(self):
-        """Update shell header bar with theme colors"""
+        """Update shell header bar with theme colors and current prompt context"""
         try:
             shell_header = self.query_one("#shell_header", Static)
         except Exception:
             return
 
         t = self.theme_colors
+        prompt = self._get_shell_prompt()
         shell_header.update(
-            f"[bold {t['primary']}]Keeper Shell[/bold {t['primary']}]  "
-            f"[{t['text_dim']}](quit/q/Ctrl+D to close)[/{t['text_dim']}]"
+            f"[bold {t['primary']}]{prompt}[/bold {t['primary']}]"
+            f"[{t['text_dim']}]  (Enter to run | Up/Down for history | Ctrl+D to close)[/{t['text_dim']}]"
         )
 
-    def check_action(self, action: str, parameters: tuple) -> bool | None:
+    def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
         """Control whether actions are enabled based on search state"""
         # When search input is active, disable all bindings except escape and search
         # This allows keys to be captured as text input instead of triggering actions
@@ -3629,6 +3618,12 @@ class SuperShellApp(App):
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
         if self.selected_record and self.selected_record in self.records:
+            # First check if clipboard is available (to distinguish from "no password" errors)
+            success, err = safe_copy_to_clipboard("")
+            if not success:
+                self.notify(f"⚠️  {err}", severity="warning")
+                return
+
             try:
                 # Use ClipboardCommand to copy password - this generates the audit event
                 cc = ClipboardCommand()
@@ -3646,8 +3641,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login' in record:
-                pyperclip.copy(record['login'])
-                self.notify("👤 Username copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login'])
+                if success:
+                    self.notify("👤 Username copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No username found for this record", severity="warning")
         else:
@@ -3658,8 +3656,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login_url' in record:
-                pyperclip.copy(record['login_url'])
-                self.notify("🔗 URL copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login_url'])
+                if success:
+                    self.notify("🔗 URL copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No URL found for this record", severity="warning")
         else:
@@ -3668,11 +3669,17 @@ class SuperShellApp(App):
     def action_copy_uid(self):
         """Copy UID of selected record or folder to clipboard"""
         if self.selected_record:
-            pyperclip.copy(self.selected_record)
-            self.notify("📋 Record UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_record)
+            if success:
+                self.notify("📋 Record UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         elif self.selected_folder:
-            pyperclip.copy(self.selected_folder)
-            self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_folder)
+            if success:
+                self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         else:
             self.notify("⚠️  No record or folder selected", severity="warning")
 
@@ -3685,7 +3692,7 @@ class SuperShellApp(App):
                 # Check if it's a Secrets Manager app record
                 if self.selected_record in self.app_record_uids:
                     # For Secrets Manager apps, copy the app data in JSON format
-                    from ..proto import APIRequest_pb2, enterprise_pb2
+                    from ...proto import APIRequest_pb2, enterprise_pb2
                     from .. import api, utils
                     
                     record = self.records[self.selected_record]
@@ -3747,8 +3754,11 @@ class SuperShellApp(App):
                     if self.view_mode == 'json':
                         # Copy as JSON
                         formatted = json.dumps(app_data, indent=2)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy as formatted text (detail view)
                         lines = []
@@ -3783,8 +3793,11 @@ class SuperShellApp(App):
                             lines.append("")
                         
                         formatted = "\n".join(lines)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                 else:
                     # Regular record handling
                     record_data = self.records.get(self.selected_record, {})
@@ -3796,22 +3809,28 @@ class SuperShellApp(App):
                         output = strip_ansi_codes(output)
                         json_obj = json.loads(output)
                         formatted = json.dumps(json_obj, indent=2)
-                        pyperclip.copy(formatted)
-                        # Generate audit event since JSON contains the password
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            # Generate audit event since JSON contains the password
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy formatted text (without Rich markup)
                         content = self._format_record_for_tui(self.selected_record)
                         # Strip Rich markup for plain text clipboard
                         import re
                         plain = re.sub(r'\[/?[^\]]+\]', '', content)
-                        pyperclip.copy(plain)
-                        # Generate audit event if record has password (detail view includes password)
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(plain)
+                        if success:
+                            # Generate audit event if record has password (detail view includes password)
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
                 self.notify("⚠️  Failed to copy record contents", severity="error")
@@ -3836,12 +3855,12 @@ class SuperShellApp(App):
 
         try:
             # Run sync-down command
-            from .utils import SyncDownCommand
+            from ..utils import SyncDownCommand
             SyncDownCommand().execute(self.params)
 
             # Run enterprise-down if available (enterprise users)
             try:
-                from .enterprise import EnterpriseDownCommand
+                from keepercommander.commands.enterprise import EnterpriseDownCommand
                 EnterpriseDownCommand().execute(self.params)
             except Exception:
                 pass  # Not an enterprise user or command not available
@@ -4026,149 +4045,3 @@ class SuperShellApp(App):
         """Quit the application"""
         self._stop_totp_timer()
         self.exit()
-
-
-class SuperShellCommand(Command):
-    """Command to launch the SuperShell TUI"""
-
-    def get_parser(self):
-        from argparse import ArgumentParser
-        parser = ArgumentParser(prog='supershell', description='Launch full terminal vault UI with vim navigation')
-        # -h/--help is automatically added by ArgumentParser
-        return parser
-
-    def is_authorised(self):
-        """Don't require pre-authentication - TUI handles all auth"""
-        return False
-
-    def execute(self, params, **kwargs):
-        """Launch the SuperShell TUI - handles login if needed"""
-        from .. import display
-        from ..cli import debug_manager
-
-        # Show government warning for GOV environments when entering SuperShell
-        if params.server and 'govcloud' in params.server.lower():
-            display.show_government_warning()
-
-        # Disable debug mode for SuperShell to prevent log output from messing up the TUI
-        saved_debug = getattr(params, 'debug', False)
-        saved_log_level = logging.getLogger().level
-        if saved_debug or logging.getLogger().level == logging.DEBUG:
-            params.debug = False
-            debug_manager.set_console_debug(False, params.batch_mode)
-            # Also set root logger level to suppress all debug output
-            logging.getLogger().setLevel(logging.WARNING)
-
-        try:
-            self._execute_supershell(params, **kwargs)
-        finally:
-            # Restore debug state when SuperShell exits
-            if saved_debug:
-                params.debug = saved_debug
-                debug_manager.set_console_debug(True, params.batch_mode)
-                logging.getLogger().setLevel(saved_log_level)
-
-    def _execute_supershell(self, params, **kwargs):
-        """Internal method to run SuperShell"""
-        import threading
-        import time
-        import sys
-
-        class Spinner:
-            """Animated spinner that runs in a background thread"""
-            def __init__(self, message="Loading..."):
-                self.message = message
-                self.running = False
-                self.thread = None
-                self.chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-                self.colors = ['\033[36m', '\033[32m', '\033[33m', '\033[35m']
-
-            def _spin(self):
-                i = 0
-                while self.running:
-                    color = self.colors[i % len(self.colors)]
-                    char = self.chars[i % len(self.chars)]
-                    # Check running again before writing to avoid race condition
-                    if not self.running:
-                        break
-                    sys.stdout.write(f"\r  {color}{char}\033[0m {self.message}")
-                    sys.stdout.flush()
-                    time.sleep(0.1)
-                    i += 1
-
-            def start(self):
-                self.running = True
-                self.thread = threading.Thread(target=self._spin, daemon=True)
-                self.thread.start()
-
-            def stop(self, success_message=None):
-                self.running = False
-                if self.thread:
-                    self.thread.join(timeout=0.5)
-                # Small delay to ensure thread has stopped writing
-                time.sleep(0.15)
-                # Clear spinner line (do it twice to handle any race condition)
-                sys.stdout.write("\r\033[K")
-                sys.stdout.write("\r\033[K")
-                sys.stdout.flush()
-                if success_message:
-                    print(f"  \033[32m✓\033[0m {success_message}")
-
-            def update(self, message):
-                self.message = message
-
-        # Check if authentication is needed
-        if not params.session_token:
-            from .utils import LoginCommand
-            try:
-                # Run login (no spinner - login may prompt for 2FA, password, etc.)
-                # show_help=False to suppress the batch mode help text
-                LoginCommand().execute(params, email=params.user, password=params.password, new_login=False, show_help=False)
-
-                if not params.session_token:
-                    logging.error("\nLogin failed or was cancelled.")
-                    return
-
-                # Sync vault data with spinner (no success message - TUI will load immediately)
-                sync_spinner = Spinner("Syncing vault data...")
-                sync_spinner.start()
-                try:
-                    from .utils import SyncDownCommand
-                    SyncDownCommand().execute(params)
-                    sync_spinner.stop()  # No success message - TUI loads immediately
-                except Exception as e:
-                    sync_spinner.stop()
-                    raise
-
-            except KeyboardInterrupt:
-                print("\n\nLogin cancelled.")
-                return
-            except Exception as e:
-                logging.error(f"\nLogin failed: {e}")
-                return
-
-        # Launch the TUI app
-        try:
-            app = SuperShellApp(params)
-            result = app.run()
-
-            # If user pressed '!' to exit to shell, start the Keeper shell
-            if result and "Exited to Keeper shell" in str(result):
-                print(result)  # Show the exit message
-                # Check if we were in batch mode BEFORE modifying it
-                was_batch_mode = params.batch_mode
-                # Clear batch mode and pending commands so the shell runs interactively
-                params.batch_mode = False
-                params.commands = [c for c in params.commands if c.lower() not in ('q', 'quit')]
-                # Only start a new shell if we were in batch mode (ran 'keeper supershell' directly)
-                # Otherwise, just return to the existing interactive shell
-                if was_batch_mode:
-                    from ..cli import loop as shell_loop
-                    shell_loop(params, skip_init=True, suppress_goodbye=True)
-                    # When the inner shell exits, queue 'q' so the outer batch-mode loop also exits
-                    params.commands.append('q')
-        except KeyboardInterrupt:
-            logging.debug("SuperShell interrupted")
-        except Exception as e:
-            logging.error(f"Error running SuperShell: {e}")
-            raise

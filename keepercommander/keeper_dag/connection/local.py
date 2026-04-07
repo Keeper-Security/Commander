@@ -86,6 +86,7 @@ class Connection(ConnectionBase):
 
     def clear_database(self):
         try:
+            print(f"remove DAG file as {self.db_file}")
             os.unlink(self.db_file)
         except (Exception,):
             pass
@@ -195,6 +196,8 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
         # First check if we can route with existing edges in the database.
         stream_id = None
+        if not os.path.exists(self.db_file):
+            raise Exception(f"Cannot find local DAG as {self.db_file}")
         with closing(sqlite3.connect(self.db_file)) as connection:
             with closing(connection.cursor()) as cursor:
 

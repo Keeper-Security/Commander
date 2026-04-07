@@ -97,6 +97,18 @@ class ConnectionBase:
         except Exception as err:
             raise Exception(f"Could not parse router response: {err}")
 
+    @staticmethod
+    def get_router_host(server_hostname: str):
+
+        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
+        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
+        if server_hostname == 'govcloud.keepersecurity.us':
+            configured_host = 'connect.keepersecurity.us'
+        else:
+            configured_host = f'connect.{server_hostname}'
+
+        return os.environ.get("ROUTER_HOST", configured_host)
+
     def rest_call_to_router(self,
                             http_method: str,
                             endpoint: str,

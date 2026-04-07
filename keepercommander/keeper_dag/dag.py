@@ -93,8 +93,7 @@ class DAG:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
-        if debug_level is None:
-            debug_level = int(os.environ.get("GS_DEBUG_LEVEL", os.environ.get("DAG_DEBUG_LEVEL", 0)))
+        self.debug_level = int(os.environ.get("GS_DEBUG_LEVEL", os.environ.get("DAG_DEBUG_LEVEL", debug_level)))
 
         # Prevent duplicate edges to be added.
         # The goal is to prevent unneeded edges.
@@ -106,7 +105,6 @@ class DAG:
             raise Exception("Cannot run dedup_edge and auto_save at the same time. The dedup_edge feature only works "
                             "in bulk saves.")
 
-        self.debug_level = debug_level
         self.log_prefix = log_prefix
 
         if save_batch_count is None or save_batch_count <= 0:
@@ -1105,8 +1103,8 @@ class DAG:
                     self.debug(f"{data.ref.value} -> {data.parentRef.value} ({data.type})")
                 self.debug("##############################################")
 
-            self.debug(f"total list has {len(data_list)} items", level=0)
-            self.debug(f"batch {self.save_batch_count} edges", level=0)
+            self.debug(f"total list has {len(data_list)} items", level=1)
+            self.debug(f"batch {self.save_batch_count} edges", level=1)
 
             batch_num = 0
             while len(data_list) > 0:
@@ -1126,7 +1124,7 @@ class DAG:
                 if len(batch_list) == 0:
                     break
 
-                self.debug(f"adding {len(batch_list)} edges, batch {batch_num}", level=0)
+                self.debug(f"adding {len(batch_list)} edges, batch {batch_num}", level=1)
 
                 payload = self.write_struct_obj.payload(
                     origin_ref=self.write_struct_obj.origin_ref(

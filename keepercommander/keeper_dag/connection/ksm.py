@@ -115,8 +115,7 @@ class Connection(ConnectionBase):
         return self.get_config_value(ConfigKeys.KEY_APP_KEY)
 
     def router_url_from_ksm_config(self) -> str:
-        from ...constants import get_router_host
-        return get_router_host(self.hostname)
+        return self.get_router_host(self.hostname)
 
     def ws_router_url_from_ksm_config(self, is_ws: bool = False) -> str:
 

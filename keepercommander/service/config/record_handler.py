@@ -25,21 +25,53 @@ class RecordHandler:
         self.validator = ConfigValidator()
         self.cli_handler = CommandHandler()
 
+    @staticmethod
+    def has_file_storage(params) -> bool:
+        """Check whether the current user can upload file attachments."""
+        if not params.license or 'bytes_total' not in params.license:
+            return False
+        if int(params.license['bytes_total']) <= 0:
+            return False
+        if params.enforcements and 'booleans' in params.enforcements:
+            restricted = next(
+                (x['value'] for x in params.enforcements['booleans']
+                 if x['key'] == 'restrict_file_upload'), False)
+            if restricted:
+                return False
+        return True
+
     @debug_decorator
-    def create_record(self, is_advanced_security_enabled: str, commands: str) -> Dict[str, Any]:
+    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: str = None, record_uid: str = None) -> Dict[str, Any]:
         """Create a new configuration record."""
         api_key = generate_api_key()
         record = self._create_base_record(api_key, commands)
         
-        if is_advanced_security_enabled == "y":
+        # Handle token expiration - either from CLI arg (streamlined) or interactive prompt
+        if token_expiration:
+            # Streamlined mode - use provided expiration
+            self._set_expiration_from_string(record, token_expiration)
+        elif is_advanced_security_enabled == "y":
+            # Interactive mode - prompt for expiration
             logger.debug("Adding expiration to record (advanced security enabled)")
             self._add_expiration_to_record(record)
             
-        print(f'Generated API key: {api_key}')
+        # Docker mode: redact API key and show vault record UID
+        if record_uid:
+            redacted_key = f"****{api_key[-4:]}" if len(api_key) >= 4 else "****"
+            print(f'Generated API key: {redacted_key} (stored in vault record: {record_uid})')
+        else:
+            print(f'Generated API key: {api_key}')
         return record
 
     def update_or_add_record(self, params: KeeperParams, title: str, config_path: Path) -> None:
         """Update existing record or add new one."""
+        if self.has_file_storage(params):
+            self._update_or_add_record_attachment(params, title, config_path)
+        else:
+            self._update_or_add_record_custom_field(params, title, config_path)
+
+    def _update_or_add_record_attachment(self, params: KeeperParams, title: str, config_path: Path) -> None:
+        """Upload service_config as a file attachment (original behaviour)."""
         try:
             record_uid = self.cli_handler.find_config_record(params, title)
             
@@ -63,6 +95,51 @@ class RecordHandler:
 
         except Exception as e:
             print(f"Error updating/adding record: {e}")
+
+    def _update_or_add_record_custom_field(self, params: KeeperParams, title: str, config_path: Path) -> None:
+        """Store service_config content as a custom field (no file storage plan)."""
+        try:
+            from ... import api, vault, record_management
+
+            config_content = config_path.read_text()
+            field_label = f'service_config_{config_path.suffix.lstrip(".")}'
+
+            record_uid = self.cli_handler.find_config_record(params, title)
+
+            if record_uid:
+                record = vault.KeeperRecord.load(params, record_uid)
+            else:
+                record = vault.KeeperRecord.create(params, 'login')
+                record.record_uid = utils.generate_uid()
+                record.record_key = utils.generate_aes_key()
+                record.title = title
+                record.type_name = 'login'
+                record_management.add_record_to_folder(params, record)
+                api.sync_down(params)
+
+            if not isinstance(record, vault.TypedRecord):
+                print("Error: Invalid record type for custom field storage")
+                return
+
+            if record.custom is None:
+                record.custom = []
+            record.custom = [
+                f for f in record.custom
+                if f.label not in ('service_config_json', 'service_config_yaml')
+            ]
+            record.custom.append(vault.TypedField.new_field('secret', config_content, field_label))
+
+            record_management.update_record(params, record)
+            params.sync_data = True
+            api.sync_down(params)
+
+            if not record_uid:
+                self.record_uid = record.record_uid
+
+            logger.debug(f"Service config stored as custom field '{field_label}' (no file storage plan)")
+
+        except Exception as e:
+            print(f"Error storing service config as custom field: {e}")
 
     def update_or_add_cert_record(self, params: KeeperParams, title: str) -> None:
         """Update existing certificate record or add a new one in Keeper Vault."""
@@ -113,23 +190,27 @@ class RecordHandler:
 
     @debug_decorator
     def _add_expiration_to_record(self, record: Dict[str, Any]) -> None:
-        """Add expiration details to the record."""
+        """Add expiration details to the record via interactive prompt."""
         expiration_str = input(
             "Token Expiration Time (Xm, Xh, Xd) or empty for no expiration: "
         ).strip()
 
         if not expiration_str:
-            #record["expiration_of_token"] = ""
             record["expiration_timestamp"] = datetime(9999, 12, 31, 23, 59, 59).isoformat()
             print("API key set to never expire")
             return
 
+        if not self._set_expiration_from_string(record, expiration_str):
+            self._add_expiration_to_record(record)
+    
+    def _set_expiration_from_string(self, record: Dict[str, Any], expiration_str: str) -> bool:
+        """Set expiration timestamp from expiration string (e.g., 5m, 24h, 7d). Returns True on success."""
         try:
             expiration_delta = self.validator.parse_expiration_time(expiration_str)
             expiration_time = datetime.now() + expiration_delta
-            #record["expiration_of_token"] = expiration_str
             record["expiration_timestamp"] = expiration_time.isoformat()
             print(f"API key will expire at: {record['expiration_timestamp']}")
+            return True
         except ValidationError as e:
             print(f"Error: {str(e)}")
-            self._add_expiration_to_record(record)
+            return False

@@ -63,11 +63,7 @@ class Connection(ConnectionBase):
 
     @property
     def hostname(self) -> str:
-        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc.
-        from ...constants import get_router_host
-        server = self.params.config.get("server")
-        configured_host = get_router_host(server)
-        return os.environ.get("ROUTER_HOST", configured_host)
+        return self.get_router_host(self.params.config.get("server"))
 
     @property
     def dag_server_url(self) -> str:

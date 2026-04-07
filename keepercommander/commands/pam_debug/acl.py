@@ -1,7 +1,8 @@
 from __future__ import annotations
 import argparse
 import logging
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM_USER
+from ..discover import (PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM_USER, MultiConfigurationException,
+                        multi_conf_msg)
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.record_link import RecordLink
@@ -14,11 +15,13 @@ if TYPE_CHECKING:
 
 
 class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-acl')
+    parser = argparse.ArgumentParser(prog='pam action debug acl')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID.')
+    parser.add_argument('--configuration-uid', "-c", required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
 
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='User UID.')
@@ -39,9 +42,16 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         record_link = RecordLink(record=gateway_context.configuration,
@@ -111,7 +121,7 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
         if belongs_to_vertex is None:
             print("User record does not belong to any resource, or provider.")
         else:
-            if belongs_to_vertex.active is False:
+            if not belongs_to_vertex.active:
                 print("User record belongs to an inactive parent.")
             else:
                 print("User record belongs to another record.")

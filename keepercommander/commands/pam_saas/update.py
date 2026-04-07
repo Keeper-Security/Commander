@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 import logging
 import traceback
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import api, vault, vault_extensions, attachment, record_management, utils
 from . import (get_plugins_map, make_script_signature, SaasCatalog, get_field_input, get_record_field_value,
@@ -25,6 +25,9 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--all', '-a', required=False, dest='do_all', action='store_true',
                         help='Update all configurations.')
     parser.add_argument('--config-record-uid', '-c', required=False, dest='config_uid', action='store',
@@ -239,11 +242,17 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                 else:
                     print(f"  {bcolors.FAIL}* the configuration record's required field(s) are missing or blank: "
                           f"{', '.join(missing_fields)}{bcolors.ENDC}")
+
+                # If the record type is login, migrate to saasConfiguration
+                if config_record.record_type == "login":
+                    print(f"  {bcolors.OKGREEN}* migrate record type to SaaS Configuration.{bcolors.ENDC}")
+                    config_record.type_name = "saasConfiguration"
+                    record_management.update_record(params, config_record)
+
                 print("")
-                return plugin
 
         logging.debug("plugin doesn't used attached scripts, or bad SaaS type in config record.")
-        return None
+        return plugin
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -252,10 +261,17 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
         config_record_uid = kwargs.get("config_uid")  # type: str
         do_dry_run = kwargs.get("do_dry_run", False)  # type: bool
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print("")
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')  # type Optional[str]
+
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         print("")
@@ -269,12 +285,12 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
             gateway_context=gateway_context
         )
 
-
         if do_all:
             logging.debug("search vault for login record types")
-            for record in list(vault_extensions.find_records(params, record_type="login")):
+            for record in list(vault_extensions.find_records(params, record_type=["login", "saasConfiguration"])):
                 logging.debug("--------------------------------------------------------------------------------------")
                 config_record = vault.TypedRecord.load(params, record.record_uid)  # type: vault.TypedRecord
+
                 logging.debug(f"checking record {record.record_uid}, {record.title}")
                 try:
                     self._update_config(
@@ -289,6 +305,8 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                     print(f"  *{bcolors.FAIL}{err}{bcolors.ENDC}")
                     logging.debug(traceback.format_exc())
                     logging.debug(f"ERROR (no fatal): {err}")
+
+                params.sync_data = True
 
         elif config_record_uid is not None:
             config_record = vault.TypedRecord.load(params, config_record_uid)  # type: vault.TypedRecord
@@ -313,6 +331,11 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         api.sync_down(params)
                         config_record = vault.TypedRecord.load(params, config_record_uid)  # type: vault.TypedRecord
 
+                        # If the record type is login, migrate to saasConfiguration
+                        if config_record.record_type == "login":
+                            logging.debug("migrating from login to saasConfiguration record type")
+                            config_record.type_name = "saasConfiguration"
+
                         for required in [True, False]:
                             for field in plugin.fields:
                                 if field.required is required:
@@ -332,11 +355,11 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         if not do_dry_run:
                             record_management.update_record(params, config_record)
                             print("")
-                            print(f"  {bcolors.OKGREEN}* the configuration record has been updated.{bcolors.ENDC}")
+                            print(f"{bcolors.OKGREEN}The SaaS configuration record has been updated.{bcolors.ENDC}")
                             print("")
                         else:
                             print("")
-                            print(f"  {bcolors.OKBLUE}* the configuration record was not saved due "
+                            print(f"{bcolors.OKBLUE}The SaaS configuration record was not saved due "
                                   f"to dry run.{bcolors.ENDC}")
                             print("")
 

@@ -122,12 +122,14 @@ get_info_parser.add_argument(
 get_info_parser.add_argument('uid', type=str, action='store', help='UID or title to search for')
 
 
-search_parser = argparse.ArgumentParser(prog='search', description='Search the vault using a regular expression')
-search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Words can be in any order.')
+search_parser.add_argument('pattern', nargs='*', type=str, action='store', help='search terms (space-separated, order independent)')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
                                 '"s" = shared folders, "t" = teams')
+search_parser.add_argument('--regex', dest='regex', action='store_true',
+                           help='treat pattern as a regular expression instead of space-separated search terms')
 search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                            default='table', help='output format')
 
@@ -275,9 +277,11 @@ class RecordGetUidCommand(Command):
             admins = api.get_share_admins_for_shared_folder(params, uid)
             sf = api.get_shared_folder(params, uid)
             if fmt == 'json':
+                path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep) if sf.shared_folder_uid else ''
                 sfo = {
                     "shared_folder_uid": sf.shared_folder_uid,
                     "name": sf.name,
+                    "path": path,
                     "manage_users": sf.default_manage_users,
                     "manage_records": sf.default_manage_records,
                     "can_edit": sf.default_can_edit,
@@ -289,17 +293,25 @@ class RecordGetUidCommand(Command):
                         'can_edit': r['can_edit'],
                         'can_share': r['can_share']
                     } for r in sf.records]
+                def _format_expiration(expiration_value):
+                    if expiration_value is None or expiration_value <= 0:
+                        return 'never'
+                    return datetime.datetime.fromtimestamp(expiration_value // 1000).isoformat()
                 if sf.users:
                     sfo['users'] = [{
                         'username': u['username'],
+                        'user_id': u.get('account_uid'),
                         'manage_records': u['manage_records'],
-                        'manage_users': u['manage_users']
+                        'manage_users': u['manage_users'],
+                        'expiration': _format_expiration(u.get('expiration'))
                     } for u in sf.users]
                 if sf.teams:
                     sfo['teams'] = [{
                         'name': t['name'],
+                        'team_uid': t.get('team_uid'),
                         'manage_records': t['manage_records'],
-                        'manage_users': t['manage_users']
+                        'manage_users': t['manage_users'],
+                        'expiration': _format_expiration(t.get('expiration'))
                     } for t in sf.teams]
 
                 if admins:
@@ -1114,9 +1126,17 @@ class SearchCommand(Command):
         return search_parser
 
     def execute(self, params, **kwargs):
-        pattern = kwargs.get('pattern') or ''
+        pattern_args = kwargs.get('pattern') or []
+        # Join multiple words into a single pattern string
+        pattern = ' '.join(pattern_args) if isinstance(pattern_args, list) else (pattern_args or '')
+        use_regex = kwargs.get('regex', False)
+
+        # Handle wildcard: '*' means match all
         if pattern == '*':
-            pattern = '.*'
+            if use_regex:
+                pattern = '.*'
+            else:
+                pattern = ''  # Empty pattern matches all in token mode
 
         categories = (kwargs.get('categories') or 'rst').lower()
         verbose = kwargs.get('verbose') is True
@@ -1127,7 +1147,7 @@ class SearchCommand(Command):
 
         if 'r' in categories:
 
-            records = list(vault_extensions.find_records(params, pattern, record_version=None if verbose else [2,3]))
+            records = list(vault_extensions.find_records(params, pattern, record_version=None if verbose else [2,3], use_regex=use_regex))
             if records:
                 if fmt == 'json':
                     for record in records:
@@ -1157,7 +1177,7 @@ class SearchCommand(Command):
 
         # Search shared folders
         if 's' in categories:
-            results = api.search_shared_folders(params, pattern)
+            results = api.search_shared_folders(params, pattern, use_regex=use_regex)
             if results:
                 if fmt == 'json':
                     for sf in results:
@@ -1175,7 +1195,7 @@ class SearchCommand(Command):
 
         # Search teams
         if 't' in categories:
-            results = api.search_teams(params, pattern)
+            results = api.search_teams(params, pattern, use_regex=use_regex)
             if results:
                 if fmt == 'json':
                     for team in results:
@@ -1253,7 +1273,8 @@ class RecordListCommand(Command):
             pattern,
             record_type=record_type,
             record_version=record_version,
-            search_fields=search_fields)]
+            search_fields=search_fields,
+            use_regex=True)]
         if any(records):
             headers = ['record_uid', 'type', 'title', 'description', 'shared']
             if fmt == 'table':
@@ -2376,7 +2397,7 @@ class ClipboardCommand(Command, RecordMixin):
 
         if record_uid is None:
             records = []    # type: List[vault.KeeperRecord]
-            for r in vault_extensions.find_records(params, record_name):
+            for r in vault_extensions.find_records(params, record_name, use_regex=True):
                 if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
                     if user_pattern:
                         login = ''

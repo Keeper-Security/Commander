@@ -196,6 +196,13 @@ class TestEnterprise(TestCase):
         cmd.execute(params, add_user=[ent_env.user2_email], team=[ent_env.team1_uid])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
+        # Manually update the mock data to reflect that user2 is now in team1
+        params.enterprise['team_users'].append({
+            'team_uid': ent_env.team1_uid,
+            'enterprise_user_id': ent_env.user2_id,
+            'user_type': 0
+        })
+
         TestEnterprise.expected_commands = ['team_enterprise_user_remove']
         cmd.execute(params, remove_user=[ent_env.user2_email], team=[ent_env.team1_uid])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)

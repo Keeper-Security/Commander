@@ -19,8 +19,8 @@ ENTERPRISE_FILE_PLANS = [
 
 MSP_FILE_PLANS = [
     (4, 'STORAGE_100GB', '100GB'),
-    (7, 'STORAGE_1000GB', '1TB'),
-    (8, 'STORAGE_10000GB', '10TB'),
+    (7, 'STORAGE_1TB', '1TB'),
+    (8, 'STORAGE_10TB', '10TB'),
 ]
 
 MSP_PLANS = [
@@ -48,6 +48,8 @@ MSP_ADDONS = [
     ('privileged_access_manager', 'Privileged Access Manager (PAM)', True, 'PAM'),
     ('keeper_endpoint_privilege_manager', 'Keeper Endpoint Privilege Manager (KEPM)', True, 'KEPM'),
 ]
+
+KEPM_VALID_SEATS = {1, 25, 50, 100, 500, 1000, 5000, 10000}
 
 
 class PrivilegeScope(enum.IntEnum):
@@ -262,6 +264,18 @@ def enforcement_list():  # type: () -> List[Tuple[str, str, str]]
 
 
 ENFORCEMENTS = {e[0].lower(): e[2].lower() for e in [*_ENFORCEMENTS, *_COMPOUND_ENFORCEMENTS]}
+
+TWO_FACTOR_DURATION_MAP = {'0': 'login', '12': '12_hours', '24': '24_hours', '30': '30_days', '9999': 'forever'}
+
+
+def format_two_factor_duration(raw_value):   # type: (str) -> str
+    """Convert stored cumulative value like '0,12,24,30' to the effective setting like '30_days'."""
+    if not isinstance(raw_value, str):
+        raw_value = str(raw_value) if raw_value is not None else ''
+    tokens = [x.strip() for x in raw_value.split(',')]
+    last = tokens[-1] if tokens else ''
+    return TWO_FACTOR_DURATION_MAP.get(last, last)
+
 
 week_days = ('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY')
 occurrences = ('FIRST', 'SECOND', 'THIRD', 'FOURTH', 'LAST')

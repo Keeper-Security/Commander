@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-info')
+    parser = argparse.ArgumentParser(prog='pam action debug info')
 
     type_name_map = {
         PAM_USER: "PAM User",
@@ -44,7 +44,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         if record.record_type not in ["pamUser", "pamMachine", "pamDatabase", "pamDirectory"]:
-            if re.search(r'^pam.*Configuration$', record.record_type) is None:
+            if re.search(r'^pam.+Configuration$', record.record_type) is None:
                 print(f"{bcolors.FAIL}The record is a {record.record_type}. This is not a PAM record.{bcolors.ENDC}")
                 return
 
@@ -58,11 +58,13 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.WARNING}PAM record does not have protobuf rotation settings, "
                   f"checking all configurations.{bcolors.ENDC}")
 
-            configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+            # Get all the PAM configuration records in the Vault; configurations are version 6
+            configuration_records = GatewayContext.get_configuration_records(params=params)
             if len(configuration_records) == 0:
                 print(f"{bcolors.FAIL}Cannot find any PAM configuration records in the Vault{bcolors.ENDC}")
 
             for configuration_record in configuration_records:
+
                 record_link = RecordLink(record=configuration_record, params=params)
                 record_vertex = record_link.dag.get_vertex(record.record_uid)
                 if record_vertex is not None and record_vertex.active is True:
@@ -176,9 +178,9 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                         acl_content = acl_edge.content_as_object(UserAcl)  # type: UserAcl
                         print(f"    * ACL to {self._n(parent_record.record_type)}; {parent_record.title}; "
                               f"{record_parent_vertex.uid}")
-                        if acl_content.is_admin is True:
+                        if acl_content.is_admin:
                             print(f"      . Is {self._gr('Admin')}")
-                        if acl_content.belongs_to is True:
+                        if acl_content.belongs_to:
                             print(f"      . Belongs")
                         else:
                             print(f"      . Is {self._bl('Remote user')}")
@@ -201,7 +203,20 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                                       f"{acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
                             print(f"      . Disabled = {acl_content.rotation_settings.disabled}")
                             print(f"      . NOOP = {acl_content.rotation_settings.noop}")
-                            print(f"      . SaaS Config Records = {acl_content.rotation_settings.saas_record_uid_list}")
+                            print(f"      . SaaS configuration record UID = "
+                                  f"{acl_content.rotation_settings.saas_record_uid_list}")
+
+                            if len(acl_content.rotation_settings.saas_record_uid_list) > 0:
+                                if acl_content.rotation_settings.noop:
+                                    saas_config_uid = acl_content.rotation_settings.saas_record_uid_list[0]
+                                    saas_config = vault.KeeperRecord.load(
+                                        params,
+                                        saas_config_uid)  # type: Optional[TypedRecord]
+
+                                    print(f"      . SaaS configuration record is {saas_config.title}")
+                                else:
+                                    print(f"{bcolors.FAIL}      . Has SaaS plugin config record, "
+                                          f"however it's not NOOP{bcolors.ENDC}")
 
                     elif record.record_type == PAM_USER:
                         print(f"{bcolors.FAIL}    * PAM User has NO acl!!!!!!{bcolors.ENDC}")
@@ -233,9 +248,9 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                         acl_content = acl_edge.content_as_object(UserAcl)
                         print(f"    * ACL from {self._n(child_record.record_type)}; {child_record.title}; "
                               f"{record_child_vertex.uid}")
-                        if acl_content.is_admin is True:
+                        if acl_content.is_admin:
                             print(f"      . Is {self._gr('Admin')}")
-                        if acl_content.belongs_to is True:
+                        if acl_content.belongs_to:
                             print(f"      . Belongs")
                         else:
                             print(f"      . Is {self._bl('Remote user')}")
@@ -503,31 +518,42 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                     print(f"  {self._b('Provider Group')}: {content.item.provider_group}")
                     print(f"  {self._b('Allows Admin')}: {content.item.allows_admin}")
                     print(f"  {self._b('Admin Reason')}: {content.item.admin_reason}")
+                else:
+                    for k, v in content.item:
+                        print(f"  {self._b(k)}: {v}")
 
-                print("")
-                print(self._h("Belongs To Vertices (Parents)"))
-                vertices = discovery_vertex.belongs_to_vertices()
-                for vertex in vertices:
-                    content = DiscoveryObject.get_discovery_object(vertex)
-                    print(f"  * {content.description} ({vertex.uid})")
-                    for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
-                        edge = discovery_vertex.get_edge(vertex, edge_type=edge_type)
-                        if edge is not None:
-                            print(f"    . {edge_type}, active: {edge.active}")
+                # Configuration records do not belong to other record; don't show.
+                if record.version != 6:
+                    print("")
+                    print(self._h("Belongs To Vertices (Parents)"))
+                    vertices = discovery_vertex.belongs_to_vertices()
+                    for vertex in vertices:
+                        try:
+                            content = DiscoveryObject.get_discovery_object(vertex)
+                            print(f"  * {content.description} ({vertex.uid})")
+                            for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
+                                edge = discovery_vertex.get_edge(vertex, edge_type=edge_type)
+                                if edge is not None:
+                                    print(f"    . {edge_type}, active: {edge.active}")
+                        except Exception as err:
+                            print(f"{bcolors.FAIL}Could not get belongs to information: {err}{bcolors.ENDC}")
 
-                if len(vertices) == 0:
-                    print(f"{bcolors.FAIL}  Does not belong to anyone{bcolors.ENDC}")
+                    if len(vertices) == 0:
+                        print(f"{bcolors.FAIL}  Does not belong to anyone{bcolors.ENDC}")
 
                 print("")
                 print(f"{bcolors.HEADER}Vertices Belonging To (Children){bcolors.ENDC}")
                 vertices = discovery_vertex.has_vertices()
                 for vertex in vertices:
-                    content = DiscoveryObject.get_discovery_object(vertex)
-                    print(f"  * {content.description} ({vertex.uid})")
-                    for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
-                        edge = vertex.get_edge(discovery_vertex, edge_type=edge_type)
-                        if edge is not None:
-                            print(f"    . {edge_type}, active: {edge.active}")
+                    try:
+                        content = DiscoveryObject.get_discovery_object(vertex)
+                        print(f"  * {content.description} ({vertex.uid})")
+                        for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
+                            edge = vertex.get_edge(discovery_vertex, edge_type=edge_type)
+                            if edge is not None:
+                                print(f"    . {edge_type}, active: {edge.active}")
+                    except Exception as err:
+                        print(f"{bcolors.FAIL}Could not get belonging to information: {err}{bcolors.ENDC}")
                 if len(vertices) == 0:
                     print(f"  Does not have any children.")
 

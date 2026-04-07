@@ -41,7 +41,7 @@ if sys.version_info >= (3, 8):
         def test_handle_configuration_streamlined(self):
             """Test streamlined configuration handling."""
             config_data = self.command.service_config.create_default_config()
-            args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y')
+            args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
             with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:
                 self.command._handle_configuration(config_data, self.params, args)
@@ -50,7 +50,7 @@ if sys.version_info >= (3, 8):
         def test_handle_configuration_interactive(self):
             """Test interactive configuration handling."""
             config_data = self.command.service_config.create_default_config()
-            args =  StreamlineArgs(port=None, commands=None, ngrok=None, allowedip='' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled=None)
+            args =  StreamlineArgs(port=None, commands=None, ngrok=None, allowedip='' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled=None, update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
             with patch.object(self.command.config_handler, 'handle_interactive_config') as mock_interactive, \
                 patch.object(self.command.security_handler, 'configure_security') as mock_security:
@@ -61,7 +61,7 @@ if sys.version_info >= (3, 8):
         def test_create_and_save_record(self):
             """Test record creation and saving."""
             config_data = self.command.service_config.create_default_config()
-            args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y')
+            args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
             with patch.object(self.command.service_config, 'create_record') as mock_create_record, \
                 patch.object(self.command.service_config, 'save_config') as mock_save_config:
@@ -72,7 +72,9 @@ if sys.version_info >= (3, 8):
                 mock_create_record.assert_called_once_with(
                     config_data["is_advanced_security_enabled"],
                     self.params,
-                    args.commands
+                    args.commands,
+                    args.token_expiration,
+                    None  # record_uid (update_vault_record is None)
                 )
                 if(args.fileformat):
                     config_data["fileformat"]= args.fileformat
@@ -81,7 +83,7 @@ if sys.version_info >= (3, 8):
                 
         def test_validation_error_handling(self):
             """Test handling of validation errors during execution."""
-            args =  StreamlineArgs(port=-1, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y')
+            args =  StreamlineArgs(port=-1, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
             with patch('builtins.print') as mock_print:
                 with patch.object(self.command.service_config, 'create_default_config') as mock_create_config:
@@ -106,7 +108,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:
@@ -128,7 +134,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch('builtins.print') as mock_print:
@@ -152,7 +162,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch('builtins.print') as mock_print:
@@ -176,7 +190,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch('builtins.print') as mock_print:
@@ -211,7 +229,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:
@@ -257,7 +279,11 @@ if sys.version_info >= (3, 8):
                                         certpassword='',
                                         fileformat='json',
                                         run_mode='foreground',
-                                        queue_enabled='y'
+                                        queue_enabled='y',
+                                        update_vault_record=None,
+                                        ratelimit=None,
+                                        encryption_key=None,
+                                        token_expiration=None
                                     )
                                     
                                     # Verify that the error was printed
@@ -279,7 +305,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:
@@ -303,7 +333,11 @@ if sys.version_info >= (3, 8):
                 certpassword='', 
                 fileformat='json', 
                 run_mode='foreground', 
-                queue_enabled='y'
+                queue_enabled='y',
+                update_vault_record=None,
+                ratelimit=None,
+                encryption_key=None,
+                token_expiration=None
             )
             
             with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:

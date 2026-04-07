@@ -188,6 +188,9 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc
+$BASE64:<BASE64>        any string field   Decodes base64 value             password=$BASE64:ZmpzemRmaGtkZg==
+                                           Useful for passwords with        Decodes to: fjzskfhkdf
+                                           special characters
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON
                                            phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}'
 
@@ -281,13 +284,18 @@ class RecordEditMixin:
             if parsed_field.type == 'login':
                 record.login = parsed_field.value
             elif parsed_field.type == 'password':
+                action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
                     record.password = self.generate_password(action_params)
+                elif self.is_base64_value(parsed_field.value, action_params):
+                    if action_params:
+                        record.password = action_params[0]
                 else:
                     record.password = parsed_field.value
             elif parsed_field.type == 'url':
                 record.link = parsed_field.value
             elif parsed_field.type == 'oneTimeCode':
+                action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
                     record.totp = self.generate_totp_url()
                 else:
@@ -312,11 +320,13 @@ class RecordEditMixin:
             value = value[5:]
             if value.startswith(':'):
                 j_str = value[1:]
-                if j_str and isinstance(parameters, list):
+                if not j_str:
+                    self.on_warning('JSON value cannot be empty. Format: $JSON:<json_object>')
+                elif isinstance(parameters, list):
                     try:
                         parameters.append(json.loads(j_str))
                     except Exception as e:
-                        self.on_warning(f'Invalid JSON value: {j_str}: {e}')
+                        self.on_warning(f'Invalid JSON value: {e}')
             return True
 
     @staticmethod
@@ -328,6 +338,30 @@ class RecordEditMixin:
                 if gen_parameters and isinstance(parameters, list):
                     parameters.extend((x.strip() for x in gen_parameters.split(',')))
             return True
+
+    def is_base64_value(self, value, parameters):    # type: (str, List[str]) -> Optional[bool]
+        """Check if value is base64-encoded and decode it."""
+        if value.startswith("$BASE64:"):
+            encoded_value = value[8:]  # Skip "$BASE64:"
+            
+            # Validate and provide helpful error messages
+            if not encoded_value:
+                self.on_warning('Base64 value cannot be empty. Format: $BASE64:<base64_string>')
+            elif isinstance(parameters, list):
+                try:
+                    decoded_bytes = base64.b64decode(encoded_value, validate=True)
+                    if not decoded_bytes:
+                        self.on_warning('Base64 decoded to empty value')
+                    else:
+                        decoded_str = decoded_bytes.decode('utf-8')
+                        if not decoded_str:
+                            self.on_warning('Base64 decoded to empty string')
+                        else:
+                            parameters.append(decoded_str)
+                except Exception as e:
+                    self.on_warning(f'Invalid base64 value: {e}')
+            return True
+        return False
 
     @staticmethod
     def generate_key_pair(key_type, passphrase):  # type: (str, str) -> dict
@@ -540,6 +574,11 @@ class RecordEditMixin:
                     (x for x in record.fields
                      if (not parsed_field.type or x.type == parsed_field.type) and
                      (ignore_label or (x.label or '').lower() == f_label)), None)
+                # When label is omitted (e.g. "url=value") and there is a single field of this type, use it
+                if not record_field and not f_label and field_type and rf and rf.multiple != record_types.Multiple.Always:
+                    candidates = [x for x in record.fields if x.type == field_type]
+                    if len(candidates) == 1:
+                        record_field = candidates[0]
                 if record_field:
                     is_field = True
                 else:
@@ -572,6 +611,9 @@ class RecordEditMixin:
                             parsed_fields.append(ParsedFieldValue('', 'password', 'passphrase', passphrase))
                     else:
                         self.on_warning(f'Cannot generate a value for a \"{record_field.type}\" field.')
+                elif self.is_base64_value(parsed_field.value, action_params):
+                    if action_params:
+                        value = action_params[0]
                 elif self.is_json_value(parsed_field.value, action_params):
                     if len(action_params) > 0:
                         value = self.validate_json_value(record_field.type, action_params[0])
@@ -806,9 +848,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record_fields.append(parsed_field)
 
         if record_type in ('legacy', 'general'):
-            # raise CommandError('record-add', 'Legacy record type is not supported anymore.')
-            record = vault.PasswordRecord()
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-add', 'Legacy record type is not supported.')
+            # record = vault.PasswordRecord()
+            # self.assign_legacy_fields(record, record_fields)
         else:
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
@@ -819,7 +861,7 @@ class RecordAddCommand(Command, RecordEditMixin):
                 ref = rf.get('$ref')
                 if not ref:
                     continue
-                label = rf.get('label', '')
+                label = rf.get('label') or ref
                 required = rf.get('required', False)
                 default_value = None
                 if ref == 'appFiller':
@@ -1202,7 +1244,8 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
                 record_fields.append(parsed_field)
 
         if isinstance(record, vault.PasswordRecord):
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-update', 'Legacy record type is not supported. Convert the record to login record type.')
+            # self.assign_legacy_fields(record, record_fields)
         elif isinstance(record, vault.TypedRecord):
             record_type = kwargs.get('record_type')
             if record_type:

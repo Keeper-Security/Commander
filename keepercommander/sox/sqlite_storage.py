@@ -201,6 +201,15 @@ class SqliteSoxStorage:
         self._user_record_links.put_links(links)
         self.set_prelim_data_updated()
 
+    def update_user_prelim_data(self, users, records, links, user_ids):
+        """Selectively update prelim data for specific users, preserving cache for others."""
+        # Remove old record links for refreshed users (their record set may have changed)
+        self._user_record_links.delete_links_for_objects(list(user_ids))
+        # Upsert user entities and records (INSERT OR REPLACE)
+        self._users.put_entities(users)
+        self._records.put_entities(records)
+        self._user_record_links.put_links(links)
+
     def clear_all(self):
         self.clear_non_aging_data()
         self._record_aging.delete_all()

@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
+# Copyright 2026 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -19,9 +19,11 @@ MySQL, PostgreSQL, SQL Server) through Guacamole over WebRTC tunnels.
 from __future__ import annotations
 import logging
 import os
-import sys
 import base64
 import json
+import secrets
+import time
+import uuid
 from typing import TYPE_CHECKING, Optional, Dict, Any
 
 import requests
@@ -29,10 +31,15 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes, string_to_bytes, bytes_to_string
 
 from ...error import CommandError
-from ... import vault
+from ... import vault, api
+from ...keeper_dag import EdgeType
+from ...proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
+from ..ssh_agent import try_extract_private_key
 from ..tunnel.port_forward.tunnel_helpers import (
     get_or_create_tube_registry,
     start_websocket_listener,
@@ -44,10 +51,13 @@ from ..tunnel.port_forward.tunnel_helpers import (
     TunnelSignalHandler,
     tunnel_encrypt,
     tunnel_decrypt,
-    get_tunnel_session,
+    get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
+    parse_keeper_webrtc_version_from_sdp,
+    set_remote_description_and_parse_version,
 )
+from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ..pam.router_helper import (
     router_send_action_to_gateway,
@@ -57,66 +67,89 @@ from ..pam.router_helper import (
 )
 from ...proto import pam_pb2
 from ...display import bcolors
+from .python_handler import create_python_handler
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
 
+from ..pam_import.base import ConnectionProtocol
 
-# Protocol type constants
-class ProtocolType:
-    """Terminal protocol types supported by PAM Launch"""
-    SSH = 'ssh'
-    TELNET = 'telnet'
-    KUBERNETES = 'kubernetes'
-    MYSQL = 'mysql'
-    POSTGRESQL = 'postgresql'
-    SQLSERVER = 'sqlserver'
-
-    # All supported terminal protocols
-    ALL_TERMINAL = {SSH, TELNET, KUBERNETES, MYSQL, POSTGRESQL, SQLSERVER}
-
-    # Database protocols
-    DATABASE = {MYSQL, POSTGRESQL, SQLSERVER}
-
-    # Machine protocols
-    MACHINE = {SSH, TELNET}
-
-
-# Default ports for protocols
-DEFAULT_PORTS = {
-    ProtocolType.SSH: 22,
-    ProtocolType.TELNET: 23,
-    ProtocolType.KUBERNETES: 443,
-    ProtocolType.MYSQL: 3306,
-    ProtocolType.POSTGRESQL: 5432,
-    ProtocolType.SQLSERVER: 1433,
+# Protocol sets and defaults (ConnectionProtocol from pam_import.base)
+GRAPHICAL = {ConnectionProtocol.RDP.value, ConnectionProtocol.VNC.value}  # not supported by CLI
+ALL_TERMINAL = {
+    ConnectionProtocol.SSH.value,
+    ConnectionProtocol.TELNET.value,
+    ConnectionProtocol.KUBERNETES.value,
+    ConnectionProtocol.MYSQL.value,
+    ConnectionProtocol.POSTGRESQL.value,
+    ConnectionProtocol.SQLSERVER.value,
+}
+DATABASE = {
+    ConnectionProtocol.MYSQL.value,
+    ConnectionProtocol.POSTGRESQL.value,
+    ConnectionProtocol.SQLSERVER.value,
 }
 
-# Default terminal metrics used to translate local console dimensions into the
-# pixel-based values that Guacamole expects.
-DEFAULT_TERMINAL_COLUMNS = 80
-DEFAULT_TERMINAL_ROWS = 24
-DEFAULT_CELL_WIDTH_PX = 10
-DEFAULT_CELL_HEIGHT_PX = 19
-DEFAULT_SCREEN_DPI = 96
+DEFAULT_PORTS = {
+    ConnectionProtocol.SSH.value: 22,
+    ConnectionProtocol.TELNET.value: 23,
+    ConnectionProtocol.KUBERNETES.value: 443,
+    ConnectionProtocol.MYSQL.value: 3306,
+    ConnectionProtocol.POSTGRESQL.value: 5432,
+    ConnectionProtocol.SQLSERVER.value: 1433,
+}
 
+from .terminal_size import (
+    DEFAULT_TERMINAL_COLUMNS,
+    DEFAULT_TERMINAL_ROWS,
+    _build_screen_info,
+    get_terminal_size_pixels,
+)
 
-def _build_screen_info(columns: int, rows: int) -> Dict[str, int]:
-    """Convert character columns/rows into pixel measurements for the Gateway."""
-    col_value = columns if isinstance(columns, int) and columns > 0 else DEFAULT_TERMINAL_COLUMNS
-    row_value = rows if isinstance(rows, int) and rows > 0 else DEFAULT_TERMINAL_ROWS
-    return {
-        "columns": col_value,
-        "rows": row_value,
-        "pixel_width": col_value * DEFAULT_CELL_WIDTH_PX,
-        "pixel_height": row_value * DEFAULT_CELL_HEIGHT_PX,
-        "dpi": DEFAULT_SCREEN_DPI,
-    }
-
-
-DEFAULT_SCREEN_INFO = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
+# Computed at import time using the best available platform APIs so the initial
+# offer payload carries accurate pixel dimensions even before the connection
+# loop runs. Falls back to fixed cell-size constants if the query fails.
+try:
+    DEFAULT_SCREEN_INFO = get_terminal_size_pixels()
+except Exception:
+    DEFAULT_SCREEN_INFO = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
 
 MAX_MESSAGE_SIZE_LINE = "a=max-message-size:1073741823"
+
+# Minimum keeper-pam-webrtc-rs version that supports ConnectAs payload in OpenConnection.
+# Older Gateways (Rust module < this) do not parse connect_as_payload; omit it when not supported.
+CONNECT_AS_MIN_VERSION = "2.1.6"
+
+
+def _version_at_least(version: Optional[str], min_version: str) -> bool:
+    """
+    Compare semantic versions. Returns True if version >= min_version.
+
+    Args:
+        version: Parsed version (e.g. "2.1.4") or None (treated as unknown/old).
+        min_version: Minimum required version (e.g. "2.1.0").
+
+    Returns:
+        True if version is known and >= min_version; False if unknown or older.
+    """
+    if not version:
+        return False
+
+    def parse(v: str) -> tuple:
+        parts = []
+        for p in v.split(".")[:3]:  # major.minor.patch
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+
+    try:
+        return parse(version) >= parse(min_version)
+    except Exception:
+        return False
 
 
 def _ensure_max_message_size_attribute(sdp_offer: Optional[str]) -> Optional[str]:
@@ -212,90 +245,120 @@ def _notify_gateway_connection_close(params, router_token, terminated=True):
 
 def detect_protocol(params: KeeperParams, record_uid: str) -> Optional[str]:
     """
-    Detect the terminal protocol from a PAM record.
+    Detect the connection protocol from a PAM record.
+
+    All machine types (pamMachine, pamDirectory, pamDatabase) allow any connection
+    type (ssh, telnet, rdp, vnc, kubernetes, mysql, etc.). Extraction follows:
+    first connection.protocol; for pamDatabase only, if still undetermined then
+    connection.databaseType, then infer from port.
 
     Args:
         params: KeeperParams instance
         record_uid: Record UID
 
     Returns:
-        Protocol string (ssh, telnet, kubernetes, mysql, postgresql, sqlserver) or None
-
-    Raises:
-        CommandError: If record type is not supported or protocol cannot be determined
+        Protocol string (ex. ssh, telnet, rdp, mysql, etc.) or None if
+        not present/undetermined. If connection.protocol is set to a value that
+        matches a ConnectionProtocol enum, returns that canonical value;
+        otherwise returns the raw string (lowercased).
     """
     record = vault.KeeperRecord.load(params, record_uid)
     if not isinstance(record, vault.TypedRecord):
-        raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
+        return None
 
     record_type = record.record_type
+    if record_type not in ('pamMachine', 'pamDirectory', 'pamDatabase'):
+        return None
 
-    # pamMachine -> SSH or Telnet
-    if record_type == 'pamMachine':
-        # Check if telnet is explicitly configured
-        # Look for telnet-specific fields or settings
-        pam_settings = record.get_typed_field('pamSettings')
-        if pam_settings:
-            settings_value = pam_settings.get_default_value(dict)
-            if settings_value:
-                connection = settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    # Check for telnet protocol indicator
-                    protocol_field = connection.get('protocol')
-                    if protocol_field and 'telnet' in str(protocol_field).lower():
-                        return ProtocolType.TELNET
+    # Map lowercase protocol string to canonical ConnectionProtocol.value
+    _protocol_values = {p.value.lower(): p.value for p in ConnectionProtocol}
 
-        # Default to SSH for pamMachine
-        return ProtocolType.SSH
+    pam_settings = record.get_typed_field('pamSettings')
+    if not pam_settings:
+        return None
 
-    # pamDirectory -> Kubernetes
-    elif record_type == 'pamDirectory':
-        return ProtocolType.KUBERNETES
+    settings_value = pam_settings.get_default_value(dict)
+    if not settings_value:
+        return None
 
-    # pamDatabase -> MySQL, PostgreSQL, or SQL Server
-    elif record_type == 'pamDatabase':
-        # Inspect the database type field
-        pam_settings = record.get_typed_field('pamSettings')
-        if pam_settings:
-            settings_value = pam_settings.get_default_value(dict)
-            if settings_value:
-                connection = settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    db_type = connection.get('databaseType', '').lower()
+    connection = settings_value.get('connection') or {}
+    if not isinstance(connection, dict):
+        return None
 
-                    if 'mysql' in db_type:
-                        return ProtocolType.MYSQL
-                    elif 'postgres' in db_type or 'postgresql' in db_type:
-                        return ProtocolType.POSTGRESQL
-                    elif 'sql server' in db_type or 'sqlserver' in db_type or 'mssql' in db_type:
-                        return ProtocolType.SQLSERVER
+    # 1) Try connection.protocol (same for all record types)
+    protocol_field = (connection.get('protocol') or '').strip()
+    if protocol_field:
+        protocol_lower = protocol_field.lower()
+        return _protocol_values.get(protocol_lower, protocol_lower)
 
-        # Try to infer from port if database type not specified
+    # 2) For pamDatabase only: connection.databaseType, then infer from port
+    if record_type == 'pamDatabase':
+        db_type = (connection.get('databaseType') or '').lower()
+        if 'mysql' in db_type:
+            return ConnectionProtocol.MYSQL.value
+        if 'postgres' in db_type or 'postgresql' in db_type:
+            return ConnectionProtocol.POSTGRESQL.value
+        if 'sql server' in db_type or 'sqlserver' in db_type or 'mssql' in db_type:
+            return ConnectionProtocol.SQLSERVER.value
+
         hostname_field = record.get_typed_field('pamHostname')
         if hostname_field:
             host_value = hostname_field.get_default_value(dict)
-            if host_value:
-                port = host_value.get('port')
-                if port:
-                    port_int = int(port) if isinstance(port, str) else port
-                    if port_int == 3306:
-                        return ProtocolType.MYSQL
-                    elif port_int == 5432:
-                        return ProtocolType.POSTGRESQL
-                    elif port_int == 1433:
-                        return ProtocolType.SQLSERVER
+            if host_value and host_value.get('port') is not None:
+                try:
+                    port_int = int(host_value['port'])
+                except (TypeError, ValueError):
+                    port_int = None
+                if port_int == 3306:
+                    return ConnectionProtocol.MYSQL.value
+                if port_int == 5432:
+                    return ConnectionProtocol.POSTGRESQL.value
+                if port_int == 1433:
+                    return ConnectionProtocol.SQLSERVER.value
 
-        # Default to MySQL if we can't determine
-        logging.warning(f"Could not determine database type for record {record_uid}, defaulting to MySQL")
-        return ProtocolType.MYSQL
-
-    else:
-        raise CommandError('pam launch', 
-                         f'Record type "{record_type}" is not supported for terminal connections. '
-                         f'Supported types: pamMachine, pamDirectory, pamDatabase')
+    return None
 
 
-def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: str) -> Dict[str, Any]:
+_PAM_TYPES_WITH_CONNECTION_PORT = ['pamMachine', 'pamDatabase', 'pamDirectory']
+
+
+def _pam_settings_connection_port(record: Any) -> Optional[int]:
+    """
+    For PAM machine record types only, return a valid pamSettings.connection.port if set.
+    """
+    if getattr(record, 'record_type', None) not in _PAM_TYPES_WITH_CONNECTION_PORT:
+        return None
+    if not hasattr(record, 'get_typed_field'):
+        return None
+    psf = record.get_typed_field('pamSettings')
+    if not psf or not hasattr(psf, 'get_default_value'):
+        return None
+    pam_val = psf.get_default_value(dict)
+    if not isinstance(pam_val, dict):
+        return None
+    connection = pam_val.get('connection')
+    if not isinstance(connection, dict):
+        return None
+    conn_port = connection.get('port')
+    if conn_port is None or conn_port == '':
+        return None
+    try:
+        p = int(conn_port)
+    except (ValueError, TypeError):
+        return None
+    if 1 <= p <= 65535:
+        return p
+    return None
+
+
+def extract_terminal_settings(
+    params: KeeperParams,
+    record_uid: str,
+    protocol: str,
+    launch_credential_uid: Optional[str] = None,
+    custom_host: Optional[str] = None,
+    custom_port: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Extract terminal connection settings from a PAM record.
 
@@ -303,6 +366,9 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         params: KeeperParams instance
         record_uid: Record UID
         protocol: Protocol type (from detect_protocol)
+        launch_credential_uid: Optional override for userRecordUid (from --credential CLI param)
+        custom_host: Optional override for hostname (from --host/--host-record/--credential CLI param)
+        custom_port: Optional override for port (from --host/--host-record/--credential CLI param)
 
     Returns:
         Dictionary containing terminal settings:
@@ -312,6 +378,9 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         - terminal: {colorScheme: str, fontSize: str}
         - recording: {includeKeys: bool}
         - protocol_specific: Protocol-specific settings dict
+        - allowSupplyUser: bool - User can supply credentials on-the-fly
+        - allowSupplyHost: bool - User can supply host on-the-fly (forces userSupplied credential type)
+        - userRecordUid: str or None - UID of linked pamUser record for credentials
 
     Raises:
         CommandError: If required fields are missing
@@ -326,28 +395,55 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         'clipboard': {'disableCopy': False, 'disablePaste': False},
         'terminal': {'colorScheme': 'gray-black', 'fontSize': '12'},
         'recording': {'includeKeys': False},
-        'protocol_specific': {}
+        'protocol_specific': {},
+        'allowSupplyUser': False,
+        'allowSupplyHost': False,
+        'userRecordUid': None,
     }
 
-    # Extract hostname and port
-    hostname_field = record.get_typed_field('pamHostname')
-    if not hostname_field:
-        raise CommandError('pam launch', f'No hostname configured for record {record_uid}')
+    # Extract hostname and port from record - enforce single non-empty host/pamHostname field.
+    # Host requires non-empty hostName; port is pamSettings.connection.port (PAM types only)
+    # when set, else the field's port — same precedence as launch._get_host_port_from_record.
+    _pam_override_port = _pam_settings_connection_port(record)
+    _host_candidates = []
+    for _f in list(getattr(record, 'fields', None) or []) + list(getattr(record, 'custom', None) or []):
+        if getattr(_f, 'type', None) in ('pamHostname', 'host'):
+            _hv = _f.get_default_value(dict) if hasattr(_f, 'get_default_value') else {}
+            _hn = ((_hv.get('hostName') or '').strip()) if isinstance(_hv, dict) else ''
+            if not _hn:
+                continue
+            _pr = _pam_override_port if _pam_override_port is not None else (
+                _hv.get('port') if isinstance(_hv, dict) else None
+            )
+            if not _pr:
+                continue
+            try:
+                _pp = int(_pr)
+                if 1 <= _pp <= 65535:
+                    _host_candidates.append((_hn, _pp, _hv))
+            except (ValueError, TypeError):
+                pass
+    if len(_host_candidates) > 1:
+        raise CommandError('pam launch',
+            f'Record {record_uid} has {len(_host_candidates)} non-empty host/pamHostname fields '
+            '(expected exactly one). Clear the extra field before launching.')
+    _record_host, _record_port_val, _host_value = _host_candidates[0] if _host_candidates else (None, None, {})
 
-    host_value = hostname_field.get_default_value(dict)
-    if not host_value:
-        raise CommandError('pam launch', f'Invalid hostname configuration for record {record_uid}')
+    settings['hostname'] = _record_host
 
-    settings['hostname'] = host_value.get('hostName')
-    if not settings['hostname']:
-        raise CommandError('pam launch', f'Hostname not found in record {record_uid}')
+    # CLI --host overrides record hostname (allowSupplyHost validated in launch.py)
+    if custom_host:
+        settings['hostname'] = custom_host
+        logging.debug(f"Using custom host override: {custom_host}")
 
-    # Get port (use default if not specified)
-    port_value = host_value.get('port')
-    if port_value:
-        settings['port'] = int(port_value) if isinstance(port_value, str) else port_value
-    else:
-        settings['port'] = DEFAULT_PORTS.get(protocol, 22)
+    # Port precedence: CLI (custom_port) > record (pamSettings.connection.port overrides host field
+    # on PAM types, else field port) > pamSettings.connection.port when record port still unset >
+    # protocol DEFAULT. pamSettings fallback runs in the pamSettings block below.
+    if custom_port is not None:
+        settings['port'] = custom_port
+    elif _record_port_val is not None:
+        settings['port'] = _record_port_val
+    # else: remains None until pamSettings fallback or DEFAULT below
 
     # Extract PAM settings
     pam_settings_field = record.get_typed_field('pamSettings')
@@ -372,15 +468,96 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
                 # Recording settings
                 settings['recording']['includeKeys'] = connection.get('recordingIncludeKeys', False)
 
+                # allowSupplyUser is inside connection
+                settings['allowSupplyUser'] = connection.get('allowSupplyUser', False)
+
+                # Extract linked pamUser record UID from pamSettings (may be overridden by CLI later)
+                # When both admin and launch credentials exist, we must use launch credential
+                dag_launch_uid = _get_launch_credential_uid(params, record_uid)
+                if dag_launch_uid:
+                    settings['userRecordUid'] = dag_launch_uid
+                    logging.debug(f"Using launch credential from DAG: {settings['userRecordUid']}")
+                elif not launch_credential_uid:
+                    # No DAG-linked credential and no -cr given.
+                    # If allowSupply* is enabled, use pamSettings.connection.userRecords[0] as
+                    # implicit credential and warn so the user can be explicit via -cr.
+                    user_records = connection.get('userRecords', [])
+                    if user_records and len(user_records) > 0:
+                        fallback_uid = user_records[0]
+                        settings['userRecordUid'] = fallback_uid
+                        allow_supply_host_flag = pam_settings_value.get('allowSupplyHost', False)
+                        allow_supply_user_flag = connection.get('allowSupplyUser', False)
+                        if allow_supply_host_flag or allow_supply_user_flag:
+                            logging.warning(
+                                'Record %s: allowSupply* is enabled but no DAG-linked launch credential '
+                                'was found; using pamSettings.connection.userRecords[0] (%s) as credential. '
+                                'Pass --credential (-cr %s) to be explicit.',
+                                record_uid, fallback_uid, fallback_uid,
+                            )
+                            settings['_fallbackCredential'] = True
+                        else:
+                            logging.debug(f"Using userRecordUid from pamSettings: {fallback_uid}")
+
+                # pamSettings.connection.port when CLI and host-derived port are still absent
+                if settings['port'] is None:
+                    conn_port = connection.get('port')
+                    if conn_port:
+                        try:
+                            settings['port'] = int(conn_port)
+                        except (ValueError, TypeError):
+                            pass
+
                 # Protocol-specific settings
-                if protocol == ProtocolType.SSH:
+                if protocol == ConnectionProtocol.SSH.value:
                     settings['protocol_specific'] = _extract_ssh_settings(connection)
-                elif protocol == ProtocolType.TELNET:
+                elif protocol == ConnectionProtocol.TELNET.value:
                     settings['protocol_specific'] = _extract_telnet_settings(connection)
-                elif protocol == ProtocolType.KUBERNETES:
+                elif protocol == ConnectionProtocol.KUBERNETES.value:
                     settings['protocol_specific'] = _extract_kubernetes_settings(connection)
-                elif protocol in ProtocolType.DATABASE:
+                elif protocol in DATABASE:
                     settings['protocol_specific'] = _extract_database_settings(connection, protocol)
+
+            # allowSupplyHost is at top level of pamSettings value, not inside connection
+            settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
+
+    # Final port fallback to protocol default
+    if settings['port'] is None:
+        settings['port'] = DEFAULT_PORTS.get(protocol, 22)
+
+    # CLI overrides: check if --credential provides a DIFFERENT user than DAG-linked.
+    # Always query the DAG directly - settings['userRecordUid'] may have been set from the
+    # userRecords[0] fallback (not DAG-linked) and must not be used for this comparison.
+    dag_linked_uid = _get_launch_credential_uid(params, record_uid)
+
+    if launch_credential_uid:
+        if launch_credential_uid == dag_linked_uid:
+            # CLI --credential matches DAG-linked credential - treat as if no --credential was provided
+            # so gateway uses normal 'linked' flow
+            logging.debug(f"CLI --credential matches DAG-linked credential {dag_linked_uid} - using normal 'linked' flow")
+            settings['cliUserOverride'] = False
+        else:
+            # CLI --credential provides a different user - this is a real override
+            settings['userRecordUid'] = launch_credential_uid
+            settings['cliUserOverride'] = True
+            logging.debug(f"CLI --credential overrides DAG credential: {launch_credential_uid} (was {dag_linked_uid})")
+    elif settings.pop('_fallbackCredential', False):
+        # userRecords[0] fallback with allowSupply* - treat as implicit -cr:
+        # gateway may not have it in DAG, so use userSupplied + ConnectAs payload
+        settings['cliUserOverride'] = True
+        logging.debug(f"Implicit credential from userRecords[0] fallback: {settings.get('userRecordUid')} - treating as userSupplied")
+    else:
+        settings['cliUserOverride'] = False
+
+    # Final validation: hostname must be present for connection to succeed
+    # Note: userRecordUid is optional - if not present, _build_guacamole_connection_settings()
+    # will fall back to credentials from the pamMachine record directly
+    if not settings['hostname']:
+        if settings['allowSupplyHost']:
+            raise CommandError('pam launch',
+                f'Hostname not found in record {record_uid}. Use --host to specify one.')
+        else:
+            raise CommandError('pam launch',
+                f'Hostname not found in record {record_uid} and allowSupplyHost is not enabled.')
 
     return settings
 
@@ -424,20 +601,20 @@ def _extract_database_settings(connection: Dict[str, Any], protocol: str) -> Dic
     }
 
     # Add protocol-specific database settings
-    if protocol == ProtocolType.MYSQL:
+    if protocol == ConnectionProtocol.MYSQL.value:
         settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ProtocolType.POSTGRESQL:
+    elif protocol == ConnectionProtocol.POSTGRESQL.value:
         settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ProtocolType.SQLSERVER:
+    elif protocol == ConnectionProtocol.SQLSERVER.value:
         settings['useSSL'] = connection.get('useSSL', True)  # SQL Server typically uses SSL by default
 
     return settings
 
 
-def create_connection_context(params: KeeperParams, 
-                             record_uid: str, 
-                             gateway_uid: str, 
-                             protocol: str, 
+def create_connection_context(params: KeeperParams,
+                             record_uid: str,
+                             gateway_uid: str,
+                             protocol: str,
                              settings: Dict[str, Any],
                              connect_as: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -466,35 +643,351 @@ def create_connection_context(params: KeeperParams,
         'terminal': settings['terminal'],
         'recording': settings['recording'],
         'connectAs': connect_as,
-        'conversationType': _get_conversation_type(protocol),
+        'conversationType': str(protocol).lower(),
+        # Credential supply flags
+        'allowSupplyUser': settings.get('allowSupplyUser', False),
+        'allowSupplyHost': settings.get('allowSupplyHost', False),
+        # Linked pamUser record UID for credential extraction
+        'userRecordUid': settings.get('userRecordUid'),
+        # True only when --credential was provided via CLI and differs from the DAG-linked record.
+        # Required by the offer-building path to distinguish "flag enabled but nothing supplied"
+        # from "flag enabled and user actually provided credentials".
+        'cliUserOverride': settings.get('cliUserOverride', False),
     }
 
     # Add protocol-specific settings
-    if protocol == ProtocolType.SSH:
+    if protocol == ConnectionProtocol.SSH.value:
         context['ssh'] = settings['protocol_specific']
-    elif protocol == ProtocolType.TELNET:
+    elif protocol == ConnectionProtocol.TELNET.value:
         context['telnet'] = settings['protocol_specific']
-    elif protocol == ProtocolType.KUBERNETES:
+    elif protocol == ConnectionProtocol.KUBERNETES.value:
         context['kubernetes'] = settings['protocol_specific']
-    elif protocol in ProtocolType.DATABASE:
+    elif protocol in DATABASE:
         context['database'] = settings['protocol_specific']
         context['database']['type'] = protocol
 
     return context
 
 
-def _get_conversation_type(protocol: str) -> str:
-    """Map protocol to Guacamole conversation type"""
-    # Map our protocol names to Guacamole conversation types
-    mapping = {
-        ProtocolType.SSH: 'ssh',
-        ProtocolType.TELNET: 'telnet',
-        ProtocolType.KUBERNETES: 'kubernetes',
-        ProtocolType.MYSQL: 'mysql',
-        ProtocolType.POSTGRESQL: 'postgresql',
-        ProtocolType.SQLSERVER: 'sql-server',
+def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optional[str]:
+    """
+    Find the launch credential UID for a PAM record using the DAG.
+
+    When a pamMachine record has both administrative credentials and launch credentials,
+    we need to use the launch credential (marked with is_launch_credential=True in DAG).
+    This function queries the DAG to find the correct credential.
+
+    Args:
+        params: KeeperParams instance
+        record_uid: UID of the pamMachine record
+
+    Returns:
+        UID of the launch credential pamUser record, or None if not found
+    """
+    try:
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
+                         transmission_key=transmission_key)
+
+        if not tdag.linking_dag.has_graph:
+            logging.debug(f"No DAG graph loaded for record {record_uid}")
+            return None
+
+        record_vertex = tdag.linking_dag.get_vertex(record_uid)
+        if record_vertex is None:
+            logging.debug(f"Record vertex not found in DAG for {record_uid}")
+            return None
+
+        # Find the credential explicitly marked as is_launch_credential=True in DAG
+        launch_credential = None
+
+        for user_vertex in record_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(record_vertex, EdgeType.ACL)
+            if acl_edge:
+                try:
+                    content = acl_edge.content_as_dict or {}
+                    if content.get('is_launch_credential', False) and launch_credential is None:
+                        launch_credential = user_vertex.uid
+                        logging.debug(f"Found launch credential via DAG: {launch_credential}")
+                except Exception as e:
+                    logging.debug(f"Error parsing ACL edge content: {e}")
+
+        if launch_credential:
+            logging.debug(f"Using launch credential from DAG: {launch_credential}")
+            return launch_credential
+
+        logging.debug(f"No explicit launch credential (is_launch_credential=True) in DAG for {record_uid}")
+        return None
+
+    except Exception as e:
+        logging.debug(f"Error accessing DAG for launch credential: {e}")
+        return None
+
+
+# ECIES info string for ConnectAs payload encryption
+# Must match the gateway's expected value
+CONNECT_AS_ECIES_INFO = b'KEEPER_CONNECT_AS_ECIES_SECP256R1_HKDF_SHA256'
+
+
+def _ecies_encrypt_with_hkdf(
+    plaintext: bytes,
+    recipient_public_key: bytes,
+    info: bytes = CONNECT_AS_ECIES_INFO
+) -> bytes:
+    """
+    Encrypt data using ECIES with HKDF key derivation.
+
+    This implements ECIES (Elliptic Curve Integrated Encryption Scheme) using:
+    - SECP256R1 (P-256) curve for ECDH key exchange
+    - HKDF-SHA256 for key derivation with the provided info string
+    - AES-256-GCM for symmetric encryption
+
+    Args:
+        plaintext: Data to encrypt
+        recipient_public_key: 65-byte uncompressed public key of recipient
+        info: HKDF info/context string (default: CONNECT_AS_ECIES_INFO)
+
+    Returns:
+        Encrypted payload: [ephemeral_pubkey (65)] + [nonce (12)] + [ciphertext + auth_tag]
+    """
+    # Generate ephemeral key pair
+    ephemeral_private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+    ephemeral_public_key = ephemeral_private_key.public_key()
+
+    # Serialize ephemeral public key (65 bytes uncompressed)
+    ephemeral_public_key_bytes = ephemeral_public_key.public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint
+    )
+
+    # Load recipient's public key from bytes
+    recipient_key = ec.EllipticCurvePublicKey.from_encoded_point(
+        ec.SECP256R1(),
+        recipient_public_key
+    )
+
+    # Perform ECDH to get shared secret
+    shared_secret = ephemeral_private_key.exchange(ec.ECDH(), recipient_key)
+
+    # Derive encryption key using HKDF
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,  # AES-256 key
+        salt=None,
+        info=info,
+        backend=default_backend()
+    )
+    encryption_key = hkdf.derive(shared_secret)
+
+    # Generate random nonce for AES-GCM
+    nonce = os.urandom(12)
+
+    # Encrypt with AES-256-GCM
+    aesgcm = AESGCM(encryption_key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+
+    # Return: [ephemeral_pubkey (65)] + [nonce (12)] + [ciphertext + auth_tag]
+    return ephemeral_public_key_bytes + nonce + ciphertext
+
+
+def _build_connect_as_payload(
+    params: 'KeeperParams',
+    user_record_uid: str,
+    gateway_public_key: bytes
+) -> Optional[bytes]:
+    """
+    Build encrypted ConnectAs payload for credential passing to gateway.
+
+    The ConnectAs payload contains user credentials from a pamUser record,
+    encrypted using ECIES with HKDF. This allows the gateway to receive
+    credentials via the OpenConnection message instead of looking them up in DAG.
+
+    Args:
+        params: KeeperParams instance
+        user_record_uid: UID of the pamUser record containing credentials
+        gateway_public_key: 65-byte public key of the gateway for ECIES encryption
+
+    Returns:
+        Encrypted payload in format expected by keeper-pam-webrtc-rs Gateway:
+        [ephemeral_pubkey (65)] + [nonce (12)] + [ciphertext + auth_tag] = 185 bytes.
+        Returns None if credentials cannot be extracted or encryption fails.
+    """
+    if not user_record_uid or not gateway_public_key:
+        return None
+
+    try:
+        # Extract credentials from pamUser record
+        creds = _extract_user_record_credentials(params, user_record_uid)
+
+        # Build ConnectAs user data structure (matches webvault's ConnectAsUser)
+        connect_as_user = {}
+        if creds.get('username'):
+            connect_as_user['username'] = creds['username']
+        if creds.get('password'):
+            connect_as_user['password'] = creds['password']
+        if creds.get('private_key'):
+            connect_as_user['private_key'] = creds['private_key']
+        if creds.get('passphrase'):
+            connect_as_user['passphrase'] = creds['passphrase']
+
+        # The payload structure matches webvault: {"user": {...}}
+        payload_dict = {'user': connect_as_user}
+        payload_json = json.dumps(payload_dict).encode('utf-8')
+
+        # keeper-pam-webrtc-rs protocol.rs expects:
+        # [encrypted_data_len: 4 bytes] + [PK(65)] + [Nonce(12)] + [Encrypted(encrypted_data_len)]
+        # Encrypted = ciphertext + auth_tag(16). Ciphertext len = plaintext len.
+        # So plaintext must be >= 92 bytes to produce 108-byte encrypted portion.
+        # Use space padding (not null) so decrypted JSON parses correctly.
+        min_plaintext_len = 92
+        if len(payload_json) < min_plaintext_len:
+            payload_json = payload_json + b' ' * (min_plaintext_len - len(payload_json))
+
+        logging.debug(f"ConnectAs payload: username={'(set)' if connect_as_user.get('username') else '(empty)'}, "
+                      f"password={'(set)' if connect_as_user.get('password') else '(empty)'}, "
+                      f"private_key={'(set)' if connect_as_user.get('private_key') else '(empty)'}")
+
+        # Encrypt with ECIES+HKDF
+        ecies_encrypted = _ecies_encrypt_with_hkdf(payload_json, gateway_public_key)
+
+        # protocol.rs reads: connect_as_payload_len = get_u32(), then
+        # required_crypto_block_len = 65 + 12 + connect_as_payload_len
+        # The length is of the ENCRYPTED portion only (ciphertext+auth_tag) = 108
+        encrypted_data_len = len(ecies_encrypted) - 65 - 12  # ciphertext + auth_tag
+        length_bytes = encrypted_data_len.to_bytes(4, byteorder='big')
+        connect_as_payload = length_bytes + ecies_encrypted
+
+        logging.debug(f"Built ConnectAs payload: total_len={len(connect_as_payload)}, encrypted_data_len={encrypted_data_len}")
+
+        return connect_as_payload
+
+    except Exception as e:
+        logging.error(f"Failed to build ConnectAs payload: {e}")
+        return None
+
+
+def _retrieve_gateway_public_key(
+    params: 'KeeperParams',
+    gateway_uid: str
+) -> Optional[bytes]:
+    """
+    Retrieve the public key for a gateway.
+
+    This function calls the vault/get_ksm_public_keys API to retrieve the
+    gateway's public key needed for ECIES encryption of ConnectAs payloads.
+
+    Args:
+        params: KeeperParams instance
+        gateway_uid: UID of the gateway
+
+    Returns:
+        65-byte uncompressed public key, or None if not found
+    """
+    try:
+        gateway_uid_bytes = url_safe_str_to_bytes(gateway_uid)
+        get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
+        get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
+        get_ksm_pubkeys_rs = api.communicate_rest(
+            params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys',
+            rs_type=GetKsmPublicKeysResponse
+        )
+
+        if len(get_ksm_pubkeys_rs.keyResponses) == 0:
+            logging.warning(f"No public key found for gateway {gateway_uid}")
+            return None
+
+        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
+        logging.debug(f"Retrieved gateway public key: {len(gateway_public_key_bytes)} bytes")
+        return gateway_public_key_bytes
+
+    except Exception as e:
+        logging.error(f"Error retrieving gateway public key: {e}")
+        return None
+
+
+def _get_single_str_field(record: Any, field_type: str) -> str:
+    """
+    Return the value of the single non-empty typed field matching field_type.
+
+    Enforces exactly one non-empty field across both record.fields[] and record.custom[].
+    Raises CommandError if multiple non-empty fields of that type are found.
+    Returns '' if none are found.
+    """
+    nonempty_values = []
+    for field in list(getattr(record, 'fields', None) or []) + list(getattr(record, 'custom', None) or []):
+        if getattr(field, 'type', None) == field_type:
+            val = field.get_default_value(str) if hasattr(field, 'get_default_value') else ''
+            if val:
+                nonempty_values.append(val)
+    if len(nonempty_values) > 1:
+        raise CommandError('pam launch',
+            f'Record has {len(nonempty_values)} non-empty {field_type!r} fields '
+            '(expected exactly one). Clear the extra field before launching.')
+    return nonempty_values[0] if nonempty_values else ''
+
+
+def _extract_user_record_credentials(
+    params: 'KeeperParams',
+    user_record_uid: str
+) -> Dict[str, Any]:
+    """
+    Extract credentials from a linked pamUser record.
+
+    This function extracts username, password, private key, and passphrase from
+    a pamUser record. For SSH connections, the private key is extracted using
+    try_extract_private_key() which checks keyPair fields, notes, custom fields,
+    and attachments. The password field serves as the passphrase for encrypted
+    private keys.
+
+    Args:
+        params: KeeperParams instance
+        user_record_uid: UID of the linked pamUser record
+
+    Returns:
+        Dictionary containing:
+        - username: Login username (str)
+        - password: Password (str)
+        - private_key: PEM-encoded private key if found (str or None)
+        - passphrase: Passphrase for encrypted private key (str or None)
+    """
+    result = {
+        'username': '',
+        'password': '',
+        'private_key': None,
+        'passphrase': None,
     }
-    return mapping.get(protocol, protocol)
+
+    # Load the pamUser record
+    user_record = vault.KeeperRecord.load(params, user_record_uid)
+    if not isinstance(user_record, vault.TypedRecord):
+        logging.warning(f"User record {user_record_uid} is not a TypedRecord")
+        return result
+
+    # Extract username - enforce single non-empty login field across fields[] + custom[]
+    result['username'] = _get_single_str_field(user_record, 'login')
+
+    # Extract password - enforce single non-empty password field across fields[] + custom[]
+    result['password'] = _get_single_str_field(user_record, 'password')
+
+    # Extract private key using try_extract_private_key()
+    # This function checks: keyPair field, notes, custom fields (text, multiline, secret, note), and attachments
+    key_result = try_extract_private_key(params, user_record)
+    if key_result:
+        private_key, passphrase = key_result
+        result['private_key'] = private_key
+        # The password field serves as the passphrase for encrypted private keys
+        # If try_extract_private_key returned a passphrase (from password field), use it
+        # Otherwise, use the password we already extracted
+        result['passphrase'] = passphrase if passphrase else (result['password'] if result['password'] else None)
+
+    logging.debug(
+        f"Extracted credentials from pamUser {user_record_uid}: "
+        f"username={'(set)' if result['username'] else '(empty)'}, "
+        f"password={'(set)' if result['password'] else '(empty)'}, "
+        f"private_key={'(set)' if result['private_key'] else '(empty)'}"
+    )
+
+    return result
 
 
 def _build_guacamole_connection_settings(
@@ -504,6 +997,8 @@ def _build_guacamole_connection_settings(
     settings: Dict[str, Any],
     context: Dict[str, Any],
     screen_info: Dict[str, int],
+    user_record_uid: Optional[str] = None,
+    credential_type: str = 'linked',
 ) -> Dict[str, Any]:
     """
     Build connection settings for Guacamole handshake in PythonHandler mode.
@@ -511,37 +1006,60 @@ def _build_guacamole_connection_settings(
     When guacd sends 'args' instruction requesting connection parameters,
     we respond with 'connect' containing these values.
 
+    Credential handling follows gateway behavior:
+    - If credential_type='linked' and user_record_uid is provided, extract credentials
+      from the linked pamUser record (username, password, private key)
+    - If credential_type='userSupplied', leave credentials empty (user provides on-the-fly)
+    - SSH authentication precedence: private key is tried first, then password
+      (standard SSH behavior handled by guacd)
+
     Args:
         params: KeeperParams instance
-        record_uid: Record UID
+        record_uid: Record UID (pamMachine record)
         protocol: Protocol type (ssh, telnet, mysql, etc.)
         settings: Terminal settings from extract_terminal_settings()
         context: Connection context from create_connection_context()
         screen_info: Screen dimensions dict
+        user_record_uid: Optional UID of linked pamUser record for credentials
+        credential_type: Credential type ('linked', 'userSupplied', 'ephemeral')
 
     Returns:
         Dictionary with connection settings for GuacamoleHandler
     """
-    # Get credentials from the record
-    record = vault.KeeperRecord.load(params, record_uid)
-    if not isinstance(record, vault.TypedRecord):
-        raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
-
-    # Extract login credentials
-    login_field = record.get_typed_field('login')
     username = ''
-    if login_field:
-        username = login_field.get_default_value(str) or ''
-
-    password_field = record.get_typed_field('password')
     password = ''
-    if password_field:
-        password = password_field.get_default_value(str) or ''
+    private_key = None
+    passphrase = None
+
+    # Determine how to get credentials based on credential_type
+    # Note: Even for 'userSupplied', if we have user_record_uid (from CLI --credential), extract credentials
+    # because guacd_params go directly to guacd via our connect instruction
+    if credential_type == 'userSupplied' and not user_record_uid:
+        # True user-supplied: no credentials provided at all
+        # Note: user may not be able to provide via guacamole prompt since STDIN/STDOUT not open yet
+        logging.debug("Using userSupplied credential type with no pamUser - leaving credentials empty")
+    elif user_record_uid:
+        # Extract credentials from linked pamUser record
+        user_creds = _extract_user_record_credentials(params, user_record_uid)
+        username = user_creds['username']
+        password = user_creds['password']
+        private_key = user_creds['private_key']
+        passphrase = user_creds['passphrase']
+        logging.debug(f"Using credentials from linked pamUser record: {user_record_uid}")
+    else:
+        # Fallback: Get credentials from the pamMachine record directly
+        # (backward compatibility for records without linked pamUser)
+        # Enforces single non-empty login/password field across fields[] + custom[].
+        record = vault.KeeperRecord.load(params, record_uid)
+        if isinstance(record, vault.TypedRecord):
+            username = _get_single_str_field(record, 'login')
+            password = _get_single_str_field(record, 'password')
+        logging.debug("Using credentials from pamMachine record (no linked pamUser)")
 
     # Build guacd parameters dictionary
     # These map to guacd's expected parameter names
     # The 'protocol' field is required for guacd to know which backend to use
-    guacd_protocol = _get_conversation_type(protocol)  # Convert to guacd protocol name (e.g., ssh, telnet)
+    guacd_protocol = str(protocol).lower()
     guacd_params = {
         'protocol': guacd_protocol,  # Required: tells guacd which protocol handler to use
         'hostname': settings.get('hostname', ''),
@@ -550,10 +1068,19 @@ def _build_guacamole_connection_settings(
         'password': password,
     }
 
+    # Add private key for SSH protocol if available
+    # SSH authentication precedence: guacd/SSH tries private key first, then password
+    # Both can be present simultaneously - this matches gateway behavior
+    if protocol == ConnectionProtocol.SSH.value and private_key:
+        guacd_params['private-key'] = private_key
+        if passphrase:
+            guacd_params['passphrase'] = passphrase
+        logging.debug("Added private-key to guacd_params for SSH authentication")
+
     # Add protocol-specific parameters
     protocol_specific = settings.get('protocol_specific', {})
 
-    if protocol == ProtocolType.SSH:
+    if protocol == ConnectionProtocol.SSH.value:
         # SSH-specific params
         if protocol_specific.get('publicHostKey'):
             guacd_params['host-key'] = protocol_specific['publicHostKey']
@@ -563,14 +1090,14 @@ def _build_guacamole_connection_settings(
         if protocol_specific.get('sftpEnabled'):
             guacd_params['enable-sftp'] = 'true'
 
-    elif protocol == ProtocolType.TELNET:
+    elif protocol == ConnectionProtocol.TELNET.value:
         # Telnet-specific params
         if protocol_specific.get('usernameRegex'):
             guacd_params['username-regex'] = protocol_specific['usernameRegex']
         if protocol_specific.get('passwordRegex'):
             guacd_params['password-regex'] = protocol_specific['passwordRegex']
 
-    elif protocol == ProtocolType.KUBERNETES:
+    elif protocol == ConnectionProtocol.KUBERNETES.value:
         # Kubernetes-specific params
         if protocol_specific.get('namespace'):
             guacd_params['namespace'] = protocol_specific['namespace']
@@ -587,10 +1114,13 @@ def _build_guacamole_connection_settings(
         if protocol_specific.get('ignoreServerCertificate'):
             guacd_params['ignore-cert'] = 'true'
 
-    elif protocol in ProtocolType.DATABASE:
+    elif protocol in DATABASE:
         # Database-specific params
         if protocol_specific.get('defaultDatabase'):
             guacd_params['database'] = protocol_specific['defaultDatabase']
+
+    # CLI mode: named pipe for terminal STDOUT (guacr terminal handlers; not graphical RDP/VNC)
+    guacd_params['enable-pipe'] = 'true'
 
     # Terminal display settings
     terminal_settings = settings.get('terminal', {})
@@ -599,12 +1129,12 @@ def _build_guacamole_connection_settings(
     if terminal_settings.get('fontSize'):
         guacd_params['font-size'] = terminal_settings['fontSize']
 
-    # Clipboard settings
-    clipboard_settings = settings.get('clipboard', {})
-    if clipboard_settings.get('disableCopy'):
-        guacd_params['disable-copy'] = 'true'
-    if clipboard_settings.get('disablePaste'):
+    # PAM clipboard → guacd: only pass disable-* when the record sets them (guacd "true" = on).
+    _pam_clip = settings.get('clipboard') or {}
+    if _pam_clip.get('disablePaste'):
         guacd_params['disable-paste'] = 'true'
+    if _pam_clip.get('disableCopy'):
+        guacd_params['disable-copy'] = 'true'
 
     # Build final connection settings
     connection_settings = {
@@ -619,6 +1149,8 @@ def _build_guacamole_connection_settings(
         'audio_mimetypes': [],  # No audio for terminal
         'video_mimetypes': [],  # No video for terminal
         'image_mimetypes': ['image/png', 'image/jpeg', 'image/webp'],
+        # PAM clipboard policy (also in guacd_params as disable-* only when record disables)
+        'clipboard': dict(settings.get('clipboard') or {}),
     }
 
     logging.debug(f"Built Guacamole connection settings for {protocol}: "
@@ -680,7 +1212,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 seed = base64_to_bytes(seed)
         else:
             # Generate a random seed if not present
-            import secrets
             seed = secrets.token_bytes(32)
             logging.debug("No trafficEncryptionSeed found, using generated seed")
 
@@ -748,7 +1279,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
         # Create a temporary tunnel session
-        import uuid
         temp_tube_id = str(uuid.uuid4())
 
         # Pre-create tunnel session to buffer early ICE candidates
@@ -771,6 +1301,23 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         no_trickle_ice = kwargs.get('no_trickle_ice', False)
         trickle_ice = not no_trickle_ice
 
+        # For trickle ICE, use shared tokens and bind_to_controller for ALB stickiness (same worker for WebSocket + POST)
+        router_tokens = None
+        http_session = None
+        cookie_header = None
+        if trickle_ice:
+            router_tokens = get_keeper_tokens(params)
+            http_session = requests.Session()
+            krouter_host = get_router_url(params)
+            try:
+                bind_url = krouter_host + "/api/user/bind_to_controller/" + gateway_uid
+                http_session.get(bind_url, verify=VERIFY_SSL, timeout=10)
+            except Exception as e:
+                logging.debug("bind_to_controller GET failed (continuing): %s", e)
+            if http_session.cookies:
+                cookie_header = "; ".join(f"{c.name}={c.value}" for c in http_session.cookies)
+                logging.debug("Bound to controller for ALB stickiness (WebSocket and streaming HTTP will use same backend)")
+
         # Create signal handler for Rust events
         signal_handler = TunnelSignalHandler(
             params=params,
@@ -781,7 +1328,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             conversation_id=conversation_id,
             tube_registry=tube_registry,
             tube_id=temp_tube_id,
-            trickle_ice=trickle_ice
+            trickle_ice=trickle_ice,
+            router_tokens=router_tokens,
+            http_session=http_session
         )
 
         # Store signal handler reference
@@ -799,15 +1348,40 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         handler_callback = None
 
         if use_python_handler:
-            # Import and create PythonHandler for simplified Guacamole protocol handling
-            from .python_handler import create_python_handler
-
             logging.debug("Using PythonHandler mode - Rust handles control frames automatically")
 
             # Set conversationType to "python_handler" to enable PythonHandler protocol mode in Rust
             # The actual protocol (ssh, telnet, etc.) is passed via guacd_params["protocol"]
+            # IMPORTANT: Only update webrtc_settings - gateway needs the actual protocol type (ssh, telnet, etc.)
+            # The gateway validates conversationType against valid protocol types, not "python_handler"
             webrtc_settings["conversationType"] = "python_handler"
-            logging.debug(f"Set conversationType to 'python_handler' (actual protocol: {protocol})")
+            # Keep context['conversationType'] as the actual protocol (ssh, telnet, etc.) for gateway
+            # Do NOT change context["conversationType"] - gateway needs the real protocol type
+            logging.debug(f"Set webrtc_settings conversationType to 'python_handler' (gateway will receive: {context['conversationType']})")
+
+            # Determine credential type based on allowSupplyHost, allowSupplyUser flags
+            # This matches gateway validation logic:
+            # - If allowSupplyHost=True: must be 'userSupplied'
+            # - If allowSupplyUser=True and no linked user: use 'userSupplied'
+            # - If linked user present: use 'linked'
+            allow_supply_host = context.get('allowSupplyHost', False)
+            allow_supply_user = context.get('allowSupplyUser', False)
+            user_record_uid = context.get('userRecordUid')
+
+            # credential_type is None when using pamMachine credentials directly (backward compatible)
+            # Priority: if user_record_uid is provided (from CLI or record), use 'linked' to send those credentials
+            credential_type = None
+            if user_record_uid:
+                # Linked user present (from CLI --credential or record) - use linked credentials
+                credential_type = 'linked'
+                logging.debug(f"Using 'linked' credential type with userRecordUid: {user_record_uid}")
+            elif allow_supply_host or allow_supply_user:
+                # No credentials provided but supply flags enabled - user must provide interactively
+                credential_type = 'userSupplied'
+                logging.debug("No credentials provided, allowSupply enabled - using 'userSupplied' credential type")
+            else:
+                # No linked user, no supply flags - use pamMachine credentials directly
+                logging.debug("No linked user or supply flags - using pamMachine credentials directly")
 
             # Build connection settings for Guacamole handshake
             # These are used when guacd sends 'args' instruction
@@ -818,6 +1392,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 settings=settings,
                 context=context,
                 screen_info=screen_info,
+                user_record_uid=user_record_uid,
+                credential_type=credential_type,
             )
 
             # Create the handler and callback
@@ -829,14 +1405,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             )
 
             logging.debug(f"Created PythonHandler for conversation {conversation_id}")
-            logging.debug(f"DEBUG: handler_callback is {'SET' if handler_callback else 'None'}, type={type(handler_callback)}")
-            logging.debug(f"DEBUG: python_handler is {'SET' if python_handler else 'None'}")
-            logging.debug(f"DEBUG: connection_settings has {len(connection_settings)} keys: {list(connection_settings.keys())}")
 
         # Create the tube to get the WebRTC offer
-        logging.debug(f"DEBUG: Calling create_tube with handler_callback={'SET' if handler_callback else 'None'}")
-        logging.debug(f"DEBUG: Calling create_tube with handler_callback={'SET' if handler_callback else 'None'}")
-        logging.debug(f"DEBUG: webrtc_settings['conversationType'] = {webrtc_settings.get('conversationType')}")
         offer = tube_registry.create_tube(
             conversation_id=conversation_id,
             settings=webrtc_settings,
@@ -875,12 +1445,33 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Registered encryption key for conversation: {conversation_id}")
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
 
-        # Start WebSocket listener
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, tunnel_session=tunnel_session)
+        # Start WebSocket listener (pass cookie_header for ALB stickiness when trickle ICE)
+        websocket_thread = start_websocket_listener(
+            params, tube_registry, timeout=300, gateway_uid=gateway_uid,
+            tunnel_session=tunnel_session,
+            router_tokens=router_tokens,
+            cookie_header=cookie_header
+        )
 
-        # Wait a moment for WebSocket to establish connection
-        import time
-        time.sleep(1.5)
+        # Wait for WebSocket to be ready before sending offer (same as pam tunnel start).
+        # Use event.wait() when available so we proceed as soon as ready; fallback to short sleep.
+        max_wait = 15.0
+        # Same backend registration delay as when event is present (router/gateway need time to register)
+        backend_delay = float(os.environ.get('WEBSOCKET_BACKEND_DELAY', '2.0'))
+        if tunnel_session.websocket_ready_event:
+            logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
+            websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
+            if not websocket_ready:
+                logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
+                signal_handler.cleanup()
+                unregister_tunnel_session(commander_tube_id)
+                return {"success": False, "error": "WebSocket connection timeout"}
+            logging.debug("Dedicated WebSocket connection established and ready for streaming")
+            logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
+            time.sleep(backend_delay)
+        else:
+            logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
+            time.sleep(backend_delay)
 
         # Send offer to gateway via HTTP POST
         logging.debug(f"{bcolors.OKBLUE}Sending {protocol} connection offer to gateway...{bcolors.ENDC}")
@@ -888,18 +1479,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Prepare the offer data with terminal-specific parameters
         # Match webvault format: host, size, audio, video, image (for guacd configuration)
         # These parameters are needed by Gateway to configure guacd BEFORE OpenConnection
-        import shutil
-
-        raw_columns = DEFAULT_TERMINAL_COLUMNS
-        raw_rows = DEFAULT_TERMINAL_ROWS
-        # Get terminal size for Guacamole size parameter
+        # Get terminal size for Guacamole size parameter (offer payload).
+        # get_terminal_size_pixels() queries the terminal internally and uses
+        # platform-specific APIs (Windows: GetCurrentConsoleFontEx; Unix:
+        # TIOCGWINSZ) to obtain exact pixel dimensions before falling back to
+        # the fixed cell-size estimate.
         try:
-            terminal_size = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
-            raw_columns = terminal_size.columns
-            raw_rows = terminal_size.lines
+            screen_info = get_terminal_size_pixels()
         except Exception:
             logging.debug("Falling back to default terminal size for offer payload")
-        screen_info = _build_screen_info(raw_columns, raw_rows)
+            screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
         logging.debug(
             f"Using terminal metrics columns={screen_info['columns']} rows={screen_info['rows']} -> "
             f"{screen_info['pixel_width']}x{screen_info['pixel_height']}px @ {screen_info['dpi']}dpi"
@@ -933,6 +1522,23 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         else:
             offer_payload = offer_sdp
 
+        # Gateway may configure guacd from this map before Python's `connect`.
+        offer_guacd_params: Dict[str, Any] = {'enable-pipe': 'true'}
+        _offer_clip = settings.get('clipboard') or {}
+        if use_python_handler:
+            _cs_gp = connection_settings.get('guacd_params') or {}
+            for _k, _v in _cs_gp.items():
+                if _k in ('disable-paste', 'disable-copy'):
+                    continue
+                offer_guacd_params[_k] = _v
+        if _offer_clip.get('disablePaste'):
+            offer_guacd_params['disable-paste'] = 'true'
+        if _offer_clip.get('disableCopy'):
+            offer_guacd_params['disable-copy'] = 'true'
+
+        _offer_disable_copy = bool(_offer_clip.get('disableCopy'))
+        _offer_disable_paste = bool(_offer_clip.get('disablePaste'))
+
         offer_data = {
             "offer": offer_payload,
             "audio": ["audio/L8", "audio/L16"],  # Supported audio codecs
@@ -943,7 +1549,18 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             "host": {
                 "hostName": settings['hostname'],
                 "port": settings['port']
-            }
+            },
+            # enable-pipe + optional disable-paste/disable-copy from PAM (see offer_guacd_params)
+            "guacd_params": offer_guacd_params,
+            "terminalSettings": {
+                "disableCopy": _offer_disable_copy,
+                "disablePaste": _offer_disable_paste,
+            },
+            # Alternate shape (PAM record uses connection.clipboard)
+            "clipboard": {
+                "disableCopy": _offer_disable_copy,
+                "disablePaste": _offer_disable_paste,
+            },
             # these are not sent by webvault during open connection for terminal connections
             # "protocol": protocol,
             # "terminalSettings": {
@@ -956,29 +1573,38 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # if 'protocol_specific' in settings and settings['protocol_specific']:
         #     offer_data["protocolSettings"] = settings['protocol_specific']
 
-        # Log what we're sending in the initial offer
         logging.debug(f"Sending initial offer with connection parameters: {json.dumps(offer_data, indent=2)}")
+        data_bytes = string_to_bytes(json.dumps(offer_data))
+        encrypted_data = tunnel_encrypt(symmetric_key, data_bytes)
 
-        string_data = json.dumps(offer_data)
-        logging.debug(f"payload.inputs.data JSON before encryption: {string_data}")
-        bytes_data = string_to_bytes(string_data)
-        encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
+        # Get userRecordUid and credential flags from context (extracted in extract_terminal_settings)
+        user_record_uid = context.get('userRecordUid')
+        allow_supply_host = context.get('allowSupplyHost', False)
+        allow_supply_user = context.get('allowSupplyUser', False)
 
-        # Extract userRecordUid from pamSettings
-        user_record_uid = None
-        pam_settings_field = record.get_typed_field('pamSettings')
-        if pam_settings_field:
-            pam_settings_value = pam_settings_field.get_default_value(dict)
-            if pam_settings_value:
-                connection = pam_settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    user_records = connection.get('userRecords', [])
-                    if user_records and len(user_records) > 0:
-                        user_record_uid = user_records[0]
-                        logging.debug(f"Found userRecordUid: {user_record_uid}")
-
-        if not user_record_uid:
-            logging.warning(f"No userRecordUid found in pamSettings for record {record_uid}")
+        # Determine credential type for gateway inputs
+        # Gateway credential types:
+        # - 'linked': Look up credential in DAG (for records with DAG-linked pamUser)
+        # - 'userSupplied': Skip DAG lookup, credentials from ConnectAs (-cr) or user prompt
+        # - None: Use pamMachine credentials directly
+        # Priority: prefer 'linked' when DAG has credentials (even if allowSupply* is enabled).
+        # Use 'userSupplied' only when no linked credential but allowSupply* enabled.
+        credential_type_for_gateway = None
+        cli_user_override = context.get('cliUserOverride', False)
+        if cli_user_override:
+            # User explicitly supplied a different credential via -cr.
+            # The -cr record is NOT DAG-linked to this machine so 'linked' would fail;
+            # credentials arrive via the ConnectAs payload (built in launch.py after tunnel opens).
+            # NOTE: -H/-hr are not accepted without -cr (legacy, to match Web Vault behaviour),
+            # so cli_user_override=True is the only reliable signal that the user supplied something.
+            credential_type_for_gateway = 'userSupplied'
+            logging.debug("CLI credential override active - using 'userSupplied' for gateway")
+        elif user_record_uid:
+            # DAG-linked pamUser (no CLI override) - gateway looks up credentials via DAG
+            credential_type_for_gateway = 'linked'
+            logging.debug(f"Using 'linked' credential type for gateway with userRecordUid: {user_record_uid}")
+        else:
+            logging.debug(f"No linked pamUser for record {record_uid} - using pamMachine credentials directly")
 
         time.sleep(1)  # Allow time for WebSocket listener to start
 
@@ -994,10 +1620,17 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 "trickleICE": trickle_ice,  # Set trickle ICE flag
             }
 
-            # Add userRecordUid and credentialType if we have a linked user
-            if user_record_uid:
-                inputs['userRecordUid'] = user_record_uid
+            # Add credential type and userRecordUid based on mode
+            if credential_type_for_gateway == 'linked' and user_record_uid:
                 inputs['credentialType'] = 'linked'
+                inputs['userRecordUid'] = user_record_uid
+            elif credential_type_for_gateway == 'userSupplied':
+                inputs['credentialType'] = 'userSupplied'
+                # For userSupplied, set allow_supply_user flag in connect_as_settings
+                # This matches gateway behavior (line 1203 in tunnel_vault_record.py)
+                inputs['allowSupplyUser'] = True
+                logging.debug("Using userSupplied credential type - user will provide credentials")
+            # else: no credentialType - gateway uses pamMachine credentials directly (backward compatible)
 
             # Router token is no longer extracted from cookies (removed in commit 338a9fda)
             # Router affinity is now handled server-side
@@ -1008,7 +1641,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
             # Two paths: streaming vs non-streaming
             if trickle_ice:
-                # Streaming path: Response will come via WebSocket
+                # Streaming path: Response will come via WebSocket (use same tokens and session as WebSocket for ALB stickiness)
+                offer_kwargs = {}
+                if router_tokens and len(router_tokens) >= 3:
+                    offer_kwargs = {
+                        "transmission_key": router_tokens[2],
+                        "encrypted_transmission_key": router_tokens[1],
+                        "encrypted_session_token": router_tokens[0],
+                    }
+                if http_session is not None:
+                    offer_kwargs["http_session"] = http_session
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
@@ -1019,7 +1661,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
                     is_streaming=True,  # Response will come via WebSocket
-                    gateway_timeout=30000
+                    gateway_timeout=30000,
+                    **offer_kwargs
                 )
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (streaming mode){bcolors.ENDC}")
@@ -1049,6 +1692,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     "screen_info": screen_info,
                     "python_handler": python_handler,  # PythonHandler for simplified guac protocol
                     "use_python_handler": use_python_handler,
+                    "user_record_uid": user_record_uid,  # For ConnectAs payload
+                    "gateway_uid": gateway_uid,  # For ConnectAs payload
                 }
             else:
                 # Non-streaming path: Handle response immediately
@@ -1067,6 +1712,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (non-streaming mode){bcolors.ENDC}")
                 logging.debug(f"Router response: {router_response}")
+
+                # Must be defined before return below; only refined inside `if router_response`.
+                remote_webrtc_version = None
 
                 # Handle immediate response
                 if router_response and router_response.get('response'):
@@ -1109,37 +1757,36 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                                         data_text = bytes_to_string(decrypted_data).replace("'", '"')
                                         logging.debug(f"Successfully decrypted data for {conversation_id_original}, length: {len(data_text)}")
 
-                                        # Parse JSON
+                                        # Parse JSON; fallback to raw SDP if decrypted data is plain SDP
+                                        answer_sdp = None
+                                        data_json = None
                                         try:
                                             data_json = json.loads(data_text)
-
-                                            # Ensure data_json is a dictionary
                                             if isinstance(data_json, dict):
                                                 logging.debug(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
+                                                answer_sdp = data_json.get('answer') or data_json.get('sdp')
+                                        except (json.JSONDecodeError, TypeError):
+                                            if data_text.strip().startswith('v=') and 'm=' in data_text:
+                                                answer_sdp = data_text.strip()
+                                                logging.debug("Decrypted data appears to be raw SDP (not JSON), using as answer")
 
-                                                # Handle SDP answer
-                                                if "answer" in data_json:
-                                                    answer_sdp = data_json.get('answer')
-                                                    if answer_sdp:
-                                                        logging.debug(f"Found SDP answer in non-streaming response, sending to Rust for conversation: {conversation_id_original}")
-                                                        tube_registry.set_remote_description(commander_tube_id, answer_sdp, is_answer=True)
+                                        if answer_sdp:
+                                            logging.debug(f"Found SDP answer in non-streaming response, sending to Rust for conversation: {conversation_id_original}")
+                                            remote_webrtc_version = set_remote_description_and_parse_version(
+                                                tube_registry, commander_tube_id, answer_sdp, is_answer=True
+                                            )
 
-                                                        if hasattr(tunnel_session, "gateway_ready_event") and tunnel_session.gateway_ready_event is not None:
-                                                            tunnel_session.gateway_ready_event.set()
-                                                        logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
+                                            if hasattr(tunnel_session, "gateway_ready_event") and tunnel_session.gateway_ready_event is not None:
+                                                tunnel_session.gateway_ready_event.set()
+                                            logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
 
-                                                        # Send any buffered local ICE candidates now that we have the answer
-                                                        if tunnel_session.buffered_ice_candidates:
-                                                            logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
-                                                            for candidate in tunnel_session.buffered_ice_candidates:
-                                                                signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
-                                                            tunnel_session.buffered_ice_candidates.clear()
-                                                elif "offer" in data_json or (data_json.get("type") == "offer"):
-                                                    # Gateway is sending us an ICE restart offer (unlikely in non-streaming mode)
-                                                    logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
-                                        except json.JSONDecodeError as e:
-                                            logging.error(f"Failed to parse decrypted data as JSON: {e}")
-                                            logging.debug(f"Data text: {data_text[:200]}...")
+                                            if tunnel_session.buffered_ice_candidates:
+                                                logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
+                                                for candidate in tunnel_session.buffered_ice_candidates:
+                                                    signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                                                tunnel_session.buffered_ice_candidates.clear()
+                                        elif isinstance(data_json, dict) and ("offer" in data_json or data_json.get("type") == "offer"):
+                                            logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
                                     else:
                                         logging.warning(f"Decryption returned None for conversation {conversation_id_original}")
                                 except Exception as e:
@@ -1167,9 +1814,20 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     "screen_info": screen_info,
                     "python_handler": python_handler,  # PythonHandler for simplified guac protocol
                     "use_python_handler": use_python_handler,
+                    "user_record_uid": user_record_uid,  # For ConnectAs payload
+                    "gateway_uid": gateway_uid,  # For ConnectAs payload
+                    "remote_webrtc_version": remote_webrtc_version,  # From SDP for ConnectAs capability
                 }
 
         except Exception as e:
+            # Stop dedicated WebSocket before Rust/tube cleanup so we do not process a late
+            # channel_closed after the CLI has already returned (avoids stray ERROR after prompt).
+            try:
+                if tunnel_session.websocket_stop_event and tunnel_session.websocket_thread:
+                    tunnel_session.websocket_stop_event.set()
+                    tunnel_session.websocket_thread.join(timeout=3.0)
+            except Exception:
+                logging.debug("Stopping WebSocket after HTTP offer failure", exc_info=True)
             signal_handler.cleanup()
             unregister_tunnel_session(commander_tube_id)
             unregister_conversation_key(conversation_id)
@@ -1220,13 +1878,24 @@ def launch_terminal_connection(params: KeeperParams,
     try:
         # Step 1: Detect protocol
         protocol = detect_protocol(params, record_uid)
-        if not protocol:
-            raise CommandError('pam launch', f'Could not detect protocol for record {record_uid}')
+        if not protocol or protocol not in ALL_TERMINAL:
+            raise CommandError(
+                'pam launch',
+                f'Protocol {protocol!r} is not supported for record {record_uid}. '
+                'Only terminal protocols (ssh, telnet, kubernetes, mysql, postgresql, sql-server) are supported.'
+            )
 
         logging.debug(f"Detected protocol: {protocol}")
 
-        # Step 2: Extract settings
-        settings = extract_terminal_settings(params, record_uid, protocol)
+        # Step 2: Extract settings (with optional CLI overrides)
+        settings = extract_terminal_settings(
+            params,
+            record_uid,
+            protocol,
+            launch_credential_uid=kwargs.get('launch_credential_uid'),
+            custom_host=kwargs.get('custom_host'),
+            custom_port=kwargs.get('custom_port'),
+        )
         logging.debug(f"Extracted settings: hostname={settings['hostname']}, port={settings['port']}")
 
         # Step 3: Build connection context
@@ -1277,5 +1946,3 @@ def launch_terminal_connection(params: KeeperParams,
     except Exception as e:
         logging.error(f"Error launching terminal connection: {e}")
         raise CommandError('pam launch', f'Failed to launch terminal connection: {e}')
-
-

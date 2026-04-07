@@ -20,6 +20,54 @@ def get_vertex_content(vertex):
     return return_content
 
 
+# Resource meta version (int). Vault uses version >= 1 to read launch credentials from ACL.
+# In set_resource_allowed: meta_version=None or 0 -> legacy (no version in meta); 1 -> v1.
+# Future: add RESOURCE_META_VERSION_V2, etc. and handle them in build_resource_meta().
+RESOURCE_META_VERSION_V1 = 1
+
+
+def build_resource_meta_v1(allowed_settings, rotate_on_termination=False):
+    """
+    Build DAG resource meta payload in v1 format so vault uses ACL is_launch_credential for launch.
+    Returns dict: {"version": <int>, "allowedSettings": allowed_settings, "rotateOnTermination": bool}.
+    """
+    if not isinstance(allowed_settings, dict):
+        allowed_settings = {}
+    return {
+        "version": int(RESOURCE_META_VERSION_V1),
+        "allowedSettings": dict(allowed_settings),
+        "rotateOnTermination": bool(rotate_on_termination),
+    }
+
+
+def build_resource_meta(version, allowed_settings, rotate_on_termination=False):
+    """
+    Build DAG resource meta payload for the given version (int).
+    version=1 -> v1 format; other values can be added for v2, v3, etc.
+    """
+    if version == RESOURCE_META_VERSION_V1:
+        return build_resource_meta_v1(allowed_settings, rotate_on_termination)
+    # Future: elif version == RESOURCE_META_VERSION_V2: return build_resource_meta_v2(...)
+    raise ValueError(f"Unsupported resource meta version: {version}")
+
+
+def ensure_resource_meta_v1(content):
+    """
+    Ensure existing meta content has version 1 and rotateOnTermination (for re-writes).
+    Returns a copy with version=<int> and rotateOnTermination default False if missing.
+    """
+    if content is None:
+        return build_resource_meta_v1({}, False)
+    out = dict(content)
+    out["version"] = int(RESOURCE_META_VERSION_V1)
+    if "rotateOnTermination" not in out:
+        out["rotateOnTermination"] = False
+    # Normalize allowedSettings key if content used a different key (e.g. allowedSettings)
+    if "allowedSettings" not in out and "allowed_settings" in out:
+        out["allowedSettings"] = out.pop("allowed_settings", {})
+    return out
+
+
 class TunnelDAG:
     def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str,
                  is_config=False, transmission_key=None):
@@ -102,7 +150,8 @@ class TunnelDAG:
     def edit_tunneling_config(self, connections=None, tunneling=None,
                               rotation=None, session_recording=None,
                               typescript_recording=None,
-                              remote_browser_isolation=None):
+                              remote_browser_isolation=None,
+                              ai_enabled=None, ai_session_terminate=None):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid, vertex_type=RefType.PAM_NETWORK)
@@ -181,6 +230,24 @@ class TunnelDAG:
                     allowed_settings.pop("remoteBrowserIsolation", None)
                 else:
                     allowed_settings["remoteBrowserIsolation"] = remote_browser_isolation
+
+        if ai_enabled is not None:
+            ai_enabled = self._convert_allowed_setting(ai_enabled)
+            if ai_enabled != allowed_settings.get("aiEnabled", None):
+                dirty = True
+                if ai_enabled is None:
+                    allowed_settings.pop("aiEnabled", None)
+                else:
+                    allowed_settings["aiEnabled"] = ai_enabled
+
+        if ai_session_terminate is not None:
+            ai_session_terminate = self._convert_allowed_setting(ai_session_terminate)
+            if ai_session_terminate != allowed_settings.get("aiSessionTerminate", None):
+                dirty = True
+                if ai_session_terminate is None:
+                    allowed_settings.pop("aiSessionTerminate", None)
+                else:
+                    allowed_settings["aiSessionTerminate"] = ai_session_terminate
 
         if dirty:
             config_vertex.add_data(content=content, path='meta', needs_encryption=False)
@@ -306,15 +373,16 @@ class TunnelDAG:
 
         return False
 
-    def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None):
+    def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None, is_launch_credential=None):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
             print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
             return False
-        self.link_user(user_uid, resource_vertex, is_admin, belongs_to)
+        self.link_user(user_uid, resource_vertex, is_admin, belongs_to, is_launch_credential=is_launch_credential)
         return None
 
-    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None, is_iam_user=None):
+    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None, is_iam_user=None,
+                  is_launch_credential=None):
 
         user_vertex = self.linking_dag.get_vertex(user_uid)
         if user_vertex is None:
@@ -328,6 +396,8 @@ class TunnelDAG:
             content["is_admin"] = bool(is_admin)
         if is_iam_user is not None:
             content["is_iam_user"] = bool(is_iam_user)
+        if is_launch_credential is not None:
+            content["is_launch_credential"] = bool(is_launch_credential)
 
         if user_vertex.vertex_type != RefType.PAM_USER:
             user_vertex.vertex_type = RefType.PAM_USER
@@ -376,6 +446,51 @@ class TunnelDAG:
                     return user_vertex.uid
         return False
 
+    def check_if_resource_has_launch_credential(self, resource_uid):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return False
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if acl_edge:
+                content = acl_edge.content_as_dict
+                if content.get('is_launch_credential'):
+                    return user_vertex.uid
+        return False
+
+    def clear_launch_credential_for_resource(self, resource_uid, exclude_user_uid=None):
+        """Remove is_launch_credential from all users on a resource except exclude_user_uid."""
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return
+        dirty = False
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            if exclude_user_uid and user_vertex.uid == exclude_user_uid:
+                continue
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if not acl_edge:
+                continue
+            edge_content = acl_edge.content_as_dict
+            if edge_content and edge_content.get('is_launch_credential'):
+                edge_content = dict(edge_content)
+                edge_content.pop('is_launch_credential')
+                user_vertex.belongs_to(resource_vertex, EdgeType.ACL, content=edge_content)
+                dirty = True
+        if dirty:
+            self.linking_dag.save()
+
+    def upgrade_resource_meta_to_v1(self, resource_uid):
+        """Ensure resource vertex meta has version >= 1 so vault reads ACL launch credentials."""
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return
+        content = get_vertex_content(resource_vertex)
+        if content and content.get('version', 0) >= RESOURCE_META_VERSION_V1:
+            return
+        upgraded = ensure_resource_meta_v1(content)
+        resource_vertex.add_data(content=upgraded, path='meta', needs_encryption=False)
+        self.linking_dag.save()
+
     def check_if_resource_allowed(self, resource_uid, setting):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         content = get_vertex_content(resource_vertex)
@@ -405,8 +520,9 @@ class TunnelDAG:
 
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
+                             ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
-                             v_type: RefType=str(RefType.PAM_MACHINE)):
+                             v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None):
         v_type = RefType(v_type)
         allowed_ref_types = [RefType.PAM_MACHINE, RefType.PAM_DATABASE, RefType.PAM_DIRECTORY, RefType.PAM_BROWSER]
         if v_type not in allowed_ref_types:
@@ -491,8 +607,35 @@ class TunnelDAG:
                 else:
                     settings["remoteBrowserIsolation"] = remote_browser_isolation
 
+        if ai_enabled is not None:
+            ai_enabled = self._convert_allowed_setting(ai_enabled)
+            if ai_enabled != settings.get("aiEnabled", None):
+                dirty = True
+                if ai_enabled is None:
+                    settings.pop("aiEnabled", None)
+                else:
+                    settings["aiEnabled"] = ai_enabled
+
+        if ai_session_terminate is not None:
+            ai_session_terminate = self._convert_allowed_setting(ai_session_terminate)
+            if ai_session_terminate != settings.get("aiSessionTerminate", None):
+                dirty = True
+                if ai_session_terminate is None:
+                    settings.pop("aiSessionTerminate", None)
+                else:
+                    settings["aiSessionTerminate"] = ai_session_terminate
+
         if dirty:
-            resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
+            # Legacy: missing or meta_version=0 -> write content as-is (no version in meta)
+            if meta_version is not None and meta_version != 0:
+                meta_payload = build_resource_meta(
+                    meta_version,
+                    content.get(allowed_settings_name, {}),
+                    rotate_on_termination=False,
+                )
+                resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
+            else:
+                resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
             self.linking_dag.save()
 
     def is_tunneling_config_set_up(self, resource_uid):

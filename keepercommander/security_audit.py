@@ -115,14 +115,16 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     saved_score_data = params.security_score_data.get(record.record_uid, {})
     saved_sec_data = params.breach_watch_security_data.get(record.record_uid, {})
     score_data =  saved_score_data.get('data', {})
+    score_revision = saved_score_data.get('revision')
+    sec_revision = saved_sec_data.get('revision')
     current_password = _get_pass(record)
-    if current_password != score_data.get('password') or None:
+    if current_password != score_data.get('password'):
         return True
 
     scores = dict(new=get_security_score(record) or 0, old=score_data.get('score', 0))
     score_changed_on_passkey = any(x >= 100 for x in scores.values()) and any(x < 100 for x in scores.values())
     creds_removed = bool(scores.get('old') and not scores.get('new'))
-    needs_alignment = bool(scores.get('new')) and not saved_sec_data
+    needs_alignment = current_password is not None and score_revision != sec_revision
     return score_changed_on_passkey or creds_removed or needs_alignment
 
 def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int

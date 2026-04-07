@@ -1,13 +1,26 @@
-## PAM Import Command
+## PAM Project Import Commands
 PAM Import command helps customers with thousands of managed companies to automate the creation of folders, gateways, machines, users, connections, tunnels and (optionally) rotations.
 
 ### Command line options
 
-`pam project import --name=project1 --filename=/path/to/import.json --dry-run`
+Initial Import.  
+`pam project import --name=project1 --filename=/path/to/import.json [--dry-run]`
 
 - `--name`, `-n` → Project name _(overrides `"project":""` from JSON)_
 - `--filename`, `-f` → JSON file to load import data from.
 - `--dry-run`, `-d` → Test import without modifying vault.
+
+
+Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
+`pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--dry-run]`
+
+- `--config`, `-c` → PAM Configuration record UID or title.
+- `--filename`, `-f` → JSON file to load import data from.
+- `--dry-run`, `-d` → Test import without modifying vault.
+
+> **Notes:**
+- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault.
+- If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 
 ### JSON format details
@@ -83,6 +96,8 @@ _You can have only one `pam_configuration` section and the only required paramet
 		"connections": "on",
 		"rotation": "on",
 		"tunneling": "on",
+		"ai_threat_detection": "off",
+		"ai_terminate_session_on_detection": "off",
 		"remote_browser_isolation": "on",
 		"graphical_session_recording": "off",
 		"text_session_recording": "off",
@@ -196,11 +211,115 @@ _You can have only one `pam_configuration` section and the only required paramet
 </details>
 
 #### Resources (users, machines etc.):
-Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user which will be identified by its unique title or login/username (ex. `"admin_credentials": "admin1"`, or `pamRemoteBrowser` → `pam_settings.connection.autofill_credentials: "BingLogin"`)
+Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser and pamRemoteBrowser do not have launch credentials; pamRemoteBrowser uses `pam_settings.connection.autofill_credentials` for RBI login.
 - **Machines** are defined in `pam_data.resources` where each machine can have its own list of `"users": []` one of which is the admin user for that machine. Users that don't belong to a single machine are into global `pam_data.users` section (record type: `login`, `pamUser` for NOOP rotation or shared across multiple machines /ex. same user for ssh, vnc, rdp etc./)
   > **Note 1:** `pam_settings` _(options, connection)_ are explained only in pamMachine section below (per protocol) but they are present in all machine types.  
   > **Note 2:** `attachments` and `scripts` examples are in `pam_configuration: local` section.  
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
+  > **Note 4:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
+
+JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records.
+
+<details>
+<summary>Just-In-Time Access (JIT)</summary>
+
+[Just-In-Time Access (JIT)](https://docs.keeper.io/en/keeperpam/privileged-access-manager/getting-started/just-in-time-access-jit) - By implementing JIT access controls, organizations can significantly reduce their attack surface by ensuring that privileged access is only granted when needed, for the duration required, and with appropriate approvals.
+
+**How to Configure:** Import JSON follows Keeper Vault web UI (JIT tab on resource records). Configure the elevation settings (Ephemeral account or Group/Role elevation) using `pam_settings.options.jit_settings`. Use `pam_directory_record` to reference a pamDirectory by its `title` from `pam_data.resources[]` (for domain account type):
+
+```json
+{
+    "jit_settings": {
+        "create_ephemeral": true,
+        "elevate": true,
+        "_comment_method": "elevation methods: <group|role>",
+        "elevation_method": "group",
+        "elevation_string": "arn:aws:iam::12345:role/Admin",
+        "base_distinguished_name": "OU=Users,DC=example,DC=net",
+        "_comment_ephemeral_account_types": "<linux|mac|windows|domain>",
+        "ephemeral_account_type": "linux",
+        "_comment_pam_directory_record": "by title, requried if ephemeral_account_type: domain",
+        "pam_directory_record": "PAM AD1"
+    }
+}
+```
+</details>
+<details>
+<summary>KeeperAI</summary>
+
+[KeeperAI](https://docs.keeper.io/en/keeperpam/privileged-access-manager/keeperai) - AI-powered threat detection for KeeperPAM privileged sessions. KeeperAI is an Agentic AI-powered threat detection system that automatically monitors and analyzes KeeperPAM privileged sessions to identify suspicious or malicious behavior.
+
+**PAM Configuration Settings** (in `pam_configuration`):
+- `ai_threat_detection`
+- `ai_terminate_session_on_detection`
+
+**Activating Threat Detection on a Resource:** Import JSON follows Keeper Vault web UI (AI tab on resource records). Session recordings (graphical and/or text) must be enabled for KeeperAI to work. Edit PAM Settings for your selected resource: enable `ai_threat_detection` and `ai_terminate_session_on_detection` in `pam_settings.options`, then add `pam_settings.options.ai_settings` with your risk-level rules:
+
+```json
+{
+    "pam_settings": {
+        "options": {
+            "graphical_session_recording": "on",
+            "text_session_recording": "on",
+            "ai_threat_detection": "on",
+            "ai_terminate_session_on_detection": "on",
+            "ai_settings": {
+                "risk_levels": {
+                    "critical": {
+                        "ai_session_terminate": true,
+                        "activities": {
+                            "allow": [
+                                {"tag": "mount"},
+                                {"tag": "umount"}
+                            ],
+                            "deny": [
+                                {"tag": "iptables"},
+                                {"tag": "wget | sh"}
+                            ]
+                        }
+                    },
+                    "high": {
+                        "ai_session_terminate": true,
+                        "activities": {
+                            "allow": [
+                                {"tag": "\\bmount\\b"},
+                                {"tag": "\\bumount\\b"}
+                            ],
+                            "deny": [
+                                {"tag": "kill -9"},
+                                {"tag": "\\bkill\\s+-9\\b.*"}
+                            ]
+                        }
+                    },
+                    "medium": {
+                        "ai_session_terminate": true,
+                        "activities": {
+                            "allow": [
+                                {"tag": "chmod"},
+                                {"tag": "chown"}
+                            ],
+                            "deny": [
+                                {"tag": "bash"},
+                                {"tag": "dash"}
+                            ]
+                        }
+                    },
+                    "low": {
+                        "ai_session_terminate": false,
+                        "activities": {
+                            "allow": [
+                                {"tag": "\\bwget\\b"},
+                                {"tag": "\\bchmod\\b"}
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+</details>
 <details>
 <summary>pam_data.resources.pamMachine (RDP)</summary>
 
@@ -211,6 +330,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
     "notes": "RDP Machine1",
     "host": "127.0.0.1",
     "port": "3389",
+    "_comment_port": "administrative port",
     "ssl_verification" : true,
     "operating_system": "Windows",
     "instance_name": "InstanceName",
@@ -227,19 +347,26 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
             "tunneling": "on",
             "remote_browser_isolation": "on",
             "graphical_session_recording": "on",
+            "ai_threat_detection": "off",
+            "ai_terminate_session_on_detection": "off",
+            "jit_settings": {},
+            "ai_settings": {}
         },
         "allow_supply_host": false,
         "port_forward": {
             "_comment": "Tunneling settings",
+            "_comment_port": "remote tunneling port",
             "port": "2222",
             "reuse_port": true
         },
         "connection" : {
             "_comment": "Connections settings per protocol - RDP",
             "protocol": "rdp",
+            "_comment_port": "connection port",
             "port": "2222",
             "allow_supply_user": true,
             "administrative_credentials": "admin1",
+            "launch_credentials": "user1",
             "recording_include_keys": true,
             "disable_copy": true,
             "disable_paste": true,
@@ -292,7 +419,9 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"tunneling": "on",
 			"remote_browser_isolation": "on",
 			"graphical_session_recording": "on",
-			"text_session_recording": "on"
+			"text_session_recording": "on",
+			"ai_threat_detection": "off",
+			"ai_terminate_session_on_detection": "off"
 		},
 		"allow_supply_host": false,
 		"port_forward": {
@@ -306,6 +435,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -361,6 +491,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -419,6 +550,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -473,6 +605,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
@@ -517,7 +650,9 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"tunneling": "on",
 						"remote_browser_isolation": "on",
 						"graphical_session_recording": "on",
-						"text_session_recording": "on"
+						"text_session_recording": "on",
+						"ai_threat_detection": "off",
+						"ai_terminate_session_on_detection": "off"
 					},
 					"allow_supply_host": false,
 					"port_forward": {
@@ -530,6 +665,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
+						"launch_credentials": "user1",
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
@@ -598,6 +734,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
+						"launch_credentials": "user1",
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
@@ -610,7 +747,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 							"sftp_root_directory": "/tmp"
 						}
 					}
-				}
+				},
 				"users": []
 			},
 			{

@@ -62,11 +62,28 @@ class PedmUtils:
         found_policies: Dict[str, admin_types.PedmPolicy] = {}
         p: Optional[admin_types.PedmPolicy]
         if isinstance(policy_names, list):
+            resolve_by_name = []
             for policy_name in policy_names:
                 p = pedm.policies.get_entity(policy_name)
-                if p is None:
-                    raise base.CommandError(f'Policy name "{policy_name}" is not found')
-                found_policies[p.policy_uid] = p
+                if p is not None:
+                    found_policies[p.policy_uid] = p
+                else:
+                    resolve_by_name.append(policy_name)
+
+            if resolve_by_name:
+                all_policies = list(pedm.policies.get_all_entities())
+                for policy_name in resolve_by_name:
+                    l_name = policy_name.lower()
+                    matches = [x for x in all_policies
+                               if isinstance(x.data, dict) and
+                               isinstance(x.data.get('PolicyName'), str) and
+                               x.data['PolicyName'].lower() == l_name]
+                    if len(matches) == 0:
+                        raise base.CommandError(f'Policy "{policy_name}" is not found')
+                    if len(matches) > 1:
+                        raise base.CommandError(f'Policy "{policy_name}" is not unique. Please use Policy UID')
+                    found_policies[matches[0].policy_uid] = matches[0]
+
         if len(found_policies) == 0:
             raise base.CommandError('No policies were found')
         return list(found_policies.values())
@@ -79,7 +96,17 @@ class PedmUtils:
 
         if isinstance(policy, admin_types.PedmPolicy):
             return policy
-        raise base.CommandError(f'Policy UID \"{policy_uid}\" does not exist')
+
+        l_name = policy_uid.lower()
+        matches = [x for x in pedm.policies.get_all_entities()
+                   if isinstance(x.data, dict) and
+                   isinstance(x.data.get('PolicyName'), str) and
+                   x.data['PolicyName'].lower() == l_name]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise base.CommandError(f'Policy \"{policy_uid}\" is not unique. Please use Policy UID')
+        raise base.CommandError(f'Policy \"{policy_uid}\" does not exist')
 
     @staticmethod
     def resolve_single_approval(pedm: admin_plugin.PedmPlugin, approval_uid: Any) -> admin_types.PedmApproval:
@@ -180,6 +207,7 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
+        self.register_command_new(PedmOfflineCommand(), 'offline')
         self.register_command_new(PedmScimCommand(), 'scim')
         self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
         #self.register_command_new(PedmBICommand(), 'bi')
@@ -204,8 +232,8 @@ class PedmScimCommand(base.ArgparseCommand):
         ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
-        ad_parser.add_argument('--netbios-domain', dest='use_netbios_domain', action='store_true',
-                              help='Use NetBIOS domain names (e.g., TEST) instead of DNS names (e.g., test.local)')
+        ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
+                              help='Use NetBIOS domain names (e.g., TEST) or DNS names (e.g., test.local)')
 
         for subparser in subparsers.choices.values():
             subparser.exit = base.suppress_exit
@@ -310,18 +338,14 @@ class PedmScimCommand(base.ArgparseCommand):
                             if groups:
                                 kwargs['groups'] = groups
 
-                    custom_field = config_record.get_typed_field(field_type=None, label='NetBIOS Domain')
+                    custom_field = config_record.get_typed_field(field_type=None, label='AD Domain')
                     if custom_field:
-                        netbios_domain = custom_field.get_default_value(bool)
-                        if netbios_domain is None:
-                            custom_value = custom_field.get_default_value(str)
-                            if custom_value:
-                                try:
-                                    netbios_domain = bool(custom_value)
-                                except:
-                                    pass
+                        netbios_domain = custom_field.get_default_value(str)
+                        if netbios_domain:
+                            if netbios_domain not in ('netbios', 'dns'):
+                                netbios_domain = None
                         if netbios_domain is True:
-                            kwargs['use_netbios_domain'] = netbios_domain
+                            kwargs['ad_domain'] = netbios_domain
 
                 else:
                     raise base.CommandError(f'Record "{config_record.title}" does not contain either "Azure Tenant ID" or "AD URL" value')
@@ -331,10 +355,11 @@ class PedmScimCommand(base.ArgparseCommand):
             ad_user = kwargs.get('ad_user')
             ad_password = kwargs.get('ad_password')
             scim_groups = kwargs.get('groups')
-            use_netbios_domain = kwargs.get('use_netbios_domain', False)
+            ad_domain = kwargs.get('ad_domain') or 'netbios'
             if scim_groups and not isinstance(scim_groups, list):
                 scim_groups = None
 
+            use_netbios_domain = ad_domain != 'dns'
             if not ad_url or not ad_user:
                 raise base.CommandError('AD source requires AD URL and AD User')
             try:
@@ -656,6 +681,8 @@ class PedmDeploymentUpdateCommand(base.ArgparseCommand):
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
 
+        utils.get_logger().info('Successfully updated deployment: %s', deployment.name or deployment.deployment_uid)
+
 
 class PedmDeploymentDeleteCommand(base.ArgparseCommand):
     def __init__(self):
@@ -720,9 +747,12 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
         token = f'{host}:{deployment.deployment_uid}:{utils.base64_url_encode(deployment.private_key)}'
         filename = kwargs.get('file')
         if filename:
+            if os.path.isdir(filename):
+                raise base.CommandError(f'"{filename}" is a directory. Please provide a full file path, e.g. "{os.path.join(filename, "deployment-token.txt")}"')
             with open(filename, 'wt') as f:
                 f.write(token)
-                return None
+            utils.get_logger().info('Deployment token saved to: %s', os.path.abspath(filename))
+            return None
 
         if not kwargs.get('verbose'):
             return token
@@ -857,11 +887,24 @@ class PedmAgentDeleteCommand(base.ArgparseCommand):
         if len(agent_uid_list) == 0:
             return
 
-        statuses = plugin.modify_agents( remove_agents=agent_uid_list)
+        force = kwargs.get('force') is True
+        if not force:
+            answer = prompt_utils.user_choice(f'Do you want to delete {len(agent_uid_list)} agent(s)?', 'yN')
+            if answer.lower() not in {'y', 'yes'}:
+                return
+
+        statuses = plugin.modify_agents(remove_agents=agent_uid_list)
+        deleted_count = 0
         if isinstance(statuses.remove, list):
             for status in statuses.remove:
-                if isinstance(status, admin_types.EntityStatus) and not status.success:
-                    utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
+                if isinstance(status, admin_types.EntityStatus):
+                    if status.success:
+                        deleted_count += 1
+                        utils.get_logger().info('Agent "%s" deleted successfully.', status.entity_uid)
+                    else:
+                        utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
+        if deleted_count > 0:
+            utils.get_logger().info('%d agent(s) deleted successfully.', deleted_count)
 
 
 class PedmAgentEditCommand(base.ArgparseCommand):
@@ -880,9 +923,8 @@ class PedmAgentEditCommand(base.ArgparseCommand):
 
         deployment_uid = kwargs.get('deployment')
         if deployment_uid:
-            deployment = plugin.deployments.get_entity(deployment_uid)
-            if not deployment:
-                raise base.CommandError(f'Deployment "{deployment_uid}" does not exist')
+            deployment = PedmUtils.resolve_single_deployment(plugin, deployment_uid)
+            deployment_uid = deployment.deployment_uid
         else:
             deployment_uid = None
 
@@ -914,8 +956,11 @@ class PedmAgentEditCommand(base.ArgparseCommand):
             statuses = plugin.modify_agents(update_agents=update_agents)
             if isinstance(statuses.update, list):
                 for status in statuses.update:
-                    if isinstance(status, admin_types.EntityStatus) and not status.success:
-                        utils.get_logger().warning(f'Failed to update agent "{status.entity_uid}": {status.message}')
+                    if isinstance(status, admin_types.EntityStatus):
+                        if status.success:
+                            utils.get_logger().info(f'Agent "{status.entity_uid}" updated successfully.')
+                        else:
+                            utils.get_logger().warning(f'Failed to update agent "{status.entity_uid}": {status.message}')
 
 
 class PedmAgentListCommand(base.ArgparseCommand):
@@ -1211,12 +1256,6 @@ class PedmPolicyMixin:
     def get_policy_filter(plugin: admin_plugin.PedmPlugin, **kwargs) -> Dict[str, Any]:
         policy_filter: Dict[str, Any] = {}
         for f in PedmPolicyMixin.ALL_FILTERS:
-            arg_name = f'{f.lower()}_filter'
-            p_filter: Any = kwargs.get(arg_name)
-            if not p_filter: continue
-            if isinstance(p_filter, str):
-                p_filter = [p_filter]
-
             if f == 'USER':
                 filter_name = 'UserCheck'
             elif f == 'MACHINE':
@@ -1231,21 +1270,31 @@ class PedmPolicyMixin:
                 filter_name = 'DayCheck'
             else:
                 continue
-            if '*' in p_filter:
-                policy_filter[filter_name] = ['*']
+
+            arg_name = f'{f.lower()}_filter'
+            p_filter: Any = kwargs.get(arg_name)
+            if p_filter:
+                if isinstance(p_filter, str):
+                    p_filter = [p_filter]
+                if '*' in p_filter:
+                    policy_filter[filter_name] = ['*']
+                else:
+                    if f == 'USER':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
+                    elif f == 'MACHINE':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
+                    elif f == 'APP':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
+                    elif f == 'DATE':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
+                    elif f == 'TIME':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
+                    elif f == 'DAY':
+                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
             else:
-                if f == 'USER':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
-                elif f == 'MACHINE':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
-                elif f == 'APP':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
-                elif f == 'DATE':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
-                elif f == 'TIME':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
-                elif f == 'DAY':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
+                if filter_name not in policy_filter:
+                    policy_filter[filter_name] = []
+
         risk_level = kwargs.get('risk_level')
         if isinstance(risk_level, int):
             if risk_level < 0 or risk_level > 100:
@@ -1270,6 +1319,10 @@ class PedmPolicyListCommand(base.ArgparseCommand):
             actions = data.get('Actions') or {}
             on_success = actions.get('OnSuccess') or {}
             controls = on_success.get('Controls') or ''
+            if isinstance(controls, list):
+                controls = ', '.join(str(c) for c in controls)
+            elif isinstance(controls, str):
+                controls = controls.replace('\n', ', ')
 
             collections = [x.collection_uid for x in plugin.storage.collection_links.get_links_for_object(policy.policy_uid)]
             collections = ['*' if x == all_agents else x for x in collections]
@@ -1478,13 +1531,45 @@ class PedmPolicyViewCommand(base.ArgparseCommand):
 
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
-        body = json.dumps(policy.data, indent=4)
+        fmt = kwargs.get('format', 'table')
         filename = kwargs.get('output')
-        if kwargs.get('format') == 'json' and filename:
-            with open(filename, 'w') as f:
-                f.write(body)
-        else:
-            return body
+
+        if fmt == 'json':
+            body = json.dumps(policy.data, indent=4)
+            if filename:
+                with open(filename, 'w') as f:
+                    f.write(body)
+                return
+            else:
+                return body
+
+        data = policy.data or {}
+        all_agents = utils.base64_url_encode(plugin.all_agents)
+        headers = ['policy_uid', 'policy_name', 'policy_type', 'status', 'controls',
+                   'users', 'machines', 'applications', 'collections']
+
+        actions = data.get('Actions') or {}
+        on_success = actions.get('OnSuccess') or {}
+        controls = on_success.get('Controls') or ''
+        if isinstance(controls, list):
+            controls = ', '.join(str(c) for c in controls)
+        elif isinstance(controls, str):
+            controls = controls.replace('\n', ', ')
+
+        collections = [x.collection_uid for x in plugin.storage.collection_links.get_links_for_object(policy.policy_uid)]
+        collections = ['*' if x == all_agents else x for x in collections]
+        collections.sort()
+
+        status = data.get('Status')
+        if policy.disabled:
+            status = 'off'
+
+        table = [[policy.policy_uid, data.get('PolicyName'), data.get('PolicyType'), status,
+                  controls, data.get('UserCheck'), data.get('MachineCheck'),
+                  data.get('ApplicationCheck'), collections]]
+
+        headers = [report_utils.field_to_title(x) for x in headers]
+        return report_utils.dump_report_data(table, headers, fmt=fmt, filename=filename)
 
 
 class PedmPolicyDeleteCommand(base.ArgparseCommand):
@@ -1504,6 +1589,9 @@ class PedmPolicyDeleteCommand(base.ArgparseCommand):
             status = rs.remove[0]
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to delete policy "{status.entity_uid}": {status.message}')
+
+        policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
+        logging.info('Successfully deleted policy: %s', policy_names)
 
 
 class PedmPolicyAgentsCommand(base.ArgparseCommand):
@@ -1527,7 +1615,8 @@ class PedmPolicyAgentsCommand(base.ArgparseCommand):
         rq.policyUid.extend(policy_uids)
         rq.summaryOnly = False
         rs = api.execute_router(context, "pedm/get_policy_agents", rq, rs_type=pedm_pb2.PolicyAgentResponse)
-        assert rs is not None
+        if rs is None:
+            rs = pedm_pb2.PolicyAgentResponse()
 
         table = []
         headers = ['key', 'uid', 'name', 'status']
@@ -1582,6 +1671,9 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
         if len(policy_uids) == 0:
             raise base.CommandError('Nothing to do')
 
+        if len(collection_uids) == 0:
+            raise base.CommandError('No collections specified. Use -c/--collection <uid> to specify collections to assign. Use "*" or "all" to assign all agents.')
+
         statuses = plugin.assign_policy_collections(policy_uids, collection_uids)
         for status in statuses.add:
             if not status.success:
@@ -1590,10 +1682,17 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
             if not status.success:
                 raise base.CommandError(f'Failed to remove from policy: {status.message}')
 
+        policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
+        collection_labels = ', '.join(
+            '*' if c == plugin.all_agents else utils.base64_url_encode(c)
+            for c in collection_uids
+        )
+        logging.info('Successfully assigned collection(s) [%s] to policy: %s', collection_labels, policy_names)
+
 
 class PedmCollectionCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Manage PEDM collections')
+        super().__init__('Manage EPM collections')
         self.register_command_new(PedmCollectionListCommand(), 'list', 'l')
         self.register_command_new(PedmCollectionViewCommand(), 'view', 'v')
         self.register_command_new(PedmCollectionAddCommand(), 'add', 'a')
@@ -2082,10 +2181,19 @@ class PedmApprovalViewCommand(base.ArgparseCommand):
             approval.expire_in
         )
 
-        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
-               approval.application_info, approval.justification, approval.expire_in, approval.created]
-
         fmt = kwargs.get('format')
+        justification = approval.justification
+        if fmt != 'json' and isinstance(justification, str):
+            try:
+                parsed = json.loads(justification)
+                if isinstance(parsed, dict):
+                    justification = parsed.get('text', justification)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
+               approval.application_info, justification, approval.expire_in, approval.created]
+
         if fmt == 'json':
             table = [row]
         else:
@@ -2098,7 +2206,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='list', description='List EPM approval requests',
                                          parents=[base.report_output_parser])
-        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired'],
+        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired', 'escalated'],
                             help='approval type filter')
 
         super().__init__(parser)
@@ -2111,6 +2219,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             approval_type = approval_type.lower()
         else:
             approval_type = None
+        fmt = kwargs.get('format')
         table: List[List[Any]] = []
         headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
         for approval in plugin.approvals.get_all_entities():
@@ -2126,12 +2235,19 @@ class PedmApprovalListCommand(base.ArgparseCommand):
 
             account_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.account_info.items())]
             application_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.application_info.items())]
+            justification = approval.justification
+            if fmt != 'json' and isinstance(justification, str):
+                try:
+                    parsed = json.loads(justification)
+                    if isinstance(parsed, dict):
+                        justification = parsed.get('text', justification)
+                except (json.JSONDecodeError, ValueError):
+                    pass
             table.append([approval.approval_uid, pedm_shared.approval_type_to_name(approval.approval_type),
-                          status, approval.agent_uid, account_info, application_info, approval.justification,
+                          status, approval.agent_uid, account_info, application_info, justification,
                           approval.expire_in, approval.created])
 
         table.sort(key=lambda x: x[8], reverse=True)
-        fmt = kwargs.get('format')
         if fmt != 'json':
             headers = [report_utils.field_to_title(x) for x in headers]
         return report_utils.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
@@ -2145,7 +2261,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         parser.add_argument('--deny', dest='deny', action='append',
                             help='Request UIDs for denial')
         parser.add_argument('--remove', dest='remove', action='append',
-                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @pending')
+                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @escalated, @pending')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -2185,10 +2301,13 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                         (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified >= expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
                 elif uid == '@expired':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified < expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS))
+                elif uid == '@escalated':
+                    to_remove_set.update(
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_ESCALATED))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
@@ -2214,3 +2333,140 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                     if not status.success:
                         if isinstance(status, admin_types.EntityStatus):
                             logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')
+
+
+class PedmOfflineCommand(base.GroupCommandNew):
+    def __init__(self):
+        super().__init__('Offline agent communication')
+        self.register_command_new(PedmOfflineRegisterCommand(), 'register')
+        #self.register_command_new(PedmDeploymentAddCommand(), 'sync', 'a')
+
+
+class PedmOfflineRegisterCommand(base.ArgparseCommand, PedmUtils):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='register', description='Register offline agent')
+        parser.add_argument('--deployment', dest='deployment', action='store', required=True,
+                            help='Agent\'s deployment')
+        parser.add_argument('--output', dest='output', action='store',
+                            help='Registration response filename')
+        parser.add_argument('file', help='Registration request filename')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        deployment = self.resolve_single_deployment(plugin, kwargs.get('deployment'))
+
+        filename = kwargs.get('file')
+        if not filename:
+            raise base.CommandError('Offline registration file is not found')
+        if not os.path.isfile(filename):
+            raise base.CommandError('Offline registration file is not found')
+
+        with open(filename, 'rt', encoding='utf-8') as f:
+            offline_request = json.load(f)
+
+        v = offline_request.get('AgentUID')
+        if not v:
+            raise base.CommandError('"AgentUID" parameter is missing')
+        agent_uid = utils.base64_url_decode(v)
+        v = offline_request.get('PublicKey')
+        if not v:
+            raise base.CommandError('"PublicKey" parameter is missing')
+        public_key = utils.base64_url_decode(v)
+        agent_public_key = crypto.load_ec_public_key(public_key)
+        machine_id = offline_request.get('MachineID')
+
+        type1_collection: Optional[pedm_pb2.CollectionValue] = None
+        type202_collection: Optional[pedm_pb2.CollectionValue] = None
+        agent_description: Optional[bytes] = None
+
+        os_collection = offline_request.get('OsCollection')
+        if isinstance(os_collection, dict):
+            try:
+                collection_fields = pedm_shared.get_collection_required_fields(pedm_shared.CollectionType.OsBuild)
+                if collection_fields:
+                    os_release = {}
+                    key_parts: List[str] = []
+                    key_fields = collection_fields.primary_key_fields or collection_fields.all_fields
+                    for k in key_fields:
+                        s = os_collection.get(k)
+                        if not isinstance(s, str) or len(s) == 0:
+                            raise base.CommandError(f'Missing required field "{k}" for agent description')
+                        os_release[k] = s
+                        key_parts.append(s)
+                    key = ''.join(key_parts)
+                    collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, pedm_shared.CollectionType.OsBuild, key)
+                    collection_data = crypto.encrypt_aes_v2(json.dumps(os_release).encode('utf-8'), plugin.agent_key)
+                    type1_collection = pedm_pb2.CollectionValue(
+                        collectionUid=utils.base64_url_decode(collection_uid),
+                        collectionType=pedm_shared.CollectionType.OsBuild,
+                        encryptedData=collection_data
+                    )
+
+                    collection_fields = pedm_shared.get_collection_required_fields(pedm_shared.CollectionType.OsVersion)
+                    if collection_fields:
+                        os_version = {}
+                        key_parts.clear()
+                        key_fields = collection_fields.primary_key_fields or collection_fields.all_fields
+                        for k in key_fields:
+                            s = os_release.get(k)
+                            if not isinstance(s, str) or len(s) == 0:
+                                raise base.CommandError(f'Missing required field "{k}" for agent description')
+                            os_version[k] = s
+                            key_parts.append(s)
+                        key = ''.join(key_parts)
+                        collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, pedm_shared.CollectionType.OsVersion, key)
+                        collection_data = crypto.encrypt_aes_v2(json.dumps(os_version).encode('utf-8'), plugin.agent_key)
+                        type202_collection = pedm_pb2.CollectionValue(
+                            collectionUid=utils.base64_url_decode(collection_uid),
+                            collectionType=pedm_shared.CollectionType.OsVersion,
+                            encryptedData=collection_data
+                        )
+
+                agent_description = json.dumps(os_collection).encode('utf-8')
+                agent_description = crypto.encrypt_aes_v2(agent_description, plugin.agent_key)
+            except Exception as e:
+                logging.warning('Update agent collection error: %s', e)
+
+        rq = pedm_pb2.OfflineAgentRegisterRequest()
+        rq.agentUid = agent_uid
+        rq.publicKey = public_key
+        rq.deploymentUid = utils.base64_url_decode(deployment.deployment_uid)
+        if machine_id:
+            rq.machineId = machine_id
+        if type1_collection:
+            rq.collection.append(type1_collection)
+        if type202_collection:
+            rq.collection.append(type202_collection)
+        rq.agentData = agent_description
+
+        rs = api.execute_router(context, 'pedm/register_offline_agent', rq, rs_type=pedm_pb2.OfflineAgentRegisterResponse)   # type: pedm_pb2.OfflineAgentRegisterResponse
+        agent_uid = rs.agentUid
+
+        enterprise_data = context.enterprise
+        enterprise_keys = enterprise_data['keys']
+        ec_public = enterprise_keys['ecc_public_key']
+        ec_public_key = utils.base64_url_decode(ec_public)
+        agent_info = pedm_shared.DeploymentAgentInformation(hash_key=plugin.agent_key, peer_public_key=ec_public_key)
+
+        agent_data =  json.dumps(agent_info.to_dict()).encode('utf-8')
+        agent_data = crypto.encrypt_ec(agent_data, agent_public_key)
+
+        host = next((host for host, server in constants.KEEPER_PUBLIC_HOSTS.items() if server == context.server), context.server)
+
+        registration_info = {
+            'AgentUID': utils.base64_url_encode(agent_uid),
+            'DeploymentUID': deployment.deployment_uid,
+            'Host': host,
+            'AgentData': utils.base64_url_encode(agent_data)
+        }
+
+        response = json.dumps(registration_info, indent=2)
+        output = kwargs.get("output")
+        if output:
+            with open(output, 'wt', encoding='utf-8') as f:
+                f.write(response)
+            return None
+        else:
+            return response

@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import re
 import requests
 import os
 import json
@@ -107,7 +108,10 @@ SERVER_PUBLIC_KEYS = {
         'BDXyZZnrl0tc2jdC5I61JjwkjK2kr7uet9tZjt8StTiJTAQQmnVOYBgbtP08PWDbecxnHghx3kJ8QXq1XE68y8c')),
 
     17: crypto.load_ec_public_key(utils.base64_url_decode(
-        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),   
+        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),
+
+    18: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BNhngQqTT1bPKxGuB6FhbPTAeNVFl8PKGGSGo5W06xWIReutm6ix6JPivqnbvkydY-1uDQTr-5e6t70G01Bb5JA')),
     
     107: utils.base64_url_decode('rsSl4OfJIffO0Fxp6oBgGqJtniM8eyhi5lwlOiVZnwGrn_qnTch5fXbJwpAbnvoIa6VS00MeNShBvDo6bNIR2RRuq4lkgHUXNfap79l8JDi6xllfVLKRn5psVrGqXkybxjJH9UNQWJKr5TurXRnG9Wll0xXCC6ppHNszZ3e7D_xt5kFO2NS5PVl83uNp-Qp7iRAzcEtizvB55pkrAbyGkAALlCqsOSMPWXI544ult8EVCgU1CRk8vMsNSmNG8mO3FcCg0rmA7ljNdSQPQjQ231NJqDeRdlUAZclK8gks3WKF0CIsbVmbTZICFesd42Cw9CbHusZUjKoyVIDPVowFmHg72kcmPovBwMuesGg3coAj_NoFAlSyiXsvgPNMDciND-Z7OiRpK-eG6RGyUvhcdlw6k5FzjfNab5Zix9hHkoZhkyG-h9exzTxxgdeu6AMLEKl2QHtXpqle4zelOSiOtkgC8BRyPfjD5PBwrJsduwoXf0KljDXP0ceAmPbMaSMabeMj3CJY8OuHZOIxzQF2J8xEnAC9wuOD2ElNcVyOQ6lyFCueXfofHce_gMAIZpABZVZDxsB2jLBW1VF1yksRb1MAjPYBHFV7YJhHyiMI34VRbPo1o3lq9vk-4rwPwYUWDWQePDUkiYuxQTs36WwXVAtY-XOF9HMnkRjK25sqV_uwzbAIHAyf8SomVHUX7AtjyMYu52d33kkHhiA7ofqXjwBK69odR8Ckzam-egKkuUWlkPJeDXyR_AhpYhAqbzqgQHw7QhpEayBIS9xRcCixONLGkKtn8xIs-6HKhPCjTEDEN_IjVxM-HEY_rHpY_wSWibtNPEPAgAEtZSQIWyjJyPMRYTEgJZEBUUk1hiuNi_FFiNM71wkJldxngipdWYd9KFt5shExO4CAzxtd3MOTrHQEBuXNz6GL50diBJuioRR5QhgCddNejAcet8Ul0duAXuCyI2QDZnCQf0RO97Z9alwYllbA67EZMScBq6s81lAqqXWPJNNWQbQEVzidmdW28ZIbaOaPLOUuIqYJv_J60XuLLcYP4hrMBANqtwAb_HNlXGaW06vJT7wasEMzhDKVNSpFs4VYSMk1tIR6wjspGYJRGGE7hpiaDCPKOQRe24Y2HPJEBmNGWmMjREKpZYKg2nsV9nWvDVShKol1JpZM2kI9AEQPIIo9ZiHBleh_OnynWcCVAdl9ZsOkpOtMFPZap8gooqqMt2FO-gofSpGkFkNs41a5gxGeqRETiBsoa-ZNyqq2wJm77qJqSvC54oGOjFE_mfJBH0I4Fahy6Kkm-zKrJEAuehaVTXVHamgJeSkfLemt3WVlgPwZjNJMh5FsM8W8rclE78yI2WYpY9i0RhOJkNViBGcn5EovgERJPEsLO7SBviJwetmUQyUVbOAyX4ag_cBJ2fmUkwVQuhV6PdsnTqFfV2dM2ptbQgcopypvHyggh1vFooMYDIUCZ7qfBZYx7ZclV0woecJGjiK9mKgTlumnHtkx1zCETtNubQaDANkpAlZkKuS42WczUDEzpye8OpeYgaF6NIolqNFs_plgZVhg9_ZBEIZcnNGd1sgbg3it_Rk7EZXJDHB_6cWoS8VW1Wcq72FBpFDOWDiiCapw0QknC9pfB_gV7zm6nJpzFRcInIqGuNNJdMcCbmPAV0cKBxGR7PfKS4KCLoTCGctS3fKpE-Q-ZJBNwWRwB-cogesufQdr1oKJ3xXJtzGcoMK2n9OSAAStt3A_V-YvkVVzb0Z32HMG79NgAAeCG9xXkidVLIpzLuhg4AQRVzpXf8gry6qBZUppbPCriSSBr-vDlJIHh6gu7-y1cLi2zHinriOoElMK3fWI1JO7HUItxLCHrkzJt4R2N9nOD8gDqIK16-OG9SssQNlex5e0MVkbAA0BR1mn7MSTBvevw2VcsTJoIxXEIjS87fRvuadwrKqw3nKFOPSCZzgC7XFtzxIpazSCGWi_5RSDWnSXGLJvNcKhcvgfpgk4jSoEdDIJ30FUDFzHkusUnfVAbTnCIWCYDKWyk7G8bsRcVZwNxwKJ7G2Mz4a3yrkYuxaFmGJX5EdCEM4EWceF5rVW3ZQuvzo'),
 
@@ -121,14 +125,17 @@ def encrypt_with_keeper_key(context, data: bytes) -> bytes:
     key_id = context.server_key_id
     if 1 <= key_id <= 6:
         return crypto.encrypt_rsa(data, SERVER_PUBLIC_KEYS[key_id])
-    elif 7 <= key_id <= 17:
+    elif 7 <= key_id <= 18:
         return crypto.encrypt_ec(data, SERVER_PUBLIC_KEYS[key_id])
     else:
         raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
 
 
-def execute_rest(context, endpoint, payload):
-    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Optional[Union[bytes, dict]]
+DEFAULT_TIMEOUT = (15, 120)
+
+
+def execute_rest(context, endpoint, payload, timeout=None):
+    # type: (RestApiContext, str, proto.ApiRequestPayload, ...) -> Optional[Union[bytes, dict]]
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
@@ -136,6 +143,8 @@ def execute_rest(context, endpoint, payload):
         context.server_key_id = 7
 
     run_request = True
+    throttle_retries = 0
+    max_throttle_retries = 3
     while run_request:
         run_request = False
 
@@ -190,7 +199,8 @@ def execute_rest(context, endpoint, payload):
 
         try:
             rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
-                               proxies=context.proxies, verify=context.certificate_check)
+                               proxies=context.proxies, verify=context.certificate_check,
+                               timeout=timeout or DEFAULT_TIMEOUT)
         except requests.exceptions.SSLError as e:
             doc_url = 'https://docs.keeper.io/secrets-manager/commander-cli/using-commander/troubleshooting-commander-cli#ssl-certificate-errors'
             if len(e.args) > 0:
@@ -223,24 +233,64 @@ def execute_rest(context, endpoint, payload):
                         server_key_id = failure['key_id']
                         if 'qrc_ec_key_id' in failure:
                             qrc_ec_key_id = failure['qrc_ec_key_id']
-                            if context.server_key_id != qrc_ec_key_id:
+                            # Defensive check: qrc_ec_key_id must be EC key (7-18)
+                            if not (7 <= qrc_ec_key_id <= 18):
+                                logging.warning(f"Server returned invalid qrc_ec_key_id={qrc_ec_key_id} (expected EC key 7-18). Falling back to EC-only encryption.")
+                                context.disable_qrc()
+                            elif context.server_key_id != qrc_ec_key_id:
                                 # EC key mismatch: update and retry with QRC
                                 logging.debug(f"QRC EC key mismatch: updating from {context.server_key_id} to {qrc_ec_key_id}")
                                 context.server_key_id = qrc_ec_key_id
-                                run_request = True
-                                continue
+                            run_request = True
+                            continue
                         elif server_key_id != context.server_key_id:
-                            context.server_key_id = server_key_id
+                            # If server returns non-EC key without qrc_ec_key_id, disable QRC
+                            if not (7 <= server_key_id <= 18):
+                                logging.warning(f"Server returned non-EC key_id={server_key_id} without qrc_ec_key_id. Falling back to EC-only encryption.")
+                                context.disable_qrc()
+                            else:
+                                context.server_key_id = server_key_id
                             run_request = True
                             continue
                 elif rs.status_code == 403:
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
-                        logging.info('Throttled. sleeping for 10 seconds')
-                        time.sleep(10)
+                        throttle_retries += 1
+                        if throttle_retries > max_throttle_retries:
+                            raise KeeperApiError(failure.get('error'), failure.get('message'))
+                        # Parse server's suggested wait time, default to 60s
+                        wait_seconds = 60
+                        message = failure.get('message', '')
+                        wait_match = re.search(r'(\d+)\s*(second|minute)', message, re.IGNORECASE)
+                        if wait_match:
+                            wait_val = int(wait_match.group(1))
+                            if 'minute' in wait_match.group(2).lower():
+                                wait_seconds = wait_val * 60
+                            else:
+                                wait_seconds = wait_val
+                        # Cap server suggestion at 5 minutes, then take the larger of suggestion vs backoff
+                        wait_seconds = min(wait_seconds, 300)
+                        backoff = max(wait_seconds, 30 * (2 ** (throttle_retries - 1)))
+                        logging.warning('Throttled (attempt %d/%d), retrying in %d seconds',
+                                        throttle_retries, max_throttle_retries, backoff)
+                        time.sleep(backoff)
                         run_request = True
                         continue
                 elif rs.status_code in (400, 500) and context.qrc_key_id is not None:
-                    logging.warning(f"QRC request failed with {rs.status_code} error, falling back to EC encryption")
+                    # Only fall back to EC if the error is QRC-specific
+                    # Don't fall back for business logic errors (duplicate, access denied, etc.)
+                    error_type = failure.get('error', '')
+                    error_msg = failure.get('message', '').lower()
+                    
+                    # QRC-specific error indicators
+                    qrc_errors = ['qrc', 'quantum', 'ml-kem', 'encryption', 'decryption', 'key']
+                    is_qrc_error = any(keyword in error_msg for keyword in qrc_errors) or error_type == 'crypto_error'
+                    
+                    # Business logic errors that shouldn't trigger fallback
+                    business_errors = ['duplicate', 'already', 'permission', 'access', 'not found', 'invalid uid']
+                    is_business_error = any(keyword in error_msg for keyword in business_errors)
+                    
+                    if is_qrc_error and not is_business_error:
+                        logging.warning(f"QRC encryption error ({error_msg}), falling back to EC encryption")
                     context.disable_qrc()
                     run_request = True
                     continue

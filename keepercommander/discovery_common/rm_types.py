@@ -137,6 +137,30 @@ class RmAzureGroupAddMeta(RmMetaBase):
     group_types: List[str] = []
 
 
+class RmGcpUserAddMeta(RmMetaBase):
+    account_enabled: Optional[bool] = True
+    display_name: Optional[str] = None
+    password_reset_required: Optional[bool] = False
+    password_reset_required_with_mfa: Optional[bool] = False
+    groups: List[str] = []
+
+
+class RmGcpGroupAddMeta(RmMetaBase):
+    group_types: List[str] = []
+
+
+class RmOktaUserAddMeta(RmMetaBase):
+    account_enabled: Optional[bool] = True
+    display_name: Optional[str] = None
+    password_reset_required: Optional[bool] = False
+    password_reset_required_with_mfa: Optional[bool] = False
+    groups: List[str] = []
+
+
+class RmOktaGroupAddMeta(RmMetaBase):
+    group_types: List[str] = []
+
+
 class RmDomainUserAddMeta(RmMetaBase):
     roles: List[str] = []
     groups: List[str] = []
@@ -253,6 +277,10 @@ class RmMongoDbRoleAddMeta(RmMetaBase):
 # MACHINE
 
 
+class RmUserDeleteBaseMeta(RmMetaBase):
+    remove_home_dir: Optional[bool] = True
+
+
 class RmLinuxGroupAddMeta(RmMetaBase):
     gid: Optional[int] = None
     system_group: Optional[bool] = False
@@ -291,8 +319,7 @@ class RmLinuxUserAddMeta(RmMachineUserAddMeta):
     non_system_dir_mode: Optional[str] = None
 
 
-class RmLinuxUserDeleteMeta(RmMetaBase):
-    remove_home_dir: Optional[bool] = True
+class RmLinuxUserDeleteMeta(RmUserDeleteBaseMeta):
     remove_user_group: Optional[bool] = True
 
 
@@ -306,6 +333,10 @@ class RmWindowsUserAddMeta(RmMachineUserAddMeta):
     disabled: bool = False
     expire_days: int = 0
     groups: List[str] = []
+
+
+class RmWindowsUserDeleteMeta(RmUserDeleteBaseMeta):
+    pass
 
 
 class RmMacOsUserAddMeta(RmMachineUserAddMeta):
@@ -323,6 +354,10 @@ class RmMacOsRoleAddMeta(RmMetaBase):
     display_name: Optional[str] = None
     gid: Optional[str] = None
     record_name: Optional[str] = None
+
+
+class RmMacOsUserDeleteMeta(RmUserDeleteBaseMeta):
+    pass
 
 
 # DIRECTORY

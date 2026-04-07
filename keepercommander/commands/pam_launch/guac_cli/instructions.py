@@ -33,7 +33,32 @@ Input uses the same pattern:
 import base64
 import logging
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
+
+
+def is_stdout_pipe_stream_name(name: str) -> bool:
+    """True if Guacamole named pipe is the terminal STDOUT stream (case/whitespace tolerant)."""
+    if not name:
+        return False
+    return str(name).strip().casefold() == 'stdout'
+
+
+def is_stdin_pipe_stream_name(name: str) -> bool:
+    """True if this named pipe is the client→server STDIN stream (do not treat as terminal output)."""
+    if not name:
+        return False
+    return str(name).strip().casefold() == 'stdin'
+
+
+def _pipe_looks_like_terminal_stdout(mimetype: str, name: str) -> bool:
+    """
+    Heuristic when guacr/gateway uses a non-STDOUT pipe name for TTY bytes (e.g. PAM clipboard flags).
+    Require text/* and exclude STDIN. Only used when no stdout stream is tracked yet.
+    """
+    if is_stdin_pipe_stream_name(name):
+        return False
+    mt = (mimetype or '').strip().lower()
+    return mt == 'text/plain' or mt.startswith('text/')
 
 
 # Handler type: receives list of string arguments
@@ -498,10 +523,29 @@ def create_instruction_router(
             # Handle pipe - track STDOUT stream
             if opcode == 'pipe' and len(args) >= 3:
                 stream_index, mimetype, name = args[0], args[1], args[2]
-                if name == 'STDOUT':
+                _note = getattr(stdout_stream_tracker, 'note_guac_pipe_instruction', None)
+                if callable(_note):
+                    _note()
+                use_as_stdout = is_stdout_pipe_stream_name(name)
+                if (
+                    not use_as_stdout
+                    and stdout_stream_tracker.stdout_stream_index == -1
+                    and _pipe_looks_like_terminal_stdout(mimetype, name)
+                ):
+                    use_as_stdout = True
+                    logging.debug(
+                        'CLI: using pipe name=%r mimetype=%r as terminal STDOUT (fallback)',
+                        name,
+                        mimetype,
+                    )
+
+                if use_as_stdout:
                     stdout_stream_tracker.stdout_stream_index = int(stream_index)
                     send_ack_callback(stream_index, 'OK', '0')
-                    logging.debug(f"STDOUT pipe opened on stream {stream_index}")
+                    evt = getattr(stdout_stream_tracker, 'stdout_pipe_opened', None)
+                    if evt is not None and hasattr(evt, 'set'):
+                        evt.set()
+                    logging.debug('Terminal output pipe on stream %s (name=%r)', stream_index, name)
                     # Still call original handler for diagnostics
                     handler = handlers.get(opcode)
                     if handler:
@@ -528,6 +572,11 @@ def create_instruction_router(
                     except Exception as e:
                         logging.error(f"Error decoding STDOUT blob: {e}")
                     return
+                # Inbound Guacamole clipboard stream (server → client)
+                clip_blob = getattr(stdout_stream_tracker, 'handle_remote_clipboard_blob', None)
+                if clip_blob is not None:
+                    if cast(Callable[[str, str], bool], clip_blob)(args[0], args[1]):
+                        return
                 # Non-STDOUT blob falls through to default handler
 
             # Handle end - clear STDOUT tracking
@@ -544,6 +593,10 @@ def create_instruction_router(
                         except Exception as e:
                             logging.error(f"Error in end handler: {e}")
                     return
+                clip_end = getattr(stdout_stream_tracker, 'handle_remote_clipboard_end', None)
+                if clip_end is not None:
+                    if cast(Callable[[str], bool], clip_end)(args[0]):
+                        return
 
         # Default routing
         handler = handlers.get(opcode)

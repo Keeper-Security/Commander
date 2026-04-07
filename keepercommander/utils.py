@@ -304,6 +304,10 @@ def password_score(password):  # type: (str) -> int
         return score
 
     total = len(password)
+    if total > 50:
+        # this password score implementation hangs if password is too long
+        password = password[:50]
+        total = 50
     uppers = 0
     lowers = 0
     digits = 0

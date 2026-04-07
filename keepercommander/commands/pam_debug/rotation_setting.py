@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-rotation')
+    parser = argparse.ArgumentParser(prog='pam action debug rotation')
 
     # The record to base everything on.
     parser.add_argument('--user-record-uid', '-i', required=True, dest='user_record_uid', action='store',
@@ -74,7 +74,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
                 return
 
-            if re.search(r'^pam.*Configuration$', configuration_record.record_type) is None:
+            if re.search(r'^pam.+Configuration$', configuration_record.record_type) is None:
                 print(
                     f"{bcolors.FAIL}The configuration record is not a configuration record. "
                     f"It's {configuration_record.record_type} record.{bcolors.ENDC}")
@@ -118,7 +118,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
             rq.pwdComplexity = b''
             rq.disabled = False
 
-            if dry_run is False:
+            if not dry_run:
                 router_set_record_rotation_information(params, rq)
 
                 params.sync_data = True
@@ -215,7 +215,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                       f"creating.{bcolors.ENDC}")
                 record_link.belongs_to(configuration_record_uid, parent_uid)
 
-        if dry_run is False:
+        if not dry_run:
             record_link.save()
 
             print(f"{bcolors.OKGREEN}{user_acl.model_dump_json(indent=4)}{bcolors.ENDC}")

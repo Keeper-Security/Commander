@@ -143,34 +143,184 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
+action_report_target_statuses = ['all','no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
-                                  choices=action_report_target_statuses, default='no-logon',
-                                  help='user status to report on')
+                                  choices=action_report_target_statuses, default='all',
+                                  help='user status to report on')                                 
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
 action_report_columns = {'name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles',
-                         'alias', '2fa_enabled'}
+                         'alias', '2fa_enabled', 'lock_time'}
 columns_help = f'comma-separated list of columns to show on report. Supported columns: {action_report_columns}'
 columns_help = re.sub('\'', '', columns_help)
 action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
                                   help=columns_help)
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
-                                  choices=['lock', 'delete', 'transfer', 'none'], default='none',
+                                  choices=['lock', 'delete', 'transfer', 'move', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
 target_user_help = 'username/email of account to transfer users to when --apply-action=transfer is specified'
 action_report_parser.add_argument('--target-user', action='store', help=target_user_help)
+target_node_help = 'Node name/ID to move users to when --apply-action=move is specified'
+action_report_parser.add_argument('--target-node', action='store', help=target_node_help)
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
 force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
 action_report_parser.add_argument('--force', '-f', action='store_true', help=force_action_help)
 node_filter_help = 'filter users by node (node name or ID)'
 action_report_parser.add_argument('--node', dest='node', action='store', help=node_filter_help)
+recursive_help = 'Search in node and subnodes when --node is specified'
+action_report_parser.add_argument('--recursive', action='store_true', help=recursive_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
 API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
+
+
+def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None):
+    # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str]) -> List[Dict[str, Any]]
+    """
+    Fetch audit events with pagination support.
+
+    This function handles pagination for both raw and span/consolidated reports,
+    making it suitable for enterprises with large numbers of users/events.
+
+    Args:
+        params: KeeperParams object
+        audit_filter: dict with filter criteria (audit_event_type, created, username, etc.)
+        columns: list of columns for non-raw reports (default: ['username'])
+        aggregate: list of aggregates for non-raw reports (default: ['last_created'] for span)
+        report_type: 'raw', 'span', 'hour', 'day', 'week', 'month' (default: 'span')
+        limit: maximum number of events to return (None for all)
+        order: 'ascending' or 'descending' (default: None, uses API default)
+
+    Returns:
+        list of event dictionaries
+    """
+    rq = {
+        'command': 'get_audit_event_reports',
+        'report_type': report_type,
+        'scope': 'enterprise' if params.enterprise else 'user'
+    }
+
+    if columns:
+        rq['columns'] = columns
+    elif report_type != 'raw':
+        rq['columns'] = ['username']
+
+    if aggregate:
+        rq['aggregate'] = aggregate
+    elif report_type == 'span':
+        rq['aggregate'] = ['last_created']
+
+    api_row_limit = API_EVENT_SUMMARY_ROW_LIMIT if report_type != 'raw' else API_EVENT_RAW_ROW_LIMIT
+    rq_limit = api_row_limit if limit is None else min(limit, api_row_limit) if limit > 0 else api_row_limit
+    rq['limit'] = rq_limit
+
+    if order:
+        rq['order'] = order
+
+    if audit_filter:
+        rq['filter'] = copy.deepcopy(audit_filter)
+
+    events = []
+    reqs = [rq]
+    max_iterations = 1000
+    iteration_count = 0
+
+    while reqs and iteration_count < max_iterations:
+        iteration_count += 1
+        rss = api.execute_batch(params, reqs)
+        next_reqs = []
+        should_stop = False
+
+        for idx, rs in enumerate(rss):
+            batch_events = rs.get('audit_event_overview_report_rows', [])
+            if not batch_events or not isinstance(batch_events, list):
+                continue
+
+            events.extend(batch_events)
+
+            # Check if user limit reached
+            if limit is not None and limit > 0 and len(events) >= limit:
+                events = events[:limit]
+                should_stop = True
+                break
+
+            # Check if we need to paginate
+            batch_limit = api_row_limit if report_type != 'raw' else API_EVENT_RAW_ROW_LIMIT
+            if len(batch_events) >= batch_limit:
+                if idx >= len(reqs):
+                    continue
+
+                current_req = reqs[idx]
+
+                # Determine timestamp field based on report type
+                timestamp_field = None
+                if report_type == 'span':
+                    if batch_events and 'last_created' in batch_events[-1]:
+                        timestamp_field = 'last_created'
+                    elif batch_events and 'first_created' in batch_events[-1]:
+                        timestamp_field = 'first_created'
+                    elif batch_events and 'created' in batch_events[-1]:
+                        timestamp_field = 'created'
+                else:
+                    timestamp_field = 'created'
+
+                if timestamp_field and batch_events and timestamp_field in batch_events[-1]:
+                    try:
+                        asc = current_req.get('order') == 'ascending'
+                        first_key, last_key = ('min', 'max') if asc else ('max', 'min')
+                        req_filter = copy.deepcopy(current_req.get('filter', {}))
+                        req_period = req_filter.get('created', {})
+
+                        timestamp_value = batch_events[-1][timestamp_field]
+                        period = {first_key: int(timestamp_value) if isinstance(timestamp_value, (int, float, str)) else timestamp_value}
+
+                        if not isinstance(req_period, dict) or req_period.get(last_key) is None:
+                            # Get the boundary timestamp
+                            last_rq = {**current_req}
+                            reverse = 'descending' if asc else 'ascending'
+                            last_rq['order'] = reverse
+                            last_rq['limit'] = 1
+                            rs_last = api.communicate(params, last_rq)
+                            last_row_events = rs_last.get('audit_event_overview_report_rows')
+                            if last_row_events:
+                                last_row = last_row_events[0]
+                                last_timestamp = last_row.get(timestamp_field, last_row.get('created', 0))
+                                period[last_key] = int(last_timestamp) if isinstance(last_timestamp, (int, float, str)) else last_timestamp
+                        else:
+                            period[last_key] = req_period.get(last_key)
+
+                        req_filter['created'] = period
+                        next_req = {**current_req}
+                        next_req['filter'] = req_filter
+
+                        if limit is not None and limit > 0:
+                            missing = limit - len(events)
+                            if missing <= 0:
+                                should_stop = True
+                                break
+                            elif missing < batch_limit:
+                                next_req['limit'] = missing
+
+                        next_reqs.append(next_req)
+                    except (ValueError, TypeError, KeyError) as e:
+                        logging.warning(f"Error processing pagination timestamp: {e}")
+                        continue
+
+            if should_stop:
+                break
+
+        if should_stop:
+            break
+
+        reqs = next_reqs
+
+    if iteration_count >= max_iterations:
+        logging.warning(f"Pagination stopped after reaching maximum iterations ({max_iterations})")
+
+    return events
 
 
 def load_syslog_templates(params):
@@ -1643,102 +1793,32 @@ class AuditReportCommand(Command):
             if columns:
                 fields.extend(columns)
             
-            max_iterations = 1000  # Safety limit to prevent infinite loops
-            iteration_count = 0
-            
-            while reqs and iteration_count < max_iterations:
-                iteration_count += 1
-                next_reqs = []
-                should_stop = False
-                
-                for idx, rs in enumerate(rss):
-                    events = rs.get('audit_event_overview_report_rows', [])
-                    if not events or not isinstance(events, list):
-                        continue
-                    for event in events:
-                        row = []
-                        for f in fields:
-                            if f in event:
-                                row.append(
-                                    self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
-                                )
-                            elif f in audit_report.fields_to_uid_name:
-                                row.append(self.resolve_lookup(params, f, event))
-                            else:
-                                row.append('')
-                        table.append(row)
-                    
-                    if len(events) >= API_EVENT_SUMMARY_ROW_LIMIT:
-                        if idx >= len(reqs):
-                            logging.warning(f"Index mismatch in pagination: idx={idx}, len(reqs)={len(reqs)}")
-                            continue
-                        
-                        current_req = reqs[idx]
-                        
-                        timestamp_field = None
-                        if report_type == 'span':
-                            if events and 'last_created' in events[-1]:
-                                timestamp_field = 'last_created'
-                            elif events and 'first_created' in events[-1]:
-                                timestamp_field = 'first_created'
-                            elif events and 'created' in events[-1]:
-                                timestamp_field = 'created'
-                        else:
-                            timestamp_field = 'created'
-                        
-                        if timestamp_field and events and timestamp_field in events[-1]:
-                            try:
-                                asc = current_req.get('order') == 'ascending'
-                                first_key, last_key = ('min', 'max') if asc else ('max', 'min')
-                                req_filter = current_req.get('filter', {})
-                                req_period = req_filter.get('created', {})
-                                
-                                timestamp_value = events[-1][timestamp_field]
-                                period = {first_key: int(timestamp_value) if isinstance(timestamp_value, (int, float, str)) else timestamp_value}
-                                
-                                if not isinstance(req_period, dict) or req_period.get(last_key) is None:
-                                    last_rq = {**current_req}
-                                    reverse = 'descending' if asc else 'ascending'
-                                    last_rq['order'] = reverse
-                                    last_rq['limit'] = 1
-                                    rs_last = api.communicate(params, last_rq)
-                                    last_row_events = rs_last.get('audit_event_overview_report_rows')
-                                    if last_row_events:
-                                        last_row = last_row_events[0]
-                                        last_timestamp = last_row.get(timestamp_field, last_row.get('created', 0))
-                                        period[last_key] = int(last_timestamp) if isinstance(last_timestamp, (int, float, str)) else last_timestamp
-                                else:
-                                    period[last_key] = req_period.get(last_key)
-                                
-                                req_filter['created'] = period
-                                next_req = {**current_req}
-                                next_req['filter'] = req_filter
+            # Use the fetch_audit_events function for pagination
+            all_events = []
+            for req in reqs:
+                events = fetch_audit_events(
+                    params,
+                    audit_filter=req.get('filter', {}),
+                    columns=req.get('columns'),
+                    aggregate=req.get('aggregate'),
+                    report_type=report_type,
+                    limit=user_limit,
+                    order=req.get('order')
+                )
+                all_events.extend(events)
 
-                                if user_limit and user_limit > 0:
-                                    missing = user_limit - len(table)
-                                    if missing <= 0:
-                                        should_stop = True
-                                        break
-                                    elif missing < API_EVENT_SUMMARY_ROW_LIMIT:
-                                        next_req['limit'] = missing
-                                
-                                next_reqs.append(next_req)
-                            except (ValueError, TypeError, KeyError) as e:
-                                logging.warning(f"Error processing pagination timestamp: {e}")
-                                continue
-                    
-                    if should_stop:
-                        break
-                
-                if should_stop:
-                    break
-                
-                reqs = next_reqs
-                if reqs:
-                    rss = api.execute_batch(params, reqs)
-            
-            if iteration_count >= max_iterations:
-                logging.warning(f"Pagination stopped after reaching maximum iterations ({max_iterations})")
+            for event in all_events:
+                row = []
+                for f in fields:
+                    if f in event:
+                        row.append(
+                            self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
+                        )
+                    elif f in audit_report.fields_to_uid_name:
+                        row.append(self.resolve_lookup(params, f, event))
+                    else:
+                        row.append('')
+                table.append(row)
             
             table = reporting.filter_rows(table, patterns, use_regex, match_all)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
@@ -1865,10 +1945,21 @@ class AgingReportCommand(Command):
         in_shared_folder = kwargs.get('in_shared_folder')
         node_id = get_node_id(params, enterprise_id)
 
+        # Pre-filter to specific user if --username is set
+        user_filter = None
+        username_arg = kwargs.get('username')
+        if username_arg:
+            user_lookup = {eu.get('username'): eu.get('enterprise_user_id')
+                           for eu in params.enterprise.get('users', [])}
+            user_id = user_lookup.get(username_arg)
+            if user_id is None:
+                raise CommandError('aram', f'User "{username_arg}" not found in enterprise')
+            user_filter = {user_id}
+
         get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folder else get_prelim_data
         sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folder \
             else [params, enterprise_id, rebuild]
-        sd_kwargs = {'min_updated': period_min_ts}
+        sd_kwargs = {'min_updated': period_min_ts, 'user_filter': user_filter}
         sd = get_sox_data_fn(*sd_args, **sd_kwargs)
         AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts, rebuild=rebuild)
 
@@ -2036,46 +2127,30 @@ class ActionReportCommand(EnterpriseCommand):
         return action_report_parser
 
     def execute(self, params, **kwargs):
-        def cmd_rq(cmd):
-            return {'command': cmd, 'scope': 'enterprise'}
-
-        def report_rq(query_filter, limit, cols=None, report_type='span'):
-            rq = {
-                **cmd_rq('get_audit_event_reports'),
-                'report_type': report_type,
-                'filter': query_filter,
-                'limit': limit
-            }
-
-            if report_type == 'span':
-                rq['columns'] = ['username'] if cols is None else cols
-                rq['aggregate'] = ['last_created']
-
-            return rq
-
         def get_excluded(candidate_usernames, query_filter, username_field='username'):
             # type: (Set[str], Dict[str, Any], Optional[str]) -> Set[str]
-            excluded = set()
-            req_limit = API_EVENT_SUMMARY_ROW_LIMIT
+            """
+            Get usernames that should be excluded (users who HAVE performed the action).
+
+            """
+            if not candidate_usernames:
+                return set()
+
             cols = [username_field]
 
-            def adjust_filter(q_filter, max_ts=0):
-                if max_ts:
-                    q_filter['created']['max'] = max_ts
-                return q_filter
+            # Use the fetch_audit_events function with pagination support
+            events = fetch_audit_events(
+                params,
+                audit_filter=query_filter,
+                columns=cols,
+                aggregate=['last_created'],
+                report_type='span',
+                limit=None  # Get all matching events
+            )
 
-            done = not candidate_usernames
-            while not done:
-                rq = report_rq(query_filter, req_limit, cols, report_type='span')
-                rs = api.communicate(params, rq)
-                events = rs['audit_event_overview_report_rows']
-                to_exclude = {event.get(username_field, '').lower() for event in events}
-                excluded.update(to_exclude.intersection(candidate_usernames))
-                end = int(events[-1]['last_created']) if events else 0
-                done = (len(events) < req_limit
-                        or len(candidate_usernames) == len(excluded)
-                        or query_filter.get('created', {}).get('min', end) >= end)
-                query_filter = adjust_filter(query_filter, end + 1) if not done else None
+            # Extract usernames from events that match the candidate usernames
+            to_exclude = {event.get(username_field, '').lower() for event in events}
+            excluded = to_exclude.intersection(candidate_usernames)
 
             return excluded
 
@@ -2099,6 +2174,38 @@ class ActionReportCommand(EnterpriseCommand):
             }
             excluded = get_excluded(included, query_filter, name_key)
             return [user for user in candidate_users if user.get('username') not in excluded]
+
+        def chunk_list(items, chunk_size):
+            for i in range(0, len(items), chunk_size):
+                yield items[i:i + chunk_size]
+
+        def get_latest_lock_times(usernames):
+            # type: (Set[str]) -> Dict[str, int]
+            if not usernames:
+                return {}
+            lock_times = {}
+            username_list = sorted({u.lower() for u in usernames if u})
+            now_ts = int(datetime.datetime.now().timestamp())
+            for chunk in chunk_list(username_list, API_EVENT_SUMMARY_ROW_LIMIT):
+                query_filter = {
+                    'audit_event_type': ['lock_user'],
+                    'to_username': chunk,
+                    'created': {'min': 0, 'max': now_ts}
+                }
+                events = fetch_audit_events(
+                    params,
+                    audit_filter=query_filter,
+                    columns=['to_username'],
+                    aggregate=['last_created'],
+                    report_type='span',
+                    limit=API_EVENT_SUMMARY_ROW_LIMIT
+                )
+                for event in events:
+                    username = (event.get('to_username') or '').lower()
+                    ts = int(event.get('last_created') or 0)
+                    if username and ts:
+                        lock_times[username] = max(lock_times.get(username, 0), ts)
+            return lock_times
 
         def get_action_results_text(cmd, cmd_status, server_msg, affected):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
@@ -2161,14 +2268,14 @@ class ActionReportCommand(EnterpriseCommand):
 
         def apply_admin_action(targets, status='no-update', action='none', dryrun=False):
             # type: (List[Dict[str, Any]], Optional[str], Optional[str], Optional[bool]) -> str
-            default_allowed = {'none'}
+            default_allowed = {'none', 'move'}
             status_actions = {
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
                 'invited':      {*default_allowed, 'delete'},
                 'no-recovery': default_allowed,
-                'blocked':      {*default_allowed, 'delete'}
+                'all': default_allowed
             }
 
             actions_allowed = status_actions.get(status)
@@ -2182,12 +2289,15 @@ class ActionReportCommand(EnterpriseCommand):
             action_handlers = {
                 'none': partial(run_cmd, targets, None, None, dryrun),
                 'lock': partial(run_cmd, targets,
-                                lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
-                                'lock', dry_run),
+                    lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
+                    'lock', dryrun),
                 'delete': partial(run_cmd, targets,
-                                  lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
-                                  'delete', dry_run),
-                'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun)
+                    lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
+                    'delete', dryrun),
+                'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun),
+                'move': partial(run_cmd, targets, 
+                    lambda: exec_fn(params, email=emails, node=kwargs.get('target_node'), force=True, return_results=True), 
+                    'move', dryrun)
             }
 
             if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and targets:
@@ -2202,13 +2312,21 @@ class ActionReportCommand(EnterpriseCommand):
 
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
-        def get_report_data_and_headers(targets, output_fmt):
-            # type: (Set[str], str) -> Tuple[List[List[Any]], List[str]]
+        def get_report_data_and_headers(targets, output_fmt, columns=None, lock_times=None):
+            # type: (Set[str], str, Optional[str], Optional[Dict[str, int]]) -> Tuple[List[List[Any]], List[str]]
             cmd = EnterpriseInfoCommand()
-            output = cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
+            output = cmd.execute(params, users=True, quiet=True, format='json', columns=columns)
             data = json.loads(output)
-            data = [u for u in data if u.get('email') in targets]
-            fields = next(iter(data)).keys() if data else []
+            targets_lower = {t.lower() for t in targets if t}
+            data = [u for u in data if (u.get('email') or '').lower() in targets_lower]
+            if lock_times is not None:
+                for user in data:
+                    email = (user.get('email') or '').lower()
+                    lock_ts = lock_times.get(email)
+                    user['lock_time'] = datetime.datetime.fromtimestamp(lock_ts) if lock_ts else None
+            fields = list(next(iter(data)).keys()) if data else []
+            if lock_times is not None and 'lock_time' not in fields:
+                fields.append('lock_time')
             headers = [field_to_title(f) for f in fields] if output_fmt != 'json' else list(fields)
             data = [[user.get(f) for f in fields] for user in data]
             return data, headers
@@ -2245,11 +2363,11 @@ class ActionReportCommand(EnterpriseCommand):
                 logging.warning(f'More than one node "{node_name}" found. Use Node ID.')
                 return
             
-            target_node_id = nodes[0]['node_id']
+            node_id = nodes[0]['node_id']
             
-            # Validate target_node_id
-            if not isinstance(target_node_id, int) or target_node_id <= 0:
-                logging.warning(f'Invalid node ID: {target_node_id}')
+            # Validate node_id
+            if not isinstance(node_id, int) or node_id <= 0:
+                logging.warning(f'Invalid node ID: {node_id}')
                 return
             
             # Build parent-child lookup dictionary once to avoid deep recursion
@@ -2275,7 +2393,7 @@ class ActionReportCommand(EnterpriseCommand):
                             queue.append(child_id)
                 return descendants
             
-            target_nodes = get_descendant_nodes(target_node_id)
+            target_nodes = get_descendant_nodes(node_id) if kwargs.get('recursive') else [node_id]
             filtered_user_ids = {user['enterprise_user_id'] for user in params.enterprise.get('users', [])
                             if user.get('node_id') in target_nodes}
             
@@ -2286,9 +2404,10 @@ class ActionReportCommand(EnterpriseCommand):
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
         if days is None:
-            days = 90 if target_status == 'locked' else 30
+            days = 90 if target_status == 'locked' else 0 if target_status == 'all' else 30
 
         args_by_status = {
+            'all': [active+locked+invited,days,[]],
             'no-logon': [active, days, ['login', 'login_console', 'chat_login', 'accept_invitation']],
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
@@ -2302,13 +2421,23 @@ class ActionReportCommand(EnterpriseCommand):
             logging.warning(f'Invalid target_user_status \'{target_status}\': value must be one of {valid_targets}')
             return
 
-        target_users = get_no_action_users(*args)
+        target_users = args[0]
         usernames = {user['username'] for user in target_users}
+
+        columns_arg = kwargs.get('columns')
+        columns = {c.strip().lower() for c in columns_arg.split(',') if c.strip()} if columns_arg else set()
+        include_lock_time = ('lock_time' in columns) if columns_arg else target_status == 'locked'
+        columns_param = None
+        if columns_arg:
+            columns_without_lock = [c for c in columns if c != 'lock_time']
+            if columns_without_lock:
+                columns_param = ','.join(columns_without_lock)
 
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
         fmt = kwargs.get('format', 'table')
-        report_data, report_headers = get_report_data_and_headers(usernames, fmt)
+        lock_times = get_latest_lock_times(usernames) if include_lock_time else None
+        report_data, report_headers = get_report_data_and_headers(usernames, fmt, columns=columns_param, lock_times=lock_times)
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         # Sync local enterprise data if changes were made

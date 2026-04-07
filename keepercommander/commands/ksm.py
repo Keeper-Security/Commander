@@ -73,10 +73,18 @@ Commands to configure and manage the Keeper Secrets Manager platform.
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
-    Options: 
+    Options:
       --force : Do not prompt for confirmation
       --client : Client name or ID. Provide `*` or `all` to delete all clients at once
-      
+
+  {bcolors.BOLD}Revoke Client Device (search all applications):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client revoke --client {bcolors.OKBLUE}[CLIENT ID]{bcolors.ENDC}
+    Searches all applications for the given client ID and revokes it.
+    Useful for quickly revoking a leaked device without knowing the application.
+    The client ID can be found in the device's configuration file as "clientId".
+    Options:
+      --force : Do not prompt for confirmation
+
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
     Options: 
@@ -284,6 +292,17 @@ class KSMCommand(Command):
             KSMCommand.remove_share(params, app_name_or_uid, secret_uids)
             return
 
+        if ksm_obj in ['client', 'c'] and ksm_action == 'revoke':
+            client_names_or_ids = kwargs.get('client_names_or_ids')
+            if not client_names_or_ids:
+                print(f"{bcolors.WARNING}Client ID is required.{bcolors.ENDC}\n"
+                      f"  Usage: {bcolors.OKGREEN}secrets-manager client revoke --client {bcolors.OKBLUE}[CLIENT ID]{bcolors.ENDC}\n"
+                      f"  The client ID can be found in the device configuration file as \"clientId\".")
+                return
+            force = kwargs.get('force')
+            KSMCommand.revoke_client(params, client_names_or_ids, force)
+            return
+
         if ksm_obj in ['client', 'c']:
             app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
 
@@ -331,7 +350,7 @@ class KSMCommand(Command):
                 if len(client_names_or_ids) == 1 and client_names_or_ids[0] in ['*', 'all']:
                     KSMCommand.remove_all_clients(params, app_name_or_uid, force)
                 else:
-                    KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+                    KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids, force)
 
                 return
 
@@ -954,10 +973,10 @@ class KSMCommand(Command):
         client_ids_to_rem = [utils.base64_url_encode(c.clientId) for ai in app_info
                              for c in ai.clients if c.appClientType == enterprise_pb2.GENERAL]
         if len(client_ids_to_rem) > 0:
-            KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem)
+            KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem, force=True)
 
     @staticmethod
-    def remove_client(params, app_name_or_uid, client_names_and_hashes):
+    def remove_client(params, app_name_or_uid, client_names_and_hashes, force=False):
 
         def convert_ids_and_hashes_to_hashes(cnahs, app_uid):
 
@@ -996,7 +1015,8 @@ class KSMCommand(Command):
         if found_clients_count == 0:
             print(bcolors.WARNING + "No Client Devices found with given name or ID\n" + bcolors.ENDC)
             return
-        else:
+        
+        if not force:
             uc = user_choice(f'\tAre you sure you want to delete {found_clients_count} matching clients from this application?',
                              'yn', default='n')
             if uc.lower() != 'y':
@@ -1008,6 +1028,87 @@ class KSMCommand(Command):
         rq.clients.extend(client_hashes)
         api.communicate_rest(params, rq, 'vault/app_client_remove')
         print(bcolors.OKGREEN + "\nClient removal was successful\n" + bcolors.ENDC)
+
+    @staticmethod
+    def revoke_client(params, client_ids, force=False):
+        """Search all SM applications for matching client IDs and revoke them.
+
+        Accepts clientId values from device config files (standard or URL-safe base64).
+        """
+        # Normalize input client IDs to URL-safe base64 for comparison
+        normalized_inputs = []
+        for cid in client_ids:
+            # Config files may use standard base64 (+, /, =) or URL-safe base64 (-, _)
+            normalized = cid.replace('+', '-').replace('/', '_').rstrip('=')
+            normalized_inputs.append(normalized)
+
+        # Collect all SM app UIDs from the vault cache
+        app_uids = []
+        app_titles = {}
+        for rec_cache_val in params.record_cache.values():
+            if rec_cache_val.get('version') == 5:
+                r_uid = rec_cache_val.get('record_uid')
+                try:
+                    r_data = json.loads(rec_cache_val.get('data_unencrypted').decode('utf-8'))
+                    app_titles[r_uid] = r_data.get('title', r_uid)
+                except Exception:
+                    app_titles[r_uid] = r_uid
+                app_uids.append(r_uid)
+
+        if not app_uids:
+            print(bcolors.WARNING + "No Secrets Manager applications found in the vault." + bcolors.ENDC)
+            return
+
+        # Fetch app info for all apps in a single API call
+        rq = APIRequest_pb2.GetAppInfoRequest()
+        for app_uid in app_uids:
+            rq.appRecordUid.append(utils.base64_url_decode(app_uid))
+        rs = api.communicate_rest(params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
+
+        # Search for matching clients across all apps
+        matches = []  # list of (app_uid, app_title, client_name, client_id_b64, client_id_bytes)
+        for ai in rs.appInfo:
+            app_uid_str = utils.base64_url_encode(ai.appRecordUid)
+            app_title = app_titles.get(app_uid_str, app_uid_str)
+            for c in ai.clients:
+                client_id_b64 = utils.base64_url_encode(c.clientId)
+                for norm_input in normalized_inputs:
+                    if client_id_b64 == norm_input or \
+                       (len(norm_input) >= KSMCommand.CLIENT_SHORT_ID_LENGTH and client_id_b64.startswith(norm_input)):
+                        matches.append((app_uid_str, app_title, c.id, client_id_b64, c.clientId))
+                        break
+
+        if not matches:
+            print(bcolors.WARNING + "No matching client devices found across any application." + bcolors.ENDC)
+            return
+
+        # Display matches and confirm
+        print(f"\n{bcolors.BOLD}Found {len(matches)} matching client device(s):{bcolors.ENDC}\n")
+        for app_uid_str, app_title, device_name, client_id_b64, _ in matches:
+            print(f"  Application: {bcolors.OKGREEN}{app_title}{bcolors.ENDC} ({app_uid_str})")
+            print(f"  Device Name: {device_name}")
+            print(f"  Client ID:   {client_id_b64[:20]}...")
+            print()
+
+        if not force:
+            uc = user_choice(f'\tAre you sure you want to revoke {len(matches)} client device(s)?', 'yn', default='n')
+            if uc.lower() != 'y':
+                return
+
+        # Group matches by app and remove
+        sorted_matches = sorted(matches, key=lambda m: m[0])
+        for app_uid_str, group in groupby(sorted_matches, key=lambda m: m[0]):
+            group_list = list(group)
+            app_title = group_list[0][1]
+            client_hashes = [m[4] for m in group_list]
+
+            rm_rq = APIRequest_pb2.RemoveAppClientsRequest()
+            rm_rq.appRecordUid = utils.base64_url_decode(app_uid_str)
+            rm_rq.clients.extend(client_hashes)
+            api.communicate_rest(params, rm_rq, 'vault/app_client_remove')
+            print(bcolors.OKGREEN + f"Revoked {len(client_hashes)} client(s) from application \"{app_title}\"" + bcolors.ENDC)
+
+        print(bcolors.OKGREEN + "\nClient revocation complete.\n" + bcolors.ENDC)
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,

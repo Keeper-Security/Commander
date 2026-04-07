@@ -35,6 +35,7 @@ from ..attachment import FileUploadTask
 
 from . import aram, audit_alerts, security_audit
 from . import compliance
+from . import domain_management
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
     report_output_parser
@@ -59,7 +60,7 @@ def register_commands(commands):
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
-    commands['domain'] = DomainCommand()
+    domain_management.register_commands(commands)
     commands['audit-log'] = aram.AuditLogCommand()
     commands['audit-report'] = aram.AuditReportCommand()
     commands['aging-report'] = aram.AgingReportCommand()
@@ -83,28 +84,28 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['esr'] = 'external-shares-report'
     aliases['tu'] = 'transfer-user'
-    aliases['dl'] = ('domain', 'list')
-    aliases['dr'] = ('domain', 'reserve')
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              user_report_parser, domain_parser]:
+              user_report_parser]:
         command_info[p.prog] = p.description
 
     command_info['audit-alert'] = 'Manage audit alerts and notifications'
 
+    domain_management.register_command_info(aliases, command_info)
     compliance.register_command_info(aliases, command_info)
     security_audit.register_command_info(aliases, command_info)
 
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
-                          'provisioning']
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
+                          'provisioning', 'isolated']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
-                          'roles', 'alias', '2fa_enabled']
+                          'roles', 'alias', '2fa_enabled', 'job_title']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
-SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams']
+SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams',
+                          'enforcement_count', 'enforcements', 'managed_node_count', 'managed_nodes', 'managed_nodes_permissions']
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
@@ -132,6 +133,7 @@ enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
+enterprise_node_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -283,40 +285,6 @@ user_report_parser.add_argument('-l', '--last-login', dest='last_login', action=
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
-domain_parser = argparse.ArgumentParser(prog='domain', description='Manage enterprise domains')
-domain_parser.error = raise_parse_exception
-domain_parser.exit = suppress_exit
-
-domain_subparsers = domain_parser.add_subparsers(dest='subcommand', help='Domain subcommands', metavar='{list,reserve}')
-
-domain_list_parser = domain_subparsers.add_parser('list', parents=[report_output_parser],
-                                                   help='List all reserved domains for the enterprise',
-                                                   description='List all reserved domains for the enterprise.')
-domain_list_parser.error = raise_parse_exception
-domain_list_parser.exit = suppress_exit
-
-domain_reserve_parser = domain_subparsers.add_parser('reserve',
-                                                      formatter_class=argparse.RawTextHelpFormatter,
-                                                      help='Reserve and manage domains',
-                                                      description='Reserve and manage domains for the enterprise.\n\n'
-                                                      'Process:\n'
-                                                      ' 1. Use --action token to get DNS verification token\n'
-                                                      ' 2. Add TXT record to your DNS\n'
-                                                      ' 3. Use --action add to complete reservation\n'
-                                                      ' 4. Use --action delete to remove domain')
-domain_reserve_parser.add_argument('--action', dest='action', required=True,
-                                    choices=['token', 'add', 'delete'],
-                                    help='Action to perform: token (get verification token), add (add domain after verification), delete (remove domain)')
-domain_reserve_parser.add_argument('--domain', dest='domain', required=True,
-                                    help='Domain name to reserve')
-domain_reserve_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
-                                    default='text', help='Output format.')
-domain_reserve_parser.add_argument('--force', dest='force', action='store_true',
-                                    help='Skip confirmation prompt for delete action')
-domain_reserve_parser.error = raise_parse_exception
-domain_reserve_parser.exit = suppress_exit
-
-
 _DEFAULT_PASSWORD_COMPLEXITY = """[
   {
     "domains": ["_default_"],
@@ -425,7 +393,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             nodes[node_id] = {
                 'node_id': node_id,
                 'parent_id': node.get('parent_id') or 0,
-                'name': node['data'].get('displayname') or '',
+                'name': (node['data'].get('displayname') or '') if node.get('parent_id') else params.enterprise['enterprise_name'],
                 'isolated': node.get('restrict_visibility') or False,
                 'users': [],
                 'teams': [],
@@ -458,6 +426,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 }
                 if 'account_share_expiration' in user:
                     u['account_share_expiration'] = user['account_share_expiration']
+                if 'job_title' in user:
+                    u['job_title'] = user['job_title']
                 users[user_id] = u
                 if node_id in nodes:
                     nodes[node_id]['users'].append(user_id)
@@ -661,12 +631,20 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         else:
             columns = set()
             if kwargs.get('columns'):
-                columns.update((x.strip() for x in kwargs.get('columns').split(',')))
+                raw_columns = kwargs.get('columns')
+                # Handle role(...) or roles(...) syntax by stripping the prefix and suffix
+                for prefix in ['roles(', 'role(', 'teams(', 'team(', 'users(', 'user(', 'nodes(', 'node(']:
+                    if raw_columns.startswith(prefix):
+                        raw_columns = raw_columns[len(prefix):]
+                        if raw_columns.endswith(')'):
+                            raw_columns = raw_columns[:-1]
+                        break
+                columns.update((x.strip() for x in raw_columns.split(',')))
             pattern = (kwargs.get('pattern') or '').lower()
             if show_nodes:
                 supported_columns = SUPPORTED_NODE_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('parent_node', 'user_count', 'team_count', 'role_count'))
+                    columns.update(('parent_node', 'parent_id', 'user_count', 'team_count', 'role_count'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -714,6 +692,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if column == 'parent_node':
                             parent_id = n.get('parent_id', 0)
                             row.append(self.get_node_path(params, parent_id) if parent_id > 0 else '')
+                        elif column == 'parent_id':
+                            parent_id = n.get('parent_id', 0)
+                            row.append(parent_id if parent_id > 0 else None)
                         elif column == 'user_count':
                             us = n.get('users', [])
                             row.append(len(us))
@@ -747,6 +728,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'sso_provisioning':
                             status = sso_provisioning.get(node_id) if sso_provisioning else None
                             row.append(status)
+                        elif column == 'isolated':
+                            row.append(n.get('isolated', False))
                         else:
                             row.append(None)
 
@@ -833,6 +816,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                         if x['enterprise_user_id'] == user_id and x['username'] != email])
                         elif column == '2fa_enabled':
                             row.append(u.get('tfa_enabled') or '')
+                        elif column == 'job_title':
+                            row.append(u.get('job_title') or '')
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -924,9 +909,54 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 displayed_columns = [x for x in supported_columns if x in columns]
 
+                role_enforcements = {}  # type: Dict[int, dict]
+                if 'role_enforcements' in params.enterprise:
+                    for re_entry in params.enterprise['role_enforcements']:
+                        role_id = re_entry.get('role_id')
+                        if role_id:
+                            role_enforcements[role_id] = re_entry.get('enforcements', {})
+
+                role_managed_nodes = {}  # type: Dict[int, List[dict]]
+                if 'managed_nodes' in params.enterprise:
+                    node_names = {x['node_id']: x['data'].get('displayname') or params.enterprise['enterprise_name']
+                                  for x in params.enterprise['nodes']}
+                    for mn in params.enterprise['managed_nodes']:
+                        role_id = mn['role_id']
+                        if role_id not in role_managed_nodes:
+                            role_managed_nodes[role_id] = []
+                        node_id = mn['managed_node_id']
+                        role_managed_nodes[role_id].append({
+                            'node_id': node_id,
+                            'node_name': node_names.get(node_id, str(node_id)),
+                            'cascade': mn.get('cascade_node_management', False)
+                        })
+
+                role_privileges = {}  # type: Dict[int, Dict[int, List[str]]]
+                is_msp = EnterpriseCommand.is_msp(params)
+                supported_privileges = {x[1].lower(): x[2] for x in constants.ROLE_PRIVILEGES}
+                if 'role_privileges' in params.enterprise:
+                    for rp in params.enterprise['role_privileges']:
+                        privilege = rp['privilege'].lower()
+                        if privilege not in supported_privileges:
+                            continue
+                        if supported_privileges[privilege] == constants.PrivilegeScope.Hidden:
+                            continue
+                        if supported_privileges[privilege] == constants.PrivilegeScope.MSP and not is_msp:
+                            continue
+                        role_id = rp['role_id']
+                        node_id = rp['managed_node_id']
+                        if role_id not in role_privileges:
+                            role_privileges[role_id] = {}
+                        if node_id not in role_privileges[role_id]:
+                            role_privileges[role_id][node_id] = []
+                        role_privileges[role_id][node_id].append(privilege)
+
                 rows = []
                 for r in roles.values():
                     row = [r['id'], r['name']]
+                    role_id = r['id']
+                    managed_nodes_list = role_managed_nodes.get(role_id, [])
+                    
                     for column in displayed_columns:
                         if column == 'visible_below':
                             row.append(r['visible_below'])
@@ -945,6 +975,56 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'teams':
                             team_names = [teams[team_uid]['name'] for team_uid in r['teams'] if team_uid in teams]
                             row.append(team_names)
+                        elif column == 'enforcement_count':
+                            enforcements = role_enforcements.get(role_id, {})
+                            row.append(len(enforcements))
+                        elif column == 'enforcements':
+                            enforcements = role_enforcements.get(role_id, {})
+                            if kwargs.get('format') == 'json':
+                                formatted_enforcements = {}
+                                for k, v in enforcements.items():
+                                    enforcement_type = constants.ENFORCEMENTS.get(k)
+                                    if enforcement_type == 'two_factor_duration':
+                                        formatted_enforcements[k] = constants.format_two_factor_duration(v)
+                                    else:
+                                        formatted_enforcements[k] = v
+                                row.append(formatted_enforcements)
+                            else:
+                                row.append(list(enforcements.keys()))
+                        elif column == 'managed_node_count':
+                            row.append(len(managed_nodes_list))
+                        elif column == 'managed_nodes':
+                            managed_node_info = []
+                            for mn in managed_nodes_list:
+                                node_name = mn.get('node_name', '')
+                                managed_node_info.append(node_name)
+                            row.append(managed_node_info)
+                        elif column == 'managed_nodes_permissions':
+                            privileges_for_role = role_privileges.get(role_id, {})
+                            is_json = kwargs.get('format') == 'json'
+                            permissions_info = []
+                            
+                            for mn in managed_nodes_list:
+                                node_id = mn.get('node_id')
+                                node_name = mn.get('node_name', '')
+                                cascade = mn.get('cascade', False)
+                                privs = privileges_for_role.get(node_id, [])
+                                
+                                if is_json:
+                                    permissions_info.append({
+                                        'node_name': node_name,
+                                        'node_id': node_id,
+                                        'cascade': cascade,
+                                        'privileges': privs
+                                    })
+                                else:
+                                    if privs:
+                                        permissions_info.append(f"{node_name} (cascade: {cascade}):")
+                                        for priv in privs:
+                                            permissions_info.append(f"  {priv}")
+                                    else:
+                                        permissions_info.append(f"{node_name} (cascade: {cascade}): none")
+                            row.append(permissions_info)
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -1043,6 +1123,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         n.append(node)
                     else:
                         node_lookup[node_name] = [n, node]
+                if not node.get('parent_id'):
+                    ent_name = params.enterprise['enterprise_name'].lower()
+                    if ent_name not in node_lookup:
+                        node_lookup[ent_name] = node
 
         parent_id = None
         if kwargs.get('parent'):
@@ -1083,7 +1167,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 logging.warning('Node \'%s\' already exists: Skipping.', node['data'].get('displayname'))
 
             if not unmatched_nodes:
-                raise CommandError('enterprise-node', 'No nodes to add.')
+                return
 
             if parent_id is None:
                 for node in params.enterprise['nodes']:
@@ -1282,7 +1366,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 if not node.get('parent_id'):
                     raise CommandError('enterprise-node', 'Cannot wipe out root node')
 
-                answer = user_choice(
+                answer = 'y' if kwargs.get('force') else user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
                     'This action cannot be undone.\n\n' +
                     'Do you want to proceed with deletion?', 'yn', 'n')
@@ -1306,14 +1390,15 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
                 role_set = set([x['role_id'] for x in managed_nodes])
                 role_set = role_set.union([x['role_id'] for x in roles])
-                for ru in params.enterprise['role_users']:
-                    if ru['role_id'] in role_set:
-                        rq = {
-                            'command': 'role_user_remove',
-                            'role_id': ru['role_id'],
-                            'enterprise_user_id': ru['enterprise_user_id']
-                        }
-                        request_batch.append(rq)
+                if 'role_users' in params.enterprise:
+                    for ru in params.enterprise['role_users']:
+                        if ru['role_id'] in role_set:
+                            rq = {
+                                'command': 'role_user_remove',
+                                'role_id': ru['role_id'],
+                                'enterprise_user_id': ru['enterprise_user_id']
+                            }
+                            request_batch.append(rq)
                 for mn in managed_nodes:
                     rq = {
                         'command': 'role_managed_node_remove',
@@ -1353,6 +1438,12 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'node_id': node_id
                     }
                     request_batch.append(rq)
+                
+                # Check if there's anything to wipe out
+                if not request_batch:
+                    node_name = node.get('data', {}).get('displayname') or str(node['node_id'])
+                    logging.info('Node \'%s\' is empty. Nothing to wipe out.', node_name)
+                    return
             elif parent_id or kwargs.get('displayname'):
                 display_name = kwargs.get('displayname')
                 def is_in_chain(node_id, parent_id):
@@ -1384,8 +1475,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                             'node_id': node['node_id'],
                             'encrypted_data': encrypted_data
                         }
-                        if parent_id:
-                            rq['parent_id'] = parent_id
+                        rq['parent_id'] = parent_id if parent_id else node.get('parent_id')
                         request_batch.append(rq)
 
         if request_batch:
@@ -1394,7 +1484,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'node_add':
                     if rs['result'] == 'success':
-                        logging.info('Node is created')
+                        node_id = rq.get('node_id')
+                        logging.info('Node is created with Node ID: %s', node_id)
                     else:
                         logging.warning('Failed to create node: %s', rs['message'])
                 elif command in {'node_delete', 'node_update'}:
@@ -1859,9 +1950,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
                     if rs['result'] == 'success':
-                        logging.info('%s user invited', rq['enterprise_user_username'])
+                        logging.info('%s user invited with Enterprise User ID : %s',
+                                     rq['enterprise_user_username'], rq['enterprise_user_id'])
                     else:
-                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], rs['message'])
+                        error_msg = rs['message']
+                        if error_msg and ';' in error_msg:
+                            error_msg = error_msg.split(';')[0].strip()
+                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], error_msg)
                 else:
                     user = None
                     if not user and 'username' in rq:
@@ -2154,17 +2249,63 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
 
+            # Collect role_ids for newly created roles
+            new_role_ids = []
             for role_name in role_names:
                 data = json.dumps({ "displayname": role_name }).encode('utf-8')
+                role_id = self.get_enterprise_id(params)
+                new_role_ids.append(role_id)
                 rq = {
                     "command": "role_add",
-                    "role_id": self.get_enterprise_id(params),
+                    "role_id": role_id,
                     "node_id": node_id,
                     "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
-                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False
+                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False,
+                    "role_name": role_name
                 }
                 request_batch.append(rq)
+            
+            if kwargs.get('add_admin') and new_role_ids:
+                skip_display = True
+                node_lookup = {}
+                if 'nodes' in params.enterprise:
+                    for node in params.enterprise['nodes']:
+                        node_lookup[str(node['node_id'])] = node
+                        if node.get('parent_id'):
+                            node_name = node['data'].get('displayname')
+                        else:
+                            node_name = params.enterprise['enterprise_name']
+                        node_name = node_name.lower()
+                        value = node_lookup.get(node_name)
+                        if value is None:
+                             value = node
+                        elif type(value) == list:
+                            value.append(node)
+                        else:
+                            value = [value, node]
+                        node_lookup[node_name] = value
+
+                admin_nodes = {}
+                for admin_node_name in kwargs.get('add_admin'):
+                    value = node_lookup.get(admin_node_name.lower())
+                    if value is None:
+                        logging.warning('Node %s could not be resolved', admin_node_name)
+                    elif isinstance(value, dict):
+                        admin_nodes[value['node_id']] = value['data'].get('displayname') or params.enterprise['enterprise_name']
+                    elif isinstance(value, list):
+                        logging.warning('Node name \'%s\' is not unique. Use Node ID. Skipping', admin_node_name)
+
+                for role_id in new_role_ids:
+                    for admin_node_id, admin_node_display_name in admin_nodes.items():
+                        rq = {
+                            "command": "role_managed_node_add",
+                            "role_id": role_id,
+                            "managed_node_id": admin_node_id,
+                            "cascade_node_management": (kwargs.get('cascade') == 'on') or False,
+                            "tree_keys": []
+                        }
+                        request_batch.append(rq)
         else:
             for role_name in role_names:
                 logging.warning('Role %s is not found: Skipping', role_name)
@@ -2719,7 +2860,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'role_add':
                     if rs['result'] == 'success':
-                        logging.info('Role created')
+                        logging.info('%s Role created with Role ID : %s', rq['role_name'], rq['role_id'])
                     else:
                         logging.warning('Failed to create role: %s', rs['message'])
                 else:
@@ -2844,11 +2985,29 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
         if 'managed_nodes' in params.enterprise:
             node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            is_msp = EnterpriseCommand.is_msp(params)
             if len(node_ids) > 0:
                 nodes = {x['node_id']: x['data'].get('displayname') or params.enterprise['enterprise_name'] for x in params.enterprise['nodes']}
+                privileges = {}
+                supported_privileges = {x[1].lower(): x[2] for x in constants.ROLE_PRIVILEGES}
+                for rp in params.enterprise.get('role_privileges', []):
+                    privilege = rp['privilege'].lower()
+                    if rp['role_id'] != role_id:
+                        continue
+                    elif privilege not in supported_privileges:
+                        continue
+                    elif supported_privileges[privilege] == constants.PrivilegeScope.Hidden or (supported_privileges[privilege] == constants.PrivilegeScope.MSP and not is_msp):
+                        continue
+
+                    if rp['managed_node_id'] not in privileges:
+                        privileges[rp['managed_node_id']] = []
+                    privileges[rp['managed_node_id']].append(privilege)
+                
                 ret['managed_nodes'] = [{
                     'node_id': x,
-                    'node_name': nodes[x]
+                    'node_name': nodes.get(x, None),
+                    'cascade': [y['cascade_node_management'] for y in params.enterprise['managed_nodes'] if y['role_id'] == role_id and y['managed_node_id'] == x][0],
+                    'privileges': privileges.get(x, None)
                 } for x in node_ids if x in nodes]
 
         if 'role_enforcements' in params.enterprise:
@@ -2886,11 +3045,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         except:
                             v = 'Error'
                     elif enforcement_type == 'two_factor_duration':
-                        value = [x.strip() for x in v.split(',')]
-                        value = ['login' if x == '0' else
-                                 '30_days' if x == '30' else
-                                 'forever' if x == '9999' else x for x in value]
-                        v = ', '.join(value)
+                        v = constants.format_two_factor_duration(v)
 
                     ret['enforcements'][k] = v
         return ret
@@ -3009,13 +3164,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             except:
                                 value = 'Error'
                         elif value_type == 'two_factor_duration':
-                            value = [x.strip() for x in value.split(',')]
-                            value = ['login' if x == '0' else
-                                     '12_hours' if x == '12' else
-                                     '24_hours' if x == '24' else
-                                     '30_days' if x == '30' else
-                                     'forever' if x == '9999' else x for x in value]
-                            value = ', '.join(value)
+                            value = constants.format_two_factor_duration(value)
                         elif value_type == 'account_share':
                             try:
                                 role_id = int(value)
@@ -3035,6 +3184,88 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 class EnterpriseTeamCommand(EnterpriseCommand):
     def get_parser(self):
         return enterprise_team_parser
+
+    @staticmethod
+    def _resolve_users(params, user_list):
+        """Resolve user names/IDs to user objects. Returns dict {user_id: user_node}"""
+        users = {}
+        for u in user_list:
+            uname = u.lower()
+            user_node = None
+            if 'users' in params.enterprise:
+                for user in params.enterprise['users']:
+                    if uname in {str(user['enterprise_user_id']), user['username'].lower()}:
+                        user_node = user
+                        break
+            if user_node:
+                users[user_node['enterprise_user_id']] = user_node
+            else:
+                logging.warning('User %s could not be resolved', u)
+        return users
+
+    @staticmethod
+    def _create_add_user_request(params, team_uid, team_key, user, hsf_flag):
+        """Create a request to add a user to a team with proper encryption"""
+        user_id = user['enterprise_user_id']
+        username = user['username']
+        
+        api.load_user_public_keys(params, [username], False)
+        user_keys = params.key_cache.get(username)
+        
+        if not user_keys:
+            logging.warning('Cannot get user %s public key', username)
+            return None
+        
+        rq = {
+            'command': 'team_enterprise_user_add',
+            'team_uid': team_uid,
+            'enterprise_user_id': user_id,
+            'user_type': 2 if hsf_flag == 'on' else 1 if hsf_flag else 0,
+        }
+        
+        if params.forbid_rsa:
+            if user_keys.ec:
+                ec_key = crypto.load_ec_public_key(user_keys.ec)
+                encrypted_team_key = crypto.encrypt_ec(team_key, ec_key)
+                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+            else:
+                logging.warning('User %s does not have EC key', username)
+                return None
+        else:
+            if user_keys.rsa:
+                rsa_key = crypto.load_rsa_public_key(user_keys.rsa)
+                encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_key)
+                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                rq['team_key_type'] = 'encrypted_by_public_key'
+            else:
+                logging.warning('User %s does not have RSA key', username)
+                return None
+        
+        return rq
+
+    @staticmethod
+    def _resolve_roles(params, role_list):
+        """Resolve role names/IDs to role objects. Returns dict {role_id: role_name} excluding admin roles"""
+        role_changes = {}
+        for role in role_list:
+            role_node = next((
+                r for r in params.enterprise['roles']
+                if role in (str(r['role_id']), r['data'].get('displayname'))
+            ), None)
+            if role_node:
+                # Check if role has administrative permissions
+                is_managed_role = any(
+                    mn['role_id'] == role_node['role_id']
+                    for mn in params.enterprise.get('managed_nodes', [])
+                )
+                if is_managed_role:
+                    logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                else:
+                    role_changes[role_node['role_id']] = role_node['data'].get('displayname')
+            else:
+                logging.warning('Role %s cannot be resolved', role)
+        return role_changes
 
     def execute(self, params, **kwargs):
         if (kwargs.get('add') or kwargs.get('approve')) and kwargs.get('remove'):
@@ -3089,6 +3320,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         matched_teams = list(matched.values())
         request_batch = []
         non_batch_update_msgs = []
+        has_warnings = False
+        new_team_roles = None  
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
@@ -3111,6 +3344,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
 
+            new_teams = {}  # {team_uid: (team_name, team_key, is_new)}
+            
             for item in queue:
                 is_new_team = type(item) == str
                 team_name = item if is_new_team else item['name']
@@ -3142,6 +3377,35 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     rq['private_key'] = utils.base64_url_encode(encrypted_rsa_private_key)
 
                 request_batch.append(rq)
+                
+                if is_new_team:
+                    new_teams[team_uid] = (team_name, team_key, True)
+            
+            if kwargs.get('add_user') and new_teams:
+                skip_display = True
+                users = self._resolve_users(params, kwargs.get('add_user'))
+                if not users:
+                    has_warnings = True
+                
+                hsf = kwargs.get('hide_shared_folders') or ''
+                for team_uid, (team_name, team_key, is_new) in new_teams.items():
+                    for user_id, user in users.items():
+                        if user['status'] == 'active':
+                            rq = self._create_add_user_request(params, team_uid, team_key, user, hsf)
+                            if rq:
+                                request_batch.append(rq)
+                        else:
+                            request_batch.append({
+                                'command': 'team_queue_user',
+                                'team_uid': team_uid,
+                                'enterprise_user_id': user_id
+                            })
+            
+            # Role additions for new teams will be handled after team creation
+            new_team_roles = None
+            if kwargs.get('add_role') and new_teams:
+                skip_display = True
+                new_team_roles = (new_teams, kwargs.get('add_role'))
         else:
             for team_name in team_names:
                 logging.warning('\'%s\' team is not found: Skipping', team_name)
@@ -3184,6 +3448,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 users[user_id] = is_add, user_node
                             else:
                                 logging.warning('User %s could not be resolved', u)
+                                has_warnings = True
 
                 if len(users) > 0:
                     for team in matched_teams:
@@ -3203,6 +3468,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                                 if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
                                     if is_added:
                                         if not hsf:
+                                            username = user['username']
+                                            team_name = team['name']
+                                            logging.warning('User %s is already a member of team \'%s\'', username, team_name)
+                                            has_warnings = True
                                             continue
                                         rq = {
                                             'command': 'team_enterprise_user_update',
@@ -3253,11 +3522,31 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                         'enterprise_user_id': user_id
                                     }
                             else:
-                                rq = {
-                                    'command': 'team_enterprise_user_remove',
-                                    'team_uid': team['team_uid'],
-                                    'enterprise_user_id': user_id
-                                }
+                                is_member = False
+                                username = user['username']
+                                team_name = team['name']
+                                
+                                # Check in active team members
+                                if 'team_users' in params.enterprise:
+                                    is_member = any(1 for t in params.enterprise['team_users']
+                                                   if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
+                                
+                                # Check in queued team members
+                                if not is_member and 'queued_team_users' in params.enterprise:
+                                    for qtu in params.enterprise['queued_team_users']:
+                                        if qtu['team_uid'] == team_uid and user_id in qtu.get('users', []):
+                                            is_member = True
+                                            break
+                                
+                                if is_member:
+                                    rq = {
+                                        'command': 'team_enterprise_user_remove',
+                                        'team_uid': team['team_uid'],
+                                        'enterprise_user_id': user_id
+                                    }
+                                else:
+                                    logging.warning('User %s is not a member of team \'%s\'', username, team_name)
+                                    has_warnings = True
                             if rq:
                                 request_batch.append(rq)
             elif node_id or kwargs.get('name') or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view'):
@@ -3293,7 +3582,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 if command in { 'team_add', 'team_delete', 'team_update' }:
                     verb = 'created' if command == 'team_add' else 'deleted' if command == 'team_delete' else 'updated'
                     if rs['result'] == 'success':
-                        logging.info('\'%s\' team is %s', team_name, verb)
+                        if command == 'team_add':
+                            logging.info('\'%s\' team is %s with Team ID: %s', team_name, verb, rq.get('team_uid'))
+                        else:
+                            logging.info('\'%s\' team is %s', team_name, verb)
                     else:
                         logging.warning('\'%s\' team is not %s: %s', team_name, verb, rs['message'])
                 elif command in {'team_enterprise_user_add', 'team_queue_user', 'team_enterprise_user_remove'}:
@@ -3306,12 +3598,36 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     else:
                         logging.warning('\'%s\' %s team failed to %s user %s: %s', team_name, 'queued' if command == 'team_queue_user' else '',
                                         'delete' if command == 'team_enterprise_user_remove' else 'add', user_name, rs['message'])
+                elif command in {'role_team_add', 'role_team_remove'}:
+                    role_id = rq.get('role_id')
+                    role_name = next((r['data'].get('displayname') for r in params.enterprise.get('roles', []) 
+                                    if r['role_id'] == role_id), str(role_id))
+                    action = 'assign' if command == 'role_team_add' else 'remove'
+                    if rs['result'] == 'success':
+                        logging.info('\'%s\' role %sed to team \'%s\'', role_name, action, team_name)
+                    else:
+                        logging.warning('Failed to %s role \'%s\' to/from team \'%s\': %s', action, role_name, team_name, rs['message'])
 
         if request_batch or len(non_batch_update_msgs) > 0:
             for update_msg in non_batch_update_msgs:
                 logging.info(update_msg)
             api.query_enterprise(params)
-        else:
+            
+            # Handle role additions for newly created teams (must be done after team exists)
+            if new_team_roles:
+                new_teams_dict, role_list = new_team_roles
+                # Fetch updated team data to get proper team objects
+                created_teams = []
+                for team_uid in new_teams_dict.keys():
+                    team_data = next((t for t in params.enterprise.get('teams', []) if t['team_uid'] == team_uid), None)
+                    if team_data:
+                        created_teams.append(team_data)
+                
+                if created_teams:
+                    role_msgs = self.change_team_roles(params, created_teams, role_list, None)
+                    for msg in role_msgs:
+                        logging.info(msg)
+        elif not has_warnings:
             for team in matched_teams:
                 print('\n')
                 self.display_team(params, team, kwargs.get('verbose'))
@@ -3941,419 +4257,3 @@ class DeviceApproveCommand(EnterpriseCommand):
                 ])
             rows.sort(key=lambda x: x[0])
             return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
-
-
-class DomainManagementHelper:
-    
-    # Domain validation constants
-    MAX_DOMAIN_LENGTH = 253
-    MAX_LABEL_LENGTH = 63
-    MIN_TLD_LENGTH = 2
-    
-    NOTICE_MSG = 'Notice: This feature is not in production yet. It will be available soon.'    
-    DOMAIN_PATTERN = r'^(?!-)([a-z0-9-]{1,63})(?<!-)(\.(?!-)([a-z0-9-]{1,63})(?<!-))*$'
-    
-    ERROR_MESSAGES = {
-        'bad_request': 'Domain not specified or invalid',
-        'access_denied': 'Access denied: You must be a Root Admin to manage domains',
-        'forbidden': 'Access denied: You must be a Root Admin to manage domains',
-        'domain_already_taken': 'Domain "{domain}" is already reserved by a different enterprise',
-        'verification_failed': 'DNS verification failed for domain "{domain}". Please ensure the TXT record is correctly added and DNS has propagated (may take up to 48 hours).',
-        'invalid_domain': 'Invalid domain format: "{domain}"',
-        'rate_limit': 'Too many requests. Please wait a moment and try again.',
-        'too_many_requests': 'Too many requests. Please wait a moment and try again.',
-    }
-    
-    @staticmethod
-    def is_feature_unavailable(error_code):
-        return error_code == 404 or error_code == '404' or error_code == 'invalid_path_or_method'
-    
-    @staticmethod
-    def handle_unavailable_feature(output_format='text'):
-        if output_format == 'json':
-            notice_output = {
-                'notice': DomainManagementHelper.NOTICE_MSG,
-            }
-            return json.dumps(notice_output, indent=2)
-        else:
-            logging.warning(f"{bcolors.WARNING}{DomainManagementHelper.NOTICE_MSG}{bcolors.ENDC}")
-            return None
-    
-    @staticmethod
-    def output_error(error_msg, output_format='text', **additional_fields):
-        if output_format == 'json':
-            error_output = {'error': error_msg}
-            error_output.update(additional_fields)
-            print(json.dumps(error_output, indent=2))
-        else:
-            logging.error(error_msg)
-    
-    @staticmethod
-    def validate_domain(domain):
-        """
-        Validate domain name format and requirements.
-        
-        Args:
-            domain: Domain name to validate
-            
-        Returns:
-            tuple: (is_valid: bool, normalized_domain: str, error_message: str or None)
-        """
-        if not domain:
-            return False, None, 'Domain name is required'
-        
-        domain = domain.strip().lower()
-        
-        if not domain or len(domain) > DomainManagementHelper.MAX_DOMAIN_LENGTH:
-            return False, domain, f'Invalid domain name: must be between 1 and {DomainManagementHelper.MAX_DOMAIN_LENGTH} characters'
-        
-        import re
-        if not re.match(DomainManagementHelper.DOMAIN_PATTERN, domain):
-            return False, domain, 'Invalid domain format: domain must contain only letters, numbers, hyphens, and dots'
-        
-        if '.' not in domain:
-            return False, domain, 'Invalid domain: must contain at least one dot (e.g., example.com)'
-        
-        # Check each label
-        labels = domain.split('.')
-        for label in labels:
-            if len(label) > DomainManagementHelper.MAX_LABEL_LENGTH:
-                return False, domain, f'Invalid domain: label "{label}" exceeds {DomainManagementHelper.MAX_LABEL_LENGTH} characters'
-        
-        # Check TLD length
-        if len(labels[-1]) < DomainManagementHelper.MIN_TLD_LENGTH:
-            return False, domain, f'Invalid domain: TLD must be at least {DomainManagementHelper.MIN_TLD_LENGTH} characters'
-        
-        return True, domain, None
-    
-    @staticmethod
-    def get_error_message(error_code, domain, action):
-        """Get user-friendly error message using class constant dictionary."""
-        
-        if error_code == 'invalid_token' and action == 'add':
-            return f'Failed to verify domain "{domain}". Please ensure you have added the TXT record with the correct token to your DNS settings and try again.'
-        
-        if error_code in ('exists', 'domain_exists'):
-            if action == 'token':
-                return f'Domain "{domain}" already exists in the enterprise. Use action "delete" to remove it first.'
-            elif action == 'add':
-                return f'Domain "{domain}" already exists in the enterprise. It may have already been added successfully.'
-        
-        if error_code in ('not_exists', 'domain_not_found', 'doesnt_exist') and action == 'delete':
-            return f'Domain "{domain}" does not exist. Use action "token" to start the domain reservation process.'
-        
-        message_template = DomainManagementHelper.ERROR_MESSAGES.get(error_code)
-        
-        if message_template:
-            if '{domain}' in message_template:
-                return message_template.format(domain=domain)
-            return message_template
-        
-        return f'Unable to {action} domain "{domain}". Please try again or contact support if the issue persists.'
-    
-    @staticmethod
-    def handle_invalid_subcommand(subcommand, output_format='text'):
-        """
-        Handle invalid subcommand error with user-friendly message.
-        
-        Args:
-            subcommand: The invalid subcommand provided by the user
-            output_format: Output format (text or json)
-        """
-        error_message = (
-            f"Invalid subcommand: '{subcommand}'. "
-            f"Use 'domain --help' for more information."
-        )
-        
-        if output_format == 'json':
-            error_output = {
-                'error': error_message,
-            }
-            print(json.dumps(error_output, indent=2))
-        else:
-            logging.error(error_message)
-
-
-class DomainCommand(EnterpriseCommand):    
-    def __init__(self):
-        super().__init__()
-        self.list_cmd = ListDomainsCommand()
-        self.reserve_cmd = ReserveDomainCommand()
-    
-    def get_parser(self):
-        return domain_parser
-    
-    def execute_args(self, params, args, **kwargs):
-        import shlex
-        from .base import ParseError, expand_cmd_args, normalize_output_param
-        
-        try:
-            d = {}
-            d.update(kwargs)
-            self.extra_parameters = ''
-            parser = self._get_parser_safe()
-            envvars = params.environment_variables
-            args = '' if args is None else args
-            
-            if parser:
-                args = expand_cmd_args(args, envvars)
-                args = normalize_output_param(args)
-                opts = parser.parse_args(shlex.split(args))
-                d.update(opts.__dict__)
-
-            return self.execute(params, **d)
-            
-        except ParseError as e:
-            error_str = str(e)
-            if 'invalid choice' in error_str:
-                import re
-                match = re.search(r"invalid choice: '([^']+)'", error_str)
-                if match:
-                    invalid_cmd = match.group(1)
-                    output_format = kwargs.get('format', 'text')
-                    DomainManagementHelper.handle_invalid_subcommand(invalid_cmd, output_format)
-                    return None
-            logging.error(error_str)
-            return None
-    
-    def execute(self, params, **kwargs):
-        subcommand = kwargs.get('subcommand')
-        
-        if not subcommand:
-            self.get_parser().print_help()
-            return
-        
-        if subcommand in ('list'):
-            return self.list_cmd.execute(params, **kwargs)
-        elif subcommand in ('reserve'):
-            return self.reserve_cmd.execute(params, **kwargs)
-        else:
-            output_format = kwargs.get('format', 'text')
-            DomainManagementHelper.handle_invalid_subcommand(subcommand, output_format)
-            return None
-
-
-class ListDomainsCommand(EnterpriseCommand):
-    def get_parser(self):
-        return domain_list_parser
-
-    def execute(self, params, **kwargs):
-        try:
-            rs = api.communicate_rest(
-                params, 
-                None,  
-                'enterprise/list_domains',
-                rs_type=enterprise_pb2.ListDomainsResponse
-            )
-            
-            fmt = kwargs.get('format', '')    
-            
-            if not rs.domain:
-                logging.info('No reserved domains found for this enterprise.')
-                return
-            
-            if fmt == 'json':
-                domains_list = list(rs.domain)
-                print(json.dumps(domains_list, indent=2))
-            else:
-                headers = ['Domain Name']
-                table = [[domain] for domain in rs.domain]
-                return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
-                
-        except KeeperApiError as e:
-            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
-            
-            if DomainManagementHelper.is_feature_unavailable(error_code):
-                result = DomainManagementHelper.handle_unavailable_feature(kwargs.get('format') or 'text')
-                if result:
-                    print(result)
-                return
-            
-            logging.error(f'Error listing domains: {e}')
-            raise
-
-
-class ReserveDomainCommand(EnterpriseCommand):
-    
-    ACTION_MAP = {
-        'token': enterprise_pb2.DOMAIN_TOKEN,
-        'add': enterprise_pb2.DOMAIN_ADD,
-        'delete': enterprise_pb2.DOMAIN_DELETE
-    }
-    
-    def get_parser(self):
-        return domain_reserve_parser
-
-    def execute(self, params, **kwargs):
-        action = kwargs.get('action')
-        domain = kwargs.get('domain')
-        output_format = kwargs.get('format', 'text')
-        force = kwargs.get('force', False)
-        
-        if not self._validate_inputs(action, domain, output_format):
-            return
-        
-        is_valid, domain, error_msg = DomainManagementHelper.validate_domain(domain)
-        if not is_valid:
-            DomainManagementHelper.output_error(error_msg, output_format, domain=domain or '', status='failed')
-            return
-        
-        try:
-            result = self._execute_action(params, action, domain, output_format, force=force)
-            if result:
-                return result
-                
-        except KeeperApiError as e:
-            return self._handle_api_error(e, domain, action, output_format)
-                
-        except Exception as e:
-            error_msg = f'Unexpected error: {str(e)}'
-            DomainManagementHelper.output_error(error_msg, output_format, domain=domain, action=action)
-            logging.debug(f'Exception details: {e}', exc_info=True)
-    
-    def _validate_inputs(self, action, domain, output_format):
-        """Validate action and domain inputs."""
-        if not action:
-            DomainManagementHelper.output_error('Action is required', output_format, status='failed')
-            return False
-        
-        if action not in self.ACTION_MAP:
-            DomainManagementHelper.output_error(
-                f'Invalid action: {action}. Must be one of: {", ".join(self.ACTION_MAP.keys())}',
-                output_format,
-                status='failed'
-            )
-            return False
-        
-        if not domain:
-            DomainManagementHelper.output_error('Domain is required', output_format, status='failed')
-            return False
-        
-        return True
-    
-    def _execute_action(self, params, action, domain, output_format, force=False):
-        """Execute the specified domain action after validation."""
-        if not action or not domain:
-            DomainManagementHelper.output_error('Action and domain are required', output_format, status='failed')
-            return
-        
-        rq = self._create_request(action, domain)
-        
-        if action == 'token':
-            return self._handle_token_action(params, rq, domain, output_format)
-        elif action == 'add':
-            return self._handle_add_action(params, rq, domain, output_format)
-        elif action == 'delete':
-            return self._handle_delete_action(params, rq, domain, output_format, force=force)
-    
-    def _create_request(self, action, domain):
-        rq = enterprise_pb2.ReserveDomainRequest()
-        rq.reserveDomainAction = self.ACTION_MAP[action]
-        rq.domain = domain       
-        
-        return rq
-    
-    def _handle_token_action(self, params, rq, domain, output_format):
-        rs = api.communicate_rest(
-            params, 
-            rq,
-            'enterprise/reserve_domain',
-            rs_type=enterprise_pb2.ReserveDomainResponse
-        )
-        
-        if not rs or not hasattr(rs, 'token') or not rs.token:
-            DomainManagementHelper.output_error(
-                'Failed to generate token: empty response from server',
-                output_format,
-                domain=domain,
-            )
-            return
-        
-        if output_format == 'json':
-            return json.dumps({'token': rs.token, 'domain': domain}, indent=2)
-        
-        self._display_token_instructions(domain, rs.token)
-    
-    def _handle_add_action(self, params, rq, domain, output_format):
-        api.communicate_rest(params, rq, 'enterprise/reserve_domain')
-        
-        if output_format == 'json':
-            return json.dumps({
-                'message': 'Domain successfully added to enterprise',
-                'domain': domain,
-                'action': 'add',
-            }, indent=2)
-        
-        logging.info(f'Domain "{domain}" has been reserved for the enterprise')
-        self._refresh_enterprise_data(params, 'added')
-    
-    def _handle_delete_action(self, params, rq, domain, output_format, force=False):
-        """Handle domain deletion with optional confirmation."""
-        if not force and output_format != 'json':
-            domain_exists = self._check_domain_exists(params, domain)
-            if not domain_exists:
-                pass
-            else:
-                confirm = input(f'\n{bcolors.WARNING}Are you sure you want to delete domain "{domain}"? (y/n): {bcolors.ENDC}')
-                if confirm.lower() not in ['yes', 'y']:
-                    logging.info('Domain deletion cancelled')
-                    return
-        
-        api.communicate_rest(params, rq, 'enterprise/reserve_domain')
-        
-        if output_format == 'json':
-            return json.dumps({
-                'message': 'Domain removed from enterprise',
-                'domain': domain,
-                'action': 'delete',
-            }, indent=2)
-        
-        logging.info(f'Domain "{domain}" has been removed from the enterprise')
-        self._refresh_enterprise_data(params, 'removed')
-    
-    def _check_domain_exists(self, params, domain):
-        """Check if a domain exists in the enterprise."""
-        rs = api.communicate_rest(
-            params,
-            None,
-            'enterprise/list_domains',
-            rs_type=enterprise_pb2.ListDomainsResponse
-        )
-        return domain in rs.domain if rs.domain else False
-    
-    def _display_token_instructions(self, domain, token):
-        logging.info(f'\n{bcolors.OKGREEN}Token generated successfully!{bcolors.ENDC}\n')
-        logging.info(f'Domain: {bcolors.BOLD}{domain}{bcolors.ENDC}')
-        logging.info(f'Token:  {bcolors.BOLD}{token}{bcolors.ENDC}\n')
-        logging.info('Next steps:')
-        logging.info('1. Log into your domain registrar or DNS provider')
-        logging.info(f'2. Add a TXT record for domain "{domain}" with value:')
-        logging.info(f'   {bcolors.WARNING}{token}{bcolors.ENDC}')
-        logging.info('3. Wait for DNS propagation (may take a few minutes)')
-        logging.info(f'4. Run: domain reserve --action add --domain {domain}')
-    
-    def _refresh_enterprise_data(self, params, action_past_tense):
-        try:
-            api.query_enterprise(params)
-        except Exception as refresh_error:
-            logging.warning(f'Successfully {action_past_tense} domain but failed to refresh enterprise data: {refresh_error}')
-    
-    def _handle_api_error(self, error, domain, action, output_format):
-        error_code = error.result_code if hasattr(error, 'result_code') else 'Unknown'
-        
-        if DomainManagementHelper.is_feature_unavailable(error_code):
-            result = DomainManagementHelper.handle_unavailable_feature(output_format)
-            if result:
-                return result
-            return
-        
-        error_msg = DomainManagementHelper.get_error_message(error_code, domain, action)
-        
-        if output_format == 'json':
-            return json.dumps({
-                'message': error_msg,
-                'domain': domain,
-                'action': action,
-            }, indent=2)
-        
-        logging.error(error_msg)

@@ -3,14 +3,15 @@ import logging
 from .types import EdgeType
 from .exceptions import DAGContentException
 import json
-from typing import Optional, Union, Any, TYPE_CHECKING
+from typing import Optional, Union, Any, TYPE_CHECKING, TypeVar, Type
 
 if TYPE_CHECKING:  # pragma: no cover
     from .vertex import DAGVertex
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]
-    import pydantic
-    from pydantic import BaseModel
+
+
+T = TypeVar('T')
 
 
 class DAGEdge:
@@ -159,8 +160,7 @@ class DAGEdge:
             pass
         return content
 
-    def content_as_object(self,
-                          meta_class: pydantic._internal._model_construction.ModelMetaclass) -> Optional[BaseModel]:
+    def content_as_object(self, meta_class: Type[T]) -> Optional[T]:
         """
         Get the content as a pydantic based object.
 

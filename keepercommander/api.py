@@ -486,12 +486,31 @@ def search_records(params, searchstring):
     return search_results
 
 
-def search_shared_folders(params, searchstring):
-    """Search shared folders """
+def search_shared_folders(params, searchstring, use_regex=False):
+    """Search shared folders.
 
-    p = re.compile(searchstring.lower())
+    Args:
+        params: KeeperParams
+        searchstring: Search string (tokens or regex depending on use_regex)
+        use_regex: If True, treat as regex. If False (default), token-based search.
+                   If searchstring is empty, returns all shared folders.
+    """
+    search_results = []
 
-    search_results = [] 
+    if not searchstring:
+        # No search string - return all shared folders
+        match_func = lambda target: True
+    elif use_regex:
+        p = re.compile(searchstring.lower())
+        match_func = lambda target: p.search(target)
+    else:
+        # Token-based search: all tokens must match
+        tokens = [t.lower() for t in searchstring.split() if t.strip()]
+        if not tokens:
+            # No valid tokens - return all shared folders
+            match_func = lambda target: True
+        else:
+            match_func = lambda target: all(token in target for token in tokens)
 
     for shared_folder_uid in params.shared_folder_cache:
 
@@ -499,29 +518,48 @@ def search_shared_folders(params, searchstring):
         sf = get_shared_folder(params, shared_folder_uid)
         target = sf.to_lowerstring()
 
-        if p.search(target):
+        if match_func(target):
             logging.debug('Search success')
             search_results.append(sf)
-     
+
     return search_results
 
 
-def search_teams(params, searchstring):
-    """Search teams """
+def search_teams(params, searchstring, use_regex=False):
+    """Search teams.
 
-    p = re.compile(searchstring.lower())
+    Args:
+        params: KeeperParams
+        searchstring: Search string (tokens or regex depending on use_regex)
+        use_regex: If True, treat as regex. If False (default), token-based search.
+                   If searchstring is empty, returns all teams.
+    """
+    search_results = []
 
-    search_results = [] 
+    if not searchstring:
+        # No search string - return all teams
+        match_func = lambda target: True
+    elif use_regex:
+        p = re.compile(searchstring.lower())
+        match_func = lambda target: p.search(target)
+    else:
+        # Token-based search: all tokens must match
+        tokens = [t.lower() for t in searchstring.split() if t.strip()]
+        if not tokens:
+            # No valid tokens - return all teams
+            match_func = lambda target: True
+        else:
+            match_func = lambda target: all(token in target for token in tokens)
 
     for team_uid in params.team_cache:
         team = get_team(params, team_uid)
 
         target = team.to_lowerstring()
 
-        if p.search(target):
+        if match_func(target):
             logging.debug('Search success')
             search_results.append(team)
-     
+
     return search_results
 
 
@@ -774,7 +812,7 @@ def execute_router_json(params, endpoint,  request):
     return None
 
 
-def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):
+def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None, timeout=None):
     api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
@@ -786,7 +824,7 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     if isinstance(payload_version, int):
         api_request_payload.apiVersion = payload_version
 
-    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload, timeout=timeout)
     if isinstance(rs, bytes):
         TTK.update_time_of_last_activity()
         if rs_type:
@@ -818,7 +856,7 @@ def communicate(params, request, retry_on_throttle=True):
         response_json = run_command(params, request)
         if response_json['result'] != 'success':
             if retry_on_throttle and response_json.get('result_code') == 'throttled':
-                logging.info('Throttled. sleeping for 10 seconds')
+                logging.debug('Throttled, retrying in 10 seconds')
                 time.sleep(10)
                 # Allow maximum 1 retry per call
                 return communicate(params, request, retry_on_throttle=False)

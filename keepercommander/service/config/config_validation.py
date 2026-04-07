@@ -20,7 +20,7 @@ from ..util.exceptions import ValidationError
 
 class ConfigValidator:
     """Validator class for service configuration"""
-    MIN_PORT = 0
+    MIN_PORT = 1024  # Minimum non-privileged port
     MAX_PORT = 65535
 
     @staticmethod
@@ -123,9 +123,16 @@ class ConfigValidator:
         return token
 
     @staticmethod
-    def validate_domain(domain: str) -> str:
-        """Validate domain name format"""
-        logger.debug(f"Validating domain: {domain}")
+    def validate_domain(domain: str, require_tld: bool = True) -> str:
+        """
+        Validate domain name format.
+        
+        Args:
+            domain: Domain name to validate
+            require_tld: If True, requires a full domain with TLD (e.g., example.com)
+                        If False, allows subdomain prefixes (e.g., myapp for ngrok)
+        """
+        logger.debug(f"Validating domain: {domain} (require_tld={require_tld})")
         
         if not domain or not domain.strip():
             raise ValidationError("Domain cannot be empty")
@@ -147,8 +154,8 @@ class ConfigValidator:
             if label.startswith('-') or label.endswith('-'):
                 raise ValidationError(f"Domain label '{label}' cannot start or end with hyphen")
         
-        if '.' not in domain:
-            raise ValidationError("Please provide a valid domain name")
+        if require_tld and '.' not in domain:
+            raise ValidationError("Please provide a valid domain name (e.g., example.com)")
             
         logger.debug("Domain validation successful")
         return domain
@@ -167,6 +174,11 @@ class ConfigValidator:
             msg = ("Invalid rate limit format. Use formats like 'X/minute', 'X/hour', 'X/day', "
                   "'X per minute', 'X per hour', or 'X per day'.")
             raise ValidationError(msg)
+        
+        # Extract the numeric value and check if it's 0
+        numeric_value = int(re.match(r'^\d+', rate_limit).group())
+        if numeric_value == 0:
+            raise ValidationError("Rate limit value cannot be 0. Please specify a positive number.")
             
         logger.debug("Rate limit validation successful")
         return rate_limit
