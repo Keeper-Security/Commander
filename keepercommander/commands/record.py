@@ -288,11 +288,18 @@ class RecordGetUidCommand(Command):
                     "can_share": sf.default_can_share
                 }
                 if sf.records:
-                    sfo['records'] = [{
-                        'record_uid': r['record_uid'],
-                        'can_edit': r['can_edit'],
-                        'can_share': r['can_share']
-                    } for r in sf.records]
+                    records_list = []
+                    for r in sf.records:
+                        rec_entry = {
+                            'record_uid': r['record_uid'],
+                            'can_edit': r['can_edit'],
+                            'can_share': r['can_share']
+                        }
+                        rec = vault.KeeperRecord.load(params, r['record_uid'])
+                        if rec:
+                            rec_entry['record_name'] = rec.title
+                        records_list.append(rec_entry)
+                    sfo['records'] = records_list
                 def _format_expiration(expiration_value):
                     if expiration_value is None or expiration_value <= 0:
                         return 'never'
