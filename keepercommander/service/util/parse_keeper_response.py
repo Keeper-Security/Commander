@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import re, json
 
 class KeeperResponseParser:
@@ -221,6 +221,56 @@ class KeeperResponseParser:
         return result
 
     @staticmethod
+    def _parse_share_bracket_list(
+        bracket_blob: str, target_key: str = "username"
+    ) -> List[Dict[str, Any]]:
+        """Parse comma-separated [target:perm1,perm2] segments from tree share lines."""
+        entries: List[Dict[str, Any]] = []
+        if not bracket_blob or not bracket_blob.strip():
+            return entries
+        for target, perms_str in re.findall(r'\[([^:]+):([^\]]+)\]', bracket_blob):
+            codes = [p.strip() for p in perms_str.split(',') if p.strip()]
+            entries.append({
+                target_key: target.strip(),
+                "permissions": ",".join(codes),
+            })
+        return entries
+
+    @staticmethod
+    def _parse_tree_share_permissions(name: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse shared-folder permission suffix from a tree line into structured fields.
+
+        CLI format (from folder.formatted_tree): (default:...; user:...; teams:...; users:...)
+        """
+        # Ordered segments from folder.py: default, user, optional teams, optional users
+        m = re.search(
+            r'\(default:([^;]+); user:([^;]+)(?:; teams:([^;]+))?(?:; users:([^)]+))?\)',
+            name,
+        )
+        if not m:
+            return None
+
+        default_val = m.group(1).strip()
+        user_val = m.group(2).strip()
+        teams_seg = (m.group(3) or "").strip()
+        users_seg = (m.group(4) or "").strip()
+
+        share_permissions: Dict[str, Any] = {
+            "default": default_val,
+            "user": user_val,
+        }
+        if teams_seg:
+            share_permissions["teams"] = KeeperResponseParser._parse_share_bracket_list(
+                teams_seg, target_key="name"
+            )
+        if users_seg:
+            share_permissions["users"] = KeeperResponseParser._parse_share_bracket_list(
+                users_seg, target_key="username"
+            )
+        return share_permissions
+
+    @staticmethod
     def _parse_tree_command(response: str) -> Dict[str, Any]:
         """Parse 'tree' command output into structured format."""
         result = {
@@ -307,13 +357,9 @@ class KeeperResponseParser:
                 uid = uid_match.group(1)
             
             # Extract share permissions if present (for -s flag)
-            share_permissions = None
-            perm_match = re.search(r'\(default:([^;]+); user:([^)]+)\)', name)
-            if perm_match:
-                share_permissions = {
-                    "default": perm_match.group(1),
-                    "user": perm_match.group(2)
-                }
+            share_permissions = (
+                KeeperResponseParser._parse_tree_share_permissions(name) if is_shared else None
+            )
             
             # Clean the name from all indicators
             clean_name = name
