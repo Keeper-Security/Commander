@@ -84,3 +84,12 @@ def set_gateway_max_instances(params, gateway_uid, max_instance_count):   # type
     rq.controllerUid = gateway_uid
     rq.maxInstanceCount = max_instance_count
     api.communicate_rest(params, rq, 'pam/set_controller_max_instance_count')
+
+
+def edit_gateway(params, gateway_uid, gateway_name, node_id):
+    rq = pam_pb2.PAMController()
+    rq.controllerUid = gateway_uid
+    rq.controllerName = gateway_name
+    rq.nodeId = node_id
+    api.communicate_rest(params, rq, 'pam/modify_controller')
+    
