@@ -457,17 +457,22 @@ class Client:
             return
         self.tunnel.send_message("mouse", x, y, button_mask)
 
-    def send_size(self, width: int, height: int) -> None:
+    def send_size(self, width: int, height: int, dpi: Optional[int] = None) -> None:
         """
         Send the current screen size to the server.
 
         Args:
             width: Screen width in pixels.
             height: Screen height in pixels.
+            dpi: Optional display DPI; when set, sent as a third ``size`` argument
+                (same shape as the Guacamole handshake ``size`` instruction).
         """
         if not self._is_connected():
             return
-        self.tunnel.send_message("size", width, height)
+        if dpi is None:
+            self.tunnel.send_message("size", width, height)
+        else:
+            self.tunnel.send_message("size", width, height, dpi)
 
     def send_ack(self, stream_index: int, message: str, code: int) -> None:
         """

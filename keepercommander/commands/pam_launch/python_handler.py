@@ -28,7 +28,7 @@ Architecture:
     Python Layer (this module):
         - Receive Guacamole data via callback
         - Parse Guacamole instructions
-        - Respond to 'args' with 'connect', 'size', 'audio', 'image' (handshake)
+        - Respond to 'args' with 'size', 'audio', 'video', 'image', 'connect' (handshake)
         - Send Guacamole responses back to Rust
 
 Event Types from Rust:
@@ -40,7 +40,7 @@ Guacamole Handshake Flow (PythonHandler mode):
     1. Gateway sends 'select' to guacd with protocol type (ssh, telnet, etc.)
     2. guacd responds with 'args' listing required parameters
     3. Gateway forwards 'args' to Python via WebRTC
-    4. Python responds with 'connect', 'size', 'audio', 'image'
+    4. Python responds with 'size', 'audio', 'video', 'image', 'connect'
     5. guacd responds with 'ready' (optional, custom extension)
     6. guacd sends first 'sync' (TRUE readiness signal - matches JS client behavior)
     7. Terminal session begins
@@ -59,10 +59,12 @@ from __future__ import annotations
 import base64
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Any
 
 from .guacamole import Parser, to_instruction
 from .guac_cli.instructions import create_instruction_router, is_stdout_pipe_stream_name
+from .terminal_size import default_handshake_dpi
 
 if TYPE_CHECKING:
     pass
@@ -108,7 +110,7 @@ class GuacamoleHandler:
                 - port: Target port
                 - width: Terminal width in pixels
                 - height: Terminal height in pixels
-                - dpi: Display DPI (default 96)
+                - dpi: Display DPI (default ``default_handshake_dpi()``)
                 - audio_mimetypes: List of supported audio types (optional)
                 - image_mimetypes: List of supported image types (optional)
                 - guacd_params: Additional guacd parameters dict (optional)
@@ -195,6 +197,8 @@ class GuacamoleHandler:
         # Clipboard stream counter — starts at 200 to avoid collision with
         # image streams (1–99) and named pipe streams (100–101).
         self._clipboard_stream_index: int = 200
+        # argv stream counter — starts at 300 to avoid collision with clipboard streams.
+        self._argv_stream_index: int = 300
 
         # Count `pipe` opcodes from guacd (diagnostics when STDOUT never binds).
         self._guac_pipe_instruction_count: int = 0
@@ -289,13 +293,16 @@ class GuacamoleHandler:
         3. Gateway receives OpenConnection, starts guacd, connects to target
         4. Gateway sends ConnectionOpened back to Rust
         5. Rust notifies Python via this callback
-        6. Gateway/guacd sends 'args' instruction (Guacamole handshake starts)
+        6. Gateway may begin streaming Guacamole **server→client** display ops
+           (size/move/pipe/img/…). The initial **args** handshake from guacd is
+           often completed **upstream** (gateway↔guacd) and never forwarded here,
+           so ``_on_args`` may never run.
         """
         logging.debug(f"✓ Connection opened: conn_no={conn_no}")
         self.conn_no = conn_no
 
-        # The connection is now ready for Guacamole protocol
-        # Gateway will send guacd's 'args' instruction next
+        # Guacamole protocol continues on the data channel; handshake may already
+        # be complete on the gateway side (no 'args' instruction to Python).
 
     def _on_data(self, conn_no: int, payload: bytes):
         """
@@ -350,15 +357,19 @@ class GuacamoleHandler:
         """
         Handle args instruction from guacd (via Gateway).
 
-        This is the critical handshake step. When guacd receives 'select' from
-        the Gateway, it responds with 'args' listing the parameters it needs.
-        We must respond with 'connect' containing the parameter values,
-        followed by 'size', 'audio', and 'image' instructions.
+        **When this runs:** Only if the gateway **forwards** guacd's ``args``
+        instruction on the PythonHandler data channel. Many PAM deployments
+        complete select/args/size/connect **between gateway and guacd** and only
+        then stream display + STDOUT to Python — in that mode this handler is
+        **never** called.
+
+        When it does run, respond with 'size', 'audio', 'video', 'image', then
+        'connect' (guacr-guacd order) so DPI in ``size`` precedes ``connect``.
 
         Guacamole handshake sequence:
             1. Gateway sends 'select <protocol>' to guacd
             2. guacd responds with 'args' (list of required params)
-            3. We respond with 'connect' (param values), 'size', 'audio', 'image'
+            3. We respond with 'size', 'audio', 'video', 'image', 'connect' (matches guacd client / guacr-guacd)
             4. guacd responds with 'ready'
 
         Args:
@@ -374,7 +385,7 @@ class GuacamoleHandler:
             # Build and send the handshake response
             self._send_handshake_response(list(args))
             self.handshake_sent = True
-            logging.debug("✓ Guacamole handshake sent (connect+size+audio+image)")
+            logging.debug("✓ Guacamole handshake sent (size,audio,video,image,connect)")
         except Exception as e:
             logging.error(f"Error sending handshake response: {e}", exc_info=True)
 
@@ -390,7 +401,9 @@ class GuacamoleHandler:
         # Get terminal dimensions (default to standard CLI size)
         width = settings.get('width', 800)
         height = settings.get('height', 600)
-        dpi = settings.get('dpi', 96)
+        # Default must match ``screen_info['dpi']`` / pixel mode (``default_handshake_dpi()``),
+        # or Cairo cell metrics diverge from client pixel sizing (wrong $COLUMNS / TUI layout).
+        dpi = settings.get('dpi', default_handshake_dpi())
 
         # Get guacd parameters (hostname, port, username, password, etc.)
         guacd_params = settings.get('guacd_params', {})
@@ -421,33 +434,33 @@ class GuacamoleHandler:
 
                 connect_args.append(value)
 
-        # Send connect instruction
-        connect_instruction = self._format_instruction('connect', *connect_args)
-        self._send_to_gateway(connect_instruction)
-        logging.debug(f"Sent 'connect' with {len(connect_args)} args")
-
-        # Send size instruction
+        # Guacd expects the same order as guacr-guacd / JS client: size (with DPI), then
+        # audio/video/image, then connect — not connect before size.
         size_instruction = self._format_instruction('size', width, height, dpi)
         self._send_to_gateway(size_instruction)
-        logging.debug(f"Sent 'size': {width}x{height} @ {dpi}dpi")
+        logging.debug(
+            f"Sent 'size' (handshake): {width}x{height} @ {dpi}dpi, "
+            f"cols/rows:{settings.get('columns')}x{settings.get('rows')}"
+        )
 
-        # Send audio instruction (supported audio mimetypes)
         audio_mimetypes = settings.get('audio_mimetypes', [])
         audio_instruction = self._format_instruction('audio', *audio_mimetypes)
         self._send_to_gateway(audio_instruction)
         logging.debug(f"Sent 'audio': {audio_mimetypes}")
 
-        # Send video instruction (supported video mimetypes - usually empty for terminal)
         video_mimetypes = settings.get('video_mimetypes', [])
         video_instruction = self._format_instruction('video', *video_mimetypes)
         self._send_to_gateway(video_instruction)
         logging.debug(f"Sent 'video': {video_mimetypes}")
 
-        # Send image instruction (supported image mimetypes)
         image_mimetypes = settings.get('image_mimetypes', ['image/png', 'image/jpeg', 'image/webp'])
         image_instruction = self._format_instruction('image', *image_mimetypes)
         self._send_to_gateway(image_instruction)
         logging.debug(f"Sent 'image': {image_mimetypes}")
+
+        connect_instruction = self._format_instruction('connect', *connect_args)
+        self._send_to_gateway(connect_instruction)
+        logging.debug(f"Sent 'connect' with {len(connect_args)} args")
 
     def _on_sync(self, args: List[str]) -> None:
         """
@@ -885,19 +898,27 @@ class GuacamoleHandler:
         except Exception as e:
             logging.error(f"Error sending mouse event: {e}")
 
-    def send_size(self, width: int, height: int, dpi: int = 96):
+    def send_size(self, width: int, height: int, dpi: Optional[int] = None):
         """
-        Send terminal size to guacd.
+        Send terminal size to guacd (runtime resize).
+
+        Sends ``size`` with width, height, and DPI (three arguments), matching the
+        handshake instruction shape and the same DPI as handshake (typically
+        ``default_handshake_dpi()`` for the active pixel mode) so guacd can
+        keep Cairo cell metrics aligned on every resize where supported.
 
         Only sends if session is active (running and data flowing).
 
         Args:
             width: Width in pixels
             height: Height in pixels
-            dpi: DPI (default 96)
+            dpi: Display DPI for font rasterisation (defaults to ``default_handshake_dpi()``)
         """
         if not self.running or not self.data_flowing.is_set():
             return
+
+        if dpi is None:
+            dpi = default_handshake_dpi()
 
         try:
             instruction = self._format_instruction('size', width, height, dpi)
@@ -948,6 +969,38 @@ class GuacamoleHandler:
             )
         except Exception as exc:
             logging.error(f"Error sending clipboard stream: {exc}")
+
+    def send_argv(self, name: str, value: str) -> None:
+        """
+        Change a guacd connection parameter at runtime via the argv stream protocol.
+
+        Wire format (mirrors Guacamole JS client argv channel):
+            argv,<stream_id>,text/plain,<name>;
+            blob,<stream_id>,<base64_value>;
+            end,<stream_id>;
+
+        Args:
+            name:  Parameter name (e.g. 'font-size', 'color-scheme').
+            value: New parameter value as a string.
+        """
+        if not self.running or not self.data_flowing.is_set():
+            return
+        try:
+            stream_id = str(self._argv_stream_index)
+            self._argv_stream_index += 1
+            value_b64 = base64.b64encode(value.encode('utf-8')).decode('ascii')
+            self._send_to_gateway(
+                self._format_instruction('argv', stream_id, 'text/plain', name)
+            )
+            self._send_to_gateway(
+                self._format_instruction('blob', stream_id, value_b64)
+            )
+            self._send_to_gateway(
+                self._format_instruction('end', stream_id)
+            )
+            logging.debug('argv sent: %s=%r stream_id=%s', name, value, stream_id)
+        except Exception as exc:
+            logging.error('Error sending argv %s: %s', name, exc)
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
         """
@@ -1064,7 +1117,7 @@ def create_python_handler(
             - port: Target port
             - width: Terminal width in pixels
             - height: Terminal height in pixels
-            - dpi: Display DPI (default 96)
+            - dpi: Display DPI (default ``default_handshake_dpi()``)
             - audio_mimetypes: List of supported audio types
             - image_mimetypes: List of supported image types
             - guacd_params: Dict of guacd connection parameters
@@ -1082,7 +1135,7 @@ def create_python_handler(
                 'protocol': 'ssh',
                 'width': 800,
                 'height': 600,
-                'dpi': 96,
+                'dpi': 192,
                 'guacd_params': {
                     'hostname': '192.168.1.100',
                     'port': '22',
