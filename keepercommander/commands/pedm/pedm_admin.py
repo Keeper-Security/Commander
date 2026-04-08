@@ -1227,9 +1227,7 @@ class PedmPolicyMixin:
         if not p_controls:
             return None
 
-        allowed_controls: Set[str] = {'audit', 'notify', 'mfa', 'justify', 'approval'}
-        if policy_type_name in ('FileAccess', 'CommandLine'):
-            allowed_controls.update(('allow', 'deny'))
+        allowed_controls: Set[str] = {'audit', 'notify', 'mfa', 'justify', 'approval', 'allow', 'deny'}
 
         controls: List[str] = []
         if isinstance(p_controls, str):
