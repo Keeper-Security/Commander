@@ -47,6 +47,7 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
 from .record_edit import RecordEditMixin
 from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
+from .enterprise_common import EnterpriseCommand
 from ..email_service import EmailSender, build_onboarding_email
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
@@ -203,6 +204,7 @@ class PAMGatewayCommand(GroupCommand):
         super(PAMGatewayCommand, self).__init__()
         self.register_command('list', PAMGatewayListCommand(), 'List Gateways', 'l')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
+        self.register_command('edit', PAMEditGatewayCommand(), 'Edit Gateway', 'e')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
         self.register_command('set-max-instances', PAMSetMaxInstancesCommand(), 'Set maximum gateway instances', 'smi')
         # self.register_command('connect', PAMConnect(), 'Connect')
@@ -3604,3 +3606,55 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
             print(bcolors.OKGREEN + one_time_token + bcolors.ENDC)
             print('-----------------------------------------------')
+
+
+class PAMEditGatewayCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam gateway edit')
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway',
+                        help='Gateway UID or Name', action='store')
+    parser.add_argument('--name', '-n', required=False, dest='gateway_name',
+                        help='Name of the Gateway', action='store')
+    parser.add_argument('--node-id', '-i', required=False, dest='node_id',
+                        help='Node ID', action='store')
+
+    def get_parser(self):
+        return PAMEditGatewayCommand.parser
+
+    def execute(self, params: KeeperParams, **kwargs):
+        gateway_uid = kwargs.get('gateway')
+        new_name = kwargs.get('gateway_name')
+        node_id_arg = kwargs.get('node_id')
+
+        if not gateway_uid:
+            raise CommandError('pam gateway edit', 'Argument --gateway is required')
+
+        gateways = gateway_helper.get_all_gateways(params)
+
+        gateway = next((x for x in gateways
+                        if utils.base64_url_encode(x.controllerUid) == gateway_uid
+                        or x.controllerName.lower() == gateway_uid.lower()), None)
+
+        if not gateway:
+            raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_uid}" not found{bcolors.ENDC}')
+
+        if not node_id_arg and not new_name:
+            raise CommandError('pam gateway edit', 'Nothing to do. At least one of --name or --node-id is required to edit the gateway')
+
+        if node_id_arg is not None and str(node_id_arg).strip():
+            if not params.enterprise or 'nodes' not in params.enterprise:
+                raise CommandError('', f'{bcolors.FAIL}Enterprise node data is not loaded{bcolors.ENDC}')
+            nodes = list(EnterpriseCommand.resolve_nodes(params, str(node_id_arg)))
+            if len(nodes) == 0:
+                raise CommandError('', f'{bcolors.FAIL}Node "{node_id_arg}" not found{bcolors.ENDC}')
+            if len(nodes) > 1:
+                raise CommandError(
+                    '',
+                    f'{bcolors.FAIL}More than one node "{node_id_arg}" found. Use Node ID.{bcolors.ENDC}')
+            resolved_node_id = nodes[0]['node_id']
+        else:
+            resolved_node_id = gateway.nodeId
+
+        gateway_name = new_name if new_name else gateway.controllerName
+
+        gateway_helper.edit_gateway(params, gateway.controllerUid, gateway_name, resolved_node_id)
+        logging.info('Gateway %s has been edited.', gateway_uid)
