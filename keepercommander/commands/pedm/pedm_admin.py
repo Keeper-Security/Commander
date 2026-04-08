@@ -1347,7 +1347,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-type', dest='policy_type', action='store', default='elevation',
                             choices=['elevation', 'file_access', 'command', 'least_privilege'],
                             help='Policy type')
-        parser.add_argument('--policy-name', dest='policy_name', action='store',
+        parser.add_argument('--policy-name', dest='policy_name', action='store', required=True,
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
                             choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
