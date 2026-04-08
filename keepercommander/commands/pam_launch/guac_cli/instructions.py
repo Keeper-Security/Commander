@@ -35,6 +35,8 @@ import logging
 import sys
 from typing import Any, Callable, Dict, List, Optional, cast
 
+from ..terminal_size import default_handshake_dpi
+
 
 def is_stdout_pipe_stream_name(name: str) -> bool:
     """True if Guacamole named pipe is the terminal STDOUT stream (case/whitespace tolerant)."""
@@ -112,7 +114,7 @@ def handle_size(args: List[str]) -> None:
         logging.debug(f"[SIZE] {width}x{height}")
     elif len(args) >= 3:
         layer, width, height = args[0], args[1], args[2]
-        dpi = args[3] if len(args) > 3 else "96"
+        dpi = args[3] if len(args) > 3 else str(default_handshake_dpi())
         logging.debug(f"[SIZE] layer={layer}, {width}x{height} @ {dpi}dpi")
     else:
         logging.debug(f"[SIZE] {args}")

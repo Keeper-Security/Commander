@@ -33,7 +33,7 @@ from .terminal_connection import (
     _version_at_least,
     _pam_settings_connection_port,
 )
-from .terminal_size import get_terminal_size_pixels, is_interactive_tty
+from .terminal_size import get_terminal_size_pixels, is_interactive_tty, PIXEL_MODE_GUACD, scale_screen_info
 from .terminal_reset import reset_local_terminal_after_pam_session
 from .guac_cli.stdin_handler import StdinHandler
 from .guac_cli.input import InputHandler
@@ -280,6 +280,9 @@ class PAMLaunchCommand(Command):
                         help='Send typed input via stdin pipe bytes (pipe/blob/end, kcm-cli style) instead of '
                              'the default Guacamole key-event mode. Paste and Ctrl+C double-tap behave the '
                              'same in both modes.')
+    parser.add_argument('--scale', '-s', required=False, dest='scale', type=int, default=None,
+                        help='Scale pixel width/height by this percentage (e.g. 50 = half canvas, 200 = double). '
+                             'Range: [40-400]. Helps when fullscreen TUI programs show garbled layout.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -813,14 +816,13 @@ class PAMLaunchCommand(Command):
                 if fs_int != 12:
                     fs_disp = fs_disp = str(fs_int) if fs_int is not None else str(pam_connection_font_size).strip()
                     logging.warning(
-                        'Record %s sets connection.fontSize=%s (guacd default is 12); session recordings '
+                        'Record %s sets connection.fontSize=%s (session overrides with 12); session recordings '
                         'may look different from this Commander terminal session.',
                         record_uid,
                         fs_disp,
                     )
                     print(
-                        f'Warning: This record sets fontSize={fs_disp}; session recordings may look '
-                        'different from this Commander terminal session.',
+                        f'Warning: connection.fontSize={fs_disp} is ignored here; this session uses font size 12 ',
                     )
 
             # Launch terminal connection
@@ -852,10 +854,17 @@ class PAMLaunchCommand(Command):
 
                 # Always start interactive CLI session
                 # Pass launch_credential_uid to know if ConnectAs payload is needed
+                _scale = kwargs.get('scale')
+                if isinstance(_scale, int):
+                    if _scale < 40 or _scale > 400:
+                        raise CommandError('pam launch',
+                                           f'--scale must be between 40 and 400 (got {_scale})')
                 self._start_cli_session(
-                    result, params,
+                    result,
+                    params,
                     kwargs.get('launch_credential_uid'),
                     use_stdin=kwargs.get('use_stdin', False),
+                    cli_scale=_scale,
                 )
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -870,6 +879,7 @@ class PAMLaunchCommand(Command):
         params: KeeperParams,
         launch_credential_uid: Optional[str] = None,
         use_stdin: bool = False,
+        cli_scale: Optional[int] = None,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -1096,6 +1106,45 @@ class PAMLaunchCommand(Command):
                 logging.debug(
                     'Terminal session active. Ctrl+C → remote interrupt; double Ctrl+C (<400 ms) to exit.',
                 )
+                # Handshake ``size`` may have been sent while the local console was still
+                # changing during WebRTC/backend wait (before ``pre_offer_sync`` patches the
+                # handler). Push the current grid as a runtime ``size`` once data is flowing.
+                if is_interactive_tty():
+                    try:
+                        _pr_raw = get_terminal_size_pixels()
+                        if isinstance(cli_scale, int) and cli_scale > 0 and cli_scale != 100:
+                            _pr = scale_screen_info(
+                                _pr_raw["columns"], _pr_raw["rows"], cli_scale
+                            )
+                        else:
+                            _pr = _pr_raw
+                        python_handler.send_size(
+                            _pr['pixel_width'],
+                            _pr['pixel_height'],
+                            _pr['dpi'],
+                        )
+                        logging.debug(
+                            'Post-ready Guacamole size sync: %sx%s -> %sx%spx @ %sdpi%s',
+                            _pr['columns'],
+                            _pr['rows'],
+                            _pr['pixel_width'],
+                            _pr['pixel_height'],
+                            _pr['dpi'],
+                            f' (--scale {cli_scale}%)' if cli_scale else '',
+                        )
+                    except Exception as _e:
+                        logging.debug('Post-ready size sync skipped: %s', _e)
+
+                # Correct font-size to 12 via argv — GW may have applied the record's
+                # fontSize during the upstream handshake before our connect instruction.
+                # font-size=12 is required for pixel metrics to match the 96-DPI cell model.
+                _record_font_size = tunnel_result.get('settings', {}).get('terminal', {}).get('fontSize')
+                if _record_font_size and str(_record_font_size) != '12':
+                    try:
+                        python_handler.send_argv('font-size', '12')
+                        logging.debug('Post-ready argv: font-size corrected from %s to 12', _record_font_size)
+                    except Exception as _e:
+                        logging.debug('Post-ready argv font-size skipped: %s', _e)
             else:
                 logging.warning(f"Guacamole did not report ready within {guac_ready_timeout}s")
                 logging.warning("Terminal may still work if data is flowing.")
@@ -1198,6 +1247,7 @@ class PAMLaunchCommand(Command):
                 # so the final resting size is always dispatched.
                 _last_sent_cols = 0
                 _last_sent_rows = 0
+
                 if _resize_enabled:
                     try:
                         _init_ts = shutil.get_terminal_size()
@@ -1248,6 +1298,8 @@ class PAMLaunchCommand(Command):
                             except Exception:
                                 _cur_cols, _cur_rows = _last_sent_cols, _last_sent_rows
 
+                            # Send only when cols or rows change; pixel values are derived
+                            # from the grid via kcm_cli_approximate_pixels in get_terminal_size_pixels.
                             if (_cur_cols, _cur_rows) != (_last_sent_cols, _last_sent_rows):
                                 # Phase 2: size changed - apply debounce then
                                 # fetch exact pixels and send.
@@ -1255,23 +1307,33 @@ class PAMLaunchCommand(Command):
                                     if shutdown_requested or not python_handler.running:
                                         break
                                     try:
-                                        _si = get_terminal_size_pixels(_cur_cols, _cur_rows)
+                                        if isinstance(cli_scale, int) and cli_scale > 0 and cli_scale != 100:
+                                            _si = scale_screen_info(
+                                                _cur_cols, _cur_rows, cli_scale
+                                            )
+                                        else:
+                                            _si = get_terminal_size_pixels(
+                                                _cur_cols, _cur_rows
+                                            )
                                         python_handler.send_size(
                                             _si['pixel_width'],
                                             _si['pixel_height'],
                                             _si['dpi'],
                                         )
-                                        _last_sent_cols = _cur_cols
-                                        _last_sent_rows = _cur_rows
+                                        # Track what get_terminal_size_pixels actually used
+                                        # (it re-queries internally), not just the poll value.
+                                        # If the inner query saw a transient size, the next
+                                        # poll will detect the mismatch and send a correction.
+                                        _last_sent_cols = _si['columns']
+                                        _last_sent_rows = _si['rows']
                                         _last_resize_send_time = _now
                                         logging.debug(
-                                            f"Terminal resized: {_cur_cols}x{_cur_rows} cols/rows "
-                                            f"-> {_si['pixel_width']}x{_si['pixel_height']}px "
-                                            f"@ {_si['dpi']}dpi"
+                                            f"Terminal resized: {_si['columns']}x{_si['rows']} cols/rows "
+                                            f"-> {_si['pixel_width']}x{_si['pixel_height']}px @ {_si['dpi']}dpi "
                                         )
                                     except Exception as _e:
                                         logging.debug(f"Failed to send resize: {_e}")
-                                # else: debounce active - _last_sent_cols/rows unchanged
+                                # else: debounce active - last sent * not updated
                                 # so the change is re-detected on the next eligible poll.
 
                     # Status indicator every 30 seconds

@@ -22,6 +22,7 @@ import os
 import base64
 import json
 import secrets
+import shutil
 import time
 import uuid
 from typing import TYPE_CHECKING, Optional, Dict, Any
@@ -102,8 +103,10 @@ DEFAULT_PORTS = {
 from .terminal_size import (
     DEFAULT_TERMINAL_COLUMNS,
     DEFAULT_TERMINAL_ROWS,
+    GUACAMOLE_HANDSHAKE_DPI,
     _build_screen_info,
     get_terminal_size_pixels,
+    scale_screen_info,
 )
 
 # Computed at import time using the best available platform APIs so the initial
@@ -1126,8 +1129,14 @@ def _build_guacamole_connection_settings(
     terminal_settings = settings.get('terminal', {})
     if terminal_settings.get('colorScheme'):
         guacd_params['color-scheme'] = terminal_settings['colorScheme']
-    if terminal_settings.get('fontSize'):
-        guacd_params['font-size'] = terminal_settings['fontSize']
+    _record_font_size = terminal_settings.get('fontSize')
+    if _record_font_size and str(_record_font_size) != '12':
+        logging.debug(
+            "Record font-size %r is not supported for terminal sessions "
+            "(pixel metrics are calibrated for font-size 12); converting to font-size 12.",
+            _record_font_size,
+        )
+    guacd_params['font-size'] = '12'
 
     # PAM clipboard → guacd: only pass disable-* when the record sets them (guacd "true" = on).
     _pam_clip = settings.get('clipboard') or {}
@@ -1136,6 +1145,15 @@ def _build_guacamole_connection_settings(
     if _pam_clip.get('disableCopy'):
         guacd_params['disable-copy'] = 'true'
 
+    # Terminal dimensions and DPI must be in guacd_params so the 'connect' instruction
+    # carries them to guacd. Without these, guacd initialises its font metrics at its
+    # built-in default DPI (96), giving char_width ≈ 10 px. The kcm pixel formula uses
+    # char_width = 19 px (calibrated for DPI 192), so a missing DPI in 'connect' causes
+    # guacd to compute ~2× too many PTY columns from the pixel width we send.
+    guacd_params['width'] = str(screen_info.get('pixel_width', 800))
+    guacd_params['height'] = str(screen_info.get('pixel_height', 600))
+    guacd_params['dpi'] = str(screen_info.get('dpi', GUACAMOLE_HANDSHAKE_DPI))
+
     # Build final connection settings
     connection_settings = {
         'protocol': protocol,
@@ -1143,7 +1161,10 @@ def _build_guacamole_connection_settings(
         'port': settings.get('port', 22),
         'width': screen_info.get('pixel_width', 800),
         'height': screen_info.get('pixel_height', 600),
-        'dpi': screen_info.get('dpi', 96),
+        # DPI comes from screen_info (192 for KCM mode, 96 for guacd/scale mode) — also
+        # carried via guacd_params['dpi'] so the 'connect' instruction sets guacd's font
+        # metrics to the correct DPI from the start.
+        'dpi': screen_info.get('dpi', GUACAMOLE_HANDSHAKE_DPI),
         'guacd_params': guacd_params,
         # Supported mimetypes for terminal sessions
         'audio_mimetypes': [],  # No audio for terminal
@@ -1383,6 +1404,28 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 # No linked user, no supply flags - use pamMachine credentials directly
                 logging.debug("No linked user or supply flags - using pamMachine credentials directly")
 
+            # Fresh TTY metrics for the Python handshake — do not use ``screen_info`` from
+            # function start (DEFAULT_SCREEN_INFO snapshot); that can be import-time or stale.
+            _scale = kwargs.get('scale')
+            if isinstance(_scale, int) and _scale > 0 and _scale != 100:
+                _ts = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
+                screen_info = scale_screen_info(_ts.columns, _ts.lines, _scale)
+                logging.debug(
+                    "--scale %s%%: guacd-96 base, grid %sx%s → %sx%spx @ %sdpi",
+                    _scale,
+                    screen_info["columns"],
+                    screen_info["rows"],
+                    screen_info["pixel_width"],
+                    screen_info["pixel_height"],
+                    screen_info["dpi"],
+                )
+            else:
+                try:
+                    screen_info = get_terminal_size_pixels()
+                except Exception:
+                    logging.debug("Falling back to default terminal size for PythonHandler connection_settings")
+                    screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
+
             # Build connection settings for Guacamole handshake
             # These are used when guacd sends 'args' instruction
             connection_settings = _build_guacamole_connection_settings(
@@ -1484,15 +1527,42 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # platform-specific APIs (Windows: GetCurrentConsoleFontEx; Unix:
         # TIOCGWINSZ) to obtain exact pixel dimensions before falling back to
         # the fixed cell-size estimate.
-        try:
-            screen_info = get_terminal_size_pixels()
-        except Exception:
-            logging.debug("Falling back to default terminal size for offer payload")
-            screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
+        _scale = kwargs.get('scale')
+        if isinstance(_scale, int) and _scale > 0 and _scale != 100:
+            _ts = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
+            screen_info = scale_screen_info(_ts.columns, _ts.lines, _scale)
+            logging.debug(
+                "--scale %s%% (offer): guacd-96 base, grid %sx%s → %sx%spx @ %sdpi",
+                _scale,
+                screen_info["columns"],
+                screen_info["rows"],
+                screen_info["pixel_width"],
+                screen_info["pixel_height"],
+                screen_info["dpi"],
+            )
+        else:
+            try:
+                screen_info = get_terminal_size_pixels()
+            except Exception:
+                logging.debug("Falling back to default terminal size for offer payload")
+                screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
         logging.debug(
             f"Using terminal metrics columns={screen_info['columns']} rows={screen_info['rows']} -> "
             f"{screen_info['pixel_width']}x{screen_info['pixel_height']}px @ {screen_info['dpi']}dpi"
         )
+
+        # Offer payload and Guacamole ``size`` handshake must agree. The handler was created
+        # earlier; refresh its stored width/height/dpi so a slightly later ``args``/handshake
+        # matches what we send in the connection offer (avoids PTY geometry vs. local TTY drift).
+        if python_handler is not None:
+            python_handler.connection_settings['width'] = screen_info['pixel_width']
+            python_handler.connection_settings['height'] = screen_info['pixel_height']
+            python_handler.connection_settings['dpi'] = screen_info['dpi']
+            # Keep connect-instruction lookup in sync with top-level handshake size/DPI.
+            _gp_sync = python_handler.connection_settings.setdefault('guacd_params', {})
+            _gp_sync['width'] = str(screen_info['pixel_width'])
+            _gp_sync['height'] = str(screen_info['pixel_height'])
+            _gp_sync['dpi'] = str(screen_info['dpi'])
 
         offer_payload = offer.get("offer")
         decoded_offer_bytes = None
@@ -1543,7 +1613,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             "offer": offer_payload,
             "audio": ["audio/L8", "audio/L16"],  # Supported audio codecs
             "video": [],  # Supported video codecs - None for terminal
-            "size": [screen_info['pixel_width'], screen_info['pixel_height'], screen_info['dpi']],  # [width, height, dpi]
+            # [width, height, dpi] — matches screen_info / pixel mode (e.g. 96 guacd, 192 kcm)
+            "size": [screen_info['pixel_width'], screen_info['pixel_height'], screen_info['dpi']],
             "image": ["image/jpeg", "image/png", "image/webp"],  # Supported image formats
             # CRITICAL: Gateway needs 'host' to configure guacd connection
             "host": {
