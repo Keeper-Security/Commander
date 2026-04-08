@@ -136,9 +136,7 @@ def _parse_fields(obj: Dict, type: str, tmpl=None):
 			"rotation_settings": {}
           }
     }
-    res = templates.get(type,{})
-    if tmpl:
-        res = tmpl
+    res = copy.deepcopy(tmpl) if tmpl else copy.deepcopy(templates.get(type, {}))
 
     for key in obj:
         if obj[key] == "": continue
@@ -166,8 +164,8 @@ def _gen_data(csv_data: List[Dict[str, str]],
     tmpl = rsrs.pop(idx) if idx is not None else {}
     rs_tmpl, usr_tmpl = None,None
     if tmpl:
-        rs_tmpl = tmpl
-        usr_tmpl = tmpl.get("users",[None])[0]
+        rs_tmpl = copy.deepcopy(tmpl)
+        usr_tmpl = copy.deepcopy(tmpl.get("users",[None])[0])
         rs_tmpl["users"] = []
 
     seen: set[str] = set()
@@ -206,7 +204,7 @@ def _gen_data(csv_data: List[Dict[str, str]],
             continue
         seen.add(username)
 
-        user = (_parse_fields(obj,"usr",usr_tmpl))
+        user = _parse_fields(obj,"usr",usr_tmpl)
         if obj.get("folder_path",None):
             user["folder_path"] = obj["folder_path"]
         user_path_value = obj["user_path"]
@@ -300,11 +298,14 @@ def main():
     if args.template_file:
         tmpl = _load_template(args.template_file)
         prepare_template(tmpl)
-    print(f"Processing {len(rows)} servers")
+    print(f"Processing {len(rows)} objects")
 
     data = _gen_data(rows, tmpl, args.prefix_names)
     write_import_json(data, args.output_file)
-    print(f"Import with `pam project import -f={args.output_file}")
+    print("- To build a new PAM model (folder paths not supported), use:")
+    print(f"pam project import -f={args.output_file}")
+    print("- To add these objects to an existing PAM model (folder paths supported), use:")
+    print(f"pam project extend -f={args.output_file} -c=<pam-configuration-uid>")
 
 
 if __name__ == "__main__":
