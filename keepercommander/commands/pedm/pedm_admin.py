@@ -1227,13 +1227,9 @@ class PedmPolicyMixin:
         if not p_controls:
             return None
 
-        allowed_controls: Set[str] = set()
-        if policy_type_name == 'PrivilegeElevation':
-            allowed_controls.update(('audit', 'notify', 'mfa', 'justify', 'approval'))
-        elif policy_type_name == 'Access':
-            allowed_controls.update(('audit', 'notify', 'allow', 'deny'))
-        elif policy_type_name == 'CommandLine':
-            allowed_controls.update(('audit', 'notify', 'allow', 'deny'))
+        allowed_controls: Set[str] = {'audit', 'notify', 'mfa', 'justify', 'approval'}
+        if policy_type_name in ('FileAccess', 'CommandLine'):
+            allowed_controls.update(('allow', 'deny'))
 
         controls: List[str] = []
         if isinstance(p_controls, str):
@@ -1350,7 +1346,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
-                            choices=['audit', 'notify', 'mfa', 'justify', 'approval'],
+                            choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
                             help='Policy controls')
         parser.add_argument('--status', dest='status', action='store',
                             choices=['enforce', 'monitor', 'monitor_and_notify'],
@@ -1502,7 +1498,7 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
-                            choices=['audit', 'notify', 'mfa', 'justify', 'approval'],
+                            choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
                             help='Policy controls')
         parser.add_argument('--status', dest='status', action='store',
                             choices=['enforce', 'monitor', 'monitor_and_notify'],
