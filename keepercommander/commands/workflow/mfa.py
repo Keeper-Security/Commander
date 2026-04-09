@@ -37,9 +37,12 @@ class WorkflowAccessValidator:
 
         mfa_required = bool(config.parameters and config.parameters.requireMFA)
 
+        no_approvals = config.parameters and config.parameters.approvalsNeeded == 0
         workflow = self._find_active_workflow()
+        if workflow is None and no_approvals:
+            workflow = self._get_workflow_state_by_record()
         if workflow is None:
-            self._print_no_workflow()
+            self._print_needs_start() if no_approvals else self._print_no_workflow()
             return {'allowed': False, 'require_mfa': False}
 
         return self._evaluate_stage(workflow, mfa_required)
@@ -88,22 +91,64 @@ class WorkflowAccessValidator:
             conditions = workflow.status.conditions
             cond_str = WorkflowFormatter.format_conditions(conditions) if conditions else 'approval'
             print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
+            if workflow.status.checkedOutBy:
+                print(f"Record is currently checked out by: {workflow.status.checkedOutBy}")
             print("Your request is being processed. Please wait for approval.\n")
             return {'allowed': False, 'require_mfa': False}
 
         if stage == workflow_pb2.WS_NEEDS_ACTION:
-            flow_uid_str = utils.base64_url_encode(workflow.flowUid)
+            conditions = workflow.status.conditions
             print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
-            print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {flow_uid_str}{bcolors.ENDC} to see details.\n")
+            if conditions:
+                has_reason = workflow_pb2.AC_REASON in conditions
+                has_ticket = workflow_pb2.AC_TICKET in conditions
+                has_approval = workflow_pb2.AC_APPROVAL in conditions
+                if has_reason or has_ticket:
+                    opts = []
+                    if has_reason:
+                        opts.append('--reason "<reason>"')
+                    if has_ticket:
+                        opts.append('--ticket "<ticket>"')
+                    print(f"Run: {bcolors.OKBLUE}pam workflow request {self.record_uid} "
+                          f"{' '.join(opts)}{bcolors.ENDC}")
+                elif has_approval:
+                    print(f"Run: {bcolors.OKBLUE}pam workflow request {self.record_uid}{bcolors.ENDC} "
+                          f"to request approval.")
+                else:
+                    cond_str = WorkflowFormatter.format_conditions(conditions)
+                    print(f"Pending conditions: {cond_str}")
+            else:
+                flow_uid_str = utils.base64_url_encode(workflow.flowUid)
+                print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {flow_uid_str}{bcolors.ENDC} "
+                      f"to see details.")
+            print()
             return {'allowed': False, 'require_mfa': False}
 
         self._print_no_workflow()
         return {'allowed': False, 'require_mfa': False}
 
+    def _get_workflow_state_by_record(self):
+        try:
+            state_query = workflow_pb2.WorkflowState()
+            state_query.resource.CopyFrom(
+                ProtobufRefBuilder.record_ref(self.record_uid_bytes, self.record_name)
+            )
+            return _post_request_to_router(
+                self.params, 'get_workflow_state',
+                rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
+            )
+        except Exception:
+            return None
+
     def _print_no_workflow(self):
         print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
         print("You must request access before connecting.")
         print(f"Run: {bcolors.OKBLUE}pam workflow request {self.record_uid}{bcolors.ENDC} to request access.\n")
+
+    def _print_needs_start(self):
+        print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
+        print("No approvals required, but the record must be checked out first.")
+        print(f"Run: {bcolors.OKBLUE}pam workflow start {self.record_uid}{bcolors.ENDC} to check out the record.\n")
 
 
 class WorkflowMfaPrompt:

@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import re
 from typing import List
 
 from ..pam.router_helper import _post_request_to_router
@@ -16,6 +17,20 @@ from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
 from ... import vault, utils
+
+
+_PROTO_DUMP_RE = re.compile(
+    r'\s*(?:type|value|name|stage|conditions|flowUid|resource)\s*:\s*(?:"[^"]*"|\S+)\s*',
+)
+_RESPONSE_CODE_RE = re.compile(r'\s*[Rr]esponse\s+code:\s*\S+\s*$')
+
+
+def sanitize_router_error(error: Exception) -> str:
+    msg = str(error)
+    msg = _RESPONSE_CODE_RE.sub('', msg)
+    msg = _PROTO_DUMP_RE.sub('', msg)
+    msg = re.sub(r'\s+', ' ', msg).strip()
+    return msg or 'Unknown error'
 
 
 class RecordResolver:
@@ -61,7 +76,7 @@ class RecordResolver:
     def resolve_user(params: KeeperParams, user_id: int) -> str:
         if params.enterprise and 'users' in params.enterprise:
             for u in params.enterprise['users']:
-                if u.get('enterprise_user_id') == user_id:
+                if u.get('enterprise_user_id') == user_id or u.get('user_id') == user_id:
                     return u.get('username', f'User ID {user_id}')
         return f'User ID {user_id}'
 
@@ -114,6 +129,26 @@ class WorkflowFormatter:
 
     DURATION_MULTIPLIERS = {'d': 86_400_000, 'h': 3_600_000, 'm': 60_000}
 
+    DAY_PARSE_MAP = {
+        'mon': workflow_pb2.MONDAY, 'monday': workflow_pb2.MONDAY,
+        'tue': workflow_pb2.TUESDAY, 'tuesday': workflow_pb2.TUESDAY,
+        'wed': workflow_pb2.WEDNESDAY, 'wednesday': workflow_pb2.WEDNESDAY,
+        'thu': workflow_pb2.THURSDAY, 'thursday': workflow_pb2.THURSDAY,
+        'fri': workflow_pb2.FRIDAY, 'friday': workflow_pb2.FRIDAY,
+        'sat': workflow_pb2.SATURDAY, 'saturday': workflow_pb2.SATURDAY,
+        'sun': workflow_pb2.SUNDAY, 'sunday': workflow_pb2.SUNDAY,
+    }
+
+    DAY_NAME_MAP = {
+        workflow_pb2.MONDAY: 'Monday',
+        workflow_pb2.TUESDAY: 'Tuesday',
+        workflow_pb2.WEDNESDAY: 'Wednesday',
+        workflow_pb2.THURSDAY: 'Thursday',
+        workflow_pb2.FRIDAY: 'Friday',
+        workflow_pb2.SATURDAY: 'Saturday',
+        workflow_pb2.SUNDAY: 'Sunday',
+    }
+
     @staticmethod
     def format_stage(stage: int) -> str:
         return WorkflowFormatter.STAGE_MAP.get(stage, f'Unknown ({stage})')
@@ -153,3 +188,65 @@ class WorkflowFormatter:
         if minutes > 0:
             return f"{minutes} minute{'s' if minutes != 1 else ''}"
         return f"{seconds} second{'s' if seconds != 1 else ''}"
+
+    @staticmethod
+    def build_temporal_filter(allowed_days_str, time_range_str, timezone_str):
+        if not allowed_days_str and not time_range_str and not timezone_str:
+            return None
+
+        temporal = workflow_pb2.TemporalAccessFilter()
+
+        if allowed_days_str:
+            for day_token in allowed_days_str.split(','):
+                day_token = day_token.strip().lower()
+                day_enum = WorkflowFormatter.DAY_PARSE_MAP.get(day_token)
+                if day_enum is None:
+                    valid = ', '.join(sorted({k for k in WorkflowFormatter.DAY_PARSE_MAP if len(k) == 3}))
+                    raise CommandError('', f'Invalid day: "{day_token}". Valid: {valid}')
+                temporal.allowedDays.append(day_enum)
+
+        if time_range_str:
+            if '-' not in time_range_str:
+                raise CommandError('', 'Time range must be in HH:MM-HH:MM format (e.g., "09:00-17:00")')
+            start_str, end_str = time_range_str.split('-', 1)
+            start_minutes = WorkflowFormatter._parse_time_to_minutes(start_str.strip())
+            end_minutes = WorkflowFormatter._parse_time_to_minutes(end_str.strip())
+            time_range = workflow_pb2.TimeOfDayRange()
+            time_range.startTime = start_minutes
+            time_range.endTime = end_minutes
+            temporal.timeRanges.append(time_range)
+
+        if timezone_str:
+            temporal.timeZone = timezone_str
+
+        return temporal
+
+    @staticmethod
+    def _parse_time_to_minutes(time_str):
+        try:
+            parts = time_str.split(':')
+            h = int(parts[0])
+            m = int(parts[1]) if len(parts) > 1 else 0
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                raise ValueError
+            return h * 60 + m
+        except (ValueError, IndexError):
+            raise CommandError('', f'Invalid time format: "{time_str}". Use HH:MM (e.g., "09:00")')
+
+    @staticmethod
+    def format_temporal_filter(at):
+        if not at:
+            return None
+        result = {}
+        if at.allowedDays:
+            result['allowed_days'] = [WorkflowFormatter.DAY_NAME_MAP.get(d, str(d)) for d in at.allowedDays]
+        if at.timeRanges:
+            ranges = []
+            for tr in at.timeRanges:
+                sh, sm = divmod(tr.startTime, 60)
+                eh, em = divmod(tr.endTime, 60)
+                ranges.append(f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}")
+            result['time_ranges'] = ranges
+        if at.timeZone:
+            result['timezone'] = at.timeZone
+        return result or None

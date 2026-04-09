@@ -11,6 +11,7 @@
 
 import argparse
 import json
+import logging
 from datetime import datetime
 
 from ..base import Command, dump_report_data
@@ -19,9 +20,9 @@ from ...display import bcolors
 from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2
-from ... import utils
+from ... import api, crypto, utils
 
-from .helpers import RecordResolver, WorkflowFormatter
+from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error
 
 
 class WorkflowGetApprovalRequestsCommand(Command):
@@ -60,7 +61,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 self._print_table(params, wf_data)
 
         except Exception as e:
-            raise CommandError('', f'Failed to get approval requests: {str(e)}')
+            raise CommandError('', f'Failed to get approval requests: {sanitize_router_error(e)}')
 
     @staticmethod
     def _resolve_status(params, wf):
@@ -78,41 +79,69 @@ class WorkflowGetApprovalRequestsCommand(Command):
             ):
                 return 'Approved'
         except Exception:
-            pass
+            logging.debug('Failed to resolve workflow status for flow', exc_info=True)
+        if wf.escalated:
+            return 'Escalated'
         return 'Pending'
 
     @staticmethod
+    def _extract_param(wf, key):
+        for p in wf.workflowParameters:
+            if p.key == key:
+                return p.data
+        return None
+
+    @staticmethod
+    def _decrypt_param(params, record_uid, encrypted_bytes):
+        if not encrypted_bytes:
+            return None
+        record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
+        if not record_key:
+            return 'No permission to view. Only users with record access can view this information.'
+        try:
+            return crypto.decrypt_aes_v2(encrypted_bytes, record_key).decode('utf-8')
+        except Exception:
+            logging.debug('Failed to decrypt workflow parameter for record %s', record_uid, exc_info=True)
+            return 'Unable to decrypt'
+
+    @staticmethod
     def _print_json(params, wf_data):
-        result = {
-            'requests': [
-                {
-                    'flow_uid': utils.base64_url_encode(wf.flowUid),
-                    'status': status,
-                    'requested_by': RecordResolver.resolve_user(params, wf.userId),
-                    'record_uid': utils.base64_url_encode(wf.resource.value),
-                    'record_name': RecordResolver.resolve_name(params, wf.resource),
-                    'started_on': wf.startedOn or None,
-                    'expires_on': wf.expiresOn or None,
-                    'duration': (
-                        WorkflowFormatter.format_duration(wf.expiresOn - wf.startedOn)
-                        if wf.expiresOn and wf.startedOn else None
-                    ),
-                    'reason': wf.reason.decode('utf-8') if wf.reason else None,
-                    'external_ref': wf.externalRef.decode('utf-8') if wf.externalRef else None,
-                }
-                for wf, status in wf_data
-            ],
-        }
-        print(json.dumps(result, indent=2))
+        decrypt = WorkflowGetApprovalRequestsCommand._decrypt_param
+        extract = WorkflowGetApprovalRequestsCommand._extract_param
+        requests = []
+        for wf, status in wf_data:
+            rec_uid = utils.base64_url_encode(wf.resource.value)
+            requested_by = wf.user or RecordResolver.resolve_user(params, wf.userId)
+            requests.append({
+                'flow_uid': utils.base64_url_encode(wf.flowUid),
+                'status': status,
+                'requested_by': requested_by,
+                'record_uid': rec_uid,
+                'record_name': RecordResolver.resolve_name(params, wf.resource),
+                'started_on': wf.startedOn or None,
+                'expires_on': wf.expiresOn or None,
+                'escalated': wf.escalated,
+                'duration': (
+                    WorkflowFormatter.format_duration(wf.expiresOn - wf.startedOn)
+                    if wf.expiresOn and wf.startedOn else None
+                ),
+                'reason': decrypt(params, rec_uid, extract(wf, 'reason')),
+                'ticket': decrypt(params, rec_uid, extract(wf, 'ticket')),
+            })
+        print(json.dumps({'requests': requests}, indent=2))
 
     @staticmethod
     def _print_table(params, wf_data):
+        decrypt = WorkflowGetApprovalRequestsCommand._decrypt_param
+        extract = WorkflowGetApprovalRequestsCommand._extract_param
         rows = []
         for wf, status in wf_data:
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             record_name = RecordResolver.resolve_name(params, wf.resource)
             flow_uid = utils.base64_url_encode(wf.flowUid)
-            requested_by = RecordResolver.resolve_user(params, wf.userId)
+            requested_by = wf.user or RecordResolver.resolve_user(params, wf.userId)
+            reason = decrypt(params, record_uid, extract(wf, 'reason')) or ''
+            ticket = decrypt(params, record_uid, extract(wf, 'ticket')) or ''
             started = (
                 datetime.fromtimestamp(wf.startedOn / 1000).strftime('%Y-%m-%d %H:%M:%S')
                 if wf.startedOn else ''
@@ -125,9 +154,9 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 WorkflowFormatter.format_duration(wf.expiresOn - wf.startedOn)
                 if wf.expiresOn and wf.startedOn else ''
             )
-            rows.append([status, record_name, record_uid, flow_uid, requested_by, started, expires, duration])
+            rows.append([status, record_name, record_uid, flow_uid, requested_by, reason, ticket, started, expires, duration])
 
-        headers = ['Status', 'Record Name', 'Record UID', 'Flow UID', 'Requested By', 'Started', 'Expires', 'Duration']
+        headers = ['Status', 'Record Name', 'Record UID', 'Flow UID', 'Requested By', 'Reason', 'Ticket', 'Started', 'Expires', 'Duration']
         print()
         dump_report_data(rows, headers=headers, sort_by=0)
         print()
@@ -154,18 +183,18 @@ class WorkflowApproveCommand(Command):
         approval.deny = False
 
         try:
-            _post_request_to_router(params, 'approve_workflow_access', rq_proto=approval)
+            _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=approval)
 
             if kwargs.get('format') == 'json':
                 result = {'status': 'success', 'flow_uid': flow_uid, 'action': 'approved'}
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Access request approved{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Access request approved{bcolors.ENDC}\n")
                 print(f"Flow UID: {flow_uid}")
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to approve request: {str(e)}')
+            raise CommandError('', f'Failed to approve request: {sanitize_router_error(e)}')
 
 
 class WorkflowDenyCommand(Command):
@@ -190,10 +219,12 @@ class WorkflowDenyCommand(Command):
         denial.flowUid = flow_uid_bytes
         denial.deny = True
         if reason:
-            denial.denialReason = reason
+            reason_bytes = reason.encode('utf-8')
+            encrypted = self._encrypt_denial_reason(params, flow_uid_bytes, reason_bytes)
+            denial.denialReason = encrypted if encrypted else reason_bytes
 
         try:
-            _post_request_to_router(params, 'deny_workflow_access', rq_proto=denial)
+            _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=denial)
 
             if kwargs.get('format') == 'json':
                 result = {'status': 'success', 'flow_uid': flow_uid, 'action': 'denied'}
@@ -208,4 +239,39 @@ class WorkflowDenyCommand(Command):
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to deny request: {str(e)}')
+            raise CommandError('', f'Failed to deny request: {sanitize_router_error(e)}')
+
+    @staticmethod
+    def _encrypt_denial_reason(params, flow_uid_bytes, reason_bytes):
+        try:
+            response = _post_request_to_router(
+                params, 'get_approval_requests',
+                rs_type=workflow_pb2.ApprovalRequests,
+            )
+            if not response or not response.workflows:
+                return None
+
+            requester_email = None
+            for wf in response.workflows:
+                if wf.flowUid == flow_uid_bytes:
+                    requester_email = wf.user or RecordResolver.resolve_user(params, wf.userId)
+                    break
+            if not requester_email or requester_email.startswith('User ID '):
+                logging.debug('Could not resolve requester email for flow UID')
+                return None
+
+            api.load_user_public_keys(params, [requester_email])
+            public_keys = params.key_cache.get(requester_email)
+            if not public_keys:
+                logging.debug('Public key not available for %s', requester_email)
+                return None
+
+            if public_keys.ec:
+                ec_key = crypto.load_ec_public_key(public_keys.ec)
+                return crypto.encrypt_ec(reason_bytes, ec_key)
+            elif public_keys.rsa:
+                rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                return crypto.encrypt_rsa(reason_bytes, rsa_key)
+        except Exception:
+            logging.debug('Failed to encrypt denial reason with requester public key', exc_info=True)
+        return None

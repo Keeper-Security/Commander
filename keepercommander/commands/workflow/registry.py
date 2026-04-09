@@ -12,7 +12,7 @@
 import logging
 from urllib.parse import urlparse
 
-from ..base import GroupCommand
+from ..base import GroupCommand, dump_report_data
 from ...display import bcolors
 
 from .config_commands import (
@@ -42,22 +42,67 @@ from .requester_commands import (
 class PAMWorkflowCommand(GroupCommand):
 
     NOTICE_MSG = 'Notice: PAM Workflow commands are not in production yet. They will be available soon.'
+    _ALLOWED_PREFIXES = ('dev.', 'qa.')
+    _ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
+    _ADMIN_VERBS = frozenset({'create', 'update', 'delete', 'add-approver', 'remove-approver'})
 
     @staticmethod
-    def _is_dev_server(params):
+    def _is_allowed_server(params):
         hostname = urlparse(params.rest_context.server_base).hostname or ''
-        return hostname.startswith('dev.')
+        return any(hostname.startswith(p) for p in PAMWorkflowCommand._ALLOWED_PREFIXES)
+
+    @staticmethod
+    def _can_manage_workflows(params):
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or 'booleans' not in enforcements:
+            return False
+        return any(
+            b.get('value') for b in enforcements['booleans']
+            if b.get('key') == PAMWorkflowCommand._ENFORCEMENT_KEY
+        )
 
     def execute_args(self, params, args, **kwargs):
-        if not self._is_dev_server(params):
+        if not self._is_allowed_server(params):
             logging.warning(f"{bcolors.WARNING}{self.NOTICE_MSG}{bcolors.ENDC}")
             return
+
+        self._current_params = params
+
+        pos = args.find(' ') if args else -1
+        verb = (args[:pos].strip() if pos > 0 else args.strip()).lower() if args else ''
+        resolved_verb = self._aliases.get(verb, verb)
+
+        if resolved_verb in self._ADMIN_VERBS and not self._can_manage_workflows(params):
+            print(
+                f"\n{bcolors.WARNING}You do not have permission to manage workflow settings.{bcolors.ENDC}\n"
+                f"The '{bcolors.BOLD}{resolved_verb}{bcolors.ENDC}' command requires the "
+                f"'{bcolors.BOLD}Can manage workflow settings{bcolors.ENDC}' enforcement policy.\n"
+                f"Contact your Keeper administrator to enable this for your role.\n"
+            )
+            return
+
         return super().execute_args(params, args, **kwargs)
+
+    def print_help(self, **kwargs):
+        params = getattr(self, '_current_params', None)
+        is_admin = params and self._can_manage_workflows(params)
+
+        print(f'{kwargs.get("command")} command [--options]')
+        table = []
+        headers = ['Command', 'Description']
+        for verb in self._commands.keys():
+            if verb in self._ADMIN_VERBS and not is_admin:
+                continue
+            row = [verb, self._command_info.get(verb) or '']
+            table.append(row)
+        print('')
+        dump_report_data(table, headers=headers)
+        print('')
 
     def __init__(self):
         super(PAMWorkflowCommand, self).__init__()
 
-        # Configuration (admin)
+        # Configuration (admin — requires 'Can manage workflow settings' enforcement)
         self.register_command('create', WorkflowCreateCommand(), 'Create workflow configuration', 'c')
         self.register_command('read', WorkflowReadCommand(), 'Read workflow configuration', 'r')
         self.register_command('update', WorkflowUpdateCommand(), 'Update workflow configuration', 'u')
@@ -71,9 +116,9 @@ class PAMWorkflowCommand(GroupCommand):
         self.register_command('deny', WorkflowDenyCommand(), 'Deny access request', 'dn')
 
         # Requester actions
-        self.register_command('request', WorkflowRequestAccessCommand(), 'Request access', 'rq')
+        self.register_command('request', WorkflowRequestAccessCommand(), 'Request or escalate access', 'rq')
         self.register_command('start', WorkflowStartCommand(), 'Start workflow (check-out)', 's')
-        self.register_command('end', WorkflowEndCommand(), 'End workflow (check-in)', 'e')
+        self.register_command('end', WorkflowEndCommand(), 'End workflow (check-in / --force for approvers)', 'e')
 
         # State inspection
         self.register_command('state', WorkflowGetStateCommand(), 'Get workflow state', 'st')

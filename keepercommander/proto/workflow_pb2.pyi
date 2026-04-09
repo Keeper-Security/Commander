@@ -1,4 +1,5 @@
 import GraphSync_pb2 as _GraphSync_pb2
+import NotificationCenter_pb2 as _NotificationCenter_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -107,23 +108,27 @@ class WorkflowConfig(_message.Message):
     def __init__(self, parameters: _Optional[_Union[WorkflowParameters, _Mapping]] = ..., approvers: _Optional[_Iterable[_Union[WorkflowApprover, _Mapping]]] = ..., createdOn: _Optional[int] = ...) -> None: ...
 
 class WorkflowStatus(_message.Message):
-    __slots__ = ("stage", "conditions", "approvedBy", "startedOn", "expiresOn", "escalated")
+    __slots__ = ("stage", "conditions", "approvedBy", "startedOn", "expiresOn", "escalated", "checkedOutBy", "canForceCheckIn")
     STAGE_FIELD_NUMBER: _ClassVar[int]
     CONDITIONS_FIELD_NUMBER: _ClassVar[int]
     APPROVEDBY_FIELD_NUMBER: _ClassVar[int]
     STARTEDON_FIELD_NUMBER: _ClassVar[int]
     EXPIRESON_FIELD_NUMBER: _ClassVar[int]
     ESCALATED_FIELD_NUMBER: _ClassVar[int]
+    CHECKEDOUTBY_FIELD_NUMBER: _ClassVar[int]
+    CANFORCECHECKIN_FIELD_NUMBER: _ClassVar[int]
     stage: WorkflowStage
     conditions: _containers.RepeatedScalarFieldContainer[AccessCondition]
     approvedBy: _containers.RepeatedCompositeFieldContainer[WorkflowApproval]
     startedOn: int
     expiresOn: int
     escalated: bool
-    def __init__(self, stage: _Optional[_Union[WorkflowStage, str]] = ..., conditions: _Optional[_Iterable[_Union[AccessCondition, str]]] = ..., approvedBy: _Optional[_Iterable[_Union[WorkflowApproval, _Mapping]]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., escalated: _Optional[bool] = ...) -> None: ...
+    checkedOutBy: str
+    canForceCheckIn: bool
+    def __init__(self, stage: _Optional[_Union[WorkflowStage, str]] = ..., conditions: _Optional[_Iterable[_Union[AccessCondition, str]]] = ..., approvedBy: _Optional[_Iterable[_Union[WorkflowApproval, _Mapping]]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., escalated: _Optional[bool] = ..., checkedOutBy: _Optional[str] = ..., canForceCheckIn: _Optional[bool] = ...) -> None: ...
 
 class WorkflowProcess(_message.Message):
-    __slots__ = ("flowUid", "userId", "resource", "startedOn", "expiresOn", "reason", "mfaVerified", "externalRef")
+    __slots__ = ("flowUid", "userId", "resource", "startedOn", "expiresOn", "reason", "mfaVerified", "externalRef", "user", "workflowParameters", "escalated")
     FLOWUID_FIELD_NUMBER: _ClassVar[int]
     USERID_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_FIELD_NUMBER: _ClassVar[int]
@@ -132,6 +137,9 @@ class WorkflowProcess(_message.Message):
     REASON_FIELD_NUMBER: _ClassVar[int]
     MFAVERIFIED_FIELD_NUMBER: _ClassVar[int]
     EXTERNALREF_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOWPARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    ESCALATED_FIELD_NUMBER: _ClassVar[int]
     flowUid: bytes
     userId: int
     resource: _GraphSync_pb2.GraphSyncRef
@@ -140,7 +148,10 @@ class WorkflowProcess(_message.Message):
     reason: bytes
     mfaVerified: bool
     externalRef: bytes
-    def __init__(self, flowUid: _Optional[bytes] = ..., userId: _Optional[int] = ..., resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., reason: _Optional[bytes] = ..., mfaVerified: _Optional[bool] = ..., externalRef: _Optional[bytes] = ...) -> None: ...
+    user: str
+    workflowParameters: _containers.RepeatedCompositeFieldContainer[_NotificationCenter_pb2.NotificationParameter]
+    escalated: bool
+    def __init__(self, flowUid: _Optional[bytes] = ..., userId: _Optional[int] = ..., resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., reason: _Optional[bytes] = ..., mfaVerified: _Optional[bool] = ..., externalRef: _Optional[bytes] = ..., user: _Optional[str] = ..., workflowParameters: _Optional[_Iterable[_Union[_NotificationCenter_pb2.NotificationParameter, _Mapping]]] = ..., escalated: _Optional[bool] = ...) -> None: ...
 
 class WorkflowApproval(_message.Message):
     __slots__ = ("userId", "user", "flowUid", "approvedOn")
@@ -193,8 +204,8 @@ class WorkflowApprovalOrDenial(_message.Message):
     DENIALREASON_FIELD_NUMBER: _ClassVar[int]
     flowUid: bytes
     deny: bool
-    denialReason: str
-    def __init__(self, flowUid: _Optional[bytes] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[str] = ...) -> None: ...
+    denialReason: bytes
+    def __init__(self, flowUid: _Optional[bytes] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[bytes] = ...) -> None: ...
 
 class UserAccessState(_message.Message):
     __slots__ = ("workflows",)
@@ -217,18 +228,20 @@ class TimeOfDayRange(_message.Message):
     def __init__(self, startTime: _Optional[int] = ..., endTime: _Optional[int] = ...) -> None: ...
 
 class ApprovalQueueEntry(_message.Message):
-    __slots__ = ("flowRef", "approverRef", "kind", "notifyAtMs", "requesterUserId")
+    __slots__ = ("flowRef", "approverRef", "kind", "notifyAtMs", "requesterUserId", "predefinedNotificationUid")
     FLOWREF_FIELD_NUMBER: _ClassVar[int]
     APPROVERREF_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     NOTIFYATMS_FIELD_NUMBER: _ClassVar[int]
     REQUESTERUSERID_FIELD_NUMBER: _ClassVar[int]
+    PREDEFINEDNOTIFICATIONUID_FIELD_NUMBER: _ClassVar[int]
     flowRef: _GraphSync_pb2.GraphSyncRef
     approverRef: _GraphSync_pb2.GraphSyncRef
     kind: ApprovalQueueKind
     notifyAtMs: int
     requesterUserId: int
-    def __init__(self, flowRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., approverRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., kind: _Optional[_Union[ApprovalQueueKind, str]] = ..., notifyAtMs: _Optional[int] = ..., requesterUserId: _Optional[int] = ...) -> None: ...
+    predefinedNotificationUid: bytes
+    def __init__(self, flowRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., approverRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., kind: _Optional[_Union[ApprovalQueueKind, str]] = ..., notifyAtMs: _Optional[int] = ..., requesterUserId: _Optional[int] = ..., predefinedNotificationUid: _Optional[bytes] = ...) -> None: ...
 
 class TemporalAccessFilter(_message.Message):
     __slots__ = ("timeRanges", "allowedDays", "timeZone")

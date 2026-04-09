@@ -21,7 +21,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter
+from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
 
 
 class WorkflowCreateCommand(Command):
@@ -45,6 +45,12 @@ class WorkflowCreateCommand(Command):
                         help='Require MFA verification for access')
     parser.add_argument('-d', '--duration', type=str, default='1d',
                         help='Access duration (e.g., "2h", "30m", "1d"). Default: 1d')
+    parser.add_argument('--allowed-days', type=str,
+                        help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
+    parser.add_argument('--time-range', type=str,
+                        help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
+    parser.add_argument('--timezone', type=str,
+                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -64,6 +70,12 @@ class WorkflowCreateCommand(Command):
         parameters.requireTicket = kwargs.get('require_ticket', False)
         parameters.requireMFA = kwargs.get('require_mfa', False)
         parameters.accessLength = WorkflowFormatter.parse_duration(kwargs.get('duration', '1d'))
+
+        temporal_filter = WorkflowFormatter.build_temporal_filter(
+            kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+        )
+        if temporal_filter:
+            parameters.allowedTimes.CopyFrom(temporal_filter)
 
         try:
             _post_request_to_router(params, 'create_workflow_config', rq_proto=parameters)
@@ -101,7 +113,7 @@ class WorkflowCreateCommand(Command):
                 }
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow created successfully{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow created successfully{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 print(f"Approvals needed: {parameters.approvalsNeeded}")
                 print(f"Check-in/out: {'Yes' if parameters.checkoutNeeded else 'No'}")
@@ -120,7 +132,7 @@ class WorkflowCreateCommand(Command):
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to create workflow: {str(e)}')
+            raise CommandError('', f'Failed to create workflow: {sanitize_router_error(e)}')
 
 
 class WorkflowReadCommand(Command):
@@ -163,7 +175,7 @@ class WorkflowReadCommand(Command):
                 self._print_table(params, response, record_uid)
 
         except Exception as e:
-            raise CommandError('', f'Failed to read workflow: {str(e)}')
+            raise CommandError('', f'Failed to read workflow: {sanitize_router_error(e)}')
 
     @staticmethod
     def _print_json(params, response, record_uid):
@@ -178,12 +190,15 @@ class WorkflowReadCommand(Command):
                 'require_ticket': response.parameters.requireTicket,
                 'require_mfa': response.parameters.requireMFA,
                 'access_duration': WorkflowFormatter.format_duration(response.parameters.accessLength),
+                'allowed_times': WorkflowFormatter.format_temporal_filter(response.parameters.allowedTimes),
             },
             'approvers': [],
         }
 
         for approver in response.approvers:
             approver_info = {'escalation': approver.escalation}
+            if approver.escalationAfterMs:
+                approver_info['escalation_after'] = WorkflowFormatter.format_duration(approver.escalationAfterMs)
             if approver.HasField('user'):
                 approver_info['type'] = 'user'
                 approver_info['email'] = approver.user
@@ -219,22 +234,41 @@ class WorkflowReadCommand(Command):
         print(f"  Ticket required: {'Yes' if p.requireTicket else 'No'}")
         print(f"  MFA required: {'Yes' if p.requireMFA else 'No'}")
 
+        if p.HasField('allowedTimes') and p.allowedTimes:
+            at = p.allowedTimes
+            print(f"\n{bcolors.BOLD}Allowed Times:{bcolors.ENDC}")
+            if at.allowedDays:
+                day_names = [WorkflowFormatter.DAY_NAME_MAP.get(d, str(d)) for d in at.allowedDays]
+                print(f"  Days: {', '.join(day_names)}")
+            if at.timeRanges:
+                for tr in at.timeRanges:
+                    start_h, start_m = divmod(tr.startTime, 60)
+                    end_h, end_m = divmod(tr.endTime, 60)
+                    print(f"  Time: {start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}")
+            if at.timeZone:
+                print(f"  Timezone: {at.timeZone}")
+
         if response.approvers:
             print(f"\n{bcolors.BOLD}Approvers ({len(response.approvers)}):{bcolors.ENDC}")
             for idx, approver in enumerate(response.approvers, 1):
-                escalation = ' (Escalation)' if approver.escalation else ''
+                esc_label = ''
+                if approver.escalation:
+                    esc_label = ' (Escalation'
+                    if approver.escalationAfterMs:
+                        esc_label += f' after {WorkflowFormatter.format_duration(approver.escalationAfterMs)}'
+                    esc_label += ')'
                 if approver.HasField('user'):
-                    print(f"  {idx}. User: {approver.user}{escalation}")
+                    print(f"  {idx}. User: {approver.user}{esc_label}")
                 elif approver.HasField('userId'):
-                    print(f"  {idx}. User: {RecordResolver.resolve_user(params, approver.userId)}{escalation}")
+                    print(f"  {idx}. User: {RecordResolver.resolve_user(params, approver.userId)}{esc_label}")
                 elif approver.HasField('teamUid'):
                     team_uid = utils.base64_url_encode(approver.teamUid)
                     team_data = params.team_cache.get(team_uid, {})
                     team_name = team_data.get('name', '')
                     team_display = f"{team_name} ({team_uid})" if team_name else team_uid
-                    print(f"  {idx}. Team: {team_display}{escalation}")
+                    print(f"  {idx}. Team: {team_display}{esc_label}")
         else:
-            print(f"\n{bcolors.WARNING}⚠ No approvers configured!{bcolors.ENDC}")
+            print(f"\n{bcolors.WARNING}No approvers configured{bcolors.ENDC}")
             print(f"Add approvers with: pam workflow add-approver {record_uid} --user <email>")
 
         print()
@@ -259,6 +293,12 @@ class WorkflowUpdateCommand(Command):
     parser.add_argument('-rm', '--require-mfa', type=lambda x: x.lower() == 'true',
                         help='Require MFA (true/false)')
     parser.add_argument('-d', '--duration', type=str, help='Access duration (e.g., "2h", "30m", "1d")')
+    parser.add_argument('--allowed-days', type=str,
+                        help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
+    parser.add_argument('--time-range', type=str,
+                        help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
+    parser.add_argument('--timezone', type=str,
+                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -301,6 +341,13 @@ class WorkflowUpdateCommand(Command):
                 parameters.accessLength = WorkflowFormatter.parse_duration(kwargs['duration'])
                 updates_provided = True
 
+            temporal_filter = WorkflowFormatter.build_temporal_filter(
+                kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+            )
+            if temporal_filter:
+                parameters.allowedTimes.CopyFrom(temporal_filter)
+                updates_provided = True
+
             if not updates_provided:
                 raise CommandError(
                     '', 'No updates provided. Specify at least one option to update '
@@ -313,14 +360,14 @@ class WorkflowUpdateCommand(Command):
                 result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title}
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow updated successfully{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow updated successfully{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 print()
 
         except CommandError:
             raise
         except Exception as e:
-            raise CommandError('', f'Failed to update workflow: {str(e)}')
+            raise CommandError('', f'Failed to update workflow: {sanitize_router_error(e)}')
 
 
 class WorkflowDeleteCommand(Command):
@@ -347,12 +394,12 @@ class WorkflowDeleteCommand(Command):
                 result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title}
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow deleted successfully{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow deleted successfully{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to delete workflow: {str(e)}')
+            raise CommandError('', f'Failed to delete workflow: {sanitize_router_error(e)}')
 
 
 class WorkflowAddApproversCommand(Command):
@@ -366,6 +413,9 @@ class WorkflowAddApproversCommand(Command):
     parser.add_argument('-t', '--team', action='append',
                         help='Team name or UID to add as approver (can specify multiple times)')
     parser.add_argument('-e', '--escalation', action='store_true', help='Mark as escalation approver')
+    parser.add_argument('-ea', '--escalation-after', type=str,
+                        help='Time before escalating to this approver (e.g., "30m", "1h", "2h"). '
+                             'Only meaningful with --escalation')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -376,9 +426,17 @@ class WorkflowAddApproversCommand(Command):
         users = kwargs.get('user') or []
         teams = kwargs.get('team') or []
         is_escalation = kwargs.get('escalation', False)
+        escalation_after = kwargs.get('escalation_after')
 
         if not users and not teams:
             raise CommandError('', 'Must specify at least one --user or --team')
+
+        if escalation_after and not is_escalation:
+            raise CommandError('', '--escalation-after requires --escalation flag')
+
+        escalation_after_ms = 0
+        if escalation_after:
+            escalation_after_ms = WorkflowFormatter.parse_duration(escalation_after)
 
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
@@ -390,6 +448,8 @@ class WorkflowAddApproversCommand(Command):
             approver = workflow_pb2.WorkflowApprover()
             approver.user = user_email
             approver.escalation = is_escalation
+            if escalation_after_ms:
+                approver.escalationAfterMs = escalation_after_ms
             config.approvers.append(approver)
 
         for team_input in teams:
@@ -397,6 +457,8 @@ class WorkflowAddApproversCommand(Command):
             approver = workflow_pb2.WorkflowApprover()
             approver.teamUid = utils.base64_url_decode(resolved_team_uid)
             approver.escalation = is_escalation
+            if escalation_after_ms:
+                approver.escalationAfterMs = escalation_after_ms
             config.approvers.append(approver)
 
         try:
@@ -411,17 +473,20 @@ class WorkflowAddApproversCommand(Command):
                     'approvers_added': total,
                     'escalation': is_escalation,
                 }
+                if escalation_after_ms:
+                    result['escalation_after'] = WorkflowFormatter.format_duration(escalation_after_ms)
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Approvers added successfully{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Approvers added successfully{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 print(f"Added {total} approver(s)")
                 if is_escalation:
-                    print("Type: Escalation approver")
+                    esc_info = f" (after {WorkflowFormatter.format_duration(escalation_after_ms)})" if escalation_after_ms else ''
+                    print(f"Type: Escalation approver{esc_info}")
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to add approvers: {str(e)}')
+            raise CommandError('', f'Failed to add approvers: {sanitize_router_error(e)}')
 
 
 class WorkflowDeleteApproversCommand(Command):
@@ -475,10 +540,10 @@ class WorkflowDeleteApproversCommand(Command):
                 }
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Approvers removed successfully{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Approvers removed successfully{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 print(f"Removed {total} approver(s)")
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to remove approvers: {str(e)}')
+            raise CommandError('', f'Failed to remove approvers: {sanitize_router_error(e)}')

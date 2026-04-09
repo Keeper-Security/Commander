@@ -21,7 +21,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter
+from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
 
 
 class WorkflowGetStateCommand(Command):
@@ -69,7 +69,7 @@ class WorkflowGetStateCommand(Command):
                 self._print_table(params, response)
 
         except Exception as e:
-            raise CommandError('', f'Failed to get workflow state: {str(e)}')
+            raise CommandError('', f'Failed to get workflow state: {sanitize_router_error(e)}')
 
     @staticmethod
     def _print_json(params, response):
@@ -80,6 +80,8 @@ class WorkflowGetStateCommand(Command):
             'stage': WorkflowFormatter.format_stage(response.status.stage),
             'conditions': [WorkflowFormatter.format_conditions([c]) for c in response.status.conditions],
             'escalated': response.status.escalated,
+            'checked_out_by': response.status.checkedOutBy or None,
+            'can_force_checkin': response.status.canForceCheckIn,
             'started_on': response.status.startedOn or None,
             'expires_on': response.status.expiresOn or None,
             'approved_by': [
@@ -101,6 +103,10 @@ class WorkflowGetStateCommand(Command):
         print(f"Stage: {WorkflowFormatter.format_stage(response.status.stage)}")
         if response.status.conditions:
             print(f"Conditions: {WorkflowFormatter.format_conditions(response.status.conditions)}")
+        if response.status.checkedOutBy:
+            print(f"Checked out by: {response.status.checkedOutBy}")
+        if response.status.canForceCheckIn:
+            print("Force check-in: Available")
         if response.status.escalated:
             print("Escalated: Yes")
         if response.status.startedOn:
@@ -151,7 +157,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                 self._print_table(params, response)
 
         except Exception as e:
-            raise CommandError('', f'Failed to get user access state: {str(e)}')
+            raise CommandError('', f'Failed to get user access state: {sanitize_router_error(e)}')
 
     @staticmethod
     def _print_json(params, response):
@@ -164,6 +170,8 @@ class WorkflowGetUserAccessStateCommand(Command):
                     'stage': WorkflowFormatter.format_stage(wf.status.stage),
                     'conditions': [WorkflowFormatter.format_conditions([c]) for c in wf.status.conditions],
                     'escalated': wf.status.escalated,
+                    'checked_out_by': wf.status.checkedOutBy or None,
+                    'can_force_checkin': wf.status.canForceCheckIn,
                     'started_on': wf.status.startedOn or None,
                     'expires_on': wf.status.expiresOn or None,
                     'approved_by': [
@@ -188,6 +196,7 @@ class WorkflowGetUserAccessStateCommand(Command):
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
             conditions = WorkflowFormatter.format_conditions(wf.status.conditions) if wf.status.conditions else ''
+            checked_out_by = wf.status.checkedOutBy or ''
             started = (
                 datetime.fromtimestamp(wf.status.startedOn / 1000).strftime('%Y-%m-%d %H:%M:%S')
                 if wf.status.startedOn else ''
@@ -203,9 +212,9 @@ class WorkflowGetUserAccessStateCommand(Command):
                     for a in wf.status.approvedBy
                 ]
                 approved_by = ', '.join(approved_names)
-            rows.append([stage, record_name, record_uid, flow_uid, approved_by, started, expires, conditions])
+            rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires, conditions])
 
-        headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Approved By', 'Started', 'Expires', 'Conditions']
+        headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires', 'Conditions']
         print()
         dump_report_data(rows, headers=headers)
         print()

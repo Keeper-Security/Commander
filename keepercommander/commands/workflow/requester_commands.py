@@ -11,26 +11,29 @@
 
 import argparse
 import json
+import logging
 
 from ..base import Command
 from ..pam.router_helper import _post_request_to_router
 from ...display import bcolors
 from ...error import CommandError
 from ...params import KeeperParams
-from ...proto import workflow_pb2
-from ... import utils
+from ...proto import workflow_pb2, GraphSync_pb2
+from ... import crypto, utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder
+from .helpers import RecordResolver, ProtobufRefBuilder, sanitize_router_error
 
 
 class WorkflowRequestAccessCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow request',
-        description='Request access to a PAM resource',
+        description='Request access to a PAM resource, or escalate a pending request',
     )
     parser.add_argument('record', help='Record UID or name')
     parser.add_argument('-r', '--reason', help='Reason for access request')
     parser.add_argument('-t', '--ticket', help='External ticket/reference number')
+    parser.add_argument('-e', '--escalate', action='store_true',
+                        help='Escalate a pending request to escalation approvers')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -38,17 +41,29 @@ class WorkflowRequestAccessCommand(Command):
         return WorkflowRequestAccessCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        if kwargs.get('escalate'):
+            return self._escalate(params, **kwargs)
+        return self._request(params, **kwargs)
+
+    @staticmethod
+    def _request(params, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
         reason = kwargs.get('reason') or ''
         ticket = kwargs.get('ticket') or ''
 
+        record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
+        if not record_key and (reason or ticket):
+            logging.warning('Record key not available — reason/ticket will be sent unencrypted')
+
         access_request = workflow_pb2.WorkflowAccessRequest()
         access_request.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
         if reason:
-            access_request.reason = reason.encode('utf-8') if isinstance(reason, str) else reason
+            reason_bytes = reason.encode('utf-8') if isinstance(reason, str) else reason
+            access_request.reason = crypto.encrypt_aes_v2(reason_bytes, record_key) if record_key else reason_bytes
         if ticket:
-            access_request.ticket = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
+            ticket_bytes = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
+            access_request.ticket = crypto.encrypt_aes_v2(ticket_bytes, record_key) if record_key else ticket_bytes
 
         try:
             _post_request_to_router(params, 'request_workflow_access', rq_proto=access_request)
@@ -66,7 +81,7 @@ class WorkflowRequestAccessCommand(Command):
                     result['ticket'] = ticket
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Access request sent{bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Access request sent{bcolors.ENDC}\n")
                 print(f"Record: {record.title} ({record_uid})")
                 if reason:
                     print(f"Reason: {reason}")
@@ -76,7 +91,35 @@ class WorkflowRequestAccessCommand(Command):
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to request access: {str(e)}')
+            raise CommandError('', f'Failed to request access: {sanitize_router_error(e)}')
+
+    @staticmethod
+    def _escalate(params, **kwargs):
+        record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        record_uid_bytes = utils.base64_url_decode(record_uid)
+
+        state = workflow_pb2.WorkflowState()
+        state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
+
+        try:
+            _post_request_to_router(params, 'request_escalation', rq_proto=state)
+
+            if kwargs.get('format') == 'json':
+                result = {
+                    'status': 'success',
+                    'record_uid': record_uid,
+                    'record_name': record.title,
+                    'action': 'escalated',
+                }
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"\n{bcolors.OKGREEN}Request escalated{bcolors.ENDC}\n")
+                print(f"Record: {record.title} ({record_uid})")
+                print("\nEscalation approvers have been notified.")
+                print()
+
+        except Exception as e:
+            raise CommandError('', f'Failed to escalate request: {sanitize_router_error(e)}')
 
 
 class WorkflowStartCommand(Command):
@@ -120,7 +163,7 @@ class WorkflowStartCommand(Command):
                     result['flow_uid'] = uid
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow started (checked out){bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow started (checked out){bcolors.ENDC}\n")
                 if record:
                     print(f"Record: {record.title} ({record_uid})")
                 else:
@@ -128,16 +171,17 @@ class WorkflowStartCommand(Command):
                 print()
 
         except Exception as e:
-            raise CommandError('', f'Failed to start workflow: {str(e)}')
+            raise CommandError('', f'Failed to start workflow: {sanitize_router_error(e)}')
 
 
 class WorkflowEndCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow end',
-        description='End a workflow (check-in). '
-                    'Can use flow UID, record UID, or record name.',
+        description='End a workflow (check-in), or force check-in another user\'s session (approvers only).',
     )
-    parser.add_argument('uid', help='Flow UID, Record UID, or record name of the workflow to end')
+    parser.add_argument('uid', help='Record UID, record name, or Flow UID')
+    parser.add_argument('-f', '--force', action='store_true',
+                        help='Force check-in (approvers only). Ends another user\'s active session.')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -145,6 +189,9 @@ class WorkflowEndCommand(Command):
         return WorkflowEndCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        if kwargs.get('force'):
+            return self._force_checkin(params, **kwargs)
+
         uid = kwargs.get('uid')
         record_uid, record = RecordResolver.resolve(params, uid, allow_missing=True)
 
@@ -152,6 +199,39 @@ class WorkflowEndCommand(Command):
             self._end_by_record(params, record_uid, record, kwargs)
         else:
             self._end_by_flow_uid(params, uid, kwargs)
+
+    @staticmethod
+    def _force_checkin(params, **kwargs):
+        record_uid, record = RecordResolver.resolve(params, kwargs.get('uid'))
+        record_uid_bytes = utils.base64_url_decode(record_uid)
+
+        ref = GraphSync_pb2.GraphSyncRef()
+        ref.type = GraphSync_pb2.RFT_REC
+        ref.value = record_uid_bytes
+        if record:
+            ref.name = record.title
+
+        try:
+            _post_request_to_router(params, 'force_checkin', rq_proto=ref)
+
+            if kwargs.get('format') == 'json':
+                result = {
+                    'status': 'success',
+                    'record_uid': record_uid,
+                    'record_name': record.title if record else '',
+                    'action': 'force_checkin',
+                }
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"\n{bcolors.OKGREEN}Record force checked in{bcolors.ENDC}\n")
+                if record:
+                    print(f"Record: {record.title} ({record_uid})")
+                else:
+                    print(f"Record: {record_uid}")
+                print()
+
+        except Exception as e:
+            raise CommandError('', f'Failed to force check-in: {sanitize_router_error(e)}')
 
     @staticmethod
     def _end_by_record(params, record_uid, record, kwargs):
@@ -184,7 +264,7 @@ class WorkflowEndCommand(Command):
                 }
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow ended (checked in){bcolors.ENDC}\n")
                 if record:
                     print(f"Record: {record.title} ({record_uid})")
                 else:
@@ -195,7 +275,7 @@ class WorkflowEndCommand(Command):
         except CommandError:
             raise
         except Exception as e:
-            raise CommandError('', f'Failed to end workflow: {str(e)}')
+            raise CommandError('', f'Failed to end workflow: {sanitize_router_error(e)}')
 
     @staticmethod
     def _end_by_flow_uid(params, uid, kwargs):
@@ -208,9 +288,9 @@ class WorkflowEndCommand(Command):
                 result = {'status': 'success', 'flow_uid': uid, 'action': 'ended'}
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
+                print(f"\n{bcolors.OKGREEN}Workflow ended (checked in){bcolors.ENDC}\n")
                 print(f"Flow UID: {uid}")
                 print("\nCredentials may have been rotated.")
                 print()
         except Exception as e:
-            raise CommandError('', f'Failed to end workflow: {str(e)}')
+            raise CommandError('', f'Failed to end workflow: {sanitize_router_error(e)}')
