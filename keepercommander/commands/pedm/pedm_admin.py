@@ -1072,7 +1072,7 @@ class PedmPolicyMixin:
         for col_value in col_values:
             if col_value == '*':
                 result.append(col_value)
-            else:
+            elif col_value:
                 cv = collection_lookup[col_value]
                 if not cv:
                     cv = collection_lookup[col_value.lower()]
@@ -1248,6 +1248,12 @@ class PedmPolicyMixin:
     def get_policy_filter(plugin: admin_plugin.PedmPlugin, **kwargs) -> Dict[str, Any]:
         policy_filter: Dict[str, Any] = {}
         for f in PedmPolicyMixin.ALL_FILTERS:
+            arg_name = f'{f.lower()}_filter'
+            p_filter: Any = kwargs.get(arg_name)
+            if not p_filter: continue
+            if isinstance(p_filter, str):
+                p_filter = [p_filter]
+
             if f == 'USER':
                 filter_name = 'UserCheck'
             elif f == 'MACHINE':
@@ -1262,31 +1268,21 @@ class PedmPolicyMixin:
                 filter_name = 'DayCheck'
             else:
                 continue
-
-            arg_name = f'{f.lower()}_filter'
-            p_filter: Any = kwargs.get(arg_name)
-            if p_filter:
-                if isinstance(p_filter, str):
-                    p_filter = [p_filter]
-                if '*' in p_filter:
-                    policy_filter[filter_name] = ['*']
-                else:
-                    if f == 'USER':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
-                    elif f == 'MACHINE':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
-                    elif f == 'APP':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
-                    elif f == 'DATE':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
-                    elif f == 'TIME':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
-                    elif f == 'DAY':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
+            if '*' in p_filter:
+                policy_filter[filter_name] = ['*']
             else:
-                if filter_name not in policy_filter:
-                    policy_filter[filter_name] = []
-
+                if f == 'USER':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
+                elif f == 'MACHINE':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
+                elif f == 'APP':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
+                elif f == 'DATE':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
+                elif f == 'TIME':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
+                elif f == 'DAY':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
         risk_level = kwargs.get('risk_level')
         if isinstance(risk_level, int):
             if risk_level < 0 or risk_level > 100:
@@ -1437,9 +1433,9 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
             policy_data.update(policy_filter)
 
         for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
-            f = policy_filter.get(filter_name)
+            f = policy_data.get(filter_name)
             if f is None:
-                policy_filter[filter_name] = ['*']
+                policy_data[filter_name] = ['*']
 
         arg_status = kwargs.get('status')
         if isinstance(arg_status, str):
