@@ -5,10 +5,17 @@ import datetime
 import json
 import logging
 import pathlib
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+import re
+from typing import AbstractSet, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from ..base import Command, FolderMixin
-from ...subfolder import get_folder_uids
+from ..pam.router_helper import get_dag_leafs
+from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+from ...subfolder import (
+    get_folder_uids,
+    SharedFolderFolderNode,
+    SharedFolderNode,
+)
 from ... import vault, api
 from ...keeper_dag import DAG, EdgeType
 from ...keeper_dag.types import PamGraphId
@@ -23,8 +30,159 @@ if TYPE_CHECKING:
 
 ALL_GRAPH_IDS = [g.value for g in PamGraphId]
 
+# Keep in sync with RecordGetCommand.include_dag valid_record_types (record.py).
+_PAM_ROUTER_RESOLVE_TYPES = frozenset({
+    'pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser',
+})
+
 # DELETION means the edge is absent; UNDENIAL cancels a DENIAL (treated as absent)
 _EXCLUDE_EDGE_TYPES = frozenset({EdgeType.DELETION, EdgeType.UNDENIAL})
+
+
+def _resolve_pam_configuration_uid_via_router(
+    params: 'KeeperParams',
+    encrypted_session_token: bytes,
+    encrypted_transmission_key: bytes,
+    record_uid: str,
+) -> Optional[str]:
+    """Return PAM configuration UID from KRouter get_leafs, or None. Logs failures at debug only."""
+    try:
+        rs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        if not rs:
+            return None
+        first = rs[0]
+        if not isinstance(first, dict):
+            return None
+        val = first.get('value', '') or ''
+        return val if val else None
+    except Exception as ex:
+        logging.debug('get_dag_leafs failed for %s: %s', record_uid, ex)
+        return None
+
+
+_PAM_CONFIGURATION_TYPE = re.compile(r'pam.+Configuration', re.IGNORECASE)
+
+
+def _eligible_shared_folder_roots_for_root_fallback(
+    params: 'KeeperParams', folder_uids: AbstractSet[Optional[str]],
+) -> Set[str]:
+    """Shared-folder UIDs for which we may attach pam*Configuration records from that folder's vault root.
+
+    Includes: dump target is a subfolder inside a shared folder, or the shared folder node itself
+    (v6 configs often sit on the shared-folder root, not in subfolders).
+    """
+    roots: Set[str] = set()
+    for fuid in folder_uids:
+        if not fuid:
+            continue
+        node = params.folder_cache.get(fuid)
+        if isinstance(node, SharedFolderFolderNode):
+            suid = getattr(node, 'shared_folder_uid', None) or ''
+            if suid:
+                roots.add(suid)
+        elif isinstance(node, SharedFolderNode):
+            roots.add(node.uid)
+    return roots
+
+
+def _shared_folder_uid_containing_folder(params: 'KeeperParams', folder_uid: str) -> Optional[str]:
+    """Walk parents from folder_uid to the enclosing shared-folder scope UID."""
+    node = params.folder_cache.get(folder_uid)
+    while node:
+        if isinstance(node, SharedFolderFolderNode):
+            return getattr(node, 'shared_folder_uid', None) or None
+        if isinstance(node, SharedFolderNode):
+            return node.uid
+        pid = getattr(node, 'parent_uid', None) or ''
+        if not pid:
+            break
+        node = params.folder_cache.get(pid)
+    return None
+
+
+def _v6_pam_configuration_uids_in_folder(params: 'KeeperParams', folder_uid: str) -> List[str]:
+    """v6 typed records at folder_uid whose type matches pam*Configuration (vault root of a shared folder)."""
+    out: List[str] = []
+    for rec_uid in params.subfolder_record_cache.get(folder_uid, set()):
+        raw = params.record_cache.get(rec_uid)
+        if not raw or raw.get('version') != 6:
+            continue
+        kr = vault.KeeperRecord.load(params, rec_uid)
+        if kr and _PAM_CONFIGURATION_TYPE.search(kr.record_type or ''):
+            out.append(rec_uid)
+    return out
+
+
+def _apply_shared_folder_root_config_fallback(
+    params: 'KeeperParams',
+    sf_roots: Set[str],
+    record_folder_map: Dict[str, Tuple[str, str]],
+    valid_uids: List[str],
+    config_to_records: Dict[str, List[str]],
+    record_config_map: Dict[str, Optional[str]],
+    record_config_source_map: Dict[str, Optional[str]],
+) -> None:
+    """Use a sole v6 pam*Configuration at shared-folder root when dump scope is that shared folder."""
+    if not sf_roots:
+        return
+
+    configs_by_sf: Dict[str, List[str]] = {}
+    for sf_root in sf_roots:
+        cfgs = _v6_pam_configuration_uids_in_folder(params, sf_root)
+        if cfgs:
+            configs_by_sf[sf_root] = cfgs
+        if len(cfgs) > 1:
+            logging.warning(
+                'PAM debug dump: %d pam*Configuration records at shared folder %s root; cannot pick one '
+                'automatically for shared_folder_folder dumps',
+                len(cfgs),
+                sf_root,
+            )
+
+    for rec_uid in valid_uids:
+        if record_config_map.get(rec_uid):
+            continue
+        kr = vault.KeeperRecord.load(params, rec_uid)
+        if not kr or kr.record_type not in _PAM_ROUTER_RESOLVE_TYPES:
+            continue
+        folder_uid = record_folder_map[rec_uid][0]
+        rec_sf = _shared_folder_uid_containing_folder(params, folder_uid)
+        if not rec_sf or rec_sf not in sf_roots:
+            continue
+        candidates = configs_by_sf.get(rec_sf, [])
+        if len(candidates) == 1:
+            cfg = candidates[0]
+            config_to_records.setdefault(cfg, []).append(rec_uid)
+            record_config_map[rec_uid] = cfg
+            record_config_source_map[rec_uid] = 'shared_folder_root'
+
+
+def _pam_config_unresolved_reason(
+    params: 'KeeperParams',
+    rec_uid: str,
+    folder_uid: str,
+    record_config_map: Dict[str, Optional[str]],
+    eligible_sf_roots: Set[str],
+    resolve_online: bool,
+    sf_uid: Optional[str],
+    root_cfgs: List[str],
+) -> Optional[str]:
+    """Why pam_config_uid is null; None when resolved."""
+    if record_config_map.get(rec_uid):
+        return None
+    kr = vault.KeeperRecord.load(params, rec_uid)
+    if not kr or kr.record_type not in _PAM_ROUTER_RESOLVE_TYPES:
+        return 'not_pam_graph_resource_type'
+    if not sf_uid:
+        return 'online_resolution_failed' if resolve_online else 'not_in_shared_folder'
+    if sf_uid not in eligible_sf_roots:
+        return 'dump_scope_excludes_shared_folder_root_fallback'
+    if len(root_cfgs) == 0:
+        return 'no_pam_configuration_at_shared_folder_root'
+    if len(root_cfgs) > 1:
+        return 'ambiguous_pam_configuration_at_shared_folder_root'
+    # Exactly one pam*Configuration at root and dump scope includes this SF — should be resolved offline.
+    return 'online_resolution_failed' if resolve_online else 'unexpected_unresolved'
 
 
 class PAMDebugDumpCommand(Command):
@@ -35,6 +193,17 @@ class PAMDebugDumpCommand(Command):
                         help='Include records in all subfolders.')
     parser.add_argument('--save-as', '-s', required=True, dest='save_as', action='store',
                         help='Output file path to save JSON results.')
+    parser.add_argument(
+        '--resolve-online', '-o',
+        required=False,
+        dest='resolve_online',
+        action='store_true',
+        help=(
+            'Contact KRouter (online) to resolve the PAM Configuration UID for resources when it cannot '
+            'be resolved locally (graph_sync would be empty) - ex. a shared PAM resource '
+            'where the Configuration record is not shared or not in the local vault.'
+        ),
+    )
 
     def get_parser(self):
         return PAMDebugDumpCommand.parser
@@ -43,6 +212,7 @@ class PAMDebugDumpCommand(Command):
         folder_uid_arg = kwargs.get('folder_uid', '')
         recursive = kwargs.get('recursive', False)
         save_as = kwargs.get('save_as')
+        resolve_online = kwargs.get('resolve_online', False)
 
         def _write_result(data: list) -> None:
             p = pathlib.Path(save_as)
@@ -100,6 +270,7 @@ class PAMDebugDumpCommand(Command):
         # Versions 1–2/4 are legacy/attachment records; skip with a warning.
         config_to_records: Dict[str, List[str]] = {}
         record_config_map: Dict[str, Optional[str]] = {}
+        record_config_source_map: Dict[str, Optional[str]] = {}
         valid_uids: List[str] = []  # passed version filter, in discovery order
 
         for rec_uid in record_folder_map:
@@ -122,6 +293,7 @@ class PAMDebugDumpCommand(Command):
             if version == 6:
                 config_to_records.setdefault(rec_uid, []).append(rec_uid)
                 record_config_map[rec_uid] = rec_uid
+                record_config_source_map[rec_uid] = 'v6_configuration'
                 continue
 
             rotation = params.record_rotation_cache.get(rec_uid)
@@ -130,14 +302,47 @@ class PAMDebugDumpCommand(Command):
                 if config_uid:
                     config_to_records.setdefault(config_uid, []).append(rec_uid)
                     record_config_map[rec_uid] = config_uid
+                    record_config_source_map[rec_uid] = 'rotation_cache'
                     continue
 
             logging.debug('Record %s not found in rotation cache; rotation config unavailable, ', rec_uid)
             record_config_map[rec_uid] = None
+            record_config_source_map[rec_uid] = None
 
         if not valid_uids:
             _write_result([])
             return
+
+        eligible_sf_roots = _eligible_shared_folder_roots_for_root_fallback(params, folder_uids)
+
+        # 3a. Shared-folder dumps: v6 pam*Configuration often lives on shared-folder root, not subfolders
+        _apply_shared_folder_root_config_fallback(
+            params,
+            eligible_sf_roots,
+            record_folder_map,
+            valid_uids,
+            config_to_records,
+            record_config_map,
+            record_config_source_map,
+        )
+
+        # 3b. Optional KRouter lookup for PAM resources still missing configuration_uid
+        if resolve_online:
+            to_resolve = []
+            for rec_uid in valid_uids:
+                if record_config_map.get(rec_uid):
+                    continue
+                kr = vault.KeeperRecord.load(params, rec_uid)
+                if kr and kr.record_type in _PAM_ROUTER_RESOLVE_TYPES:
+                    to_resolve.append(rec_uid)
+            if to_resolve:
+                est, etk, _ = get_keeper_tokens(params)
+                for rec_uid in to_resolve:
+                    config_uid = _resolve_pam_configuration_uid_via_router(params, est, etk, rec_uid)
+                    if config_uid:
+                        config_to_records.setdefault(config_uid, []).append(rec_uid)
+                        record_config_map[rec_uid] = config_uid
+                        record_config_source_map[rec_uid] = 'router'
 
         # 4. Load all 5 DAGs once per config_uid
         # keyed by (config_uid, graph_id)
@@ -219,8 +424,24 @@ class PAMDebugDumpCommand(Command):
                     logging.warning('Error collecting graph data for record %s graph %d config %s: %s',
                                     rec_uid, graph_id, c_uid, err)
 
+            sf_uid = _shared_folder_uid_containing_folder(params, folder_uid)
+            root_cfgs = _v6_pam_configuration_uids_in_folder(params, sf_uid) if sf_uid else []
+            unresolved = _pam_config_unresolved_reason(
+                params,
+                rec_uid,
+                folder_uid,
+                record_config_map,
+                eligible_sf_roots,
+                resolve_online,
+                sf_uid,
+                root_cfgs,
+            )
+
             result.append({
                 'uid': rec_uid,
+                'pam_config_uid': record_config_map.get(rec_uid),
+                'pam_config_uid_source': record_config_source_map.get(rec_uid),
+                'pam_config_unresolved_reason': unresolved,
                 'metadata': metadata,
                 'data': data,
                 'graph_sync': graph_sync,
