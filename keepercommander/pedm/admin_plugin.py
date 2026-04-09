@@ -152,7 +152,7 @@ class PedmPlugin(IPedmAdmin):
             self._push_notifications.main_loop(url=url, headers=headers), background.get_loop())
 
     def on_push_message(self, message: Union[str, bytes]):
-        self.logger.debug('Received PEDM Admin notification: %s', message)
+        self.logger.debug('Received EPM Admin notification: %s', message)
         if isinstance(message, str):
             try:
                 data = json.loads(message)

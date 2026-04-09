@@ -484,14 +484,14 @@ This automates the complete setup for Slack App integration:
   - Collects Slack tokens (App Token, Bot Token, Signing Secret)
   - Creates Slack configuration record
   - Updates `docker-compose.yml` with Slack App service
-  - Supports optional PEDM and Device Approval integrations
+  - Supports optional EPM and Device Approval integrations
 
 **Configuration Options:**
 - Port selection (default: 8900)
 - Ngrok/Cloudflare tunneling for public URL exposure
 - Slack App credentials
 - Approvals channel ID
-- Optional PEDM integration
+- Optional EPM integration
 - Optional SSO Cloud Device Approval
 
 The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.

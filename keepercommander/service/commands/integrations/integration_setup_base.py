@@ -370,18 +370,18 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
         print(f"    • {name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
         self.print_integration_specific_resources(config)
-        print(f"    • PEDM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
+        print(f"    • EPM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
         print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}")
 
     # -- Optional feature collectors -----------------------------------
 
     def _collect_pedm_config(self) -> Tuple[bool, int]:
-        print(f"\n{bcolors.BOLD}PEDM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
-        print(f"  Integrate with Keeper PEDM for privilege elevation")
-        enabled = input(f"{bcolors.OKBLUE}Enable PEDM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        print(f"\n{bcolors.BOLD}EPM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
+        print(f"  Integrate with Keeper EPM for privilege elevation")
+        enabled = input(f"{bcolors.OKBLUE}Enable EPM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
         interval = 120
         if enabled:
-            interval_input = input(f"{bcolors.OKBLUE}PEDM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
+            interval_input = input(f"{bcolors.OKBLUE}EPM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
             interval = int(interval_input) if interval_input else 120
         return enabled, interval
 
