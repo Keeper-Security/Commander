@@ -20,7 +20,7 @@ from ...pedm import admin_plugin, admin_storage
 
 class PedmReportCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Display PEDM  reports')
+        super().__init__('Display EPM  reports')
         self.register_command_new(PedmPolicyUsageReportCommand(), 'policy-usage', 'pu')
         self.register_command_new(PedmColumnReportCommand(), 'column', 'c')
         self.register_command_new(PedmEventReportCommand(), 'event', 'e')
