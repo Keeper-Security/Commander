@@ -57,7 +57,6 @@ class NotificationApprovalStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapp
     NAS_DENIED: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_APPROVAL_RIGHTS: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_ACCESS: _ClassVar[NotificationApprovalStatus]
-    NAS_ESCALATED: _ClassVar[NotificationApprovalStatus]
 NC_UNSPECIFIED: NotificationCategory
 NC_ACCOUNT: NotificationCategory
 NC_SHARING: NotificationCategory
@@ -96,7 +95,6 @@ NAS_APPROVED: NotificationApprovalStatus
 NAS_DENIED: NotificationApprovalStatus
 NAS_LOST_APPROVAL_RIGHTS: NotificationApprovalStatus
 NAS_LOST_ACCESS: NotificationApprovalStatus
-NAS_ESCALATED: NotificationApprovalStatus
 
 class EncryptedData(_message.Message):
     __slots__ = ("version", "data")
@@ -115,7 +113,7 @@ class NotificationParameter(_message.Message):
     def __init__(self, key: _Optional[str] = ..., data: _Optional[bytes] = ...) -> None: ...
 
 class Notification(_message.Message):
-    __slots__ = ("type", "category", "sender", "senderFullName", "encryptedData", "refs", "categories")
+    __slots__ = ("type", "category", "sender", "senderFullName", "encryptedData", "refs", "categories", "parameters")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
     SENDER_FIELD_NUMBER: _ClassVar[int]
@@ -123,6 +121,7 @@ class Notification(_message.Message):
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
     REFS_FIELD_NUMBER: _ClassVar[int]
     CATEGORIES_FIELD_NUMBER: _ClassVar[int]
+    PARAMETERS_FIELD_NUMBER: _ClassVar[int]
     type: NotificationType
     category: NotificationCategory
     sender: _GraphSync_pb2.GraphSyncRef
@@ -130,7 +129,8 @@ class Notification(_message.Message):
     encryptedData: EncryptedData
     refs: _containers.RepeatedCompositeFieldContainer[_GraphSync_pb2.GraphSyncRef]
     categories: _containers.RepeatedScalarFieldContainer[NotificationCategory]
-    def __init__(self, type: _Optional[_Union[NotificationType, str]] = ..., category: _Optional[_Union[NotificationCategory, str]] = ..., sender: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., senderFullName: _Optional[str] = ..., encryptedData: _Optional[_Union[EncryptedData, _Mapping]] = ..., refs: _Optional[_Iterable[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]]] = ..., categories: _Optional[_Iterable[_Union[NotificationCategory, str]]] = ...) -> None: ...
+    parameters: _containers.RepeatedCompositeFieldContainer[NotificationParameter]
+    def __init__(self, type: _Optional[_Union[NotificationType, str]] = ..., category: _Optional[_Union[NotificationCategory, str]] = ..., sender: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., senderFullName: _Optional[str] = ..., encryptedData: _Optional[_Union[EncryptedData, _Mapping]] = ..., refs: _Optional[_Iterable[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]]] = ..., categories: _Optional[_Iterable[_Union[NotificationCategory, str]]] = ..., parameters: _Optional[_Iterable[_Union[NotificationParameter, _Mapping]]] = ...) -> None: ...
 
 class NotificationReadMark(_message.Message):
     __slots__ = ("uid", "notification_edge_id", "mark_edge_id", "readStatus")
@@ -203,16 +203,18 @@ class ProcessMarkReadEventsRequest(_message.Message):
     def __init__(self, readStatusUpdate: _Optional[_Iterable[_Union[ReadStatusUpdate, _Mapping]]] = ...) -> None: ...
 
 class NotificationSendRequest(_message.Message):
-    __slots__ = ("recipients", "notification", "clientTypeIDs", "deviceIDs")
+    __slots__ = ("recipients", "notification", "clientTypeIDs", "deviceIDs", "predefinedUid")
     RECIPIENTS_FIELD_NUMBER: _ClassVar[int]
     NOTIFICATION_FIELD_NUMBER: _ClassVar[int]
     CLIENTTYPEIDS_FIELD_NUMBER: _ClassVar[int]
     DEVICEIDS_FIELD_NUMBER: _ClassVar[int]
+    PREDEFINEDUID_FIELD_NUMBER: _ClassVar[int]
     recipients: _containers.RepeatedCompositeFieldContainer[_GraphSync_pb2.GraphSyncRef]
     notification: Notification
     clientTypeIDs: _containers.RepeatedScalarFieldContainer[int]
     deviceIDs: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, recipients: _Optional[_Iterable[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]]] = ..., notification: _Optional[_Union[Notification, _Mapping]] = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ...) -> None: ...
+    predefinedUid: bytes
+    def __init__(self, recipients: _Optional[_Iterable[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]]] = ..., notification: _Optional[_Union[Notification, _Mapping]] = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ..., predefinedUid: _Optional[bytes] = ...) -> None: ...
 
 class NotificationsSendRequest(_message.Message):
     __slots__ = ("notifications",)
@@ -226,8 +228,18 @@ class NotificationSyncRequest(_message.Message):
     syncPoint: int
     def __init__(self, syncPoint: _Optional[int] = ...) -> None: ...
 
+class SentNotification(_message.Message):
+    __slots__ = ("user", "notificationUid")
+    USER_FIELD_NUMBER: _ClassVar[int]
+    NOTIFICATIONUID_FIELD_NUMBER: _ClassVar[int]
+    user: int
+    notificationUid: bytes
+    def __init__(self, user: _Optional[int] = ..., notificationUid: _Optional[bytes] = ...) -> None: ...
+
 class NotificationsApprovalStatusUpdateRequest(_message.Message):
-    __slots__ = ("updates",)
-    UPDATES_FIELD_NUMBER: _ClassVar[int]
-    updates: _containers.RepeatedCompositeFieldContainer[ApprovalStatusUpdate]
-    def __init__(self, updates: _Optional[_Iterable[_Union[ApprovalStatusUpdate, _Mapping]]] = ...) -> None: ...
+    __slots__ = ("status", "notifications")
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    NOTIFICATIONS_FIELD_NUMBER: _ClassVar[int]
+    status: NotificationApprovalStatus
+    notifications: _containers.RepeatedCompositeFieldContainer[SentNotification]
+    def __init__(self, status: _Optional[_Union[NotificationApprovalStatus, str]] = ..., notifications: _Optional[_Iterable[_Union[SentNotification, _Mapping]]] = ...) -> None: ...
