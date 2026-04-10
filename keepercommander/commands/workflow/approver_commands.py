@@ -74,10 +74,19 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 params, 'get_workflow_state',
                 rq_proto=st, rs_type=workflow_pb2.WorkflowState,
             )
-            if ws and ws.status and ws.status.stage in (
-                workflow_pb2.WS_READY_TO_START, workflow_pb2.WS_STARTED,
-            ):
-                return 'Approved'
+            if ws and ws.status:
+                stage = ws.status.stage
+                if stage == workflow_pb2.WS_STARTED:
+                    return 'Approved'
+                if stage == workflow_pb2.WS_READY_TO_START:
+                    has_data = (ws.status.conditions or ws.status.approvedBy
+                                or ws.status.startedOn or ws.status.expiresOn)
+                    if has_data:
+                        return 'Approved'
+                if stage == workflow_pb2.WS_WAITING:
+                    return 'Waiting'
+                if stage == workflow_pb2.WS_NEEDS_ACTION:
+                    return 'Needs Action'
         except Exception:
             logging.debug('Failed to resolve workflow status for flow', exc_info=True)
         if wf.escalated:

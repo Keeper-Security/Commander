@@ -15,7 +15,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import vault, utils
 
-from .helpers import ProtobufRefBuilder, WorkflowFormatter
+from .helpers import ProtobufRefBuilder, WorkflowFormatter, is_workflow_exempt
 
 
 class WorkflowAccessValidator:
@@ -31,6 +31,9 @@ class WorkflowAccessValidator:
         self.record_name = record.title if record else record_uid
 
     def validate(self) -> dict:
+        if is_workflow_exempt(self.params, self.record_uid):
+            return dict(self._DEFAULT_RESULT)
+
         config = self._read_workflow_config()
         if config is None:
             return dict(self._DEFAULT_RESULT)

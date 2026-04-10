@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from ..base import GroupCommand, dump_report_data
 from ...display import bcolors
+from .helpers import _ENFORCEMENT_KEY
 
 from .config_commands import (
     WorkflowCreateCommand,
@@ -43,7 +44,6 @@ class PAMWorkflowCommand(GroupCommand):
 
     NOTICE_MSG = 'Notice: PAM Workflow commands are not in production yet. They will be available soon.'
     _ALLOWED_PREFIXES = ('dev.', 'qa.')
-    _ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
     _ADMIN_VERBS = frozenset({'create', 'update', 'delete', 'add-approver', 'remove-approver'})
 
     @staticmethod
@@ -58,7 +58,7 @@ class PAMWorkflowCommand(GroupCommand):
             return False
         return any(
             b.get('value') for b in enforcements['booleans']
-            if b.get('key') == PAMWorkflowCommand._ENFORCEMENT_KEY
+            if b.get('key') == _ENFORCEMENT_KEY
         )
 
     def execute_args(self, params, args, **kwargs):
@@ -118,7 +118,7 @@ class PAMWorkflowCommand(GroupCommand):
         # Requester actions
         self.register_command('request', WorkflowRequestAccessCommand(), 'Request or escalate access', 'rq')
         self.register_command('start', WorkflowStartCommand(), 'Start workflow (check-out)', 's')
-        self.register_command('end', WorkflowEndCommand(), 'End workflow (check-in / --force for approvers)', 'e')
+        self.register_command('end', WorkflowEndCommand(), 'End workflow (check-in)', 'e')
 
         # State inspection
         self.register_command('state', WorkflowGetStateCommand(), 'Get workflow state', 'st')

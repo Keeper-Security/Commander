@@ -33,6 +33,40 @@ def sanitize_router_error(error: Exception) -> str:
     return msg or 'Unknown error'
 
 
+_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
+
+
+def is_workflow_exempt(params, record_uid):
+    """Users with edit access AND 'Can manage workflow settings' are exempt from workflow."""
+    enforcements = getattr(params, 'enforcements', None)
+    if not enforcements or 'booleans' not in enforcements:
+        return False
+    can_manage = any(
+        b.get('value') for b in enforcements['booleans']
+        if b.get('key') == _ENFORCEMENT_KEY
+    )
+    if not can_manage:
+        return False
+
+    if record_uid in getattr(params, 'record_owner_cache', {}):
+        owner_info = params.record_owner_cache[record_uid]
+        if getattr(owner_info, 'owner', False):
+            return True
+
+    meta = getattr(params, 'meta_data_cache', {}).get(record_uid)
+    if meta and meta.get('can_edit'):
+        return True
+
+    for sf_uid in getattr(params, 'shared_folder_cache', {}):
+        sf = params.shared_folder_cache[sf_uid]
+        for sfr in sf.get('records', []):
+            if sfr.get('record_uid') == record_uid:
+                if sfr.get('owner') or sfr.get('can_edit'):
+                    return True
+
+    return False
+
+
 class RecordResolver:
 
     @staticmethod
@@ -150,7 +184,12 @@ class WorkflowFormatter:
     }
 
     @staticmethod
-    def format_stage(stage: int) -> str:
+    def format_stage(stage: int, status=None) -> str:
+        if stage == workflow_pb2.WS_READY_TO_START and status is not None:
+            has_data = (status.conditions or status.approvedBy
+                        or status.startedOn or status.expiresOn)
+            if not has_data:
+                return 'Pending'
         return WorkflowFormatter.STAGE_MAP.get(stage, f'Unknown ({stage})')
 
     @staticmethod

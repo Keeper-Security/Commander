@@ -77,7 +77,7 @@ class WorkflowGetStateCommand(Command):
             'flow_uid': utils.base64_url_encode(response.flowUid) if response.flowUid else None,
             'record_uid': utils.base64_url_encode(response.resource.value),
             'record_name': RecordResolver.resolve_name(params, response.resource),
-            'stage': WorkflowFormatter.format_stage(response.status.stage),
+            'stage': WorkflowFormatter.format_stage(response.status.stage, response.status),
             'conditions': [WorkflowFormatter.format_conditions([c]) for c in response.status.conditions],
             'escalated': response.status.escalated,
             'checked_out_by': response.status.checkedOutBy or None,
@@ -100,7 +100,7 @@ class WorkflowGetStateCommand(Command):
         print(f"Record: {RecordResolver.format_label(params, response.resource)}")
         if response.flowUid:
             print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
-        print(f"Stage: {WorkflowFormatter.format_stage(response.status.stage)}")
+        print(f"Stage: {WorkflowFormatter.format_stage(response.status.stage, response.status)}")
         if response.status.conditions:
             print(f"Conditions: {WorkflowFormatter.format_conditions(response.status.conditions)}")
         if response.status.checkedOutBy:
@@ -167,7 +167,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                     'flow_uid': utils.base64_url_encode(wf.flowUid),
                     'record_uid': utils.base64_url_encode(wf.resource.value),
                     'record_name': RecordResolver.resolve_name(params, wf.resource),
-                    'stage': WorkflowFormatter.format_stage(wf.status.stage),
+                    'stage': WorkflowFormatter.format_stage(wf.status.stage, wf.status),
                     'conditions': [WorkflowFormatter.format_conditions([c]) for c in wf.status.conditions],
                     'escalated': wf.status.escalated,
                     'checked_out_by': wf.status.checkedOutBy or None,
@@ -191,7 +191,7 @@ class WorkflowGetUserAccessStateCommand(Command):
     def _print_table(params, response):
         rows = []
         for wf in response.workflows:
-            stage = WorkflowFormatter.format_stage(wf.status.stage)
+            stage = WorkflowFormatter.format_stage(wf.status.stage, wf.status)
             record_name = RecordResolver.resolve_name(params, wf.resource)
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''

@@ -21,7 +21,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
 from ... import crypto, utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, sanitize_router_error
+from .helpers import RecordResolver, ProtobufRefBuilder, sanitize_router_error, is_workflow_exempt
 
 
 class WorkflowRequestAccessCommand(Command):
@@ -48,6 +48,10 @@ class WorkflowRequestAccessCommand(Command):
     @staticmethod
     def _request(params, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        if is_workflow_exempt(params, record_uid):
+            print(f"\n{bcolors.WARNING}You have edit access and workflow management permissions for this record.{bcolors.ENDC}")
+            print("Workflow is not required — you can access this resource directly.\n")
+            return
         record_uid_bytes = utils.base64_url_decode(record_uid)
         reason = kwargs.get('reason') or ''
         ticket = kwargs.get('ticket') or ''
@@ -96,6 +100,10 @@ class WorkflowRequestAccessCommand(Command):
     @staticmethod
     def _escalate(params, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        if is_workflow_exempt(params, record_uid):
+            print(f"\n{bcolors.WARNING}You have edit access and workflow management permissions for this record.{bcolors.ENDC}")
+            print("Workflow is not required — you can access this resource directly.\n")
+            return
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
         state = workflow_pb2.WorkflowState()
@@ -177,11 +185,11 @@ class WorkflowStartCommand(Command):
 class WorkflowEndCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow end',
-        description='End a workflow (check-in), or force check-in another user\'s session (approvers only).',
+        description='End a workflow (check-in).',
     )
     parser.add_argument('uid', help='Record UID, record name, or Flow UID')
     parser.add_argument('-f', '--force', action='store_true',
-                        help='Force check-in (approvers only). Ends another user\'s active session.')
+                        help='force check-in: approvers can terminate another user\'s active session\nwhen single-user checkout is enabled.')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -202,32 +210,40 @@ class WorkflowEndCommand(Command):
 
     @staticmethod
     def _force_checkin(params, **kwargs):
-        record_uid, record = RecordResolver.resolve(params, kwargs.get('uid'))
-        record_uid_bytes = utils.base64_url_decode(record_uid)
+        uid = kwargs.get('uid')
+        record_uid, record = RecordResolver.resolve(params, uid, allow_missing=True)
 
-        ref = GraphSync_pb2.GraphSyncRef()
-        ref.type = GraphSync_pb2.RFT_REC
-        ref.value = record_uid_bytes
-        if record:
-            ref.name = record.title
+        if record_uid:
+            ref = GraphSync_pb2.GraphSyncRef()
+            ref.type = GraphSync_pb2.RFT_REC
+            ref.value = utils.base64_url_decode(record_uid)
+            if record:
+                ref.name = record.title
+            label = f"Record: {record.title} ({record_uid})" if record else f"Record: {record_uid}"
+        else:
+            try:
+                uid_bytes = utils.base64_url_decode(uid)
+            except Exception:
+                raise CommandError('', f'"{uid}" is not a valid record UID/name or flow UID')
+            ref = GraphSync_pb2.GraphSyncRef()
+            ref.type = GraphSync_pb2.RFT_WORKFLOW
+            ref.value = uid_bytes
+            label = f"Flow UID: {uid}"
 
         try:
             _post_request_to_router(params, 'force_checkin', rq_proto=ref)
 
             if kwargs.get('format') == 'json':
-                result = {
-                    'status': 'success',
-                    'record_uid': record_uid,
-                    'record_name': record.title if record else '',
-                    'action': 'force_checkin',
-                }
+                result = {'status': 'success', 'action': 'force_checkin'}
+                if record_uid:
+                    result['record_uid'] = record_uid
+                    result['record_name'] = record.title if record else ''
+                else:
+                    result['flow_uid'] = uid
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKGREEN}Record force checked in{bcolors.ENDC}\n")
-                if record:
-                    print(f"Record: {record.title} ({record_uid})")
-                else:
-                    print(f"Record: {record_uid}")
+                print(label)
                 print()
 
         except Exception as e:
