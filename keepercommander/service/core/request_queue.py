@@ -242,34 +242,36 @@ class RequestQueueManager:
         request.status = RequestStatus.PROCESSING
         request.started_at = datetime.now()
         
-        logger.info(f"Processing request {request.request_id}: {request.command}")
+        queue_wait_ms = (request.started_at - request.created_at).total_seconds() * 1000
+        logger.info(f"Processing request {request.request_id}: {request.command}  (queued for {queue_wait_ms:.0f} ms)")
         
         try:
-            # Execute the command using existing CommandExecutor
             result, status_code = CommandExecutor.execute(request.command)
             
-            # Mark as completed
             request.status = RequestStatus.COMPLETED
             request.completed_at = datetime.now()
             request.result = result
             request.status_code = status_code
             
-            logger.info(f"Request {request.request_id} completed successfully")
+            exec_ms = (request.completed_at - request.started_at).total_seconds() * 1000
+            total_ms = (request.completed_at - request.created_at).total_seconds() * 1000
+            logger.info(
+                f"Request {request.request_id} completed  "
+                f"exec={exec_ms:.0f} ms  total={total_ms:.0f} ms  status={status_code}"
+            )
             
         except Exception as e:
-            # Mark as failed
             request.status = RequestStatus.FAILED
             request.completed_at = datetime.now()
             request.error_message = str(e)
             
-            logger.error(f"Request {request.request_id} failed: {e}")
+            exec_ms = (request.completed_at - request.started_at).total_seconds() * 1000
+            logger.error(f"Request {request.request_id} failed after {exec_ms:.0f} ms: {e}")
         
         finally:
-            # Clean up temporary files
             if request.temp_files:
                 RequestValidator.cleanup_temp_files(request.temp_files)
             
-            # Move from active to completed
             with self.data_lock:
                 if request.request_id in self.active_requests:
                     del self.active_requests[request.request_id]

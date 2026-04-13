@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 import json
 import logging
+import time
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
@@ -24,6 +25,7 @@ from ... import cli, utils
 from ...__main__ import get_params_from_config
 from ...service.config.service_config import ServiceConfig
 from ...crypto import encrypt_aes_v2
+from . import perf_trace
 
 class CommandExecutor:
     @staticmethod
@@ -126,6 +128,8 @@ class CommandExecutor:
             return validation_error
         
         from ..core.globals import ensure_params_loaded
+        perf_trace.install()
+        perf_trace.begin_trace(command)
         try:
             params = ensure_params_loaded()
             # Set service mode flag to bypass master password enforcement
@@ -142,8 +146,6 @@ class CommandExecutor:
             logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}', log_output: '{sanitized_logs}'")
             sanitized_response = sanitize_debug_data(str(response))
             logger.debug(f"Final response: '{sanitized_response}', response type: {type(response)}")
-
-            cli.do_command(params, 'sync-down')
             
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
@@ -180,3 +182,5 @@ class CommandExecutor:
                 "error": f"Unexpected error: {str(e)}"
             }
             return error_response, 500
+        finally:
+            perf_trace.end_trace()

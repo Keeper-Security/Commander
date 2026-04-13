@@ -824,7 +824,7 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     if isinstance(payload_version, int):
         api_request_payload.apiVersion = payload_version
 
-    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload, timeout=timeout)
+    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload, timeout=timeout or (15, 2400))
     if isinstance(rs, bytes):
         TTK.update_time_of_last_activity()
         if rs_type:
