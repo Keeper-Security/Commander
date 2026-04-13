@@ -192,6 +192,10 @@ class RequestQueueManager:
                     return request.result, status_code
                 elif request.status == RequestStatus.FAILED:
                     return {"error": request.error_message}, 500
+                elif request.status == RequestStatus.EXPIRED:
+                    return {
+                        "error": request.error_message or "Error: Request expired before execution"
+                    }, 504
             return None
 
     @debug_decorator
@@ -219,16 +223,48 @@ class RequestQueueManager:
             if status_info.get("status") == RequestStatus.EXPIRED.value:
                 return {
                     "status": "error",
-                    "error": "Error: Request timed out while waiting for result"
+                    "error": status_info.get("error_message") or "Error: Request timed out while waiting for result"
                 }, 504
 
             if time.monotonic() >= deadline:
+                if status_info.get("status") == RequestStatus.QUEUED.value:
+                    error_message = "Error: Request expired before execution while waiting for result"
+                    if self._expire_queued_request(request_id, error_message):
+                        return {
+                            "status": "error",
+                            "error": error_message
+                        }, 504
+
                 return {
                     "status": "error",
                     "error": "Error: Request did not complete within the synchronous wait window"
                 }, 504
 
             time.sleep(DEFAULT_SYNC_WAIT_POLL_INTERVAL)
+
+    def _expire_queued_request(self, request_id: str, error_message: str) -> bool:
+        """Expire a queued request so the worker will not execute it later."""
+        from ..util.request_validation import RequestValidator
+
+        expired_request = None
+        with self.data_lock:
+            request = self.active_requests.get(request_id)
+            if request is None or request.status != RequestStatus.QUEUED:
+                return False
+
+            request.status = RequestStatus.EXPIRED
+            request.completed_at = datetime.now()
+            request.error_message = error_message
+            expired_request = request
+
+            del self.active_requests[request_id]
+            self.completed_requests[request_id] = request
+
+        if expired_request and expired_request.temp_files:
+            RequestValidator.cleanup_temp_files(expired_request.temp_files)
+
+        logger.warning(f"Request {request_id} expired before execution")
+        return True
     
     @debug_decorator
     def get_queue_status(self) -> Dict[str, Any]:
@@ -254,6 +290,10 @@ class RequestQueueManager:
             try:
                 # Get next request from queue (blocking with timeout)
                 request = self.request_queue.get(timeout=1.0)
+                if request.status == RequestStatus.EXPIRED:
+                    logger.info(f"Skipping expired request {request.request_id}")
+                    self.request_queue.task_done()
+                    continue
                 self._process_request(request)
                 self.request_queue.task_done()
                 
@@ -316,23 +356,22 @@ class RequestQueueManager:
     def _cleanup_expired_requests(self):
         """Clean up expired and old completed requests."""
         now = datetime.now()
-        
+
+        expired_ids = []
         with self.data_lock:
-            # Find expired active requests
-            expired_ids = []
             for request_id, request in self.active_requests.items():
                 if request.status == RequestStatus.QUEUED:
                     age = (now - request.created_at).total_seconds()
                     if age > self.request_timeout:
-                        request.status = RequestStatus.EXPIRED
                         expired_ids.append(request_id)
-            
-            # Move expired requests to completed
-            for request_id in expired_ids:
-                request = self.active_requests.pop(request_id)
-                self.completed_requests[request_id] = request
-                logger.warning(f"Request {request_id} expired after {self.request_timeout}s")
-            
+
+        for request_id in expired_ids:
+            self._expire_queued_request(
+                request_id,
+                f"Error: Request expired after waiting more than {self.request_timeout}s in queue"
+            )
+
+        with self.data_lock:
             # Clean up old completed requests
             cutoff_time = now - timedelta(seconds=self.result_retention)
             old_ids = []
