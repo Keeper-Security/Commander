@@ -16,25 +16,22 @@ from .onboarding import create_onboarding_blueprint
 from ..decorators.logging import logger, debug_decorator
 
 def _setup_queue_mode(app: Flask) -> None:
-    """Setup queue mode with native v2 and synchronous v1 compatibility endpoints."""
+    """Setup queue mode with v2 API endpoints."""
     from ..core.request_queue import queue_manager
     queue_manager.start()
 
     command_bp = create_command_blueprint()
     app.register_blueprint(command_bp, url_prefix='/api/v2')
 
-    legacy_bp = create_legacy_command_blueprint(use_queue=True)
-    app.register_blueprint(legacy_bp, url_prefix='/api/v1')
-
     # Register onboarding endpoints
     onboarding_bp = create_onboarding_blueprint()
     app.register_blueprint(onboarding_bp, url_prefix='/api/v2')
 
-    logger.debug("Started queue manager and registered /api/v2 plus synchronous /api/v1 compatibility endpoints")
+    logger.debug("Started queue manager and registered command blueprint with URL prefix '/api/v2'")
 
 def _setup_legacy_mode(app: Flask) -> None:
     """Setup legacy mode with v1 API endpoints."""
-    legacy_bp = create_legacy_command_blueprint(use_queue=False)
+    legacy_bp = create_legacy_command_blueprint()
     app.register_blueprint(legacy_bp, url_prefix='/api/v1')
     logger.info("Using /api/v1 - Enable queue mode (-q y) for /api/v2")
 
@@ -59,7 +56,7 @@ def init_routes(app: Optional[Flask] = None) -> None:
         queue_enabled = config_data.get("queue_enabled", "y")  # Default to enabled
         
         if queue_enabled == "y":
-            logger.debug("Queue enabled - setting up v2 API with request queue and v1 compatibility")
+            logger.debug("Queue enabled - setting up v2 API with request queue")
             _setup_queue_mode(app)
         else:
             logger.debug("Queue disabled - setting up v1 API with direct execution")

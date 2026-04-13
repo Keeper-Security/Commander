@@ -79,18 +79,13 @@ class ServiceManager:
             
             is_running = True
             queue_enabled = config_data.get("queue_enabled", "y")
+            api_version = "v2" if queue_enabled == "y" else "v1"
             
             # Check if SSL is configured to determine the correct protocol
             ssl_context = cls.get_ssl_context(config_data)
             protocol = "https" if ssl_context else "http"
             
-            if queue_enabled == "y":
-                print(
-                    f"Commander Service starting on {protocol}://localhost:{port}/api/v2/ "
-                    f"(legacy sync compatibility available at {protocol}://localhost:{port}/api/v1/executecommand)"
-                )
-            else:
-                print(f"Commander Service starting on {protocol}://localhost:{port}/api/v1/")
+            print(f"Commander Service starting on {protocol}://localhost:{port}/api/{api_version}/")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
             cloudflare_pid = None
