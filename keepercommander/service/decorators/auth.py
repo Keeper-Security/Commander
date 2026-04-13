@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import hmac
 from functools import wraps
 from flask import request
 from datetime import datetime
@@ -28,7 +29,7 @@ def auth_check(fn):
             }, 401
 
         stored_key = ConfigReader.read_config('api-key', api_key)
-        if not stored_key or api_key.strip() != stored_key.strip():
+        if not stored_key or not hmac.compare_digest(api_key.strip(), stored_key.strip()):
             return {
                 'status': 'error',
                 'error': 'Please provide a valid api key'
