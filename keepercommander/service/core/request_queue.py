@@ -26,6 +26,7 @@ from ..decorators.logging import logger, debug_decorator
 DEFAULT_QUEUE_MAX_SIZE = 100
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes in seconds
 DEFAULT_RESULT_RETENTION = 3600  # 1 hour in seconds
+DEFAULT_SYNC_WAIT_POLL_INTERVAL = 0.1
 
 
 class RequestStatus(Enum):
@@ -192,6 +193,42 @@ class RequestQueueManager:
                 elif request.status == RequestStatus.FAILED:
                     return {"error": request.error_message}, 500
             return None
+
+    @debug_decorator
+    def wait_for_result(self, request_id: str, timeout: Optional[float] = None) -> Optional[Tuple[Any, int]]:
+        """Wait synchronously for a queued request result.
+
+        Args:
+            request_id: The unique request identifier
+            timeout: Maximum seconds to wait. Defaults to the queue request timeout.
+
+        Returns:
+            Tuple of (result, status_code), or None if the request vanished unexpectedly.
+        """
+        deadline = time.monotonic() + (timeout if timeout is not None else self.request_timeout)
+
+        while True:
+            result_data = self.get_request_result(request_id)
+            if result_data is not None:
+                return result_data
+
+            status_info = self.get_request_status(request_id)
+            if status_info is None:
+                return None
+
+            if status_info.get("status") == RequestStatus.EXPIRED.value:
+                return {
+                    "status": "error",
+                    "error": "Error: Request timed out while waiting for result"
+                }, 504
+
+            if time.monotonic() >= deadline:
+                return {
+                    "status": "error",
+                    "error": "Error: Request did not complete within the synchronous wait window"
+                }, 504
+
+            time.sleep(DEFAULT_SYNC_WAIT_POLL_INTERVAL)
     
     @debug_decorator
     def get_queue_status(self) -> Dict[str, Any]:
