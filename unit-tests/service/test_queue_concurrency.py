@@ -184,3 +184,26 @@ if sys.version_info >= (3, 8):
 
             self.assertIn("first", executed_commands)
             self.assertNotIn("second", executed_commands)
+
+        def test_processing_v1_request_waits_past_queue_timeout(self):
+            app = self._create_app(include_v2=False)
+            request_timeout = 0.1
+            self.manager.request_timeout = request_timeout
+
+            started_processing = threading.Event()
+
+            def fake_execute(command):
+                started_processing.set()
+                time.sleep(request_timeout + 0.15)
+                return {"status": "success", "data": {"command": command}}, 200
+
+            with mock.patch('keepercommander.service.api.command.queue_manager', self.manager), \
+                 mock.patch('keepercommander.service.core.request_queue.CommandExecutor.execute', side_effect=fake_execute):
+                self.manager.start()
+
+                with app.test_client() as client:
+                    response = client.post('/api/v1/executecommand', json={"command": "slow-command"})
+
+            self.assertTrue(started_processing.is_set())
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["data"]["command"], "slow-command")

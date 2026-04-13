@@ -204,7 +204,8 @@ class RequestQueueManager:
 
         Args:
             request_id: The unique request identifier
-            timeout: Maximum seconds to wait. Defaults to the queue request timeout.
+            timeout: Maximum seconds to wait while the request remains queued.
+                Once processing starts, continue waiting for completion.
 
         Returns:
             Tuple of (result, status_code), or None if the request vanished unexpectedly.
@@ -234,11 +235,11 @@ class RequestQueueManager:
                             "status": "error",
                             "error": error_message
                         }, 504
-
-                return {
-                    "status": "error",
-                    "error": "Error: Request did not complete within the synchronous wait window"
-                }, 504
+                if status_info.get("status") != RequestStatus.PROCESSING.value:
+                    return {
+                        "status": "error",
+                        "error": "Error: Request did not complete within the synchronous wait window"
+                    }, 504
 
             time.sleep(DEFAULT_SYNC_WAIT_POLL_INTERVAL)
 
