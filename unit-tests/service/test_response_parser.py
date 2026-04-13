@@ -1,6 +1,5 @@
 import sys
 if sys.version_info >= (3, 8):
-  import pytest
   from unittest import TestCase
   from keepercommander.service.util.parse_keeper_response import KeeperResponseParser
 
@@ -48,6 +47,29 @@ if sys.version_info >= (3, 8):
           self.assertEqual(result['data']['tree'][1]['level'], 0)
           self.assertEqual(result['data']['tree'][1]['name'], 'Folder1')
           self.assertEqual(result['data']['tree'][1]['path'], 'Folder1')
+
+      def test_parse_tree_command_share_permissions_structured(self):
+          """tree -s -v: share_permissions splits default/user vs per-user list"""
+          sample_output = """Share Permissions Key:
+======================
+RO = Read-Only
+MU = Can Manage Users
+======================
+My Vault
+ └── Shared Folder (abc123) [SHARED] (default:CE; user:CE; users:[a@x.com:RO],[b@y.com:MU,MR])
+"""
+          result = KeeperResponseParser._parse_tree_command(sample_output)
+          self.assertEqual(result['data']['share_permissions_key'][:2], ['RO = Read-Only', 'MU = Can Manage Users'])
+          entry = result['data']['tree'][0]
+          self.assertTrue(entry['shared'])
+          sp = entry['share_permissions']
+          self.assertEqual(sp['default'], 'CE')
+          self.assertEqual(sp['user'], 'CE')
+          self.assertEqual(len(sp['users']), 2)
+          self.assertEqual(sp['users'][0]['username'], 'a@x.com')
+          self.assertEqual(sp['users'][0]['permissions'], 'RO')
+          self.assertEqual(sp['users'][1]['username'], 'b@y.com')
+          self.assertEqual(sp['users'][1]['permissions'], 'MU,MR')
 
       def test_parse_mkdir_command(self):
           """Test parsing of 'mkdir' command output"""

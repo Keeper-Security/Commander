@@ -46,7 +46,7 @@ def register_command_info(aliases, command_info):
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
 convert_parser.add_argument(
-    '-t', '--record-type', '--record_type', dest='record_type', action='store', help='Convert to record type'
+    '-t', '--record-type', dest='record_type', action='store', help='Convert to record type (default: login)'
 )
 convert_parser.add_argument(
     '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
@@ -79,7 +79,7 @@ convert_all_parser = argparse.ArgumentParser(
     description='Convert all legacy General records in the vault to a typed record format'
 )
 convert_all_parser.add_argument(
-    '-t', '--record-type', '--record_type', dest='record_type', action='store',
+    '-t', '--record-type', dest='record_type', action='store',
     help='Target record type (default: login)'
 )
 convert_all_parser.add_argument(

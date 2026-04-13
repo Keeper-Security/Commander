@@ -24,58 +24,47 @@ limiter = Limiter(
 )
     
 def is_allowed_ip(ip_addr, allowed_ips_str, denied_ips_str):
-    """Check if the given IP address is blocked."""
-    logger.debug(f"allowed_ips_str :{allowed_ips_str}")
-    logger.debug(f"denied_ips_str : {denied_ips_str}")
-    logger.debug(f"requested ip_addr : {ip_addr}")
-    
-    ip_allow_list = allowed_ips_str.split(',') if allowed_ips_str else []
-    ip_deny_list = denied_ips_str.split(',') if denied_ips_str else []
-    try:
-        # Check if the IP is in the allow list first
-        if ip_allow_list:
-            for allow_ip in ip_allow_list:
-                if is_ip_in_range(ip_addr, allow_ip.strip()):
-                    return True  # IP allowed
-        # If ip_allow is empty, skip this check
-        elif not ip_allow_list:
-         # If ip_allow is empty, deny if IP is in deny list
-            for deny_ip in ip_deny_list:
-                if is_ip_in_range(ip_addr, deny_ip.strip()):
-                    return False  # IP denied
-        # If ip_allow is empty and ip_deny is not empty, check if IP is in deny list
-        if ip_deny_list:
-            for deny_ip in ip_deny_list:
-                if is_ip_in_range(ip_addr, deny_ip.strip()):
-                    return False  # IP denied
-                
-        ip_addr = ipaddress.ip_address(ip_addr)
-    except ValueError:
+    """Check if the given IP address is allowed based on allow/deny lists.
+
+    Rules:
+    - No lists configured → allow all
+    - Deny list only → allow unless explicitly denied
+    - Allow list (with or without deny list) → must be in allow list AND not in deny list
+    """
+    logger.debug(f"allowed_ips_str: {allowed_ips_str}")
+    logger.debug(f"denied_ips_str: {denied_ips_str}")
+    logger.debug(f"requested ip_addr: {ip_addr}")
+
+    allow_list = [ip.strip() for ip in allowed_ips_str.split(',') if ip.strip()] if allowed_ips_str else []
+    deny_list = [ip.strip() for ip in denied_ips_str.split(',') if ip.strip()] if denied_ips_str else []
+
+    if not allow_list and not deny_list:
         return True
 
-    for allowed in allowed_ips_str.split(','):
-        allowed = allowed.strip()
-        try:
-            if ipaddress.ip_address(allowed) == ip_addr:
-                return True
-        except ValueError:
-            try:
-                network = ipaddress.ip_network(allowed, strict=False)
-                if ip_addr in network:
-                    return True
-            except ValueError:
-                continue
-    return False
-
-def is_ip_in_range(ip, ip_range):
     try:
-        # For IP range like 10.10.1.1-10.10.1.255
-        if '-' in ip_range:
-            start_ip, end_ip = ip_range.split('-')
-            return ipaddress.IPv4Address(start_ip) <= ipaddress.IPv4Address(ip) <= ipaddress.IPv4Address(end_ip)
-        else:
-            # For single IP address
-            return ip == ip_range
+        parsed_ip = ipaddress.ip_address(ip_addr)
+    except ValueError:
+        logger.warning(f"Failed to parse IP address: {ip_addr}")
+        return False
+
+    if any(_ip_matches(parsed_ip, entry) for entry in deny_list):
+        return False
+
+    if allow_list:
+        return any(_ip_matches(parsed_ip, entry) for entry in allow_list)
+
+    return True
+
+
+def _ip_matches(parsed_ip, pattern):
+    """Check if a parsed IP matches a pattern (single IP, CIDR network, or dash-range)."""
+    try:
+        if '-' in pattern:
+            start_str, end_str = pattern.split('-', 1)
+            return ipaddress.ip_address(start_str.strip()) <= parsed_ip <= ipaddress.ip_address(end_str.strip())
+        if '/' in pattern:
+            return parsed_ip in ipaddress.ip_network(pattern, strict=False)
+        return parsed_ip == ipaddress.ip_address(pattern)
     except ValueError:
         return False
     
@@ -86,6 +75,17 @@ def get_rate_limit():
 def get_rate_limit_key():
     """Generate rate limit key per IP + endpoint for separate limits per endpoint"""
     return f"{get_remote_address()}:{request.endpoint}"
+
+def is_behind_proxy():
+    """Check if the service is configured behind a reverse proxy (ngrok/cloudflare)."""
+    try:
+        return bool(
+            ConfigReader.read_config('ngrok_public_url')
+            or ConfigReader.read_config('cloudflare_public_url')
+        )
+    except Exception:
+        return False
+
 
 def security_check(fn):
     @wraps(fn)
