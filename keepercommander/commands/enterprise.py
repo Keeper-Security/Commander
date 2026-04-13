@@ -40,13 +40,14 @@ from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
     report_output_parser
 from .enterprise_common import EnterpriseCommand
+from .automator import AutomatorListCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, crypto, utils, constants
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams
-from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
+from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2, automator_pb2, pam_pb2
 
 
 def register_commands(commands):
@@ -1359,6 +1360,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'node_id': node['node_id']
                     }
                     request_batch.append(rq)
+                    
             elif kwargs.get('wipe_out'):
                 if len(matched_nodes) != 1:
                     raise CommandError('enterprise-node', 'Cannot wipe-out more than one node')
@@ -1366,19 +1368,23 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 if not node.get('parent_id'):
                     raise CommandError('enterprise-node', 'Cannot wipe out root node')
 
-                answer = 'y' if kwargs.get('force') else user_choice(
-                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                    'This action cannot be undone.\n\n' +
-                    'Do you want to proceed with deletion?', 'yn', 'n')
-                if answer.lower() != 'y':
-                    return
-
                 sub_nodes = [node['node_id']]
                 EnterpriseNodeCommand.get_subnodes(params, sub_nodes, 0)
                 nodes = set(sub_nodes)
+                verbose_nodes = {x["node_id"]:x["data"]["displayname"] for x in params.enterprise['nodes'] if x["node_id"] in nodes}
 
+                answer = 'y' if kwargs.get('force') else user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                    'Selected nodes:\n' + 
+                    "\n".join([f"- {verbose_nodes[node]} ({node})" for node in sub_nodes]) +
+                    '\n\nThis action cannot be undone.\n\n' +
+                    'Do you want to proceed with deletion?', 'yn', 'n')
+                if answer.lower() != 'y':
+                    return
+                
                 if 'queued_teams' in params.enterprise:
                     queued_teams = [x for x in params.enterprise['queued_teams'] if x['node_id'] in nodes]
+                    if queued_teams: logging.info('Deleting queued teams')
                     for qt in queued_teams:
                         rq = {
                             'command': 'team_delete',
@@ -1390,6 +1396,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
                 role_set = set([x['role_id'] for x in managed_nodes])
                 role_set = role_set.union([x['role_id'] for x in roles])
+                if role_set: logging.info('Deleting roles')
                 if 'role_users' in params.enterprise:
                     for ru in params.enterprise['role_users']:
                         if ru['role_id'] in role_set:
@@ -1414,6 +1421,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     request_batch.append(rq)
 
                 users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
+                if users: logging.info('Deleting users')
                 for u in users:
                     rq = {
                         'command': 'enterprise_user_delete',
@@ -1423,12 +1431,33 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
                 if 'teams' in params.enterprise:
                     teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
+                    if teams: logging.info('Deleting teams')
                     for t in teams:
                         rq = {
                             'command': 'team_delete',
                             'team_uid': t['team_uid']
                         }
                         request_batch.append(rq)
+                        
+                automators = json.loads(AutomatorListCommand().execute(params,format='json'))
+                found_automators = [x for x in automators if x['node_id'] in nodes]
+                if found_automators: 
+                    logging.info('Deleting automators')
+                    for a in found_automators:
+                        rq = automator_pb2.AdminDeleteAutomatorRequest()
+                        rq.automatorId = a['id']
+                        api.communicate_rest(params, rq, 'automator/automator_delete', rs_type=automator_pb2.AdminResponse)
+                
+                can_list_gateways = [x for x in params.enforcements['booleans'] if x['key']=='allow_secrets_manager' and x['value']==True]
+                if can_list_gateways:
+                    rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=pam_pb2.PAMControllersResponse)
+                    found_gateways = [f'{x.controllerName} exists in node {x.nodeId}' for x in rs.controllers if x.nodeId in nodes]
+                    if found_gateways:
+                        logging.info(
+                            'Detected gateway objects under selected nodes:\n- ' +
+                            '\n- '.join(found_gateways) + '\n'
+                            'You must  move all gateways outside of selected nodes (pam gateway edit -g <gateway_uid> -i <target_node>)\n'
+                        )
 
                 sub_nodes.pop(0)
                 sub_nodes.reverse()
@@ -1499,6 +1528,9 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         logging.info('\'%s\' node is %s', node_name, verb)
                     else:
                         logging.warning('\'%s\' node is not %s. Error: %s', node_name, verb, rs['message'])
+                        if rs['message'] == "You must first delete or move the objects on this node":
+                            logging.warning('Note: Provisioning Methods and Gateways are not cleared by this command')
+                            
                 else:
                     if rs['result'] != 'success':
                         raise CommandError('enterprise-node', '\'{0}\' command error: {1}'.format(command,  rs['message']))
