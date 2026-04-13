@@ -9,12 +9,24 @@
 # Contact: ops@keepersecurity.com
 #
 
+import logging
 from functools import wraps
 from typing import Callable, Any
 from flask import request
 import time
 import re
 from .logging import logger
+
+
+class SSLHandshakeFilter(logging.Filter):
+    """Replace cryptic SSL handshake errors with a user-friendly message."""
+    def filter(self, record):
+        if hasattr(record, 'getMessage'):
+            message = record.getMessage()
+            if "Bad request version" in message and any(ord(c) > 127 for c in message):
+                record.msg = "HTTPS request received but HTTPS protocol is not enabled on this service"
+                record.args = ()
+        return True
 
 def sanitize_password_in_command(data):
     """Sanitize password values in command string and filedata"""
