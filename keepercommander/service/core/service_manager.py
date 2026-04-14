@@ -86,11 +86,11 @@ class ServiceManager:
             
             if queue_enabled == "y":
                 print(
-                    f"Commander Service starting on {protocol}://localhost:{port}/api/v2/ "
-                    f"(legacy sync compatibility available at {protocol}://localhost:{port}/api/v1/executecommand)"
+                    f"Commander Service (async) is starting on \033[1m{protocol}://localhost:{port}/api/v2/executecommand-async\033[0m\n"
+                    f"Legacy (sync) compatibility is available at \033[1m{protocol}://localhost:{port}/api/v1/executecommand\033[0m"
                 )
             else:
-                print(f"Commander Service starting on {protocol}://localhost:{port}/api/v1/")
+                print(f"Commander Service starting on \033[1m{protocol}://localhost:{port}/api/v1/executecommand\033[0m")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
             cloudflare_pid = None
