@@ -268,6 +268,12 @@ class CredentialProvisionCommand(Command):
                 config['account'] = {}
             if pam_config_arg:
                 config['account']['pam_config_uid'] = pam_config_arg
+            elif config.get('account', {}).get('pam_config_uid'):
+                logging.warning(
+                    '⚠️  account.pam_config_uid in YAML is deprecated and will be removed in a future release.\n'
+                    '    Use the -c/--pam-config command line argument instead.\n'
+                    '    Example: credential-provision -c <PAM-CONFIG-UID> --config config.yaml'
+                )
             # If neither -c nor YAML pam_config_uid provided, validation will catch it
 
             validation_errors = self._validate_config(params, config)
@@ -366,7 +372,10 @@ class CredentialProvisionCommand(Command):
             # Execute provisioning
             state = ProvisioningState()
             has_delivery = 'delivery' in config
-            has_email = 'email' in config
+            # Email section is only active if config_name is a real value (not 'none', empty, etc.)
+            email_config = config.get('email', {})
+            email_config_name = email_config.get('config_name', '') if email_config else ''
+            has_email = bool(email_config_name and email_config_name.lower() not in ('none', 'null', ''))
 
             try:
 
@@ -383,21 +392,43 @@ class CredentialProvisionCommand(Command):
                 # Generate password
                 password = self._generate_password(config['rotation']['password_complexity'])
 
-                # Create AD user via Gateway if AD-specific fields are present (KC-1035)
+                # Create AD user via Gateway if AD-specific fields are present
                 ad_groups = config['account'].get('ad_groups', [])
                 has_ad_config = config['account'].get('distinguished_name') or ad_groups
                 if has_ad_config:
-                    self._create_ad_user_via_gateway(config, password, params, state)
-                    if output_format == 'text':
-                        logging.info(f'✅ AD user created: {config["account"]["username"]}')
-
-                    # Add to AD groups
-                    if ad_groups:
-                        self._add_ad_user_to_groups_via_gateway(
-                            config, params, state.ad_gateway_uid
-                        )
+                    # Check Gateway version — AD operations require 1.8.0+
+                    gateway_uid = self._get_gateway_uid_for_config(
+                        config['account']['pam_config_uid'], params
+                    )
+                    if gateway_uid and not self._check_gateway_version(params, gateway_uid, '1.8.0'):
                         if output_format == 'text':
-                            logging.info(f'✅ Added to AD groups: {", ".join(ad_groups)}')
+                            logging.warning(
+                                '⚠️  Gateway version is below 1.8.0 — skipping AD user creation and group assignment.\n'
+                                '    Upgrade your Gateway to 1.8.0+ for AD provisioning support.\n'
+                                '    Continuing with PAM User record creation only.'
+                            )
+                    else:
+                        try:
+                            self._create_ad_user_via_gateway(config, password, params, state)
+                            if output_format == 'text':
+                                logging.info(f'✅ AD user created: {config["account"]["username"]}')
+                        except CommandError as ad_err:
+                            if 'already exists' in str(ad_err).lower():
+                                if output_format == 'text':
+                                    logging.info(f'⚠️  AD user already exists: {config["account"]["username"]} — continuing with PAM User creation')
+                            else:
+                                raise
+
+                        # Add to AD groups
+                        if ad_groups:
+                            succeeded, failed = self._add_ad_user_to_groups_via_gateway(
+                                config, params, state.ad_gateway_uid
+                            )
+                            if output_format == 'text':
+                                if succeeded:
+                                    logging.info(f'✅ Added to AD groups: {", ".join(succeeded)}')
+                                if failed:
+                                    logging.warning(f'⚠️  Failed to add to AD groups: {", ".join(failed)}')
 
                 # Create PAM User record
                 pam_user_uid = self._create_pam_user(config, password, params)
@@ -435,7 +466,7 @@ class CredentialProvisionCommand(Command):
                         else:
                             logging.warning(f'⚠️  Direct share to {share_to} failed — share manually')
 
-                # Email delivery (if email section present)
+                # Email delivery (if email section present with valid config_name)
                 if has_email:
                     share_url = self._generate_share_url(pam_user_uid, config, params)
                     if output_format == 'text':
@@ -443,6 +474,9 @@ class CredentialProvisionCommand(Command):
                     email_success = self._send_email(config, share_url, params)
                     if output_format == 'text':
                         logging.info('✅ Email with one-time share sent')
+                elif 'email' in config and not has_email:
+                    if output_format == 'text':
+                        logging.info('⚠️  Email section present but config_name is not configured — skipping email delivery')
 
                 if not has_delivery and not has_email:
                     if output_format == 'text':
@@ -617,6 +651,27 @@ class CredentialProvisionCommand(Command):
         """
         errors = []
 
+        # Check for deprecated pam.rotation structure
+        has_pam_rotation = isinstance(config.get('pam'), dict) and 'rotation' in config.get('pam', {})
+        has_rotation = 'rotation' in config
+        if has_pam_rotation and not has_rotation:
+            errors.append(
+                'The "pam: rotation:" YAML structure has been deprecated.\n'
+                '    Please move your rotation settings to the top level:\n'
+                '    \n'
+                '    Before:\n'
+                '      pam:\n'
+                '        rotation:\n'
+                '          schedule: "0 0 3 ? * 2"\n'
+                '          password_complexity: "24,4,4,4,4"\n'
+                '    \n'
+                '    After:\n'
+                '      rotation:\n'
+                '        schedule: "0 0 3 ? * 2"\n'
+                '        password_complexity: "24,4,4,4,4"'
+            )
+            return errors
+
         # Validate required top-level sections
         required_sections = ['user', 'account', 'rotation']
         for section in required_sections:
@@ -636,13 +691,68 @@ class CredentialProvisionCommand(Command):
         if 'delivery' in config:
             errors.extend(self._validate_delivery_section(config['delivery']))
 
-        # Validate email section if present (email delivery)
-        if 'email' in config:
-            errors.extend(self._validate_email_section(params, config.get('email', {})))
+        # Validate email section if present with a real config_name
+        email_cfg = config.get('email', {})
+        email_cfg_name = email_cfg.get('config_name', '') if email_cfg else ''
+        if email_cfg and email_cfg_name and email_cfg_name.lower() not in ('none', 'null', ''):
+            errors.extend(self._validate_email_section(params, email_cfg))
 
         # Validate optional vault section
         if 'vault' in config:
             errors.extend(self._validate_vault_section(params, config['vault']))
+
+        # Validate directory_uid if provided — must be a pamDirectory record
+        directory_uid = config.get('account', {}).get('directory_uid')
+        if directory_uid:
+            try:
+                dir_record = vault.KeeperRecord.load(params, directory_uid)
+                if dir_record:
+                    if hasattr(dir_record, 'record_type') and dir_record.record_type != 'pamDirectory':
+                        errors.append(
+                            f'account.directory_uid "{directory_uid}" is a {dir_record.record_type} record, not a pamDirectory.\n'
+                            f'    The directory_uid must point to a PAM Directory record with directoryType=ad.'
+                        )
+                else:
+                    errors.append(
+                        f'account.directory_uid "{directory_uid}" not found in vault.\n'
+                        f'    Make sure the PAM Directory record exists and you have access to it.'
+                    )
+            except Exception:
+                errors.append(
+                    f'account.directory_uid "{directory_uid}" could not be loaded.\n'
+                    f'    Make sure the PAM Directory record exists and you have access to it.'
+                )
+
+        # Validate distinguished_name placeholder requires username or username_template
+        dn = config.get('account', {}).get('distinguished_name', '')
+        if '{username}' in dn:
+            if not config.get('account', {}).get('username') and not config.get('account', {}).get('username_template'):
+                errors.append(
+                    'account.distinguished_name contains {username} placeholder but neither\n'
+                    '    account.username nor account.username_template is provided.'
+                )
+
+        # Validate ad_groups requires directory_uid
+        ad_groups = config.get('account', {}).get('ad_groups', [])
+        if ad_groups and not config.get('account', {}).get('directory_uid'):
+            errors.append(
+                'account.ad_groups requires account.directory_uid to be set.\n'
+                '    The Gateway needs a PAM Directory record to know which AD to connect to for group operations.'
+            )
+
+        # Validate delivery.share_to is a Keeper user
+        delivery = config.get('delivery', {})
+        share_to = delivery.get('share_to', '') if delivery else ''
+        if share_to:
+            try:
+                user_keys = api.load_user_public_keys(params, [share_to])
+                if share_to.lower() not in params.key_cache:
+                    logging.warning(
+                        f'⚠️  delivery.share_to "{share_to}" may not have an active Keeper vault.\n'
+                        f'    Sharing may fail or require an invitation.'
+                    )
+            except Exception:
+                pass  # Non-fatal — will be caught at runtime
 
         # Validate optional managed_company section (MSP scenarios)
         if 'managed_company' in config:
@@ -1177,21 +1287,22 @@ class CredentialProvisionCommand(Command):
         # Determine target folder
         user_specified_folder = config.get('vault', {}).get('folder')
 
-        # Validate user-specified folder path
         if user_specified_folder:
-
-            self._validate_folder_path(user_specified_folder)
-
-            # User specified a subfolder (relative to gateway folder)
-            # Example: "PAM Users/Engineering"
-            target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+            # Check if the value is a folder UID (exists in folder cache)
+            if user_specified_folder in params.folder_cache:
+                folder_uid = user_specified_folder
+            elif user_specified_folder in params.shared_folder_cache:
+                folder_uid = user_specified_folder
+            else:
+                # Treat as a relative folder path
+                self._validate_folder_path(user_specified_folder)
+                target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+                folder_uid = self._ensure_folder_exists(target_folder_path, params)
         else:
             # Auto-generate subfolder based on department
             department = config['user'].get('department', 'Default')
             target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
-
-        # Ensure target folder exists
-        folder_uid = self._ensure_folder_exists(target_folder_path, params)
+            folder_uid = self._ensure_folder_exists(target_folder_path, params)
 
         # Create PAM User typed record
         pam_user = vault.TypedRecord()
@@ -1242,7 +1353,7 @@ class CredentialProvisionCommand(Command):
 
         # KC-1035: Owner metadata for deprovision support
         delivery = config.get('delivery', {})
-        if delivery.get('method') == 'direct_share' and delivery.get('share_to'):
+        if delivery.get('share_to'):
             custom_fields.append(vault.TypedField.new_field(
                 'text',
                 delivery['share_to'],
@@ -1511,14 +1622,20 @@ class CredentialProvisionCommand(Command):
             complexity = rotation_config['password_complexity']
 
             rotation_cmd = PAMCreateRecordRotationCommand()
+            directory_uid = config['account'].get('directory_uid')
             kwargs = {
                 'record_name': pam_user_uid,
-                'iam_aad_config_uid': pam_config_uid,
                 'schedule_cron_data': [schedule],
                 'pwd_complexity': complexity,
                 'enable': True,
                 'force': True,
             }
+            # Use directory_uid as resource if available, otherwise use pam_config_uid
+            # Cannot pass both --resource and --iam-aad-config_uid simultaneously
+            if directory_uid:
+                kwargs['resource'] = directory_uid
+            else:
+                kwargs['iam_aad_config_uid'] = pam_config_uid
 
             try:
                 # Suppress verbose output from rotation command
@@ -1587,6 +1704,35 @@ class CredentialProvisionCommand(Command):
     # =========================================================================
     # AD User Creation via Gateway (KC-1035)
     # =========================================================================
+
+    def _get_gateway_version(self, params: KeeperParams, gateway_uid: str) -> Optional[str]:
+        """Get the Gateway version from connected controllers list."""
+        try:
+            online = router_get_connected_gateways(params)
+            if online:
+                for controller in online.controllers:
+                    uid = utils.base64_url_encode(controller.controllerUid)
+                    if uid == gateway_uid and hasattr(controller, 'version') and controller.version:
+                        # Version string may contain OS info: "1.8.0;Darwin;25.4.0;arm64"
+                        return controller.version.split(';')[0]
+        except Exception as e:
+            logging.debug(f'Failed to get Gateway version: {e}')
+        return None
+
+    def _check_gateway_version(self, params: KeeperParams, gateway_uid: str, min_version: str) -> bool:
+        """Check if Gateway version meets minimum requirement."""
+        version = self._get_gateway_version(params, gateway_uid)
+        if not version:
+            logging.warning(f'⚠️  Could not determine Gateway version — proceeding anyway')
+            return True  # Allow if we can't check
+        try:
+            from packaging.version import Version
+            return Version(version) >= Version(min_version)
+        except ImportError:
+            # Fall back to tuple comparison
+            v_parts = tuple(int(x) for x in version.split('.'))
+            m_parts = tuple(int(x) for x in min_version.split('.'))
+            return v_parts >= m_parts
 
     def _get_gateway_uid_for_config(self, pam_config_uid: str, params: KeeperParams) -> Optional[str]:
         """Find the connected Gateway UID for a PAM Configuration.
@@ -1732,7 +1878,7 @@ class CredentialProvisionCommand(Command):
         config: Dict[str, Any],
         params: KeeperParams,
         gateway_uid: str
-    ) -> None:
+    ) -> Tuple[List[str], List[str]]:
         """
         Add AD user to groups via Gateway's rm-add-user-to-group action (KC-1035).
 
@@ -1740,16 +1886,25 @@ class CredentialProvisionCommand(Command):
             config: YAML config with account.ad_groups list
             params: KeeperParams session
             gateway_uid: Connected Gateway UID
+
+        Returns:
+            Tuple of (succeeded_groups, failed_groups)
         """
         username = config['account']['username']
         pam_config_uid = config['account']['pam_config_uid']
         resource_uid = config['account'].get('directory_uid')
         groups = config['account'].get('ad_groups', [])
 
-        # Encrypt username with PAM Config record key
-        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
-        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(username.encode(), record_key)).decode()
+        # Use DN if available, otherwise username — Gateway needs to find the user in AD
+        dn = config['account'].get('distinguished_name', '')
+        user_value = dn if dn else username
 
+        # Encrypt with PAM Config record key
+        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
+        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(user_value.encode(), record_key)).decode()
+
+        succeeded = []
+        failed = []
         for group in groups:
             action_inputs = GatewayActionRmAddUserToGroupInputs(
                 configuration_uid=pam_config_uid,
@@ -1777,11 +1932,16 @@ class CredentialProvisionCommand(Command):
                 if data and not data.get('success', False):
                     error = data.get('error', 'Unknown error')
                     logging.warning(f'   Failed to add {username} to group {group}: {error}')
+                    failed.append(group)
                 else:
                     logging.info(f'   Added {username} to AD group: {group}')
+                    succeeded.append(group)
 
             except Exception as e:
                 logging.warning(f'   Failed to add {username} to group {group}: {e}')
+                failed.append(group)
+
+        return succeeded, failed
 
     def _delete_ad_user_via_gateway(self, state: 'ProvisioningState', params: KeeperParams) -> None:
         """Delete AD user via Gateway for rollback (KC-1035)."""
@@ -2339,7 +2499,7 @@ class CredentialProvisionCommand(Command):
         # Unknown PAM Type
         # ===================================================================
         else:
-            # Skip warning when resource_uid is provided — the resource record
+            # Skip warning when directory_uid is provided — the directory record
             # determines AD behavior, not the config type
             if not config['account'].get('directory_uid'):
                 logging.warning('')
