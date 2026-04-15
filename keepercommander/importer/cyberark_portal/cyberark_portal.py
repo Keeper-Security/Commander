@@ -53,7 +53,7 @@ class CyberArkPortalImporter(BaseImporter):
 
         See https://docs.cyberark.com/identity/latest/en/content/getstarted/tenant-url-domains.htm
         """
-        default_url = f'https://{tenant_name}.my.idaptive.app'
+        default_url = f'https://{tenant_name}.id.cyberark.cloud'
 
         try:
             requests.head(default_url, timeout=5)
@@ -91,32 +91,48 @@ class CyberArkPortalImporter(BaseImporter):
         name = filename.removeprefix("https://").removeprefix("http://")
         host_part = name.split("/")[0]
 
-        if host_part.count(".") >= 2:
+        if "." in host_part:
             identity_base_url = f'https://{host_part}'
             tenant_name = host_part.split(".")[0]
         else:
-            match = re.search(r"^([A-Za-z0-9-]+)(\.cyberark\.cloud)?$", host_part)
-            if not match:
-                logging.error(f"Invalid CyberArk tenant name or URL: {filename}")
-                return
-            tenant_name = match.group(1)
+            # Bare tenant name (e.g. "eqrworld") — run discovery
+            tenant_name = host_part
             identity_base_url = self.discover_identity_url(tenant_name)
 
         logging.info(f"Using CyberArk Identity URL: {identity_base_url}")
 
         username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk User Portal username: ")
+
+        start_auth_payload = {
+            "TenantId": tenant_name,
+            "Version": "1.0",
+            "User": username,
+        }
+
         response = requests.post(
             self.get_url(identity_base_url, "/Security/StartAuthentication"),
-            json={
-                "TenantId": tenant_name,
-                "Version": "1.0",
-                "User": username,
-            },
+            json=start_auth_payload,
             timeout=self.TIMEOUT,
+            allow_redirects=False,
         )
 
+       
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirect_url = response.headers.get('Location', '')
+            if redirect_url:
+                identity_host = urlparse(redirect_url).hostname
+                if identity_host:
+                    identity_base_url = f'https://{identity_host}'
+                    logging.info(f"StartAuthentication redirected; retrying on discovered identity URL: {identity_base_url}")
+                    response = requests.post(
+                        self.get_url(identity_base_url, "/Security/StartAuthentication"),
+                        json=start_auth_payload,
+                        timeout=self.TIMEOUT,
+                        allow_redirects=False,
+                    )
+
         if response.status_code != HTTPStatus.OK:
-            logging.error(f"Error starting authentication: {response.text}")
+            logging.error(f"Error starting authentication (HTTP {response.status_code}): {response.text[:500]}")
             return
         start_auth_result = response.json().get("Result")
         logging.debug(f"Authentication Result: {start_auth_result}")
@@ -130,15 +146,12 @@ class CyberArkPortalImporter(BaseImporter):
             )
             response = requests.post(
                 self.get_url(identity_base_url, "/Security/StartAuthentication"),
-                json={
-                    "TenantId": tenant_name,
-                    "Version": "1.0",
-                    "User": username,
-                },
+                json=start_auth_payload,
                 timeout=self.TIMEOUT,
+                allow_redirects=False,
             )
             if response.status_code != HTTPStatus.OK:
-                logging.error(f"Error starting authentication on {redirect}: {response.text}")
+                logging.error(f"Error starting authentication on {redirect}: {response.text[:500]}")
                 return
             start_auth_result = response.json().get("Result")
             logging.debug(f"Authentication Result (redirected): {start_auth_result}")
