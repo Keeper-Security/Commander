@@ -1026,7 +1026,8 @@ def _build_guacamole_connection_settings(
         screen_info: Screen dimensions dict
         user_record_uid: Optional UID of linked pamUser record for credentials
         credential_type: Credential type ('linked', 'userSupplied', 'ephemeral')
-        normalize_crlf: When True, Commander maps CRLF to LF on decoded STDOUT blobs only (CLI).
+        normalize_crlf: When True, map CRLF to LF on decoded STDOUT blobs and run downstream LF cleanup
+            (``pam launch --normalize-crlf`` / ``-n``). Default False keeps raw CR/LF (CLI default).
 
     Returns:
         Dictionary with connection settings for GuacamoleHandler

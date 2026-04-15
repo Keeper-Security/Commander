@@ -35,6 +35,11 @@ from .terminal_connection import (
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty, PIXEL_MODE_GUACD, scale_screen_info
 from .terminal_reset import reset_local_terminal_after_pam_session
+from .crlf_merge_delay import (
+    MAX_CRLF_MERGE_DELAY_MS,
+    MIN_CRLF_MERGE_DELAY_MS,
+    PAM_LAUNCH_CRLF_MERGE_DELAY_MS_ENV,
+)
 from .guac_cli.stdin_handler import StdinHandler
 from .guac_cli.input import InputHandler
 from .guac_cli.session_input import CtrlCCoordinator, PasteOrchestrator
@@ -282,8 +287,12 @@ class PAMLaunchCommand(Command):
                              'the default Guacamole key-event mode. Paste and Ctrl+C double-tap behave the '
                              'same in both modes.')
     parser.add_argument('--normalize-crlf', '-n', required=False, dest='normalize_crlf', action='store_true',
-                        help='Convert CRLF (\\r\\n) to LF (\\n) for terminal output only. Use when the remote '
-                             'session sends Windows-style line endings and the local terminal shows extra blank lines.')
+                        help='Normalize decoded Guacamole STDOUT: CRLF to LF and downstream LF cleanup. '
+                             'Use when you see double new lines from the remote. '
+                             'By default we keep raw CR/LF on STDOUT (lower overhead). '
+                             'Alternatively, tune sending double newlines to the remote with environment '
+                             f'variable {PAM_LAUNCH_CRLF_MERGE_DELAY_MS_ENV}: [{MIN_CRLF_MERGE_DELAY_MS}..{MAX_CRLF_MERGE_DELAY_MS}] ms '
+                             'which controls local Enter coalescing (split CRLF across reads).')
     parser.add_argument('--scale', '-s', required=False, dest='scale', type=int, default=None,
                         help='Scale pixel width/height by this percentage (e.g. 50 = half canvas, 200 = double). '
                              'Range: [40-400]. Helps when fullscreen TUI programs show garbled layout.')
@@ -894,6 +903,7 @@ class PAMLaunchCommand(Command):
                         cli_scale=_scale,
                         connect_banner_title=_banner_title,
                         pre_connect_spinner=pre_connect_spinner,
+                        preserve_crlf=not bool(kwargs.get('normalize_crlf')),
                     )
                 except BaseException:
                     if pre_connect_spinner is not None and getattr(
@@ -919,6 +929,7 @@ class PAMLaunchCommand(Command):
         cli_scale: Optional[int] = None,
         connect_banner_title: Optional[str] = None,
         pre_connect_spinner: Optional[PamLaunchSpinner] = None,
+        preserve_crlf: bool = True,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -958,6 +969,7 @@ class PAMLaunchCommand(Command):
             connect_banner_title: Record title (or fallback) for the pre-session banner and spinner.
             pre_connect_spinner: If set, an already-started PamLaunchSpinner from execute() after record checks
                 (banner printed there); do not create a second spinner or duplicate the launching line.
+            preserve_crlf: When True (default), STDOUT keeps raw CRLF; False when ``pam launch -n`` / ``--normalize-crlf``.
         """
         import sys as _sys
 
