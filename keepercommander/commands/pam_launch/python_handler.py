@@ -115,6 +115,7 @@ class GuacamoleHandler:
                 - image_mimetypes: List of supported image types (optional)
                 - guacd_params: Additional guacd parameters dict (optional)
                 - clipboard: Optional {disableCopy, disablePaste} from PAM (optional)
+                - normalize_crlf: When True, map CRLF to LF on Guacamole STDOUT blobs only (CLI).
             on_ready: Optional callback when Guacamole connection is ready
             on_disconnect: Optional callback when connection is closed (receives reason)
         """
@@ -167,6 +168,7 @@ class GuacamoleHandler:
             },
             send_ack_callback=self._send_ack,
             stdout_stream_tracker=self,
+            normalize_stdout_crlf=bool(self.connection_settings.get('normalize_crlf')),
         )
 
         # State

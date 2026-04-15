@@ -468,6 +468,8 @@ def create_instruction_router(
     custom_handlers: Optional[Dict[str, InstructionHandler]] = None,
     send_ack_callback: Optional[AckCallback] = None,
     stdout_stream_tracker: Optional[Any] = None,
+    *,
+    normalize_stdout_crlf: bool = False,
 ) -> Callable[[str, List[str]], None]:
     """
     Create an instruction router callback for use with Parser.oninstruction.
@@ -488,6 +490,8 @@ def create_instruction_router(
             - pipe with name "STDOUT" stores stream index and sends ack
             - blob with matching stream decodes base64 to stdout and sends ack
             - end with matching stream clears tracking
+        normalize_stdout_crlf: When True, replace CRLF with LF in decoded STDOUT blobs only
+            (terminal output). Does not alter stdin or other streams.
 
     Returns:
         A callback function with signature (opcode: str, args: List[str]) -> None
@@ -564,6 +568,8 @@ def create_instruction_router(
                     # Decode base64 and write to stdout
                     try:
                         decoded = base64.b64decode(args[1])
+                        if normalize_stdout_crlf:
+                            decoded = decoded.replace(b'\r\n', b'\n')
                         # Try buffer.write for binary output, fall back to str for compatibility
                         if hasattr(sys.stdout, 'buffer'):
                             sys.stdout.buffer.write(decoded)
