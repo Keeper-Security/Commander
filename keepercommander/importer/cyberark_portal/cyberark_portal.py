@@ -39,16 +39,76 @@ class CyberArkPortalImporter(BaseImporter):
     TIMEOUT = 10  # Wait up to 10 seconds for CyberArk API requests
 
     @staticmethod
-    def get_url(id_tenant, endpoint):
-        return f'https://{id_tenant}.id.cyberark.cloud/{endpoint.rstrip("/")}'
+    def get_url(identity_base_url, endpoint):
+        return f'{identity_base_url.rstrip("/")}/{endpoint.lstrip("/").rstrip("/")}'
+
+    @staticmethod
+    def discover_identity_url(tenant_name):
+        """Discover the actual CyberArk Identity URL for a tenant.
+
+        Probes candidate URLs in order and returns the first reachable identity
+        endpoint.  For tenants that use legacy Idaptive (*.my.idaptive.app) the
+        portal at *.cyberark.cloud redirects to the identity login page, so we
+        extract the identity host from that redirect.
+
+        See https://docs.cyberark.com/identity/latest/en/content/getstarted/tenant-url-domains.htm
+        """
+        default_url = f'https://{tenant_name}.my.idaptive.app'
+
+        try:
+            requests.head(default_url, timeout=5)
+            return default_url
+        except requests.exceptions.ConnectionError:
+            logging.debug(f"{default_url} is not reachable, attempting auto-discovery")
+        except requests.exceptions.RequestException:
+            logging.debug(f"{default_url} request failed, attempting auto-discovery")
+
+        portal_url = f'https://{tenant_name}.cyberark.cloud'
+        try:
+            resp = requests.get(portal_url, timeout=10, allow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redirect_url = resp.headers.get('Location', '')
+                parsed = urlparse(redirect_url)
+                identity_host = parsed.hostname
+                if identity_host:
+                    discovered = f'https://{identity_host}'
+                    logging.info(f"Auto-discovered identity URL: {discovered} (via redirect from {portal_url})")
+                    return discovered
+        except requests.exceptions.ConnectionError:
+            logging.debug(f"{portal_url} is also not reachable")
+        except requests.exceptions.RequestException as e:
+            logging.debug(f"{portal_url} request failed: {e}")
+
+        logging.warning(
+            f"Could not auto-discover identity URL for tenant '{tenant_name}'. "
+            f"Falling back to {default_url}. "
+            f"You can also pass the full identity URL directly, e.g.: "
+            f"import --format=cyberark_portal https://YOUR_TENANT.my.idaptive.app"
+        )
+        return default_url
 
     def do_import(self, filename, **kwargs):
-        id_tenant = re.search(r"^([A-Za-z0-9-]+)(\.id\.cyberark\.cloud)?$", filename.removeprefix("https://"))[0]
+        name = filename.removeprefix("https://").removeprefix("http://")
+        host_part = name.split("/")[0]
+
+        if host_part.count(".") >= 2:
+            identity_base_url = f'https://{host_part}'
+            tenant_name = host_part.split(".")[0]
+        else:
+            match = re.search(r"^([A-Za-z0-9-]+)(\.cyberark\.cloud)?$", host_part)
+            if not match:
+                logging.error(f"Invalid CyberArk tenant name or URL: {filename}")
+                return
+            tenant_name = match.group(1)
+            identity_base_url = self.discover_identity_url(tenant_name)
+
+        logging.info(f"Using CyberArk Identity URL: {identity_base_url}")
+
         username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk User Portal username: ")
         response = requests.post(
-            self.get_url(id_tenant, "/Security/StartAuthentication"),
+            self.get_url(identity_base_url, "/Security/StartAuthentication"),
             json={
-                "TenantId": id_tenant,
+                "TenantId": tenant_name,
                 "Version": "1.0",
                 "User": username,
             },
@@ -60,15 +120,28 @@ class CyberArkPortalImporter(BaseImporter):
             return
         start_auth_result = response.json().get("Result")
         logging.debug(f"Authentication Result: {start_auth_result}")
-        redirect = start_auth_result.get("PodFqdn")
 
+        # https://docs.cyberark.com/identity/latest/en/content/developer/authentication/adaptive-mfa-overview.htm#Ha
+        redirect = start_auth_result.get("PodFqdn")
         if redirect:
+            identity_base_url = f'https://{redirect}'
             print_formatted_text(
-                HTML(
-                    f"Use <ansigreen><i>{redirect.removesuffix('.id.cyberark.cloud')}</i></ansigreen> instead of <ansired>{id_tenant}</ansired> for user <i>{username}</i>."
-                )
+                HTML(f"Redirecting to preferred tenant URL: <ansigreen>{redirect}</ansigreen>")
             )
-            return
+            response = requests.post(
+                self.get_url(identity_base_url, "/Security/StartAuthentication"),
+                json={
+                    "TenantId": tenant_name,
+                    "Version": "1.0",
+                    "User": username,
+                },
+                timeout=self.TIMEOUT,
+            )
+            if response.status_code != HTTPStatus.OK:
+                logging.error(f"Error starting authentication on {redirect}: {response.text}")
+                return
+            start_auth_result = response.json().get("Result")
+            logging.debug(f"Authentication Result (redirected): {start_auth_result}")
 
         if start_auth_result.get("IdpRedirectUrl"):
 
@@ -173,7 +246,7 @@ class CyberArkPortalImporter(BaseImporter):
             callback = OAuth2Callback()
             callback.start()
             response = requests.post(
-                self.get_url(id_tenant, "/OAuth2/Authorize/KeeperCommander"),
+                self.get_url(identity_base_url, "/OAuth2/Authorize/KeeperCommander"),
                 data={
                     "response_type": "code",
                     "redirect_uri": OAuth2Callback.REDIRECT_URI,
@@ -193,7 +266,7 @@ class CyberArkPortalImporter(BaseImporter):
 
             # The user did not quit so the code has been received or entered by the user
             response = requests.post(
-                self.get_url(id_tenant, "/OAuth2/Token/KeeperCommander"),
+                self.get_url(identity_base_url, "/OAuth2/Token/KeeperCommander"),
                 data={
                     "grant_type": "authorization_code",
                     "redirect_uri": OAuth2Callback.REDIRECT_URI,
@@ -232,7 +305,7 @@ class CyberArkPortalImporter(BaseImporter):
             }
             session_id = start_auth_result.get("SessionId")
             advance_auth_request = {
-                "TenantId": id_tenant,
+                "TenantId": tenant_name,
                 "SessionId": session_id,
             }
 
@@ -252,7 +325,7 @@ class CyberArkPortalImporter(BaseImporter):
 
             logging.debug(f"Advance Authentication Request: {advance_auth_request}")
             response = requests.post(
-                self.get_url(id_tenant, "/Security/AdvanceAuthentication"),
+                self.get_url(identity_base_url, "/Security/AdvanceAuthentication"),
                 json=advance_auth_request,
                 timeout=self.TIMEOUT,
             )
@@ -274,9 +347,9 @@ class CyberArkPortalImporter(BaseImporter):
             # Iterate through the challenge mechanisms until we get a successful login or run out of mechanisms
             while challenge_mechs and advance_auth_result.get("Summary") == "OobPending":
                 response = requests.post(
-                    self.get_url(id_tenant, "/Security/AdvanceAuthentication"),
+                    self.get_url(identity_base_url, "/Security/AdvanceAuthentication"),
                     json={
-                        "TenantId": id_tenant,
+                        "TenantId": tenant_name,
                         "SessionId": session_id,
                         "MechanismId": challenge_mechs[0]["MechanismId"],
                         "Action": "Answer",
@@ -308,7 +381,7 @@ class CyberArkPortalImporter(BaseImporter):
 
         # Get all the application data (except the password, of course) in one API call
         response = requests.post(
-            self.get_url(id_tenant, "/UPRest/GetUPData"),
+            self.get_url(identity_base_url, "/UPRest/GetUPData"),
             headers={"Authorization": f"Bearer {authentication_token}"},
             json={},
             timeout=self.TIMEOUT,
@@ -349,7 +422,7 @@ class CyberArkPortalImporter(BaseImporter):
                     )
 
                 response = requests.post(
-                    self.get_url(id_tenant, f"/UPRest/GetMCFA?appkey={app_key}"),
+                    self.get_url(identity_base_url, f"/UPRest/GetMCFA?appkey={app_key}"),
                     headers={"Authorization": f"Bearer {authentication_token}"},
                     json={},
                     timeout=self.TIMEOUT,
@@ -368,7 +441,7 @@ class CyberArkPortalImporter(BaseImporter):
                 yield record
 
         response = requests.post(
-            self.get_url(id_tenant, "/UPRest/GetSecuredItemsData"),
+            self.get_url(identity_base_url, "/UPRest/GetSecuredItemsData"),
             headers={"Authorization": f"Bearer {authentication_token}"},
             json={},
             timeout=self.TIMEOUT,
@@ -400,7 +473,7 @@ class CyberArkPortalImporter(BaseImporter):
                     )
 
                 response = requests.post(
-                    self.get_url(id_tenant, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
+                    self.get_url(identity_base_url, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
                     headers={"Authorization": f"Bearer {authentication_token}"},
                     json={},
                     timeout=self.TIMEOUT,
