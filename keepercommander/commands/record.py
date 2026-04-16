@@ -202,6 +202,8 @@ clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store'
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove or delete a record from the vault')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+rm_parser.add_argument('--purge', dest='purge', action='store_true',
+                        help='permanently delete the record for ALL users (default: remove only from your vault)')
 rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
 
@@ -2617,50 +2619,103 @@ class RecordRemoveCommand(Command):
                                         if record.title.casefold() == record_name.casefold():
                                             records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
-                    raise CommandError('rm', f'Record {name} cannot be resolved')
+                    # Fallback: global title search so records in shared folders are also found.
+                    for record_uid in params.record_cache:
+                        record = vault.KeeperRecord.load(params, record_uid)
+                        if record and record.title.casefold() == name.casefold():
+                            for folder in find_all_folders(params, record_uid):
+                                records_to_delete.append((folder, record_uid))
+                if len(records_to_delete) == orig_len:
+                    raise CommandError('rm', f'No record found matching "{name}". '
+                                       f'Provide a valid record title, path, or UID.')
 
         vault_changed = False
-        while len(records_to_delete) > 0:
-            rq = {
-                'command': 'pre_delete',
-                'objects': []
-            }
+        force = kwargs.get('force') or False
+        purge = kwargs.get('purge') or False
 
-            chunk = records_to_delete[:rq_obj_limit]
-            records_to_delete = records_to_delete[rq_obj_limit:]
-            for folder, record_uid in chunk:
-                del_obj = {
-                    'delete_resolution': 'unlink',
-                    'object_uid': record_uid,
-                    'object_type': 'record'
-                }
-                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                    del_obj['from_type'] = 'user_folder'
-                    if folder.type == BaseFolderNode.UserFolderType:
-                        del_obj['from_uid'] = folder.uid
+        if purge:
+            # Hard-delete records for ALL users: deduplicate UIDs across folders
+            record_uids = list({uid for _, uid in records_to_delete})
+
+            # Only the record owner may permanently delete a record
+            non_owned = []
+            owned_uids = []
+            for uid in record_uids:
+                ro = params.record_owner_cache.get(uid)
+                if ro and ro.owner:
+                    owned_uids.append(uid)
                 else:
-                    del_obj['from_type'] = 'shared_folder_folder'
-                    del_obj['from_uid'] = folder.uid
-                rq['objects'].append(del_obj)
+                    record = vault.KeeperRecord.load(params, uid)
+                    title = record.title if record else uid
+                    non_owned.append(title)
+            if non_owned:
+                for title in non_owned:
+                    logging.warning('Cannot permanently delete "%s": you are not the record owner.', title)
+            if not owned_uids:
+                return
+            record_uids = owned_uids
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
+            if not force:
+                print(f'This will permanently delete {len(record_uids)} record(s) for ALL users.')
+                np = base.user_choice('Do you want to proceed?', 'yn', default='n')
+                if np.lower() != 'y':
+                    return
+            while record_uids:
+                chunk = record_uids[:rq_obj_limit]
+                record_uids = record_uids[rq_obj_limit:]
+                rq = {
+                    'command': 'record_update',
+                    'delete_records': chunk
+                }
+                rs = api.communicate(params, rq)
+                if 'delete_records' in rs:
+                    for status in rs['delete_records']:
+                        if status.get('status') != 'success':
+                            logging.warning('Failed to delete record %s: %s',
+                                            status.get('uid', ''), status.get('status', ''))
+                vault_changed = True
+        else:
+            # Remove records from your vault only (unlink), leaving them intact for other users
+            while len(records_to_delete) > 0:
+                rq = {
+                    'command': 'pre_delete',
+                    'objects': []
+                }
 
-                force = kwargs.get('force') or False
-                np = 'y'
-                if force is not True:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                    np = base.user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
+                chunk = records_to_delete[:rq_obj_limit]
+                records_to_delete = records_to_delete[rq_obj_limit:]
+                for folder, record_uid in chunk:
+                    del_obj = {
+                        'delete_resolution': 'unlink',
+                        'object_uid': record_uid,
+                        'object_type': 'record'
                     }
-                    api.communicate(params, rq)
-                    vault_changed = True
+                    if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                        del_obj['from_type'] = 'user_folder'
+                        if folder.type == BaseFolderNode.UserFolderType:
+                            del_obj['from_uid'] = folder.uid
+                    else:
+                        del_obj['from_type'] = 'shared_folder_folder'
+                        del_obj['from_uid'] = folder.uid
+                    rq['objects'].append(del_obj)
+
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    pdr = rs['pre_delete_response']
+
+                    np = 'y'
+                    if force is not True:
+                        summary = pdr['would_delete']['deletion_summary']
+                        for x in summary:
+                            print(x)
+                        np = base.user_choice('Do you want to proceed with removal?', 'yn', default='n')
+                    if np.lower() == 'y':
+                        rq = {
+                            'command': 'delete',
+                            'pre_delete_token': pdr['pre_delete_token']
+                        }
+                        api.communicate(params, rq)
+                        vault_changed = True
 
         if vault_changed:
             BreachWatch.save_reused_pw_count(params)
