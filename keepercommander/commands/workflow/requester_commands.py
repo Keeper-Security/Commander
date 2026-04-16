@@ -26,13 +26,15 @@ from .helpers import RecordResolver, ProtobufRefBuilder, sanitize_router_error, 
 class WorkflowRequestAccessCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow request',
-        description='Request access to a PAM resource, or escalate a pending request',
+        description='Request access to a PAM resource, escalate, or cancel a pending request',
     )
     parser.add_argument('record', help='Record UID or name')
     parser.add_argument('-r', '--reason', help='Reason for access request')
     parser.add_argument('-t', '--ticket', help='External ticket/reference number')
     parser.add_argument('-e', '--escalate', action='store_true',
                         help='Escalate a pending request to escalation approvers')
+    parser.add_argument('-c', '--cancel', action='store_true',
+                        help='Cancel a pending or active workflow request')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -40,7 +42,17 @@ class WorkflowRequestAccessCommand(Command):
         return WorkflowRequestAccessCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
-        if kwargs.get('escalate'):
+        cancel = kwargs.get('cancel')
+        escalate = kwargs.get('escalate')
+
+        if cancel and escalate:
+            raise CommandError('', '--cancel and --escalate cannot be used together')
+        if cancel and (kwargs.get('reason') or kwargs.get('ticket')):
+            raise CommandError('', '--cancel cannot be used with --reason or --ticket')
+
+        if cancel:
+            return self._cancel(params, **kwargs)
+        if escalate:
             return self._escalate(params, **kwargs)
         return self._request(params, **kwargs)
 
@@ -128,6 +140,47 @@ class WorkflowRequestAccessCommand(Command):
 
         except Exception as e:
             raise CommandError('', f'Failed to escalate request: {sanitize_router_error(e)}')
+
+    @staticmethod
+    def _cancel(params, **kwargs):
+        record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        record_uid_bytes = utils.base64_url_decode(record_uid)
+
+        try:
+            state_query = workflow_pb2.WorkflowState()
+            state_query.resource.CopyFrom(
+                ProtobufRefBuilder.record_ref(record_uid_bytes, record.title if record else '')
+            )
+            workflow_state = _post_request_to_router(
+                params, 'get_workflow_state',
+                rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
+            )
+            if not workflow_state or not workflow_state.flowUid:
+                raise CommandError(
+                    '', 'No active workflow request found for this record.',
+                )
+
+            flow_ref = ProtobufRefBuilder.workflow_ref(workflow_state.flowUid)
+            _post_request_to_router(params, 'end_workflow', rq_proto=flow_ref)
+
+            flow_uid_str = utils.base64_url_encode(workflow_state.flowUid)
+            if kwargs.get('format') == 'json':
+                result = {
+                    'status': 'success',
+                    'record_uid': record_uid,
+                    'record_name': record.title,
+                    'flow_uid': flow_uid_str,
+                    'action': 'cancelled',
+                }
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"\n{bcolors.OKGREEN}Workflow request cancelled{bcolors.ENDC}\n")
+                print(f"Record: {record.title} ({record_uid})")
+                print(f"Flow UID: {flow_uid_str}")
+                print()
+
+        except Exception as e:
+            raise CommandError('', f'Failed to cancel request: {sanitize_router_error(e)}')
 
 
 class WorkflowStartCommand(Command):
