@@ -1335,7 +1335,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-type', dest='policy_type', action='store', default='elevation',
                             choices=['elevation', 'file_access', 'command', 'least_privilege'],
                             help='Policy type')
-        parser.add_argument('--policy-name', dest='policy_name', action='store', required=True,
+        parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
                             choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
@@ -1431,14 +1431,6 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         policy_filter = PedmPolicyMixin.get_policy_filter(plugin, **kwargs)
         if policy_filter:
             policy_data.update(policy_filter)
-
-        if policy_type in ('PrivilegeElevation', 'FileAccess', 'CommandLine'):
-            missing = [name for name, key in (('user', 'UserCheck'), ('machine', 'MachineCheck'), ('application', 'ApplicationCheck'))
-                       if not policy_filter.get(key)]
-            if missing:
-                raise base.CommandError(
-                    f'At least one machine, application, and user collection required to save this policy type. '
-                    f'Missing: {", ".join(missing)}. Use --user-filter, --machine-filter, --app-filter.')
 
         for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
             f = policy_data.get(filter_name)
