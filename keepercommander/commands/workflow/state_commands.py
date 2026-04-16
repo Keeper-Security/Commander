@@ -21,7 +21,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
+from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error, is_workflow_exempt, print_exempt_message
 
 
 class WorkflowGetStateCommand(Command):
@@ -44,9 +44,15 @@ class WorkflowGetStateCommand(Command):
 
         state = workflow_pb2.WorkflowState()
         if flow_uid:
-            state.flowUid = utils.base64_url_decode(flow_uid)
+            try:
+                state.flowUid = utils.base64_url_decode(flow_uid)
+            except Exception:
+                raise CommandError('', f'Invalid flow UID: "{flow_uid}"')
         else:
             record_uid, record = RecordResolver.resolve(params, record_uid)
+            if is_workflow_exempt(params, record_uid):
+                print_exempt_message(kwargs.get('format', 'table'))
+                return
             record_uid_bytes = utils.base64_url_decode(record_uid)
             state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
 

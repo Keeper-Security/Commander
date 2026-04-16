@@ -12,7 +12,6 @@
 import re
 from typing import List
 
-from ..pam.router_helper import _post_request_to_router
 from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
@@ -34,6 +33,17 @@ def sanitize_router_error(error: Exception) -> str:
 
 
 _ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
+
+
+def print_exempt_message(fmt='table'):
+    """Print the standard exemption message in the appropriate format."""
+    import json as _json
+    from ...display import bcolors as _bc
+    if fmt == 'json':
+        print(_json.dumps({'status': 'exempt', 'message': 'Workflow not required'}, indent=2))
+    else:
+        print(f"\n{_bc.WARNING}You have edit access and workflow management permissions for this record.{_bc.ENDC}\n")
+        print("Workflow is not required — you can access this resource directly.\n")
 
 
 def is_workflow_exempt(params, record_uid):
@@ -115,12 +125,33 @@ class RecordResolver:
         return f'User ID {user_id}'
 
     @staticmethod
+    def resolve_team_name(params: KeeperParams, team_uid: str) -> str:
+        team_data = params.team_cache.get(team_uid, {})
+        name = team_data.get('name', '')
+        if name:
+            return name
+        if params.enterprise and 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                if team.get('team_uid', '') == team_uid:
+                    return team.get('name', '')
+        return ''
+
+    @staticmethod
     def validate_team(params: KeeperParams, team_input: str) -> str:
         if team_input in params.team_cache:
             return team_input
         for uid, team_data in params.team_cache.items():
             if team_data.get('name', '').casefold() == team_input.casefold():
                 return uid
+
+        if params.enterprise and 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                team_uid = team.get('team_uid', '')
+                if team_uid == team_input:
+                    return team_uid
+                if team.get('name', '').casefold() == team_input.casefold():
+                    return team_uid
+
         raise CommandError('', f'Team "{team_input}" not found. Use a valid team UID or team name.')
 
 
@@ -186,10 +217,8 @@ class WorkflowFormatter:
     @staticmethod
     def format_stage(stage: int, status=None) -> str:
         if stage == workflow_pb2.WS_READY_TO_START and status is not None:
-            has_data = (status.conditions or status.approvedBy
-                        or status.startedOn or status.expiresOn)
-            if not has_data:
-                return 'Pending'
+            if not status.startedOn and not status.conditions:
+                return 'Needs Action'
         return WorkflowFormatter.STAGE_MAP.get(stage, f'Unknown ({stage})')
 
     @staticmethod
@@ -205,12 +234,18 @@ class WorkflowFormatter:
         try:
             for suffix, factor in WorkflowFormatter.DURATION_MULTIPLIERS.items():
                 if duration_str.endswith(suffix):
-                    return int(duration_str[:-1]) * factor
-            return int(duration_str) * 60_000
+                    value = int(duration_str[:-1])
+                    if value <= 0:
+                        raise ValueError
+                    return value * factor
+            value = int(duration_str)
+            if value <= 0:
+                raise ValueError
+            return value * 60_000
         except ValueError:
             raise CommandError(
                 '', f'Invalid duration format: {duration_str}. '
-                    'Use format like "2h", "30m", or "1d"',
+                    'Use a positive value like "2h", "30m", or "1d"',
             )
 
     @staticmethod

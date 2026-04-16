@@ -11,6 +11,7 @@
 
 import argparse
 import json
+import logging
 from datetime import datetime
 
 from ..base import Command
@@ -61,9 +62,13 @@ class WorkflowCreateCommand(Command):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
+        approvals = kwargs.get('approvals_needed', 1)
+        if approvals < 0:
+            raise CommandError('', 'Approvals needed must be 0 or greater')
+
         parameters = workflow_pb2.WorkflowParameters()
         parameters.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
-        parameters.approvalsNeeded = kwargs.get('approvals_needed', 1)
+        parameters.approvalsNeeded = approvals
         parameters.checkoutNeeded = kwargs.get('checkout', False)
         parameters.startAccessOnApproval = kwargs.get('start_on_approval', False)
         parameters.requireReason = kwargs.get('require_reason', False)
@@ -93,8 +98,10 @@ class WorkflowCreateCommand(Command):
                     approver_config.approvers.append(approver)
                     _post_request_to_router(params, 'add_workflow_approvers', rq_proto=approver_config)
                     owner_added = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.debug('Failed to auto-add owner as approver: %s', e, exc_info=True)
+                    print(f"\n{bcolors.WARNING}Workflow created, but failed to add you as approver automatically.{bcolors.ENDC}")
+                    print(f"Run: pam workflow add-approver {record_uid} --user {owner_email}")
 
             if kwargs.get('format') == 'json':
                 result = {
@@ -263,8 +270,7 @@ class WorkflowReadCommand(Command):
                     print(f"  {idx}. User: {RecordResolver.resolve_user(params, approver.userId)}{esc_label}")
                 elif approver.HasField('teamUid'):
                     team_uid = utils.base64_url_encode(approver.teamUid)
-                    team_data = params.team_cache.get(team_uid, {})
-                    team_name = team_data.get('name', '')
+                    team_name = RecordResolver.resolve_team_name(params, team_uid)
                     team_display = f"{team_name} ({team_uid})" if team_name else team_uid
                     print(f"  {idx}. Team: {team_display}{esc_label}")
         else:
@@ -331,6 +337,9 @@ class WorkflowUpdateCommand(Command):
                 'require_mfa': 'requireMFA',
             }
 
+            if kwargs.get('approvals_needed') is not None and kwargs['approvals_needed'] < 0:
+                raise CommandError('', 'Approvals needed must be 0 or greater')
+
             updates_provided = False
             for kwarg_key, proto_field in updatable_fields.items():
                 if kwargs.get(kwarg_key) is not None:
@@ -364,8 +373,6 @@ class WorkflowUpdateCommand(Command):
                 print(f"Record: {record.title} ({record_uid})")
                 print()
 
-        except CommandError:
-            raise
         except Exception as e:
             raise CommandError('', f'Failed to update workflow: {sanitize_router_error(e)}')
 

@@ -50,23 +50,34 @@ class WorkflowGetApprovalRequestsCommand(Command):
                     print(f"\n{bcolors.WARNING}No approval requests{bcolors.ENDC}\n")
                 return
 
-            wf_data = [
-                (wf, self._resolve_status(params, wf))
-                for wf in response.workflows
-            ]
+            seen_flows = set()
+            unique = []
+            for wf in response.workflows:
+                fuid = bytes(wf.flowUid)
+                if fuid not in seen_flows:
+                    seen_flows.add(fuid)
+                    unique.append(wf)
+
+            pending = [wf for wf in unique
+                       if not self._already_approved_by_me(params, wf)]
+
+            if not pending:
+                if kwargs.get('format') == 'json':
+                    print(json.dumps({'requests': []}, indent=2))
+                else:
+                    print(f"\n{bcolors.WARNING}No pending approval requests{bcolors.ENDC}\n")
+                return
 
             if kwargs.get('format') == 'json':
-                self._print_json(params, wf_data)
+                self._print_json(params, pending)
             else:
-                self._print_table(params, wf_data)
+                self._print_table(params, pending)
 
         except Exception as e:
             raise CommandError('', f'Failed to get approval requests: {sanitize_router_error(e)}')
 
     @staticmethod
-    def _resolve_status(params, wf):
-        if wf.startedOn:
-            return 'Approved'
+    def _already_approved_by_me(params, wf):
         try:
             st = workflow_pb2.WorkflowState()
             st.flowUid = wf.flowUid
@@ -74,24 +85,14 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 params, 'get_workflow_state',
                 rq_proto=st, rs_type=workflow_pb2.WorkflowState,
             )
-            if ws and ws.status:
-                stage = ws.status.stage
-                if stage == workflow_pb2.WS_STARTED:
-                    return 'Approved'
-                if stage == workflow_pb2.WS_READY_TO_START:
-                    has_data = (ws.status.conditions or ws.status.approvedBy
-                                or ws.status.startedOn or ws.status.expiresOn)
-                    if has_data:
-                        return 'Approved'
-                if stage == workflow_pb2.WS_WAITING:
-                    return 'Waiting'
-                if stage == workflow_pb2.WS_NEEDS_ACTION:
-                    return 'Needs Action'
+            if ws and ws.status and ws.status.approvedBy:
+                current_user = params.user
+                for a in ws.status.approvedBy:
+                    if a.user == current_user:
+                        return True
         except Exception:
-            logging.debug('Failed to resolve workflow status for flow', exc_info=True)
-        if wf.escalated:
-            return 'Escalated'
-        return 'Pending'
+            logging.debug('Failed to check approval status for flow', exc_info=True)
+        return False
 
     @staticmethod
     def _extract_param(wf, key):
@@ -114,16 +115,15 @@ class WorkflowGetApprovalRequestsCommand(Command):
             return 'Unable to decrypt'
 
     @staticmethod
-    def _print_json(params, wf_data):
+    def _print_json(params, workflows):
         decrypt = WorkflowGetApprovalRequestsCommand._decrypt_param
         extract = WorkflowGetApprovalRequestsCommand._extract_param
         requests = []
-        for wf, status in wf_data:
+        for wf in workflows:
             rec_uid = utils.base64_url_encode(wf.resource.value)
             requested_by = wf.user or RecordResolver.resolve_user(params, wf.userId)
             requests.append({
                 'flow_uid': utils.base64_url_encode(wf.flowUid),
-                'status': status,
                 'requested_by': requested_by,
                 'record_uid': rec_uid,
                 'record_name': RecordResolver.resolve_name(params, wf.resource),
@@ -140,11 +140,11 @@ class WorkflowGetApprovalRequestsCommand(Command):
         print(json.dumps({'requests': requests}, indent=2))
 
     @staticmethod
-    def _print_table(params, wf_data):
+    def _print_table(params, workflows):
         decrypt = WorkflowGetApprovalRequestsCommand._decrypt_param
         extract = WorkflowGetApprovalRequestsCommand._extract_param
         rows = []
-        for wf, status in wf_data:
+        for wf in workflows:
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             record_name = RecordResolver.resolve_name(params, wf.resource)
             flow_uid = utils.base64_url_encode(wf.flowUid)
@@ -163,11 +163,11 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 WorkflowFormatter.format_duration(wf.expiresOn - wf.startedOn)
                 if wf.expiresOn and wf.startedOn else ''
             )
-            rows.append([status, record_name, record_uid, flow_uid, requested_by, reason, ticket, started, expires, duration])
+            rows.append([record_name, record_uid, flow_uid, requested_by, reason, ticket, started, expires, duration])
 
-        headers = ['Status', 'Record Name', 'Record UID', 'Flow UID', 'Requested By', 'Reason', 'Ticket', 'Started', 'Expires', 'Duration']
+        headers = ['Record Name', 'Record UID', 'Flow UID', 'Requested By', 'Reason', 'Ticket', 'Started', 'Expires', 'Duration']
         print()
-        dump_report_data(rows, headers=headers, sort_by=0)
+        dump_report_data(rows, headers=headers)
         print()
 
 
@@ -185,7 +185,10 @@ class WorkflowApproveCommand(Command):
 
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
-        flow_uid_bytes = utils.base64_url_decode(flow_uid)
+        try:
+            flow_uid_bytes = utils.base64_url_decode(flow_uid)
+        except Exception:
+            raise CommandError('', f'Invalid flow UID: "{flow_uid}"')
 
         approval = workflow_pb2.WorkflowApprovalOrDenial()
         approval.flowUid = flow_uid_bytes
@@ -222,7 +225,10 @@ class WorkflowDenyCommand(Command):
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
         reason = kwargs.get('reason') or ''
-        flow_uid_bytes = utils.base64_url_decode(flow_uid)
+        try:
+            flow_uid_bytes = utils.base64_url_decode(flow_uid)
+        except Exception:
+            raise CommandError('', f'Invalid flow UID: "{flow_uid}"')
 
         denial = workflow_pb2.WorkflowApprovalOrDenial()
         denial.flowUid = flow_uid_bytes

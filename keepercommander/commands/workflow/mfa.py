@@ -164,9 +164,13 @@ class WorkflowMfaPrompt:
         from ...proto import APIRequest_pb2
         from ... import api
 
-        tfa_list = self._fetch_2fa_list(self.params, api, APIRequest_pb2, getpass)
+        tfa_list = self._fetch_2fa_list(self.params, api, APIRequest_pb2)
         if tfa_list is None:
-            return None
+            try:
+                code = getpass.getpass('2FA required. Enter TOTP code: ').strip()
+                return code if code else None
+            except (KeyboardInterrupt, EOFError):
+                return None
 
         supported_types = {
             APIRequest_pb2.TWO_FA_CT_TOTP: 'TOTP (Authenticator App)',
@@ -189,18 +193,14 @@ class WorkflowMfaPrompt:
         return self._dispatch(selected.channelType, APIRequest_pb2)
 
     @staticmethod
-    def _fetch_2fa_list(params, api, APIRequest_pb2, getpass):
+    def _fetch_2fa_list(params, api, APIRequest_pb2):
         try:
             tfa_list = api.communicate_rest(
                 params, None, 'authentication/2fa_list',
                 rs_type=APIRequest_pb2.TwoFactorListResponse,
             )
         except Exception:
-            try:
-                code = getpass.getpass('2FA required. Enter TOTP code: ').strip()
-                return code if code else None
-            except (KeyboardInterrupt, EOFError):
-                return None
+            return None
 
         if not tfa_list.channels:
             print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
@@ -283,8 +283,8 @@ class WorkflowMfaPrompt:
             push_rq.pushType = push_type
             _post_request_to_router(self.params, '2fa_send_push', rq_proto=push_rq)
             print(f"{bcolors.OKGREEN}{sent_message}{bcolors.ENDC}")
-        except Exception as e:
-            print(f"{bcolors.FAIL}Failed to send {prompt_label} push: {e}{bcolors.ENDC}")
+        except Exception:
+            print(f"{bcolors.FAIL}Failed to send {prompt_label} push. Please try again.{bcolors.ENDC}")
             return None
 
         try:
@@ -336,8 +336,8 @@ class WorkflowMfaPrompt:
             from ...yubikey import display_fido2_warning
             display_fido2_warning()
             return None
-        except Exception as e:
-            print(f"{bcolors.FAIL}Security key error: {e}{bcolors.ENDC}")
+        except Exception:
+            print(f"{bcolors.FAIL}Security key authentication failed. Please try again.{bcolors.ENDC}")
             return None
 
 
