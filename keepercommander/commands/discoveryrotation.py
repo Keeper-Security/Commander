@@ -76,7 +76,6 @@ from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
-from keepercommander.commands.pam_cloud.pam_privileged_workflow import PAMPrivilegedWorkflowCommand
 from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
@@ -192,8 +191,6 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
-        self.register_command('workflow', PAMPrivilegedWorkflowCommand(),
-                              'Manage workflow access operations', 'wf')
         self.register_command('access', PAMPrivilegedAccessCommand(),
                               'Manage privileged cloud access operations', 'ac')
 
