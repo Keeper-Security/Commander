@@ -2620,11 +2620,18 @@ class RecordRemoveCommand(Command):
                                             records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
                     # Fallback: global title search so records in shared folders are also found.
+                    matches = []
                     for record_uid in params.record_cache:
                         record = vault.KeeperRecord.load(params, record_uid)
                         if record and record.title.casefold() == name.casefold():
-                            for folder in find_all_folders(params, record_uid):
-                                records_to_delete.append((folder, record_uid))
+                            matches.append(record_uid)
+                    if len(matches) > 1:
+                        lines = [f'  {uid}' for uid in matches]
+                        raise CommandError('rm', f'"{name}" matches {len(matches)} records. '
+                                           f'Use a UID to identify the record:\n' + '\n'.join(lines))
+                    for record_uid in matches:
+                        for folder in find_all_folders(params, record_uid):
+                            records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
                     raise CommandError('rm', f'No record found matching "{name}". '
                                        f'Provide a valid record title, path, or UID.')
@@ -2660,6 +2667,7 @@ class RecordRemoveCommand(Command):
                 np = base.user_choice('Do you want to proceed?', 'yn', default='n')
                 if np.lower() != 'y':
                     return
+            success_count = 0
             while record_uids:
                 chunk = record_uids[:rq_obj_limit]
                 record_uids = record_uids[rq_obj_limit:]
@@ -2670,9 +2678,14 @@ class RecordRemoveCommand(Command):
                 rs = api.communicate(params, rq)
                 if 'delete_records' in rs:
                     for status in rs['delete_records']:
-                        if status.get('status') != 'success':
+                        if status.get('status') == 'success':
+                            success_count += 1
+                        else:
                             logging.warning('Failed to delete record %s: %s',
                                             status.get('uid', ''), status.get('status', ''))
+            if success_count:
+                logging.info('%d record(s) permanently deleted for all users.', success_count)
+                api.sync_down(params)
                 vault_changed = True
         else:
             # Remove records from your vault only (unlink), leaving them intact for other users
