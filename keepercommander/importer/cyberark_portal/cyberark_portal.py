@@ -450,6 +450,13 @@ class CyberArkPortalImporter(BaseImporter):
                     logging.warning(f"No password found for app {app_key}; response: {response.text}")
                 else:
                     record.password = response.json()["Result"].get("p", "")
+                    record.username = response.json()["Result"].get("u", "")
+                    record.notes = response.json()["Result"].get("n", "")
+                    record.fields.append(RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in response.json()["Result"].get("t", []))))
+                    record.fields.append(RecordField(type="text", label="Category", value=response.json()["Result"].get("c", "")))
+                    record.fields.append(RecordField(type="text", label="Description", value=response.json()["Result"].get("d", "")))
+                    record.fields.append(RecordField(type="text", label="Registration Message", value=response.json()["Result"].get("rm", "")))
+                    record.fields.append(RecordField(type="text", label="Registration Link Message", value=response.json()["Result"].get("rrm", "")))
 
                 yield record
 
