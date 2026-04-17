@@ -33,9 +33,113 @@ Input uses the same pattern:
 import base64
 import logging
 import sys
+import time
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from ..terminal_size import default_handshake_dpi
+
+
+def _streaming_crlf_to_lf(decoded: bytes, carry_cell: List[bytes]) -> bytes:
+    """
+    Map CRLF to LF across Guacamole STDOUT **blob** boundaries.
+
+    A single per-blob CRLF→LF replace misses a carriage return at the end of one blob
+    and a line feed at the start of the next; the local TTY then sees two motion
+    operations (common symptom: double vertical step in mysql-style prompts).
+    """
+    data = carry_cell[0] + decoded
+    carry_cell[0] = b''
+    out = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        if data[i] == 0x0D:
+            if i + 1 < n and data[i + 1] == 0x0A:
+                out.append(0x0A)
+                i += 2
+            elif i + 1 >= n:
+                carry_cell[0] = b'\r'
+                i += 1
+            else:
+                out.append(0x0D)
+                i += 1
+        else:
+            out.append(data[i])
+            i += 1
+    return bytes(out)
+
+
+def _collapse_adjacent_lf_pairs(data: bytes) -> bytes:
+    """
+    One left-to-right pass: each adjacent ``\\n\\n`` becomes a single ``\\n``.
+
+    This only merges **pairs** (e.g. four consecutive LFs become two, six become three).
+    It does **not** repeatedly collapse until a single LF (which would erase intentional
+    blank lines from a long run in one blob).
+    """
+    if not data or b'\n\n' not in data:
+        return data
+    out = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        if i + 1 < n and data[i] == 0x0A and data[i + 1] == 0x0A:
+            out.append(0x0A)
+            i += 2
+        else:
+            out.append(data[i])
+            i += 1
+    return bytes(out)
+
+
+def _drop_one_oob_lf_pair(data: bytes) -> bytes:
+    """
+    Remove at most one leading and at most one trailing ``\\n\\n`` pair (each -> single ``\\n``).
+
+    ``_collapse_adjacent_lf_pairs`` already handles runs in the middle; mysql result blobs
+    sometimes end with an extra ``\\r\\n\\r\\n`` / ``\\n\\n`` before the next prompt (see
+    ``show databases``) where the duplicate is not a byte-identical repeat of the prior blob.
+    """
+    d = data
+    if d.startswith(b'\n\n'):
+        d = d[1:]
+    if len(d) >= 2 and d.endswith(b'\n\n'):
+        d = d[:-1]
+    return d
+
+
+# Guacamole sometimes delivers the same STDOUT blob twice (darwin/mysql); gaps can exceed
+# 120ms (seen ~175ms). Suppress only the **second** of each identical pair (then allow the third).
+_IDENTICAL_STDOUT_BLOB_PAIR_MAX_S = 0.75
+_IDENTICAL_STDOUT_BLOB_PAIR_MAX_LEN = 512
+
+
+def _identical_stdout_blob_pair_anchorable(to_write: bytes) -> bool:
+    """Single-byte keystroke blobs must not replace the dedupe anchor (breaks prompt pair logic)."""
+    return len(to_write) >= 8 or (b'\n' in to_write or b'\r' in to_write)
+
+
+def _identical_stdout_blob_pair_should_skip(to_write: bytes, state: List[Any]) -> bool:
+    if not to_write or len(to_write) > _IDENTICAL_STDOUT_BLOB_PAIR_MAX_LEN:
+        return False
+    now = time.monotonic()
+    last_b, last_t, already_skipped = state[0], state[1], state[2]
+    if last_b is None or to_write != last_b:
+        return False
+    if (now - last_t) >= _IDENTICAL_STDOUT_BLOB_PAIR_MAX_S:
+        return False
+    if already_skipped:
+        return False
+    state[2] = True
+    return True
+
+
+def _identical_stdout_blob_pair_note_emitted(to_write: bytes, state: List[Any]) -> None:
+    now = time.monotonic()
+    lb, _lt, sk = state[0], state[1], state[2]
+    if _identical_stdout_blob_pair_anchorable(to_write):
+        state[:] = [to_write, now, False]
+    else:
+        # Slide time only; keep anchor so a duplicate prompt line still matches after 1-byte blobs.
+        state[:] = [lb, now, False]
 
 
 def is_stdout_pipe_stream_name(name: str) -> bool:
@@ -468,6 +572,8 @@ def create_instruction_router(
     custom_handlers: Optional[Dict[str, InstructionHandler]] = None,
     send_ack_callback: Optional[AckCallback] = None,
     stdout_stream_tracker: Optional[Any] = None,
+    *,
+    normalize_stdout_crlf: bool = False,
 ) -> Callable[[str, List[str]], None]:
     """
     Create an instruction router callback for use with Parser.oninstruction.
@@ -488,6 +594,10 @@ def create_instruction_router(
             - pipe with name "STDOUT" stores stream index and sends ack
             - blob with matching stream decodes base64 to stdout and sends ack
             - end with matching stream clears tracking
+        normalize_stdout_crlf: When True (``pam launch -n``), replace CRLF with LF in decoded STDOUT
+            blobs only (terminal output), including **across** blob boundaries; then collapse
+            adjacent ``\\n\\n`` to ``\\n`` **one pair at a time** per pass (see
+            :func:`_collapse_adjacent_lf_pairs`). Does not alter stdin or other streams.
 
     Returns:
         A callback function with signature (opcode: str, args: List[str]) -> None
@@ -516,6 +626,13 @@ def create_instruction_router(
     if custom_handlers:
         handlers.update(custom_handlers)
 
+    # Per-router STDOUT CRLF tail when normalizing (see _streaming_crlf_to_lf).
+    _stdout_crlf_carry: List[bytes] = [b'']
+    # Previous STDOUT write ended with LF — if next chunk starts with LF, drop one (pairwise).
+    _stdout_prev_emitted_ends_lf: List[bool] = [False]
+    # [last_emitted_bytes|None, last_emit_mono, skipped_one_duplicate_of_last]
+    _stdout_identical_pair: List[Any] = [None, 0.0, False]
+
     def router(opcode: str, args: List[str]) -> None:
         """Route instruction to appropriate handler."""
 
@@ -542,6 +659,9 @@ def create_instruction_router(
                     )
 
                 if use_as_stdout:
+                    _stdout_crlf_carry[0] = b''
+                    _stdout_prev_emitted_ends_lf[0] = False
+                    _stdout_identical_pair[:] = [None, 0.0, False]
                     stdout_stream_tracker.stdout_stream_index = int(stream_index)
                     send_ack_callback(stream_index, 'OK', '0')
                     evt = getattr(stdout_stream_tracker, 'stdout_pipe_opened', None)
@@ -564,12 +684,29 @@ def create_instruction_router(
                     # Decode base64 and write to stdout
                     try:
                         decoded = base64.b64decode(args[1])
+                        if normalize_stdout_crlf:
+                            decoded = _streaming_crlf_to_lf(decoded, _stdout_crlf_carry)
+                            if _stdout_prev_emitted_ends_lf[0] and decoded.startswith(b'\n'):
+                                decoded = decoded[1:]
+                            decoded = _collapse_adjacent_lf_pairs(decoded)
+                            decoded = _drop_one_oob_lf_pair(decoded)
+                            if decoded and _identical_stdout_blob_pair_should_skip(
+                                decoded, _stdout_identical_pair
+                            ):
+                                send_ack_callback(args[0], 'OK', '0')
+                                return
                         # Try buffer.write for binary output, fall back to str for compatibility
-                        if hasattr(sys.stdout, 'buffer'):
-                            sys.stdout.buffer.write(decoded)
-                        else:
-                            sys.stdout.write(decoded.decode('utf-8', errors='replace'))
-                        sys.stdout.flush()
+                        if decoded:
+                            if hasattr(sys.stdout, 'buffer'):
+                                sys.stdout.buffer.write(decoded)
+                            else:
+                                sys.stdout.write(decoded.decode('utf-8', errors='replace'))
+                            sys.stdout.flush()
+                            if normalize_stdout_crlf:
+                                _stdout_prev_emitted_ends_lf[0] = decoded.endswith(b'\n')
+                                _identical_stdout_blob_pair_note_emitted(
+                                    decoded, _stdout_identical_pair
+                                )
                         send_ack_callback(args[0], 'OK', '0')
                     except Exception as e:
                         logging.error(f"Error decoding STDOUT blob: {e}")
@@ -585,6 +722,19 @@ def create_instruction_router(
             elif opcode == 'end' and len(args) >= 1:
                 stream_index = int(args[0])
                 if stream_index == stdout_stream_tracker.stdout_stream_index:
+                    _stdout_prev_emitted_ends_lf[0] = False
+                    _stdout_identical_pair[:] = [None, 0.0, False]
+                    if normalize_stdout_crlf and _stdout_crlf_carry[0]:
+                        tail = _stdout_crlf_carry[0]
+                        _stdout_crlf_carry[0] = b''
+                        try:
+                            if hasattr(sys.stdout, 'buffer'):
+                                sys.stdout.buffer.write(tail)
+                            else:
+                                sys.stdout.write(tail.decode('utf-8', errors='replace'))
+                            sys.stdout.flush()
+                        except Exception as exc:
+                            logging.debug('STDOUT CRLF carry flush at stream end: %s', exc)
                     stdout_stream_tracker.stdout_stream_index = -1
                     logging.debug(f"STDOUT stream {stream_index} ended")
                     # Still call original handler for diagnostics

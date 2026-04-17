@@ -1002,6 +1002,7 @@ def _build_guacamole_connection_settings(
     screen_info: Dict[str, int],
     user_record_uid: Optional[str] = None,
     credential_type: str = 'linked',
+    normalize_crlf: bool = False,
 ) -> Dict[str, Any]:
     """
     Build connection settings for Guacamole handshake in PythonHandler mode.
@@ -1025,6 +1026,8 @@ def _build_guacamole_connection_settings(
         screen_info: Screen dimensions dict
         user_record_uid: Optional UID of linked pamUser record for credentials
         credential_type: Credential type ('linked', 'userSupplied', 'ephemeral')
+        normalize_crlf: When True, map CRLF to LF on decoded STDOUT blobs and run downstream LF cleanup
+            (``pam launch --normalize-crlf`` / ``-n``). Default False keeps raw CR/LF (CLI default).
 
     Returns:
         Dictionary with connection settings for GuacamoleHandler
@@ -1172,6 +1175,8 @@ def _build_guacamole_connection_settings(
         'image_mimetypes': ['image/png', 'image/jpeg', 'image/webp'],
         # PAM clipboard policy (also in guacd_params as disable-* only when record disables)
         'clipboard': dict(settings.get('clipboard') or {}),
+        # CLI-only: GuacamoleHandler / instruction router (not sent to guacd)
+        'normalize_crlf': bool(normalize_crlf),
     }
 
     logging.debug(f"Built Guacamole connection settings for {protocol}: "
@@ -1437,6 +1442,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 screen_info=screen_info,
                 user_record_uid=user_record_uid,
                 credential_type=credential_type,
+                normalize_crlf=bool(kwargs.get('normalize_crlf')),
             )
 
             # Create the handler and callback
