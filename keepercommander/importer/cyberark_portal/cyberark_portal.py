@@ -1,5 +1,7 @@
 import base64
 import hashlib
+import json
+import os
 import re
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -15,7 +17,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Record, RecordField
+from ..importer import BaseImporter, Record, RecordField, Folder
 import secrets
 import string
 
@@ -87,7 +89,63 @@ class CyberArkPortalImporter(BaseImporter):
         )
         return default_url
 
+    @staticmethod
+    def _create_empty_keeper_folder(params, folder_name, is_shared):
+        """Create an empty folder directly in the user's Keeper vault.
+
+        The Keeper importer pipeline creates user folders only implicitly when a record is placed
+        inside them, so a CyberArk folder with zero items would otherwise never appear in Keeper.
+        We bypass that limitation by calling the folder_add Keeper API directly.  If `params` is
+        not available (e.g. the importer is being exercised in dry-run mode or a context that does
+        not forward params), we silently skip the creation instead of failing.
+        """
+        if not params or not folder_name:
+            return
+        try:
+            from ... import api, crypto, utils
+        except Exception as e:
+            logging.debug(f"Unable to import Keeper api helpers for folder creation: {e}")
+            return
+
+        try:
+            # Skip if a top-level folder with the same name already exists to avoid duplicates
+            # on repeated imports.
+            existing_names = set()
+            root_subfolders = getattr(params.root_folder, "subfolders", None) or []
+            for sub_uid in root_subfolders:
+                sub = params.folder_cache.get(sub_uid)
+                if sub and sub.name:
+                    existing_names.add(sub.name.lower())
+            if folder_name.lower() in existing_names:
+                logging.debug(f"Folder '{folder_name}' already exists in vault; skipping creation.")
+                return
+
+            folder_uid = api.generate_record_uid()
+            folder_key = os.urandom(32)
+            request = {
+                "command": "folder_add",
+                "folder_uid": folder_uid,
+                "folder_type": "shared_folder" if is_shared else "user_folder",
+                "key": utils.base64_url_encode(crypto.encrypt_aes_v1(folder_key, params.data_key)),
+            }
+
+            data = json.dumps({"name": folder_name})
+            request["data"] = utils.base64_url_encode(
+                crypto.encrypt_aes_v1(data.encode("utf-8"), folder_key)
+            )
+            if is_shared:
+                request["name"] = utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(folder_name.encode("utf-8"), folder_key)
+                )
+
+            api.communicate(params, request)
+            params.sync_data = True
+            logging.info(f"Created empty Keeper folder '{folder_name}' (is_shared={is_shared}).")
+        except Exception as e:
+            logging.warning(f"Failed to create empty folder '{folder_name}': {e}")
+
     def do_import(self, filename, **kwargs):
+        params = kwargs.get("params")
         name = filename.removeprefix("https://").removeprefix("http://")
         host_part = name.split("/")[0]
 
@@ -392,10 +450,103 @@ class CyberArkPortalImporter(BaseImporter):
 
         print_formatted_text(HTML("Authentication <ansigreen>successful</ansigreen>"))
 
+        auth_headers = {"Authorization": f"Bearer {authentication_token}"}
+
+        
+        app_folder_map = {}       # type: dict
+        item_folder_map = {}      # type: dict
+
+        folders_response = requests.post(
+            self.get_url(identity_base_url, "/Folder/GetFolders"),
+            headers=auth_headers,
+            json={},
+            timeout=self.TIMEOUT,
+        )
+
+        if folders_response.status_code == HTTPStatus.OK:
+            folders_result = folders_response.json().get("Result") or []
+            logging.debug(f"Folders: {folders_result}")
+            for folder in folders_result:
+                folder_uuid = folder.get("FolderUuid")
+                folder_name = (folder.get("Name") or "").strip()
+                if not folder_name:
+                    continue
+                share_option = folder.get("ShareOption", "NotShared")
+                is_shared = share_option != "NotShared"
+                folder_meta = {
+                    "uuid": folder_uuid,
+                    "name": folder_name,
+                    "is_shared": is_shared,
+                }
+
+                app_keys = set(folder.get("Apps") or [])
+                item_keys = set(folder.get("SecuredItems") or [])
+
+                if folder_uuid:
+                    items_response = requests.post(
+                        self.get_url(
+                            identity_base_url,
+                            f"/Folder/GetFolderItems?folderUuid={folder_uuid}",
+                        ),
+                        headers=auth_headers,
+                        json={},
+                        timeout=self.TIMEOUT,
+                    )
+                    if items_response.status_code == HTTPStatus.OK:
+                        items_result = items_response.json().get("Result") or {}
+                        app_keys.update(items_result.get("Apps") or [])
+                        item_keys.update(items_result.get("SecuredItems") or [])
+                        for it in items_result.get("Items") or []:
+                            key = it.get("ItemKey") or it.get("_RowKey")
+                            if not key:
+                                continue
+                            it_type = it.get("Type") or ""
+                            if it_type == "App" or "AppType" in it:
+                                app_keys.add(key)
+                            else:
+                                item_keys.add(key)
+                    else:
+                        logging.warning(
+                            f"HTTP {items_response.status_code} getting items for folder "
+                            f"{folder_name} ({folder_uuid}): {items_response.text[:200]}"
+                        )
+
+                for k in app_keys:
+                    app_folder_map[k] = folder_meta
+                for k in item_keys:
+                    item_folder_map[k] = folder_meta
+
+               
+                if not app_keys and not item_keys:
+                    self._create_empty_keeper_folder(
+                        params, folder_meta["name"], folder_meta["is_shared"]
+                    )
+        else:
+            logging.warning(
+                f"HTTP {folders_response.status_code} getting folders: {folders_response.text[:200]}; "
+                f"records will be imported at the vault root."
+            )
+
+        def _attach_folder(record, folder_meta):
+            """Attach a single Folder reference to the record if the item lives inside a CyberArk folder.
+
+            - Shared folder -> Folder.domain = folder name (Keeper creates a Shared Folder)
+            - Personal folder -> Folder.path = folder name (Keeper creates a user folder)
+            - No mapping -> no folder is attached, record goes to the vault root
+            """
+            if not folder_meta or not folder_meta.get("name"):
+                return
+            f = Folder()
+            if folder_meta["is_shared"]:
+                f.domain = folder_meta["name"]
+            else:
+                f.path = folder_meta["name"]
+            record.folders = [f]
+
         # Get all the application data (except the password, of course) in one API call
         response = requests.post(
             self.get_url(identity_base_url, "/UPRest/GetUPData"),
-            headers={"Authorization": f"Bearer {authentication_token}"},
+            headers=auth_headers,
             json={},
             timeout=self.TIMEOUT,
         )
@@ -425,6 +576,7 @@ class CyberArkPortalImporter(BaseImporter):
                 record.login = app.get("Username", "")
                 record.login_url = app.get("Url", "")
                 record.notes = app.get("Notes", "")
+                _attach_folder(record, app_folder_map.get(app_key))
 
                 if app.get("IsTotpSet"):
                     record.notes += "The CyberArk Application had a TOTP that Keeper could not access to import."
@@ -436,7 +588,7 @@ class CyberArkPortalImporter(BaseImporter):
 
                 response = requests.post(
                     self.get_url(identity_base_url, f"/UPRest/GetMCFA?appkey={app_key}"),
-                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    headers=auth_headers,
                     json={},
                     timeout=self.TIMEOUT,
                 )
@@ -462,7 +614,7 @@ class CyberArkPortalImporter(BaseImporter):
 
         response = requests.post(
             self.get_url(identity_base_url, "/UPRest/GetSecuredItemsData"),
-            headers={"Authorization": f"Bearer {authentication_token}"},
+            headers=auth_headers,
             json={},
             timeout=self.TIMEOUT,
         )
@@ -486,15 +638,17 @@ class CyberArkPortalImporter(BaseImporter):
                 item_key = item["ItemKey"]
                 record = Record()
                 record.title = item["Name"]
+                _attach_folder(record, item_folder_map.get(item_key))
 
                 if item.get("Tags"):
                     record.fields.append(
                         RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in item["Tags"]))
                     )
+                    
 
                 response = requests.post(
                     self.get_url(identity_base_url, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
-                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    headers=auth_headers,
                     json={},
                     timeout=self.TIMEOUT,
                 )
