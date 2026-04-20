@@ -1051,9 +1051,8 @@ class PedmPolicyMixin:
 
         collection_lookup: Dict[str, Union[str, List[str]]] = {}
         for c in plugin.collections.get_all_entities():
-            if c.collection_type not in col_types: continue
             collection_lookup[c.collection_uid] = c.collection_uid
-            if c.collection_type >= 100:
+            if c.collection_type in col_types and c.collection_type >= 100:
                 collection_name: Optional[str] = c.collection_data.get('Name')
                 if not collection_name:
                     continue
@@ -1073,12 +1072,12 @@ class PedmPolicyMixin:
             if col_value == '*':
                 result.append(col_value)
             elif col_value:
-                cv = collection_lookup[col_value]
+                cv = collection_lookup.get(col_value)
                 if not cv:
-                    cv = collection_lookup[col_value.lower()]
+                    cv = collection_lookup.get(col_value.lower())
                 if not cv:
-                    raise base.CommandError(f'collection value "{col_value}" cannot be resolved')
-                if isinstance(cv, str):
+                    result.append(col_value)
+                elif isinstance(cv, str):
                     result.append(cv)
                 else:
                     raise base.CommandError(f'collection value "{col_value}" is not unique. Use collection UID')
@@ -1274,7 +1273,7 @@ class PedmPolicyMixin:
                 if f == 'USER':
                     policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
                 elif f == 'MACHINE':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101, 201], p_filter)
                 elif f == 'APP':
                     policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
                 elif f == 'DATE':
