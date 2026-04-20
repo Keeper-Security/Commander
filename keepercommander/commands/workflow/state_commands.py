@@ -24,6 +24,14 @@ from ... import utils
 from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error, is_workflow_exempt, print_exempt_message
 
 
+def _ms_to_datetime_str(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _fmt_ts_or_empty(ts_ms: int) -> str:
+    return _ms_to_datetime_str(ts_ms) if ts_ms else ''
+
+
 class WorkflowGetStateCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow state',
@@ -104,31 +112,26 @@ class WorkflowGetStateCommand(Command):
     def _print_table(params, response):
         print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
         print(f"Record: {RecordResolver.format_label(params, response.resource)}")
-        if response.flowUid:
-            print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
-        print(f"Stage: {WorkflowFormatter.format_stage(response.status.stage, response.status)}")
-        if response.status.conditions:
-            print(f"Conditions: {WorkflowFormatter.format_conditions(response.status.conditions)}")
-        if response.status.checkedOutBy:
-            print(f"Checked out by: {response.status.checkedOutBy}")
-        if response.status.canForceCheckIn:
-            print("Force check-in: Available")
-        if response.status.escalated:
-            print("Escalated: Yes")
-        if response.status.startedOn:
-            started = datetime.fromtimestamp(response.status.startedOn / 1000)
-            print(f"Started: {started.strftime('%Y-%m-%d %H:%M:%S')}")
-        if response.status.expiresOn:
-            expires = datetime.fromtimestamp(response.status.expiresOn / 1000)
-            print(f"Expires: {expires.strftime('%Y-%m-%d %H:%M:%S')}")
-        if response.status.approvedBy:
+        st = response.status
+        detail_lines = [
+            f"Flow UID: {utils.base64_url_encode(response.flowUid)}" if response.flowUid else None,
+            f"Stage: {WorkflowFormatter.format_stage(st.stage, st)}",
+            f"Conditions: {WorkflowFormatter.format_conditions(st.conditions)}" if st.conditions else None,
+            f"Checked out by: {st.checkedOutBy}" if st.checkedOutBy else None,
+            "Force check-in: Available" if st.canForceCheckIn else None,
+            "Escalated: Yes" if st.escalated else None,
+            f"Started: {_ms_to_datetime_str(st.startedOn)}" if st.startedOn else None,
+            f"Expires: {_ms_to_datetime_str(st.expiresOn)}" if st.expiresOn else None,
+        ]
+        for line in detail_lines:
+            if line:
+                print(line)
+        if st.approvedBy:
             print("Approved by:")
-            for a in response.status.approvedBy:
+            for a in st.approvedBy:
                 name = a.user if a.user else RecordResolver.resolve_user(params, a.userId)
-                ts = ''
-                if a.approvedOn:
-                    ts = f" at {datetime.fromtimestamp(a.approvedOn / 1000).strftime('%Y-%m-%d %H:%M:%S')}"
-                print(f"  - {name}{ts}")
+                suffix = f" at {_ms_to_datetime_str(a.approvedOn)}" if a.approvedOn else ''
+                print(f"  - {name}{suffix}")
         print()
 
 
@@ -203,14 +206,8 @@ class WorkflowGetUserAccessStateCommand(Command):
             flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
             conditions = WorkflowFormatter.format_conditions(wf.status.conditions) if wf.status.conditions else ''
             checked_out_by = wf.status.checkedOutBy or ''
-            started = (
-                datetime.fromtimestamp(wf.status.startedOn / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                if wf.status.startedOn else ''
-            )
-            expires = (
-                datetime.fromtimestamp(wf.status.expiresOn / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                if wf.status.expiresOn else ''
-            )
+            started = _fmt_ts_or_empty(wf.status.startedOn)
+            expires = _fmt_ts_or_empty(wf.status.expiresOn)
             approved_by = ''
             if wf.status.approvedBy:
                 approved_names = [
