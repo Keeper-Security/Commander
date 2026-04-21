@@ -541,6 +541,16 @@ class PAMLaunchCommand(Command):
             if not isinstance(record, vault.TypedRecord):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+            try:
+                from ..workflow import check_workflow_and_prompt_2fa
+                should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
+                if not should_proceed:
+                    return
+                if two_factor_value:
+                    kwargs['two_factor_value'] = two_factor_value
+            except ImportError:
+                pass
+
             if not self._is_valid_pam_record(params, record_uid):
                 record_type = getattr(record, 'record_type', type(record).__name__)
                 raise CommandError('pam launch',f'Record {record_uid} of type "{record_type}" is not a machine record type (pamMachine, pamDirectory, pamDatabase)')
