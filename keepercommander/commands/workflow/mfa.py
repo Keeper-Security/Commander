@@ -9,6 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+import logging
+
 from ..pam.router_helper import _post_request_to_router
 from ...display import bcolors
 from ...params import KeeperParams
@@ -17,10 +19,13 @@ from ... import vault, utils
 
 from .helpers import ProtobufRefBuilder, WorkflowFormatter, is_workflow_exempt
 
+_TRANSPORT_ERROR = object()
+
 
 class WorkflowAccessValidator:
 
     _DEFAULT_RESULT = {'allowed': True, 'require_mfa': False}
+    _BLOCKED_RESULT = {'allowed': False, 'require_mfa': False}
 
     def __init__(self, params: KeeperParams, record_uid: str):
         self.params = params
@@ -35,6 +40,9 @@ class WorkflowAccessValidator:
             return dict(self._DEFAULT_RESULT)
 
         config = self._read_workflow_config()
+        if config is _TRANSPORT_ERROR:
+            self._print_transport_error('read workflow configuration')
+            return dict(self._BLOCKED_RESULT)
         if config is None:
             return dict(self._DEFAULT_RESULT)
 
@@ -42,11 +50,17 @@ class WorkflowAccessValidator:
 
         no_approvals = config.parameters and config.parameters.approvalsNeeded == 0
         workflow = self._find_active_workflow()
+        if workflow is _TRANSPORT_ERROR:
+            self._print_transport_error('verify workflow access state')
+            return dict(self._BLOCKED_RESULT)
         if workflow is None and no_approvals:
             workflow = self._get_workflow_state_by_record()
+            if workflow is _TRANSPORT_ERROR:
+                self._print_transport_error('verify workflow state')
+                return dict(self._BLOCKED_RESULT)
         if workflow is None:
             self._print_needs_start() if no_approvals else self._print_no_workflow()
-            return {'allowed': False, 'require_mfa': False}
+            return dict(self._BLOCKED_RESULT)
 
         return self._evaluate_stage(workflow, mfa_required)
 
@@ -57,8 +71,9 @@ class WorkflowAccessValidator:
                 self.params, 'read_workflow_config',
                 rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
             )
-        except Exception:
-            return None
+        except Exception as e:
+            logging.debug('Failed to read workflow config for %s: %s', self.record_uid, e)
+            return _TRANSPORT_ERROR
 
     def _find_active_workflow(self):
         try:
@@ -66,8 +81,9 @@ class WorkflowAccessValidator:
                 self.params, 'get_user_access_state',
                 rs_type=workflow_pb2.UserAccessState,
             )
-        except Exception:
-            return None
+        except Exception as e:
+            logging.debug('Failed to get user access state: %s', e)
+            return _TRANSPORT_ERROR
 
         if user_state and user_state.workflows:
             for wf in user_state.workflows:
@@ -140,8 +156,13 @@ class WorkflowAccessValidator:
                 self.params, 'get_workflow_state',
                 rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
             )
-        except Exception:
-            return None
+        except Exception as e:
+            logging.debug('Failed to get workflow state for %s: %s', self.record_uid, e)
+            return _TRANSPORT_ERROR
+
+    def _print_transport_error(self, action: str):
+        print(f"\n{bcolors.FAIL}Unable to {action} — the server may be unavailable.{bcolors.ENDC}")
+        print("Access is blocked until workflow status can be verified. Please try again later.\n")
 
     def _print_no_workflow(self):
         print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")

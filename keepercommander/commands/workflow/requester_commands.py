@@ -264,6 +264,8 @@ class WorkflowEndCommand(Command):
     @staticmethod
     def _force_checkin(params, **kwargs):
         uid = kwargs.get('uid')
+        if not uid or not uid.strip():
+            raise CommandError('', 'Record UID, record name, or Flow UID is required')
         record_uid, record = RecordResolver.resolve(params, uid, allow_missing=True)
 
         if record_uid:
