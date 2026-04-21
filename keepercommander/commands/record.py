@@ -2664,7 +2664,7 @@ class RecordRemoveCommand(Command):
 
             if not force:
                 print(f'This will permanently delete {len(record_uids)} record(s) for ALL users.')
-                np = base.user_choice('Do you want to proceed?', 'yn', default='n')
+                np = base.user_choice('Do you want to proceed?', 'y/n', default='n')
                 if np.lower() != 'y':
                     return
             success_count = 0
