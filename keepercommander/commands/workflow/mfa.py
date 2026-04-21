@@ -9,12 +9,13 @@
 # Contact: ops@keepersecurity.com
 #
 
+import getpass
 import logging
 
 from ..pam.router_helper import _post_request_to_router
 from ...display import bcolors
 from ...params import KeeperParams
-from ...proto import workflow_pb2
+from ...proto import workflow_pb2, router_pb2
 from ... import vault, utils
 
 from .helpers import ProtobufRefBuilder, WorkflowFormatter, is_workflow_exempt
@@ -181,7 +182,6 @@ class WorkflowMfaPrompt:
         self.params = params
 
     def prompt(self):
-        import getpass
         from ...proto import APIRequest_pb2
         from ... import api
 
@@ -262,8 +262,6 @@ class WorkflowMfaPrompt:
         return None
 
     def _dispatch(self, channel_type, APIRequest_pb2):
-        import getpass
-
         if channel_type == APIRequest_pb2.TWO_FA_CT_TOTP:
             try:
                 code = getpass.getpass('Enter TOTP code: ').strip()
@@ -296,9 +294,6 @@ class WorkflowMfaPrompt:
         return None
 
     def _send_push_and_prompt(self, push_type, sent_message, prompt_label):
-        import getpass
-        from ...proto import router_pb2
-
         try:
             push_rq = router_pb2.Router2FASendPushRequest()
             push_rq.pushType = push_type
@@ -316,7 +311,6 @@ class WorkflowMfaPrompt:
 
     def _handle_webauthn(self):
         import json as _json
-        from ...proto import router_pb2
 
         try:
             challenge_rq = router_pb2.Router2FAGetWebAuthnChallengeRequest()
