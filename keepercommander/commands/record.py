@@ -2620,21 +2620,21 @@ class RecordRemoveCommand(Command):
                                             records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
                     # Fallback: global title search so records in shared folders are also found.
-                    matches = []
                     for record_uid in params.record_cache:
                         record = vault.KeeperRecord.load(params, record_uid)
                         if record and record.title.casefold() == name.casefold():
-                            matches.append(record_uid)
-                    if len(matches) > 1:
-                        lines = [f'  {uid}' for uid in matches]
-                        raise CommandError('rm', f'"{name}" matches {len(matches)} records. '
-                                           f'Use a UID to identify the record:\n' + '\n'.join(lines))
-                    for record_uid in matches:
-                        for folder in find_all_folders(params, record_uid):
-                            records_to_delete.append((folder, record_uid))
+                            for folder in find_all_folders(params, record_uid):
+                                records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
                     raise CommandError('rm', f'No record found matching "{name}". '
                                        f'Provide a valid record title, path, or UID.')
+                # Check across both path-based and fallback results: if multiple distinct
+                # record UIDs were matched by title, require the user to specify a UID.
+                found_uids = list({uid for _, uid in records_to_delete[orig_len:]})
+                if len(found_uids) > 1:
+                    lines = [f'  {uid}' for uid in found_uids]
+                    raise CommandError('rm', f'"{name}" matches {len(found_uids)} records. '
+                                       f'Use a UID to identify the record:\n' + '\n'.join(lines))
 
         vault_changed = False
         force = kwargs.get('force') or False
