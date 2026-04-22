@@ -1853,7 +1853,7 @@ class PAMConfigurationListCommand(Command):
                 values = list(field.get_external_value())
                 if not values:
                     continue
-                field_name = field.label
+                field_name = field.label if field.label else field.type
                 if field.type == 'schedule':
                     field_name = 'Default Schedule'
 
