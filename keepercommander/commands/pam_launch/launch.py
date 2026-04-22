@@ -33,7 +33,11 @@ from .terminal_connection import (
     _version_at_least,
     _pam_settings_connection_port,
 )
-from .connect_timing import PamConnectTiming
+from .connect_timing import (
+    PamConnectTiming,
+    open_connection_delay_sec,
+    webrtc_connection_poll_sec,
+)
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty, PIXEL_MODE_GUACD, scale_screen_info
 from .terminal_reset import reset_local_terminal_after_pam_session
 from .crlf_merge_delay import (
@@ -1150,11 +1154,14 @@ class PAMLaunchCommand(Command):
                 python_handler.start()
                 _cli_tc.checkpoint('python_handler_start_done')
 
-                # Wait for WebRTC connection to be established
+                # Wait for WebRTC connection to be established.
+                # Poll tick defaults to 25ms (was 100ms) — cheap FFI call,
+                # tightens P99 handoff latency. Set PAM_WEBRTC_POLL_MS to override.
                 logging.debug("Waiting for WebRTC connection...")
                 max_wait = 15
                 start_time = time.time()
                 connected = False
+                poll_tick = webrtc_connection_poll_sec()
 
                 while time.time() - start_time < max_wait:
                     try:
@@ -1165,7 +1172,7 @@ class PAMLaunchCommand(Command):
                             break
                     except Exception as e:
                         logging.debug(f"Checking connection state: {e}")
-                    time.sleep(0.1)
+                    time.sleep(poll_tick)
 
                 if not connected:
                     raise CommandError('pam launch', "WebRTC connection not established within timeout")
@@ -1174,9 +1181,12 @@ class PAMLaunchCommand(Command):
                 # Wait for DataChannel to be ready and Gateway to wire the session.
                 # connection state "connected" can precede DataChannel readiness; Gateway also needs
                 # time to associate the WebRTC connection with the channel and prepare guacd.
-                # Configurable via PAM_OPEN_CONNECTION_DELAY (default 0.2s; use 2.0 if handshake never starts).
-                open_conn_delay = float(os.environ.get('PAM_OPEN_CONNECTION_DELAY', '0.2'))
-                time.sleep(open_conn_delay)
+                # Default 0.05s — a small safety margin on top of the open_handler_connection
+                # retry loop below (exponential backoff already handles slow DataChannel).
+                # Set PAM_OPEN_CONNECTION_DELAY=2.0 to restore the legacy safety wait.
+                open_conn_delay = open_connection_delay_sec()
+                if open_conn_delay > 0:
+                    time.sleep(open_conn_delay)
                 _cli_tc.checkpoint('open_connection_delay_done')
 
                 # Send OpenConnection to Gateway to initiate guacd session
