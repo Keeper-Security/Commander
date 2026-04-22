@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives import serialization
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes, string_to_bytes, bytes_to_string
 
 from ...error import CommandError
+from ...constants import get_keeper_server_hostname
 from ... import vault, api
 from ...keeper_dag import EdgeType
 from ...proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
@@ -1273,7 +1274,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         base64_nonce = bytes_to_base64(nonce)
 
         # Get relay server configuration
-        relay_url = 'krelay.' + params.server
+        relay_url = 'krelay.' + get_keeper_server_hostname(params.server)
         krelay_url = os.getenv('KRELAY_URL')
         if krelay_url:
             relay_url = krelay_url

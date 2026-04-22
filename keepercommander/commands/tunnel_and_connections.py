@@ -33,6 +33,7 @@ from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders
 from ..utils import value_to_boolean
+from ..constants import get_keeper_server_hostname
 
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
@@ -951,15 +952,16 @@ class PAMTunnelDiagnoseCommand(Command):
         output_format = kwargs.get('format', 'table')
         test_filter = kwargs.get('test_filter')
 
-        server = params.server  # e.g. "keepersecurity.com"
-        krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server}'
-        connect_host = f'connect.{server}'
+        server = params.server  # e.g. "keepersecurity.com" or "https://qa.keepersecurity.com"
+        server_host = get_keeper_server_hostname(server)
+        krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server_host}'
+        connect_host = f'connect.{server_host}'
 
         # ── header ────────────────────────────────────────────────────────────
         self._print_header()
         print()
         now = datetime.datetime.utcnow()
-        region_label = 'US' if server == 'keepersecurity.com' else server.split('.')[0].upper()
+        region_label = 'US' if server_host == 'keepersecurity.com' else server_host.split('.')[0].upper()
         print(self._green(f'  Region  {region_label}  \u00b7  {server}'))
         print(self._green(f'  Date    {now.strftime("%Y-%m-%d  %H:%M")} UTC'))
         if record_name:
@@ -984,16 +986,16 @@ class PAMTunnelDiagnoseCommand(Command):
         # DNS
         t0 = time.monotonic()
         try:
-            infos = socket.getaddrinfo(server, None, socket.AF_INET)
+            infos = socket.getaddrinfo(server_host, None, socket.AF_INET)
             ips = list(dict.fromkeys(a[4][0] for a in infos))
             ms = int((time.monotonic() - t0) * 1000)
             extra = f'(+{len(ips) - 1} addr)' if len(ips) > 1 else ''
-            _record(f'DNS  {server}', True, f'\u2192  {ips[0]}  {extra}'.strip(), ms)
+            _record(f'DNS  {server_host}', True, f'\u2192  {ips[0]}  {extra}'.strip(), ms)
         except Exception as exc:
-            _record(f'DNS  {server}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
+            _record(f'DNS  {server_host}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
 
-        passed, detail, ms = self._test_https(server)
-        _record(f'HTTPS  {server}:443', passed, detail, ms)
+        passed, detail, ms = self._test_https(server_host)
+        _record(f'HTTPS  {server_host}:443', passed, detail, ms)
 
         passed, detail, ms = self._test_websocket(connect_host)
         _record(f'WebSocket  {connect_host}:443', passed, detail, ms)
