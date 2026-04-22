@@ -40,22 +40,13 @@ class TestSecurityAuditRefresh(TestCase):
         cli.do_command(self.params, 'delete-all --force')
         api.sync_down(self.params, record_types=True)
 
-    def add_legacy_record(self, title, password, extra_fields=''):
-        command = (
-            f'record-add --title="{title}" --record-type=legacy '
-            f'login=security.audit@example.com password={password} url=https://example.com'
-        )
-        if extra_fields:
-            command = f'{command} {extra_fields}'
-        record_uid = cli.do_command(self.params, command)
-        api.sync_down(self.params, record_types=True)
-        return record_uid
-
-    def add_typed_login_record(self, title, password):
+    def add_typed_login_record(self, title, password, extra_fields=''):
         command = (
             f'record-add --title="{title}" --record-type=login '
             f'login=security.audit@example.com password={password} url=https://example.com'
         )
+        if extra_fields:
+            command = f'{command} {extra_fields}'
         try:
             record_uid = cli.do_command(self.params, command)
         except CommandError as err:
@@ -168,7 +159,7 @@ class TestSecurityAuditRefresh(TestCase):
         self.assertIsNone(self.current_user_debug_row())
 
     def test_summary_alignment_for_add_update_reuse_and_password_removal(self):
-        record_uid_1 = self.add_legacy_record('Security audit lifecycle-1', 'aa')
+        record_uid_1 = self.add_typed_login_record('Security audit lifecycle-1', 'aa')
         self.assert_record_security_state(record_uid_1, 'aa', 0, True)
         self.assert_record_revisions_aligned(record_uid_1)
         self.assert_admin_summary_matches_records([record_uid_1])
@@ -188,7 +179,7 @@ class TestSecurityAuditRefresh(TestCase):
         self.assert_record_revisions_aligned(record_uid_1)
         self.assert_admin_summary_matches_records([record_uid_1])
 
-        record_uid_2 = self.add_legacy_record('Security audit lifecycle-2', 'StrongPass123!')
+        record_uid_2 = self.add_typed_login_record('Security audit lifecycle-2', 'StrongPass123!')
         self.assert_record_security_state(record_uid_2, 'StrongPass123!', 100, True)
         self.assert_record_revisions_aligned(record_uid_2)
         self.assert_admin_summary_matches_records([record_uid_1, record_uid_2])
@@ -198,7 +189,9 @@ class TestSecurityAuditRefresh(TestCase):
         self.assert_admin_summary_matches_records([record_uid_1, record_uid_2])
 
     def test_rotation_and_hard_clear_repair_align_admin_summary(self):
-        record_uid = self.add_legacy_record('Security audit rotate/repair', 'aa', extra_fields='cmdr:plugin=noop')
+        record_uid = self.add_typed_login_record(
+            'Security audit rotate/repair', 'aa', extra_fields='cmdr:plugin=noop'
+        )
         self.assert_record_security_state(record_uid, 'aa', 0, True)
         self.assert_record_revisions_aligned(record_uid)
         self.assert_admin_summary_matches_records([record_uid])
