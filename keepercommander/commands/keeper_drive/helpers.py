@@ -221,12 +221,12 @@ def infer_role(access):
 
     Follows the official permission matrix::
 
-        manager > content-share-manager > shared-manager >
-        content-manager > viewer > contributor
+        full-manager > content-share-manager > shared-manager >
+        content-manager > viewer > contributor > requestor > navigator
     """
     get = access.get
     if get('can_change_ownership') or get('can_delete'):
-        return 'manager'
+        return 'full-manager'
     if get('can_update_access') and get('can_approve_access'):
         return 'content-share-manager'
     if get('can_update_access'):
@@ -235,7 +235,11 @@ def infer_role(access):
         return 'content-manager'
     if get('can_view') and get('can_list_access'):
         return 'viewer'
-    return 'contributor'
+    if get('can_view'):
+        return 'contributor'
+    if get('can_view_title'):
+        return 'requestor'
+    return 'navigator'
 
 
 def role_label(access_role_type):
@@ -244,7 +248,7 @@ def role_label(access_role_type):
     if access_role_type is not None:
         return next(
             (k.upper() for k, v in _kd.ROLE_NAME_MAP.items()
-             if v == access_role_type and '-' not in k and '_' not in k),
+             if v == access_role_type and '_' not in k),
             str(access_role_type),
         )
     return ''
@@ -272,6 +276,70 @@ def format_timestamp(ms):
     if ms:
         return datetime.datetime.fromtimestamp(ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
     return ''
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Permission checks
+# ═══════════════════════════════════════════════════════════════════════════
+
+def check_folder_edit_permission(params, folder_uid, cmd_name):
+    """Raise if the current user cannot edit (rename/recolor) the folder."""
+    _check_folder_permission(params, folder_uid, 'can_update_setting',
+                             'You do not have permission to edit this folder.', cmd_name)
+
+
+def check_folder_share_permission(params, folder_uid, cmd_name):
+    """Raise if the current user cannot share the folder."""
+    _check_folder_permission(params, folder_uid, 'can_update_access',
+                             'You do not have permission to share this folder.', cmd_name)
+
+
+def check_folder_delete_permission(params, folder_uid, cmd_name):
+    """Raise if the current user cannot delete the folder."""
+    _check_folder_permission(params, folder_uid, 'can_delete',
+                             'You do not have permission to delete this folder.', cmd_name)
+
+
+def check_record_edit_permission(params, record_uid, cmd_name):
+    """Raise if the current user cannot edit the record."""
+    _check_record_permission(params, record_uid, 'can_edit',
+                             'You do not have edit permissions on this record.', cmd_name)
+
+
+def check_record_share_permission(params, record_uid, cmd_name):
+    """Raise if the current user cannot share the record."""
+    _check_record_permission(params, record_uid, 'can_update_access',
+                             'You do not have permission to share this record.', cmd_name)
+
+
+def check_record_delete_permission(params, record_uid, cmd_name):
+    """Raise if the current user cannot delete the record."""
+    _check_record_permission(params, record_uid, 'can_delete',
+                             'You do not have permission to delete this record.', cmd_name)
+
+
+def _check_folder_permission(params, folder_uid, permission_key, error_message, cmd_name):
+    from ...proto import folder_pb2
+    accesses = getattr(params, 'keeper_drive_folder_accesses', {}).get(folder_uid, [])
+    for fa in accesses:
+        if fa.get('username') == params.user:
+            if fa.get('access_type') == int(folder_pb2.AT_OWNER):
+                return
+            perms = fa.get('permissions', {})
+            if perms.get(permission_key):
+                return
+            raise CommandError(cmd_name, error_message)
+
+
+def _check_record_permission(params, record_uid, permission_key, error_message, cmd_name):
+    accesses = getattr(params, 'keeper_drive_record_accesses', {}).get(record_uid, [])
+    for ra in accesses:
+        if ra.get('username') == params.user:
+            if ra.get('owner'):
+                return
+            if ra.get(permission_key):
+                return
+            raise CommandError(cmd_name, error_message)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

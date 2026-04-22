@@ -25,6 +25,7 @@ from .helpers import (
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
     command_error_handler, check_result,
+    check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
 )
 from .parsers import (
     keeper_drive_mkdir_parser,
@@ -48,9 +49,8 @@ class KeeperDriveMkdirCommand(Command):
     def execute(self, params, **kwargs):
         folder_path = (kwargs.get('folder') or '').strip()
         if not folder_path:
-            raise CommandError('kd-mkdir', 'Folder name or path is required')
+            raise CommandError('kd-mkdir', 'Folder name is required')
 
-        create_parents = kwargs.get('create_parents', False)
         color = kwargs.get('color')
         inherit_permissions = not kwargs.get('no_inherit_permissions', False)
 
@@ -59,62 +59,38 @@ class KeeperDriveMkdirCommand(Command):
         if current and current in getattr(params, 'keeper_drive_folders', {}):
             base_folder_uid = current
 
-        folder_parts = self._parse_path(folder_path, create_parents)
-        if len(folder_parts) > 1 and not create_parents:
-            raise CommandError('kd-mkdir',
-                               'Character "/" is reserved. Use "//" inside folder name')
+        folder_name = self._parse_path(folder_path)
 
-        created_folders = []
-        current_parent_uid = base_folder_uid
+        existing_uid = self._find_existing_child(params, folder_name, base_folder_uid)
+        if existing_uid:
+            logging.warning('kd-mkdir: Folder "%s" already exists', folder_name)
+            return existing_uid
 
-        for i, folder_name in enumerate(folder_parts):
-            is_last = (i == len(folder_parts) - 1)
-            existing_uid = self._find_existing_child(params, folder_name, current_parent_uid)
+        with command_error_handler('kd-mkdir'):
+            result = _kd.create_folder_v3(
+                params=params, folder_name=folder_name,
+                parent_uid=base_folder_uid,
+                color=color,
+                inherit_permissions=inherit_permissions,
+            )
+            check_result(result, 'kd-mkdir')
 
-            if existing_uid:
-                if is_last and not create_parents:
-                    logging.warning('kd-mkdir: Folder "%s" already exists', folder_name)
-                    return existing_uid
-                current_parent_uid = existing_uid
-                continue
-
-            with command_error_handler('kd-mkdir'):
-                result = _kd.create_folder_v3(
-                    params=params, folder_name=folder_name,
-                    parent_uid=current_parent_uid,
-                    color=color if is_last else None,
-                    inherit_permissions=inherit_permissions,
-                )
-                check_result(result, 'kd-mkdir')
-
-            created_uid = result['folder_uid']
-            created_folders.append(created_uid)
-            params.sync_data = True
-
-            if i < len(folder_parts) - 1:
-                from keepercommander import api as comm_api
-                comm_api.sync_down(params)
-            current_parent_uid = created_uid
-
-        return created_folders[-1] if created_folders else None
+        params.sync_data = True
+        return result['folder_uid']
 
     @staticmethod
-    def _parse_path(folder_path, create_parents):
-        if '/' not in folder_path:
-            return [folder_path]
-        is_slash = False
-        for x in range(len(folder_path) - 1):
-            if folder_path[x] == '/':
-                is_slash = not is_slash
-            else:
-                if is_slash and not create_parents:
-                    raise CommandError('kd-mkdir',
-                                       'Character "/" is reserved. Use "//" inside folder name')
-        parts = folder_path.replace('//', '\x00').split('/')
-        result = [p.replace('\x00', '/') for p in parts if p]
-        if not result:
-            raise CommandError('kd-mkdir', 'Invalid folder path')
-        return result
+    def _parse_path(folder_path):
+        # Collapse escaped slashes (//) to a sentinel so we can detect any
+        # stray path separator and refuse it — kd-mkdir creates a single
+        # folder, not a nested hierarchy.
+        collapsed = folder_path.replace('//', '\x00')
+        if '/' in collapsed:
+            raise CommandError('kd-mkdir',
+                               'Character "/" is reserved. Use "//" inside folder name')
+        name = collapsed.replace('\x00', '/').strip()
+        if not name:
+            raise CommandError('kd-mkdir', 'Invalid folder name')
+        return name
 
     @staticmethod
     def _find_existing_child(params, folder_name, parent_uid):
@@ -163,6 +139,10 @@ class KeeperDriveUpdateFolderCommand(Command):
 
         if new_name is None and color is None and inherit_permissions is None:
             raise CommandError('kd-rndir', 'New folder name and/or color parameters are required.')
+
+        folder_uid = resolve_folder_uid(params, folder_arg)
+        if folder_uid:
+            check_folder_edit_permission(params, folder_uid, 'kd-rndir')
 
         with command_error_handler('kd-rndir'):
             result = _kd.update_folder_v3(
@@ -334,6 +314,7 @@ class KeeperDriveShareFolderCommand(Command):
             folder_uid = resolve_folder_uid(params, folder_arg)
             if not folder_uid:
                 raise CommandError('kd-share-folder', f'No such folder: {folder_arg!r}')
+            check_folder_share_permission(params, folder_uid, 'kd-share-folder')
             for email in users:
                 targets = self._expand_users(params, email, folder_uid, folder_arg)
                 if targets is None:
@@ -403,6 +384,7 @@ class KeeperDriveRemoveFolderCommand(Command):
             folder_uid = _kd.resolve_kd_folder_uid(params, identifier)
             if not folder_uid:
                 raise CommandError('kd-rmdir', f"Folder '{identifier}' not found")
+            check_folder_delete_permission(params, folder_uid, 'kd-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
         if len(removals) > 100:

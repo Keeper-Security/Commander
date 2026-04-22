@@ -29,6 +29,7 @@ from ... import keeper_drive as _kd
 from .helpers import (
     parse_expiration, infer_role,
     command_error_handler, check_result,
+    check_record_share_permission,
 )
 from .parsers import (
     keeper_drive_share_record_parser,
@@ -74,6 +75,9 @@ class KeeperDriveShareRecordCommand(Command):
             kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-record')
         access_role_type = _kd.resolve_role_name(role) if role else None
         record_uids = self._resolve_record_uids(params, record_arg, recursive)
+
+        for uid in record_uids:
+            check_record_share_permission(params, uid, 'kd-share-record')
 
         if dry_run:
             self._print_dry_run(action, record_uids, emails, role, expiration)
@@ -171,8 +175,18 @@ class KeeperDriveShareRecordCommand(Command):
     @staticmethod
     def _resolve_record_uids(params, record_arg, recursive):
         kd_folders = getattr(params, 'keeper_drive_folders', {})
+        kd_records = getattr(params, 'keeper_drive_records', {})
 
-        folder_uid = _kd.resolve_folder_identifier(params, record_arg)
+        # Fast path: if the identifier is a known record UID, don't attempt
+        # to resolve it as a folder path (folder resolution can traverse the
+        # folder tree and raise on malformed/missing nodes).
+        if record_arg in kd_records:
+            return [record_arg]
+
+        try:
+            folder_uid = _kd.resolve_folder_identifier(params, record_arg)
+        except Exception:
+            folder_uid = None
         if folder_uid and folder_uid in kd_folders:
             record_uids = []
             def collect(fuid, visited=None):
@@ -220,8 +234,8 @@ class KeeperDriveRecordPermissionCommand(Command):
     """Bulk-update sharing permissions on records within a KeeperDrive folder."""
 
     _ROLE_NAMES = [
-        'contributor', 'viewer', 'shared-manager',
-        'content-manager', 'content-share-manager', 'manager',
+        'viewer', 'shared-manager',
+        'content-manager', 'content-share-manager', 'full-manager',
     ]
 
     def get_parser(self):
