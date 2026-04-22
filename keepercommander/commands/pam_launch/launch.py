@@ -33,6 +33,7 @@ from .terminal_connection import (
     _version_at_least,
     _pam_settings_connection_port,
 )
+from .connect_timing import PamConnectTiming
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty, PIXEL_MODE_GUACD, scale_screen_info
 from .terminal_reset import reset_local_terminal_after_pam_session
 from .crlf_merge_delay import (
@@ -51,7 +52,9 @@ from ..tunnel.port_forward.tunnel_helpers import (
     get_tunnel_session,
     unregister_tunnel_session,
     unregister_conversation_key,
+    get_keeper_tokens,
 )
+from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from .rust_log_filter import (
     enter_pam_launch_terminal_rust_logging,
     exit_pam_launch_terminal_rust_logging,
@@ -450,13 +453,22 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def find_gateway(self, params: KeeperParams, record_uid: str) -> Optional[Dict]:
+    def find_gateway(
+        self,
+        params: KeeperParams,
+        record_uid: str,
+        tdag: Optional[Any] = None,
+    ) -> Optional[Dict]:
         """
         Find the gateway associated with a PAM record.
 
         Args:
             params: KeeperParams instance
             record_uid: Record UID to find gateway for (must be pre-validated as PAM type)
+            tdag: Optional pre-built TunnelDAG. When provided, the config UID is
+                read from ``tdag.record.record_uid`` instead of fetched again via
+                ``get_config_uid_from_record`` — avoids the extra
+                ``/api/user/get_leafs`` roundtrip.
 
         Returns:
             Dictionary with gateway information including:
@@ -471,7 +483,12 @@ class PAMLaunchCommand(Command):
         """
         # Get the gateway UID from the record
         # Note: Record type validation happens in find_record()
-        gateway_uid = get_gateway_uid_from_record(params, vault, record_uid)
+        if tdag is not None:
+            config_uid = tdag.record.record_uid
+            gateway_uid = self._gateway_uid_from_config(params, config_uid) if config_uid else ''
+        else:
+            gateway_uid = get_gateway_uid_from_record(params, vault, record_uid)
+            config_uid = None  # resolved below when tdag is absent
 
         if not gateway_uid:
             raise CommandError('pam launch', f'No gateway found for record {record_uid}. ')
@@ -491,8 +508,9 @@ class PAMLaunchCommand(Command):
         gateway_name = gateway_proto.controllerName if gateway_proto else 'Unknown'
         logging.debug(f"Found gateway: {gateway_name} ({gateway_uid})")
 
-        # Get the configuration UID
-        config_uid = get_config_uid_from_record(params, vault, record_uid)
+        # Get the configuration UID (already resolved from tdag when present)
+        if config_uid is None:
+            config_uid = get_config_uid_from_record(params, vault, record_uid)
 
         return {
             'gateway_uid': gateway_uid,
@@ -500,6 +518,37 @@ class PAMLaunchCommand(Command):
             'config_uid': config_uid,
             'gateway_proto': gateway_proto
         }
+
+    @staticmethod
+    def _gateway_uid_from_config(params: KeeperParams, pam_config_uid: str) -> str:
+        """Resolve the controller (gateway) UID from a PAM configuration UID.
+
+        Mirrors the second half of
+        ``tunnel_helpers.get_gateway_uid_from_record`` — read ``controllerUid``
+        from the config record's ``pamResources`` field, falling back to the
+        ``pam/get_configuration_controller`` API when the local record is
+        missing the field.
+        """
+        gateway_uid = ''
+        record = vault.KeeperRecord.load(params, pam_config_uid)
+        if record is not None:
+            field = record.get_typed_field('pamResources')
+            value = field.get_default_value(dict) if field is not None else None
+            if value:
+                gateway_uid = value.get('controllerUid', '') or ''
+
+        if not gateway_uid:
+            try:
+                from ..pam.config_helper import configuration_controller_get
+                from ... import utils
+                config_uid_bytes = url_safe_str_to_bytes(pam_config_uid)
+                controller = configuration_controller_get(params, config_uid_bytes)
+                if controller and controller.controllerUid:
+                    gateway_uid = utils.base64_url_encode(controller.controllerUid)
+            except Exception as e:
+                logging.debug('_gateway_uid_from_config: fallback failed: %s', e)
+
+        return gateway_uid
 
     def execute(self, params: KeeperParams, **kwargs):
         """
@@ -509,6 +558,17 @@ class PAMLaunchCommand(Command):
             params: KeeperParams instance containing session state
             **kwargs: Command arguments including 'record' (record path or UID)
         """
+        # Grand-total timer: from command entry through handoff to the interactive
+        # loop. Summary fires in _start_cli_session just before input_handler.start().
+        # Per-phase blocks (pam-launch:execute / :terminal_connection / :webrtc-tunnel /
+        # :cli_session) nest inside and log their own totals — no double-counting.
+        _total_tc = PamConnectTiming('pam-launch:total')
+
+        # Pre-phase timer: covers all work done in execute() before the terminal
+        # connection handoff. Summary fires at pre_terminal_connection below.
+        _exec_tc = PamConnectTiming('pam-launch:execute')
+        _exec_tc.checkpoint('execute_start')
+
         # Save original root logger level and set to ERROR if not in DEBUG mode
         root_logger = logging.getLogger()
         original_level = root_logger.level
@@ -554,6 +614,7 @@ class PAMLaunchCommand(Command):
             if not self._is_valid_pam_record(params, record_uid):
                 record_type = getattr(record, 'record_type', type(record).__name__)
                 raise CommandError('pam launch',f'Record {record_uid} of type "{record_type}" is not a machine record type (pamMachine, pamDirectory, pamDatabase)')
+            _exec_tc.checkpoint('record_loaded')
 
             # Only terminal protocols are supported (SSH, Telnet, Kubernetes, databases).
             protocol = detect_protocol(params, record_uid)
@@ -564,9 +625,31 @@ class PAMLaunchCommand(Command):
                     protocol,
                 )
                 return
+            _exec_tc.checkpoint('protocol_detected_top')
 
-            # Get DAG-linked credential UID early (needed for comparison and validation)
-            dag_linked_uid = _get_launch_credential_uid(params, record_uid)
+            # Build the TunnelDAG once for the entire launch. Previously three separate
+            # call sites (here + two inside extract_terminal_settings) each built a fresh
+            # TunnelDAG and paid 2–3 HTTP roundtrips for it. The resolved tdag is threaded
+            # through _get_launch_credential_uid / find_gateway / launch_terminal_connection
+            # so every downstream consumer reuses the same graph.
+            try:
+                _enc_session_token, _enc_transmission_key, _transmission_key = get_keeper_tokens(params)
+                _launch_tdag = TunnelDAG(
+                    params,
+                    _enc_session_token,
+                    _enc_transmission_key,
+                    record_uid,
+                    transmission_key=_transmission_key,
+                )
+            except Exception as _e:
+                logging.debug('Failed to build TunnelDAG up front: %s — falling back to per-call lookups', _e)
+                _launch_tdag = None
+            _exec_tc.checkpoint('dag_built')
+
+            # Get DAG-linked credential UID early (needed for comparison and validation).
+            # Reuse _launch_tdag so we don't rebuild the DAG.
+            dag_linked_uid = _get_launch_credential_uid(params, record_uid, tdag=_launch_tdag)
+            _exec_tc.checkpoint('dag_linked_uid_resolved')
             if not dag_linked_uid:
                 # Fallback: first entry in pamSettings.connection.userRecords
                 _psf = record.get_typed_field('pamSettings')
@@ -805,14 +888,15 @@ class PAMLaunchCommand(Command):
                             f'No credentials configured for record {record_uid}. '
                             'Configure a linked credential or enable allowSupplyUser/allowSupplyHost.')
 
-            # Find the gateway for this record
-            gateway_info = self.find_gateway(params, record_uid)
+            # Find the gateway for this record (reuse tdag to skip another get_leafs roundtrip)
+            gateway_info = self.find_gateway(params, record_uid, tdag=_launch_tdag)
 
             if not gateway_info:
                 raise CommandError('pam launch', f'No gateway found for record {record_uid}')
 
             logging.debug(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
             logging.debug(f"Configuration: {gateway_info['config_uid']}")
+            _exec_tc.checkpoint('find_gateway_ok')
 
             # Optionally check if Gateway appears online; if not, log warning and try anyway.
             try:
@@ -833,6 +917,7 @@ class PAMLaunchCommand(Command):
                     logging.error('Gateway seems offline - trying to connect anyway.')
             except Exception as e:
                 logging.debug('Could not verify gateway status: %s. Continuing...', e)
+            _exec_tc.checkpoint('gateway_online_verified')
 
             if pam_connection_font_size is not None and str(pam_connection_font_size).strip() != '':
                 fs_int = _pam_connection_font_size_int(pam_connection_font_size)
@@ -859,6 +944,14 @@ class PAMLaunchCommand(Command):
                 print(f'Launching connection to {_banner_name_connect}...', flush=True)
                 pre_connect_spinner = PamLaunchSpinner('[ Establishing secure session… ]')
                 pre_connect_spinner.start()
+
+            # Pass the resolved DAG UID through so extract_terminal_settings does not
+            # rebuild the DAG. kwargs carries both the ConnectAs-relevant
+            # launch_credential_uid (possibly CLI-overridden) and the authoritative
+            # dag_linked_uid used only for DAG-comparison logic.
+            kwargs['dag_linked_uid'] = dag_linked_uid
+            _exec_tc.checkpoint('pre_terminal_connection')
+            _exec_tc.summary('execute_pre_interactive')
 
             # Launch terminal connection
             try:
@@ -914,6 +1007,7 @@ class PAMLaunchCommand(Command):
                         connect_banner_title=_banner_title,
                         pre_connect_spinner=pre_connect_spinner,
                         preserve_crlf=not bool(kwargs.get('normalize_crlf')),
+                        pam_total_tc=_total_tc,
                     )
                 except BaseException:
                     if pre_connect_spinner is not None and getattr(
@@ -940,6 +1034,7 @@ class PAMLaunchCommand(Command):
         connect_banner_title: Optional[str] = None,
         pre_connect_spinner: Optional[PamLaunchSpinner] = None,
         preserve_crlf: bool = True,
+        pam_total_tc: Optional[PamConnectTiming] = None,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -1049,8 +1144,11 @@ class PAMLaunchCommand(Command):
                 _connect_spinner = PamLaunchSpinner('[ Establishing secure session… ]')
                 _connect_spinner.start()
             try:
+                _cli_tc = PamConnectTiming('pam-launch:cli_session')
+                _cli_tc.checkpoint('cli_session_try_enter')
                 # Start the Python handler
                 python_handler.start()
+                _cli_tc.checkpoint('python_handler_start_done')
 
                 # Wait for WebRTC connection to be established
                 logging.debug("Waiting for WebRTC connection...")
@@ -1071,6 +1169,7 @@ class PAMLaunchCommand(Command):
 
                 if not connected:
                     raise CommandError('pam launch', "WebRTC connection not established within timeout")
+                _cli_tc.checkpoint('webrtc_data_plane_connected')
 
                 # Wait for DataChannel to be ready and Gateway to wire the session.
                 # connection state "connected" can precede DataChannel readiness; Gateway also needs
@@ -1078,6 +1177,7 @@ class PAMLaunchCommand(Command):
                 # Configurable via PAM_OPEN_CONNECTION_DELAY (default 0.2s; use 2.0 if handshake never starts).
                 open_conn_delay = float(os.environ.get('PAM_OPEN_CONNECTION_DELAY', '0.2'))
                 time.sleep(open_conn_delay)
+                _cli_tc.checkpoint('open_connection_delay_done')
 
                 # Send OpenConnection to Gateway to initiate guacd session
                 # This is critical - without it, Gateway doesn't start guacd and no Guacamole traffic flows
@@ -1142,6 +1242,7 @@ class PAMLaunchCommand(Command):
                             conversation_id, 1, connect_as_payload
                         )
                         logging.debug("✓ OpenConnection sent successfully")
+                        _cli_tc.checkpoint('open_connection_sent_ok')
                         break
                     except Exception as e:
                         last_error = e
@@ -1183,6 +1284,10 @@ class PAMLaunchCommand(Command):
             guac_ready_timeout = 10.0  # Reduced from 30s - sync triggers readiness quickly
 
             guac_ready_result = python_handler.wait_for_ready(guac_ready_timeout)
+            _cli_tc.checkpoint(
+                'guacamole_wait_for_ready_ok' if guac_ready_result else 'guacamole_wait_for_ready_timeout'
+            )
+            _cli_tc.summary('cli_session_pre_interactive')
             if guac_ready_result:
                 logging.debug("* Guacamole connection ready!")
                 logging.debug(
@@ -1296,6 +1401,13 @@ class PAMLaunchCommand(Command):
                     disable_paste=disable_paste,
                 )
                 logging.debug('Input mode: key-event (InputHandler, default)')
+
+            # Grand-total stop point: we're about to hand control to input_handler.start()
+            # and enter the interactive loop. Everything after this is session runtime,
+            # not launch time. Fires after check_stdout_pipe_support + coordinator setup so
+            # the total reflects the *user-visible* time-to-prompt, not just guac-ready.
+            if pam_total_tc is not None:
+                pam_total_tc.summary('ready_for_prompt')
 
             # Main event loop with input handler
             try:

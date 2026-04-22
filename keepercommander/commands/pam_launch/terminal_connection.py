@@ -75,6 +75,11 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 from ..pam_import.base import ConnectionProtocol
+from .connect_timing import PamConnectTiming
+
+# Sentinel for "dag_linked_uid not resolved yet" — ``None`` is a valid resolved
+# result (no DAG-linked launch credential), so we need a distinct marker.
+_DAG_UID_UNSET = object()
 
 # Protocol sets and defaults (ConnectionProtocol from pam_import.base)
 GRAPHICAL = {ConnectionProtocol.RDP.value, ConnectionProtocol.VNC.value}  # not supported by CLI
@@ -362,6 +367,7 @@ def extract_terminal_settings(
     launch_credential_uid: Optional[str] = None,
     custom_host: Optional[str] = None,
     custom_port: Optional[int] = None,
+    dag_linked_uid: Any = _DAG_UID_UNSET,
 ) -> Dict[str, Any]:
     """
     Extract terminal connection settings from a PAM record.
@@ -392,6 +398,13 @@ def extract_terminal_settings(
     record = vault.KeeperRecord.load(params, record_uid)
     if not isinstance(record, vault.TypedRecord):
         raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
+
+    # Resolve DAG-linked launch credential UID once; the pamSettings block and the
+    # later CLI-override comparison both need the same value. Pam launch passes
+    # a pre-resolved value via the kwarg so the 2–3 HTTP round-trips that build
+    # a TunnelDAG only happen once per command instead of per call site.
+    if dag_linked_uid is _DAG_UID_UNSET:
+        dag_linked_uid = _get_launch_credential_uid(params, record_uid)
 
     settings = {
         'hostname': None,
@@ -476,10 +489,10 @@ def extract_terminal_settings(
                 settings['allowSupplyUser'] = connection.get('allowSupplyUser', False)
 
                 # Extract linked pamUser record UID from pamSettings (may be overridden by CLI later)
-                # When both admin and launch credentials exist, we must use launch credential
-                dag_launch_uid = _get_launch_credential_uid(params, record_uid)
-                if dag_launch_uid:
-                    settings['userRecordUid'] = dag_launch_uid
+                # When both admin and launch credentials exist, we must use launch credential.
+                # dag_linked_uid was resolved once at the top of the function.
+                if dag_linked_uid:
+                    settings['userRecordUid'] = dag_linked_uid
                     logging.debug(f"Using launch credential from DAG: {settings['userRecordUid']}")
                 elif not launch_credential_uid:
                     # No DAG-linked credential and no -cr given.
@@ -529,10 +542,9 @@ def extract_terminal_settings(
         settings['port'] = DEFAULT_PORTS.get(protocol, 22)
 
     # CLI overrides: check if --credential provides a DIFFERENT user than DAG-linked.
-    # Always query the DAG directly - settings['userRecordUid'] may have been set from the
+    # dag_linked_uid is the once-resolved DAG value from the top of the function —
+    # distinct from settings['userRecordUid'] which may have been set from the
     # userRecords[0] fallback (not DAG-linked) and must not be used for this comparison.
-    dag_linked_uid = _get_launch_credential_uid(params, record_uid)
-
     if launch_credential_uid:
         if launch_credential_uid == dag_linked_uid:
             # CLI --credential matches DAG-linked credential - treat as if no --credential was provided
@@ -673,7 +685,11 @@ def create_connection_context(params: KeeperParams,
     return context
 
 
-def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optional[str]:
+def _get_launch_credential_uid(
+    params: 'KeeperParams',
+    record_uid: str,
+    tdag: Optional['TunnelDAG'] = None,
+) -> Optional[str]:
     """
     Find the launch credential UID for a PAM record using the DAG.
 
@@ -684,14 +700,19 @@ def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optio
     Args:
         params: KeeperParams instance
         record_uid: UID of the pamMachine record
+        tdag: Optional pre-built TunnelDAG to reuse. When provided, skips the
+            expensive ``TunnelDAG(...)`` construction (which issues 2–3 HTTP
+            round-trips). Used by ``pam launch`` to avoid resolving the same
+            DAG three times per command invocation.
 
     Returns:
         UID of the launch credential pamUser record, or None if not found
     """
     try:
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
-                         transmission_key=transmission_key)
+        if tdag is None:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
+                             transmission_key=transmission_key)
 
         if not tdag.linking_dag.has_graph:
             logging.debug(f"No DAG graph loaded for record {record_uid}")
@@ -1224,6 +1245,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
     screen_info = DEFAULT_SCREEN_INFO
 
     try:
+        _pam_tc = PamConnectTiming('pam-launch:webrtc-tunnel')
+        _pam_tc.checkpoint('enter')
         router_token = None
 
         # Get encryption seed from record
@@ -1282,6 +1305,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         response = router_get_relay_access_creds(params=params, expire_sec=60000000)
         if response is None:
             return {"success": False, "error": "Failed to get relay access credentials"}
+        _pam_tc.checkpoint('relay_creds_ok')
 
         # Create WebRTC settings for terminal (no local socket needed)
         webrtc_settings = {
@@ -1483,6 +1507,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Created tube with ID: {commander_tube_id}")
         logging.debug(f"Conversation ID for this tube: {conversation_id_original}")
         logging.debug(f"Data channel will be named: {conversation_id}")
+        _pam_tc.checkpoint('create_tube_ok')
 
         # Update signal handler and tunnel session with real tube ID
         signal_handler.tube_id = commander_tube_id
@@ -1502,6 +1527,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             router_tokens=router_tokens,
             cookie_header=cookie_header
         )
+        _pam_tc.checkpoint('websocket_listener_started')
 
         # Wait for WebSocket to be ready before sending offer (same as pam tunnel start).
         # Use event.wait() when available so we proceed as soon as ready; fallback to short sleep.
@@ -1519,9 +1545,11 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             logging.debug("Dedicated WebSocket connection established and ready for streaming")
             logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
             time.sleep(backend_delay)
+            _pam_tc.checkpoint('websocket_ready_backend_delay_done')
         else:
             logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
             time.sleep(backend_delay)
+            _pam_tc.checkpoint('websocket_no_event_backend_delay_done')
 
         # Send offer to gateway via HTTP POST
         logging.debug(f"{bcolors.OKBLUE}Sending {protocol} connection offer to gateway...{bcolors.ENDC}")
@@ -1684,7 +1712,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         else:
             logging.debug(f"No linked pamUser for record {record_uid} - using pamMachine credentials directly")
 
+        _pam_tc.checkpoint('pre_offer_sleep_start')
         time.sleep(1)  # Allow time for WebSocket listener to start
+        _pam_tc.checkpoint('pre_offer_sleep_done')
 
         # Send offer via HTTP POST - two paths: streaming vs non-streaming
         try:
@@ -1734,6 +1764,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     }
                 if http_session is not None:
                     offer_kwargs["http_session"] = http_session
+                _pam_tc.checkpoint('gateway_offer_http_attempt_1')
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
@@ -1747,6 +1778,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     gateway_timeout=30000,
                     **offer_kwargs
                 )
+                _pam_tc.checkpoint('gateway_offer_http_done')
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (streaming mode){bcolors.ENDC}")
 
@@ -1764,6 +1796,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
                 logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}gathering candidates...")
 
+                _pam_tc.summary('webrtc_tunnel_open_ok_streaming')
                 return {
                     "success": True,
                     "tube_id": commander_tube_id,
@@ -1780,6 +1813,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 }
             else:
                 # Non-streaming path: Handle response immediately
+                _pam_tc.checkpoint('gateway_offer_http_attempt_1')
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
@@ -1792,6 +1826,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     is_streaming=False,  # Response comes immediately in HTTP response
                     gateway_timeout=30000
                 )
+                _pam_tc.checkpoint('gateway_offer_http_done')
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (non-streaming mode){bcolors.ENDC}")
                 logging.debug(f"Router response: {router_response}")
@@ -1885,6 +1920,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
                 logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}established (non-streaming mode)...")
 
+                _pam_tc.summary('webrtc_tunnel_open_ok_non_streaming')
                 return {
                     "success": True,
                     "tube_id": commander_tube_id,
@@ -1959,6 +1995,8 @@ def launch_terminal_connection(params: KeeperParams,
         CommandError: If connection cannot be established
     """
     try:
+        _launch_tc = PamConnectTiming('pam-launch:terminal_connection')
+        _launch_tc.checkpoint('enter')
         # Step 1: Detect protocol
         protocol = detect_protocol(params, record_uid)
         if not protocol or protocol not in ALL_TERMINAL:
@@ -1969,8 +2007,12 @@ def launch_terminal_connection(params: KeeperParams,
             )
 
         logging.debug(f"Detected protocol: {protocol}")
+        _launch_tc.checkpoint('protocol_detected')
 
-        # Step 2: Extract settings (with optional CLI overrides)
+        # Step 2: Extract settings (with optional CLI overrides).
+        # Forward the pre-resolved DAG launch credential UID when the caller supplied it
+        # (pam launch does, to collapse three DAG loads into one); otherwise
+        # extract_terminal_settings falls back to resolving it internally.
         settings = extract_terminal_settings(
             params,
             record_uid,
@@ -1978,19 +2020,22 @@ def launch_terminal_connection(params: KeeperParams,
             launch_credential_uid=kwargs.get('launch_credential_uid'),
             custom_host=kwargs.get('custom_host'),
             custom_port=kwargs.get('custom_port'),
+            dag_linked_uid=kwargs.get('dag_linked_uid', _DAG_UID_UNSET),
         )
         logging.debug(f"Extracted settings: hostname={settings['hostname']}, port={settings['port']}")
+        _launch_tc.checkpoint('settings_extracted')
 
         # Step 3: Build connection context
         context = create_connection_context(
-            params, 
-            record_uid, 
-            gateway_info['gateway_uid'], 
-            protocol, 
+            params,
+            record_uid,
+            gateway_info['gateway_uid'],
+            protocol,
             settings,
             connect_as
         )
         logging.debug(f"Built connection context for {protocol}")
+        _launch_tc.checkpoint('context_built')
 
         # Step 4: Open WebRTC tunnel
         tunnel_result = _open_terminal_webrtc_tunnel(
@@ -2006,11 +2051,13 @@ def launch_terminal_connection(params: KeeperParams,
         if not tunnel_result.get('success'):
             error_msg = tunnel_result.get('error', 'Unknown error')
             raise CommandError('pam launch', f'Failed to open WebRTC tunnel: {error_msg}')
+        _launch_tc.checkpoint('webrtc_tunnel_opened')
 
         logging.debug(f"Terminal connection established for {protocol}")
         logging.debug(f"Target: {settings['hostname']}:{settings['port']}")
         logging.debug(f"Gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
 
+        _launch_tc.summary('terminal_connection_ok')
         return {
             'success': True,
             'protocol': protocol,
