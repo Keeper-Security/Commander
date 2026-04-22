@@ -49,7 +49,7 @@ from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
 from .enterprise_common import EnterpriseCommand
 from ..email_service import EmailSender, build_onboarding_email
-from .tunnel.port_forward.TunnelGraph import TunnelDAG
+from .tunnel.port_forward.TunnelGraph import TunnelDAG, get_vertex_content
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
@@ -1759,6 +1759,53 @@ class PAMConfigurationListCommand(Command):
                 tmp_dag.print_tunneling_config(pam_configuration_uid, None)
 
     @staticmethod
+    def _allowed_settings_dag_to_json(allowed):
+        # type: (dict) -> dict
+        """Maps PAM graph allowedSettings to JSON keys matching pam config edit/new flags."""
+        if not allowed:
+            allowed = {}
+        return {
+            'connections': allowed.get('connections'),
+            'tunneling': allowed.get('portForwards'),
+            'rotation': allowed.get('rotation'),
+            'remote_browser_isolation': allowed.get('remoteBrowserIsolation'),
+            'connections_recording': allowed.get('sessionRecording'),
+            'typescript_recording': allowed.get('typescriptRecording'),
+            'ai_threat_detection': allowed.get('aiEnabled'),
+            'ai_terminate_session_on_detection': allowed.get('aiSessionTerminate'),
+        }
+
+    @staticmethod
+    def _domain_administrative_credential_uid(configuration):
+        # type: (vault.KeeperRecord) -> Optional[str]
+        if not isinstance(configuration, vault.TypedRecord) or \
+                configuration.record_type != 'pamDomainConfiguration':
+            return None
+        prf = configuration.get_typed_field('pamResources')
+        if not prf or not prf.value or not isinstance(prf.value[0], dict):
+            return None
+        return prf.value[0].get('adminCredentialRef') or None
+
+    @staticmethod
+    def _pam_config_allowed_settings_json(params, config_uid):
+        try:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tmp_dag = TunnelDAG(
+                params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                is_config=True, transmission_key=transmission_key,
+            )
+            tmp_dag.linking_dag.load()
+            vertex = tmp_dag.linking_dag.get_vertex(config_uid)
+            content = get_vertex_content(vertex) if vertex else None
+            a = (content or {}).get('allowedSettings')
+            if a is None:
+                a = {}
+            return PAMConfigurationListCommand._allowed_settings_dag_to_json(a)
+        except Exception as e:
+            logging.getLogger(__name__).debug('PAM config allowedSettings: %s', e)
+            return PAMConfigurationListCommand._allowed_settings_dag_to_json({})
+
+    @staticmethod
     def print_pam_configuration_details(params, config_uid, is_verbose=False, format_type='table'):
         configuration = vault.KeeperRecord.load(params, config_uid)
         if not configuration:
@@ -1795,6 +1842,7 @@ class PAMConfigurationListCommand(Command):
                     "uid": sf.shared_folder_uid if sf else None
                 } if sf else None,
                 "gateway_uid": facade.controller_uid,
+                "gateway_name": facade.title,
                 "resource_record_uids": facade.resource_ref,
                 "fields": {}
             }
@@ -1805,11 +1853,19 @@ class PAMConfigurationListCommand(Command):
                 values = list(field.get_external_value())
                 if not values:
                     continue
-                field_name = field.get_field_name()
+                field_name = field.label
                 if field.type == 'schedule':
                     field_name = 'Default Schedule'
 
                 config_data["fields"][field_name] = values
+
+            if configuration.record_type == 'pamDomainConfiguration':
+                config_data['domain_administrative_credential'] = (
+                    PAMConfigurationListCommand._domain_administrative_credential_uid(configuration))
+
+            if is_verbose:
+                config_data['allowed_settings'] = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+                    params, configuration.record_uid)
 
             return json.dumps(config_data, indent=2)
         else:
@@ -2390,6 +2446,11 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                         help='Set recording connections permissions for the resource')
     parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
                         help='Set TypeScript recording permissions for the resource')
+    parser.add_argument('--ai-threat-detection', dest='ai_threat_detection', choices=choices,
+                        help='Set AI threat detection permissions')
+    parser.add_argument('--ai-terminate-session-on-detection', dest='ai_terminate_session_on_detection',
+                        choices=choices,
+                        help='Set AI session termination on threat detection permissions')
 
     def __init__(self):
         super(PAMConfigurationEditCommand, self).__init__()
@@ -2491,13 +2552,17 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         _rbi = kwargs.get('remotebrowserisolation', None)
         _recording = kwargs.get('recording', None)
         _typescript_recording = kwargs.get('typescriptrecording', None)
+        _ai_threat = kwargs.get('ai_threat_detection', None)
+        _ai_terminate = kwargs.get('ai_terminate_session_on_detection', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-                _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
+                _recording is not None or _typescript_recording is not None or _ai_threat is not None or
+                _ai_terminate is not None or orig_admin_cred_ref != admin_cred_ref):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True, transmission_key=transmission_key)
-            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi)
+            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi,
+                                          _ai_threat, _ai_terminate)
             if orig_admin_cred_ref != admin_cred_ref:
                 if orig_admin_cred_ref:  # just drop is_admin from old Domain
                     tmp_dag.link_user_to_config_with_options(orig_admin_cred_ref, is_admin='default')
