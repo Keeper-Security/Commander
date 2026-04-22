@@ -672,6 +672,12 @@ class TunnelDAG:
             rotation = f"{bcolors.WARNING}Disabled" if (allowed_settings.get('rotation') and not allowed_settings['rotation']) else f"{bcolors.OKBLUE}Enabled"
             print(f"{bcolors.OKGREEN}\tRotation: {rotation}{bcolors.ENDC}")
             print(f"{bcolors.OKGREEN}\tTunneling: {port_forwarding}{bcolors.ENDC}")
+            ai_enabled = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('aiEnabled') else \
+                f"{bcolors.WARNING}Disabled"
+            ai_terminate = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('aiSessionTerminate') else \
+                f"{bcolors.WARNING}Disabled"
+            print(f"{bcolors.OKGREEN}\tAI threat detection: {ai_enabled}{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}\tAI terminate session on detection: {ai_terminate}{bcolors.ENDC}")
 
             print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
             if config_id is not None:
@@ -687,3 +693,9 @@ class TunnelDAG:
                         f"{bcolors.OKBLUE}Enabled"
                     print(f"{bcolors.OKGREEN}\tRotation: {config_rotation}{bcolors.ENDC}")
                     print(f"{bcolors.OKGREEN}\tTunneling: {config_port_forwarding}{bcolors.ENDC}")
+                    config_ai_enabled = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('aiEnabled') else \
+                        f"{bcolors.WARNING}Disabled"
+                    config_ai_terminate = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('aiSessionTerminate') else \
+                        f"{bcolors.WARNING}Disabled"
+                    print(f"{bcolors.OKGREEN}\tAI threat detection: {config_ai_enabled}{bcolors.ENDC}")
+                    print(f"{bcolors.OKGREEN}\tAI terminate session on detection: {config_ai_terminate}{bcolors.ENDC}")
