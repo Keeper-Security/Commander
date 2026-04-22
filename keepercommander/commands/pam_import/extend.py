@@ -438,7 +438,6 @@ class PAMProjectExtendCommand(Command):
             except Exception as e:
                 raise CommandError("pam project extend", f"""Unable to read file "{file_name}": {e}""")
 
-        print(data)
         pam_data = data.get("pam_data") if isinstance(data, dict) else {}
         pam_data = pam_data if isinstance(pam_data, dict) else {}
         users =  pam_data["users"] if isinstance(pam_data.get("users"), list) else []
