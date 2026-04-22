@@ -416,6 +416,21 @@ def get_abbrev_by_host(host):
     return None
 
 
+def get_keeper_server_hostname(server):
+    """
+    Return a bare hostname from ``params.server`` / config ``server`` when the value
+    is a full URL (https://qa.keepersecurity.com). Otherwise return the string unchanged.
+    Used for krelay / ICE hostnames where a scheme must not be present.
+    """
+    if not server:
+        return server
+    if server.startswith("http://") or server.startswith("https://"):
+        parsed_host = urlparse(server).hostname
+        if parsed_host:
+            return parsed_host
+    return server
+
+
 def get_router_host(server_hostname):
     """
     Get the router hostname for a given Keeper server hostname.
@@ -434,6 +449,7 @@ def get_router_host(server_hostname):
           - 'govcloud.dev.keepersecurity.us' -> 'connect.dev.keepersecurity.us'
           - 'govcloud.qa.keepersecurity.us' -> 'connect.qa.keepersecurity.us'
     """
+    server_hostname = get_keeper_server_hostname(server_hostname)
     # GovCloud environments (.keepersecurity.us) replace 'govcloud.' with 'connect.'
     if server_hostname and server_hostname.startswith('govcloud.'):
         return 'connect.' + server_hostname[len('govcloud.'):]

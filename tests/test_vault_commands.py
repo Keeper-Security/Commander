@@ -2,16 +2,73 @@ import tempfile
 import json
 import os
 import warnings
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipUnless
 
 import pytest
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_VAULT_CONFIG = os.path.join(_TESTS_DIR, 'vault.json')
 
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api, vault
 from keepercommander.commands import recordv3, folder
 
+
+def _record_password(rec):
+    if isinstance(rec, vault.PasswordRecord):
+        return rec.password
+    if isinstance(rec, vault.TypedRecord):
+        pw = rec.get_typed_field('password')
+        if pw and pw.value:
+            return pw.value[0]
+    return None
+
+
+def _typed_cmdr_plugin_noop(rec):
+    if isinstance(rec, vault.PasswordRecord):
+        return rec.get_custom_value('cmdr:plugin') == 'noop'
+    if isinstance(rec, vault.TypedRecord):
+        f = next((x for x in rec.custom if (x.label or '') == 'cmdr:plugin'), None)
+        if not f:
+            return False
+        vals = list(f.get_external_value())
+        return bool(vals) and vals[0] == 'noop'
+    return False
+
+
+def _cache_attachment_file_count(params, record_uid):
+    raw = params.record_cache.get(record_uid) or {}
+    ex = raw.get('extra_unencrypted')
+    if not ex:
+        return 0
+    try:
+        data = json.loads(ex) if isinstance(ex, str) else json.loads(ex.decode('utf-8'))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return 0
+    return len(data.get('files') or [])
+
+
+def _first_attachment_id(params, record_uid):
+    raw = params.record_cache.get(record_uid) or {}
+    ex = raw.get('extra_unencrypted')
+    if not ex:
+        return None
+    try:
+        data = json.loads(ex) if isinstance(ex, str) else json.loads(ex.decode('utf-8'))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    files = data.get('files') or []
+    if not files:
+        return None
+    return files[0].get('id') or files[0].get('title')
+
+
 @pytest.mark.integration
+@skipUnless(
+    os.path.isfile(_VAULT_CONFIG),
+    'tests/vault.json not found (integration credentials; optional fixture)',
+)
 class TestConnectedCommands(TestCase):
     params = None
 
@@ -79,18 +136,22 @@ class TestConnectedCommands(TestCase):
     def test_commands(self):
         params = TestConnectedCommands.params   # type: KeeperParams
         with mock.patch('builtins.input', side_effect=KeyboardInterrupt()), mock.patch('builtins.print'):
-            record1_uid = cli.do_command(params,
-                'record-add --title="Record 1" --record-type=legacy login=user@company.com password=$GEN url=https://company.com/ cmdr:plugin=noop')
+            record1_uid = cli.do_command(
+                params,
+                'record-add --title="Record 1" --record-type=login '
+                'login=user@company.com password=$GEN url=https://company.com/ cmdr:plugin=noop',
+            )
 
             rec = vault.KeeperRecord.load(params, record1_uid)
-            self.assertIsInstance(rec, vault.PasswordRecord)
-            self.assertEqual(rec.get_custom_value('cmdr:plugin'), 'noop')
-            old_password = rec.password
+            self.assertIsInstance(rec, vault.TypedRecord)
+            self.assertEqual(rec.record_type, 'login')
+            self.assertTrue(_typed_cmdr_plugin_noop(rec))
+            old_password = _record_password(rec)
             cli.do_command(params, 'rotate -- {0}'.format(rec.record_uid))
             cli.do_command(params, 'sync-down')
             rec = vault.KeeperRecord.load(params, record1_uid)
-            self.assertIsInstance(rec, vault.PasswordRecord)
-            self.assertNotEqual(old_password, rec.password)
+            self.assertIsInstance(rec, vault.TypedRecord)
+            self.assertNotEqual(old_password, _record_password(rec))
 
             record2_uid = cli.do_command(
                 params, 'record-add --title="Record 2" --record-type=login login=user@company.com password=$GEN url=https://company.com/')
@@ -150,15 +211,16 @@ class TestConnectedCommands(TestCase):
                 self.assertEqual(len(params.shared_folder_cache), len(exported['shared_folders']))
 
             cli.do_command(params, 'sync-down --force')
+            self.assertEqual(_cache_attachment_file_count(params, record1_uid), 1)
             rec = vault.KeeperRecord.load(params, record1_uid)
-            self.assertIsInstance(rec, vault.PasswordRecord)
-            self.assertIsNotNone(rec.attachments)
-            self.assertEqual(len(rec.attachments), 1)
-            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0].id, record1_uid))
+            self.assertIsInstance(rec, vault.TypedRecord)
+            att_id = _first_attachment_id(params, record1_uid)
+            self.assertIsNotNone(att_id)
+            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(att_id, record1_uid))
             cli.do_command(params, 'sync-down')
+            self.assertEqual(_cache_attachment_file_count(params, record1_uid), 0)
             rec = vault.KeeperRecord.load(params, record1_uid)
-            self.assertIsInstance(rec, vault.PasswordRecord)
-            self.assertEqual(len(rec.attachments), 0)
+            self.assertIsInstance(rec, vault.TypedRecord)
 
             script_path = os.path.dirname(__file__)
             cwd = os.getcwd()

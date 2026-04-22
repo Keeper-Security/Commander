@@ -139,7 +139,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         record.custom = custom_fields
         return record
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_self_managing_azure(self, mock_load):
         """Azure config without identityProviderUid returns self."""
         record = self._make_mock_record('pamAzureConfiguration')
@@ -149,7 +149,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         result = resolve_pam_idp_config(params, 'azure-123')
         self.assertEqual(result, 'azure-123')
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_cross_reference(self, mock_load):
         """Config with identityProviderUid returns the referenced UID."""
         net_record = self._make_mock_record('pamNetworkConfiguration', idp_uid='azure-456')
@@ -168,7 +168,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         result = resolve_pam_idp_config(params, 'net-123')
         self.assertEqual(result, 'azure-456')
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_config_not_found(self, mock_load):
         """Raises error when config UID doesn't exist."""
         mock_load.return_value = None
@@ -177,7 +177,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         with self.assertRaises(CommandError):
             resolve_pam_idp_config(params, 'nonexistent')
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_non_idp_type_without_ref(self, mock_load):
         """Raises error for a non-IdP config type without identityProviderUid."""
         record = self._make_mock_record('pamNetworkConfiguration')
@@ -188,7 +188,7 @@ class TestResolveIdpConfig(unittest.TestCase):
             resolve_pam_idp_config(params, 'net-123')
         self.assertIn('No Identity Provider available', str(ctx.exception))
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_referenced_config_not_found(self, mock_load):
         """Raises error when referenced IdP config doesn't exist."""
         net_record = self._make_mock_record('pamNetworkConfiguration', idp_uid='missing-456')
@@ -205,7 +205,7 @@ class TestResolveIdpConfig(unittest.TestCase):
             resolve_pam_idp_config(params, 'net-123')
         self.assertIn('not found', str(ctx.exception))
 
-    @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.pam_cloud.pam_privileged_access.vault.KeeperRecord.load')
     def test_referenced_config_invalid_type(self, mock_load):
         """Raises error when a referenced config type doesn't support IdP."""
         net_record = self._make_mock_record('pamNetworkConfiguration', idp_uid='other-456')
