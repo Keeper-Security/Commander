@@ -25,6 +25,7 @@ from ...error import CommandError
 from ... import keeper_drive as _kd, vault
 from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
+    check_record_edit_permission, check_record_delete_permission,
 )
 from .parsers import (
     keeper_drive_add_record_parser,
@@ -209,6 +210,7 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
                 if not record_uid:
                     raise CommandError('kd-record-update',
                                        f"Record '{identifier}' not found")
+                check_record_edit_permission(params, record_uid, 'kd-record-update')
                 result = _kd.update_record_v3(
                     params=params, record_uid=record_uid,
                     title=kwargs.get('title'), record_type=record_type,
@@ -453,6 +455,7 @@ class KeeperDriveRemoveRecordCommand(Command):
             record_uid = _kd.resolve_kd_record_uid(params, identifier)
             if not record_uid:
                 raise CommandError('kd-rm', f"Record '{identifier}' not found")
+            check_record_delete_permission(params, record_uid, 'kd-rm')
             ctx_folder = folder_uid
             if not ctx_folder:
                 folders = _kd.find_kd_folders_for_record(params, record_uid)

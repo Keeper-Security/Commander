@@ -36,10 +36,7 @@ keeper_drive_mkdir_parser = _make_parser(
     'kd-mkdir', 'Create a new KeeperDrive folder using v3 API')
 keeper_drive_mkdir_parser.add_argument(
     'folder', type=str,
-    help='Folder name or path to create (e.g., "Projects/Work" or "folder1/folder2/folder3")')
-keeper_drive_mkdir_parser.add_argument(
-    '-p', '--parents', dest='create_parents', action='store_true',
-    help='Create parent folders as needed')
+    help='Folder name to create (use "//" to embed a literal "/" in the name)')
 keeper_drive_mkdir_parser.add_argument(
     '--color', type=str,
     choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'gray'],
@@ -102,8 +99,8 @@ keeper_drive_share_folder_parser.add_argument(
 keeper_drive_share_folder_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'contributor', 'viewer', 'shared-manager',
-        'content-manager', 'content-share-manager', 'manager',
+        'viewer', 'shared-manager',
+        'content-manager', 'content-share-manager', 'full-manager',
     ],
     default='viewer',
     help='permission role (default: viewer). Required for grant action')
@@ -219,8 +216,8 @@ keeper_drive_share_record_parser.add_argument(
 keeper_drive_share_record_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'contributor', 'viewer', 'shared-manager',
-        'content-manager', 'content-share-manager', 'manager',
+        'viewer', 'shared-manager',
+        'content-manager', 'content-share-manager', 'full-manager',
     ],
     help='permission role. Required for grant/update actions')
 keeper_drive_share_record_parser.add_argument(
@@ -256,8 +253,8 @@ keeper_drive_record_permission_parser.add_argument(
 keeper_drive_record_permission_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'contributor', 'viewer', 'shared-manager',
-        'content-manager', 'content-share-manager', 'manager',
+        'viewer', 'shared-manager',
+        'content-manager', 'content-share-manager', 'full-manager',
     ],
     help='Permission role to grant, or filter for revoke')
 keeper_drive_record_permission_parser.add_argument(

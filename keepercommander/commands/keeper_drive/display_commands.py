@@ -53,10 +53,7 @@ class KeeperDriveGetRecordDetailsCommand(Command):
 
         record_uids = []
         for ident in identifiers:
-            uid = _kd.resolve_kd_record_uid(params, ident)
-            if not uid:
-                raise CommandError('kd-record-details',
-                                   f"Record '{ident}' not found")
+            uid = _kd.resolve_kd_record_uid(params, ident) or ident
             record_uids.append(uid)
 
         with command_error_handler('kd-record-details'):

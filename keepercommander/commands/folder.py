@@ -856,6 +856,16 @@ class FolderMoveCommand(Command):
                 if src_folder.type == BaseFolderNode.RootFolderType:
                     raise CommandError('mv', 'Root folder cannot be a source folder')
 
+                if src_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        raise CommandError('mv', 'Drive folders cannot be moved inside a Shared folder.')
+                    raise CommandError('mv', 'Moving drive folders is currently not supported.')
+
+                if dst_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                    if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        raise CommandError('mv', 'Shared folders cannot be moved inside a drive folder.')
+                    raise CommandError('mv', 'Folders cannot be moved inside a drive folder.')
+
                 dp = set()
                 f = dst_folder
                 while f is not None and f.uid is not None:
@@ -897,6 +907,9 @@ class FolderMoveCommand(Command):
                         FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
 
             else:
+                if src_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                    raise CommandError('mv', 'Moving drive records is currently not supported.')
+
                 move = {
                     'uid': record_uid,
                     'type': 'record',
