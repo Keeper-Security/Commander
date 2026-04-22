@@ -271,6 +271,15 @@ def _record_has_host_port(record: Any) -> bool:
     return bool(host) and port is not None
 
 
+# JIT storage and shape handling is centralised in ``jit.py``.
+from .jit import (
+    JIT_MODE_ELEVATION,
+    derive_jit_mode,
+    load_jit_settings,
+    provisions_credential,
+)
+
+
 class PAMLaunchCommand(Command):
     """PAM Launch command to launch a connection to a PAM resource"""
 
@@ -305,6 +314,12 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--scale', '-s', required=False, dest='scale', type=int, default=None,
                         help='Scale pixel width/height by this percentage (e.g. 50 = half canvas, 200 = double). '
                              'Range: [40-400]. Helps when fullscreen TUI programs show garbled layout.')
+    parser.add_argument('--jit', '-j', required=False, dest='jit', action='store_true',
+                        help='Trigger just-in-time (JIT) access at connect time. The gateway creates an '
+                             'ephemeral account and/or elevates an existing account for the session and '
+                             'reverts on disconnect. Requires JIT enabled on the record (via Web Vault '
+                             'UI or `pam env apply`). Mutually exclusive with --credential, --host '
+                             'and --host-record.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -583,11 +598,12 @@ class PAMLaunchCommand(Command):
             root_logger.setLevel(logging.ERROR)
 
         try:
-            # TODO: Add JIT - note that allowSupplyHost overrides all other supply modes.
-            # When a PAM record has allowSupplyHost, allowSupplyUser, and JIT settings all enabled,
-            # the Web Vault (and this CLI) treat allowSupplyHost as the active mode and ignore the
-            # other two. Any validation logic below must reflect this precedence: if allowSupplyHost
-            # is True, treat the record as "host+credential supply" mode regardless of the other flags.
+            # Precedence note (matches Web Vault): allowSupplyHost > JIT > allowSupplyUser > linked.
+            # When a record has allowSupplyHost + jit_settings + allowSupplyUser all enabled,
+            # allowSupplyHost wins and the JIT block is ignored (the operator is supplying
+            # host+credential explicitly). launch.py enforces this below by rejecting --jit when
+            # the record already has allowSupplyHost, and by ignoring jit_settings downstream in
+            # terminal_connection.py when allowSupplyHost is on.
 
             record_token = kwargs.get('record')
 
@@ -773,6 +789,47 @@ class PAMLaunchCommand(Command):
             # Get record host/port for fallback validation
             hostname_on_record, port_on_record = _get_host_port_from_record(record)
 
+            # --- Resolve --jit option (JIT just-in-time access) ---
+            # Validation rules:
+            #   1. --jit requires the record to have a meaningful jit_settings block
+            #      (create_ephemeral and/or elevate set to true).
+            #   2. --jit is mutually exclusive with --credential / --host / --host-record
+            #      since JIT provisions the credential itself. If operators genuinely need to
+            #      override either of those, they should not use JIT for that session.
+            #   3. allowSupplyHost wins over JIT per Web Vault precedence; --jit on a record
+            #      with allowSupplyHost is rejected with a clear error.
+            #   4. Pre-flight credential checks are bypassed for --jit ephemeral/both because the
+            #      Gateway provisions the account. --jit elevation still requires a linked
+            #      credential (enforced below in the "No --credential" branch).
+            jit_flag = bool(kwargs.get('jit'))
+            jit_settings = load_jit_settings(params=params, record=record, record_uid=record_uid)
+            jit_mode = derive_jit_mode(jit_settings)
+
+            if jit_flag:
+                if not jit_settings or not jit_mode:
+                    raise CommandError('pam launch',
+                        '--jit requires the PAM record to have JIT enabled (createEphemeral and/or '
+                        'elevate set in the Web Vault UI, or jit_settings declared in a '
+                        '`pam env apply` manifest). Neither the DAG nor pamSettings.options '
+                        'carries an active JIT configuration for this record.')
+                if allow_supply_host:
+                    raise CommandError('pam launch',
+                        '--jit cannot be combined with allowSupplyHost on the record. '
+                        'Either disable allowSupplyHost or launch without --jit to supply '
+                        'host+credential manually.')
+                if kwargs.get('launch_credential') or kwargs.get('custom_host') or kwargs.get('host_record'):
+                    raise CommandError('pam launch',
+                        '--jit is mutually exclusive with --credential/--host/--host-record. '
+                        'JIT provisions the credential itself; remove those flags to use --jit.')
+                # Note: for ephemeral_account_type=='domain', the pamDirectory binding is a
+                # separate DAG LINK edge (path="domain") on the resource vertex, not a field in
+                # jit_settings — see pam_import/extend.py:link_machine_to_directory. The Gateway
+                # owns that validation; Commander does not re-check it here.
+                # Propagate to downstream so the offer builder emits the right inputs.
+                kwargs['jit_mode'] = jit_mode
+                kwargs['jit_settings'] = jit_settings
+                logging.debug(f"JIT mode enabled: {jit_mode} (settings={jit_settings})")
+
             # --- Resolve --credential option ---
             launch_credential = kwargs.get('launch_credential')
             launch_credential_uid = None
@@ -928,18 +985,30 @@ class PAMLaunchCommand(Command):
                             raise CommandError('pam launch',
                                 f'No hostname configured for record {record_uid}.')
 
-                    # No CLI options at all -> validate DAG-linked credential has login + password or SSH key
-                    if dag_linked_uid:
-                        dag_cred_record = vault.KeeperRecord.load(params, dag_linked_uid)
-                        if dag_cred_record and not _record_has_credentials(dag_cred_record, params):
+                    # Credential validation. When --jit is active in ephemeral/both mode the
+                    # Gateway provisions the account, so pre-existing credentials on the record
+                    # are not required (and any linked credential is ignored downstream in favour
+                    # of the ephemeral one). --jit elevation still requires a linked credential
+                    # because the gateway elevates that account for the session. Without --jit
+                    # the usual checks apply regardless of whether the record has jit_settings.
+                    if not provisions_credential(jit_flag, jit_mode):
+                        if dag_linked_uid:
+                            dag_cred_record = vault.KeeperRecord.load(params, dag_linked_uid)
+                            if dag_cred_record and not _record_has_credentials(dag_cred_record, params):
+                                raise CommandError('pam launch',
+                                    f'Linked credential record {dag_linked_uid} has no usable auth '
+                                    '(need login and password, or login and SSH private key). '
+                                    'Configure valid credentials or use --credential to override.')
+                        elif not allow_supply_user and not allow_supply_host:
+                            if jit_flag and jit_mode == JIT_MODE_ELEVATION:
+                                raise CommandError('pam launch',
+                                    f'--jit elevation on record {record_uid} requires a linked '
+                                    'credential: elevation is applied on top of that account. '
+                                    'Link a pamUser record, enable allowSupplyUser, or switch '
+                                    'jit_settings to create_ephemeral=true.')
                             raise CommandError('pam launch',
-                                f'Linked credential record {dag_linked_uid} has no usable auth '
-                                '(need login and password, or login and SSH private key). '
-                                'Configure valid credentials or use --credential to override.')
-                    elif not allow_supply_user and not allow_supply_host:
-                        raise CommandError('pam launch',
-                            f'No credentials configured for record {record_uid}. '
-                            'Configure a linked credential or enable allowSupplyUser/allowSupplyHost.')
+                                f'No credentials configured for record {record_uid}. '
+                                'Configure a linked credential or enable allowSupplyUser/allowSupplyHost.')
 
             # Gateway resolution — cache hit reuses the cached entry, cache
             # miss calls find_gateway and populates the cache on success.

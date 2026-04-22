@@ -70,6 +70,7 @@ from ..pam.router_helper import (
 from ...proto import pam_pb2
 from ...display import bcolors
 from .python_handler import create_python_handler
+from . import jit
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -422,6 +423,12 @@ def extract_terminal_settings(
         'allowSupplyUser': False,
         'allowSupplyHost': False,
         'userRecordUid': None,
+        # JIT (just-in-time) access block. Loaded by ``jit.load_jit_settings`` from
+        # either the DAG (Web Vault authoritative) or the pamSettings.options mirror.
+        # jit_mode is derived by ``jit.derive_jit_mode`` and is one of the
+        # ``jit.JIT_MODE_*`` constants or ``None``.
+        'jit_settings': None,
+        'jit_mode': None,
     }
 
     # Extract hostname and port from record - enforce single non-empty host/pamHostname field.
@@ -542,6 +549,16 @@ def extract_terminal_settings(
 
             # allowSupplyHost is at top level of pamSettings value, not inside connection
             settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
+
+            # JIT settings come from either the DAG (Web Vault authoritative, camelCase)
+            # or pamSettings.options.jit_settings (declarative mirror, snake_case).
+            # jit.load_jit_settings prefers the DAG and returns snake_case either way;
+            # jit.derive_jit_mode centralises the mode rule.
+            jit_raw = jit.load_jit_settings(params=params, record=record, record_uid=record_uid)
+            jit_mode = jit.derive_jit_mode(jit_raw)
+            if jit_mode:
+                settings['jit_settings'] = dict(jit_raw)
+                settings['jit_mode'] = jit_mode
 
     # Final port fallback to protocol default
     if settings['port'] is None:
@@ -675,6 +692,15 @@ def create_connection_context(params: KeeperParams,
         # Required by the offer-building path to distinguish "flag enabled but nothing supplied"
         # from "flag enabled and user actually provided credentials".
         'cliUserOverride': settings.get('cliUserOverride', False),
+        # JIT (just-in-time) settings. jit_mode is one of ``jit.JIT_MODE_*`` or ``None``.
+        # jit_settings is the normalised snake_case dict loaded by ``jit.load_jit_settings``
+        # from the DAG (Web Vault) or pamSettings.options.jit_settings (declarative mirror),
+        # projected for the gateway by ``jit.build_{ephemeral,elevation}_payload``.
+        # jit_enabled is True only when the operator passed --jit on the CLI, giving explicit
+        # opt-in (records that happen to have jit_settings never auto-trigger JIT).
+        'jit_settings': settings.get('jit_settings'),
+        'jit_mode': settings.get('jit_mode'),
+        'jit_enabled': settings.get('jit_enabled', False),
     }
 
     # Add protocol-specific settings
@@ -689,6 +715,8 @@ def create_connection_context(params: KeeperParams,
         context['database']['type'] = protocol
 
     return context
+
+
 
 
 def _get_launch_credential_uid(
@@ -1068,7 +1096,11 @@ def _build_guacamole_connection_settings(
     # Determine how to get credentials based on credential_type
     # Note: Even for 'userSupplied', if we have user_record_uid (from CLI --credential), extract credentials
     # because guacd_params go directly to guacd via our connect instruction
-    if credential_type == 'userSupplied' and not user_record_uid:
+    if credential_type == 'ephemeral':
+        # JIT ephemeral: gateway provisions the account and injects credentials into guacd
+        # server-side. Leave Commander's guacd_params creds empty so the gateway's values win.
+        logging.debug("Using ephemeral credential type - gateway supplies credentials")
+    elif credential_type == 'userSupplied' and not user_record_uid:
         # True user-supplied: no credentials provided at all
         # Note: user may not be able to provide via guacamole prompt since STDIN/STDOUT not open yet
         logging.debug("Using userSupplied credential type with no pamUser - leaving credentials empty")
@@ -1442,9 +1474,17 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             user_record_uid = context.get('userRecordUid')
 
             # credential_type is None when using pamMachine credentials directly (backward compatible)
-            # Priority: if user_record_uid is provided (from CLI or record), use 'linked' to send those credentials
+            # Priority: JIT ephemeral wins (gateway supplies creds); otherwise if user_record_uid
+            # is provided (from CLI or record), use 'linked'; fallback to 'userSupplied' when
+            # allowSupply* flags are enabled.
+            jit_mode = context.get('jit_mode') if context.get('jit_enabled') else None
             credential_type = None
-            if user_record_uid:
+            if jit_mode in (jit.JIT_MODE_EPHEMERAL, jit.JIT_MODE_BOTH) and not allow_supply_host:
+                # Gateway provisions the ephemeral account and injects credentials server-side;
+                # leave guacd username/password empty on the client.
+                credential_type = 'ephemeral'
+                logging.debug("JIT ephemeral mode - using 'ephemeral' credential type (creds come from gateway)")
+            elif user_record_uid:
                 # Linked user present (from CLI --credential or record) - use linked credentials
                 credential_type = 'linked'
                 logging.debug(f"Using 'linked' credential type with userRecordUid: {user_record_uid}")
@@ -1721,12 +1761,36 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Gateway credential types:
         # - 'linked': Look up credential in DAG (for records with DAG-linked pamUser)
         # - 'userSupplied': Skip DAG lookup, credentials from ConnectAs (-cr) or user prompt
+        # - 'ephemeral': Gateway provisions a short-lived account (JIT create_ephemeral); no
+        #   credentials flow from Commander. Optional jitElevation adds a group/role delta
+        #   applied on top of the ephemeral or linked account.
         # - None: Use pamMachine credentials directly
-        # Priority: prefer 'linked' when DAG has credentials (even if allowSupply* is enabled).
-        # Use 'userSupplied' only when no linked credential but allowSupply* enabled.
+        # Priority: allowSupplyHost > JIT (ephemeral) > cliUserOverride > userRecordUid > none.
+        # allowSupplyHost wins per the Web Vault contract (also noted in the launch.py TODO now
+        # removed); JIT elevation piggy-backs on 'linked' so the gateway still receives the
+        # linked credential to elevate.
         credential_type_for_gateway = None
         cli_user_override = context.get('cliUserOverride', False)
-        if cli_user_override:
+        jit_enabled = context.get('jit_enabled', False)
+        jit_mode = context.get('jit_mode') if jit_enabled else None
+        jit_settings = context.get('jit_settings') or {} if jit_enabled else {}
+        # allowSupplyHost disables JIT per Web Vault precedence; launch.py already rejects the
+        # combination when JIT is requested, so here we simply let the existing userSupplied /
+        # linked path handle allowSupplyHost records.
+        if allow_supply_host and jit_mode:
+            logging.debug(
+                "allowSupplyHost is enabled; ignoring jit_mode=%s per Web Vault precedence",
+                jit_mode,
+            )
+            jit_mode = None
+
+        if jit_mode in (jit.JIT_MODE_EPHEMERAL, jit.JIT_MODE_BOTH):
+            # Gateway creates a short-lived account; Commander does not carry the credential.
+            # For 'both' (create_ephemeral + elevate) the gateway also applies the elevation
+            # delta, so jitElevation is still emitted alongside jitSettings.
+            credential_type_for_gateway = 'ephemeral'
+            logging.debug("JIT ephemeral mode active - using 'ephemeral' for gateway")
+        elif cli_user_override:
             # User explicitly supplied a different credential via -cr.
             # The -cr record is NOT DAG-linked to this machine so 'linked' would fail;
             # credentials arrive via the ConnectAs payload (built in launch.py after tunnel opens).
@@ -1735,9 +1799,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             credential_type_for_gateway = 'userSupplied'
             logging.debug("CLI credential override active - using 'userSupplied' for gateway")
         elif user_record_uid:
-            # DAG-linked pamUser (no CLI override) - gateway looks up credentials via DAG
+            # DAG-linked pamUser (no CLI override) - gateway looks up credentials via DAG.
+            # When jit_mode == 'elevation' this path still applies: the gateway elevates the
+            # linked account for the session and reverts on disconnect.
             credential_type_for_gateway = 'linked'
-            logging.debug(f"Using 'linked' credential type for gateway with userRecordUid: {user_record_uid}")
+            if jit_mode == jit.JIT_MODE_ELEVATION:
+                logging.debug(
+                    f"JIT elevation mode active - using 'linked' credentials + jitElevation for {user_record_uid}"
+                )
+            else:
+                logging.debug(f"Using 'linked' credential type for gateway with userRecordUid: {user_record_uid}")
         else:
             logging.debug(f"No linked pamUser for record {record_uid} - using pamMachine credentials directly")
 
@@ -1766,12 +1837,34 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             if credential_type_for_gateway == 'linked' and user_record_uid:
                 inputs['credentialType'] = 'linked'
                 inputs['userRecordUid'] = user_record_uid
+                # JIT elevation: linked account stays, gateway applies group/role delta for
+                # the session and reverts on disconnect.
+                if jit_mode == jit.JIT_MODE_ELEVATION:
+                    elevation_payload = jit.build_elevation_payload(jit_settings)
+                    if elevation_payload:
+                        inputs['jitElevation'] = elevation_payload
+                        logging.debug(f"Attached jitElevation payload: {elevation_payload}")
             elif credential_type_for_gateway == 'userSupplied':
                 inputs['credentialType'] = 'userSupplied'
                 # For userSupplied, set allow_supply_user flag in connect_as_settings
                 # This matches gateway behavior (line 1203 in tunnel_vault_record.py)
                 inputs['allowSupplyUser'] = True
                 logging.debug("Using userSupplied credential type - user will provide credentials")
+            elif credential_type_for_gateway == 'ephemeral':
+                # JIT ephemeral: gateway provisions a short-lived account and returns creds.
+                # For 'both' (create_ephemeral + elevate), jitElevation is emitted alongside.
+                inputs['credentialType'] = 'ephemeral'
+                ephemeral_payload = jit.build_ephemeral_payload(jit_settings)
+                if ephemeral_payload:
+                    inputs['jitSettings'] = ephemeral_payload
+                if jit_mode == jit.JIT_MODE_BOTH:
+                    elevation_payload = jit.build_elevation_payload(jit_settings)
+                    if elevation_payload:
+                        inputs['jitElevation'] = elevation_payload
+                logging.debug(
+                    f"Using ephemeral credential type - gateway will provision JIT account "
+                    f"(jitSettings={ephemeral_payload})"
+                )
             # else: no credentialType - gateway uses pamMachine credentials directly (backward compatible)
 
             # Add 2FA value if workflow requires MFA
@@ -2114,6 +2207,14 @@ def launch_terminal_connection(params: KeeperParams,
             custom_port=kwargs.get('custom_port'),
             dag_linked_uid=kwargs.get('dag_linked_uid', _DAG_UID_UNSET),
         )
+        # JIT is opt-in via --jit. extract_terminal_settings always reads the record's
+        # jit_settings so validation can inspect them, but we only treat JIT as "active"
+        # (i.e. emit it to the gateway) when the operator explicitly requested it.
+        settings['jit_enabled'] = bool(kwargs.get('jit'))
+        if not settings['jit_enabled']:
+            # Clear derived jit_mode so downstream branches fall through to the normal path.
+            settings['jit_mode'] = None
+            settings['jit_settings'] = None
         logging.debug(f"Extracted settings: hostname={settings['hostname']}, port={settings['port']}")
         _launch_tc.checkpoint('settings_extracted')
 
