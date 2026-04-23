@@ -1551,22 +1551,34 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # WebSocket handshake. Default 0.30s; on first-offer failure we top up
         # with the delta to the legacy 2.0s before retrying (adaptive fallback).
         backend_delay = websocket_backend_delay_sec()
-        if tunnel_session.websocket_ready_event:
-            logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
-            websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
-            if not websocket_ready:
-                logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
-                signal_handler.cleanup()
-                unregister_tunnel_session(commander_tube_id)
-                return {"success": False, "error": "WebSocket connection timeout"}
-            logging.debug("Dedicated WebSocket connection established and ready for streaming")
-            logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
-            time.sleep(backend_delay)
-            _pam_tc.checkpoint('websocket_ready_backend_delay_done')
+        if trickle_ice:
+            if tunnel_session.websocket_ready_event:
+                logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
+                websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
+                if not websocket_ready:
+                    logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
+                    signal_handler.cleanup()
+                    unregister_tunnel_session(commander_tube_id)
+                    return {"success": False, "error": "WebSocket connection timeout"}
+                logging.debug("Dedicated WebSocket connection established and ready for streaming")
+                logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
+                time.sleep(backend_delay)
+                _pam_tc.checkpoint('websocket_ready_backend_delay_done')
+            else:
+                logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
+                time.sleep(backend_delay)
+                _pam_tc.checkpoint('websocket_no_event_backend_delay_done')
         else:
-            logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
-            time.sleep(backend_delay)
-            _pam_tc.checkpoint('websocket_no_event_backend_delay_done')
+            # Non-trickle ICE: SDP answer comes via the HTTP offer response body
+            # (handled further below in the non-streaming branch) and ICE candidates
+            # are carried inside the offer SDP itself, so there is no streamed
+            # conversation to register on the router/gateway side. The WebSocket
+            # listener keeps running in the background for async signaling
+            # (disconnect / state changes) but the main thread does not need to
+            # block on it. Saves ~backend_delay + ~WS-TLS-handshake before the
+            # offer POST (~700ms on a typical launch).
+            logging.debug("Non-trickle ICE: skipping WebSocket-ready wait and backend_delay")
+            _pam_tc.checkpoint('non_trickle_skip_backend_delay')
 
         # Send offer to gateway via HTTP POST
         logging.debug(f"{bcolors.OKBLUE}Sending {protocol} connection offer to gateway...{bcolors.ENDC}")
@@ -1871,11 +1883,18 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 signal_handler.offer_sent = True
                 tunnel_session.offer_sent = True
 
-                # Send any buffered ICE candidates
+                # Send any buffered ICE candidates — one batched HTTP POST instead of N
+                # serial ``_send_ice_candidate_immediately`` calls. The gateway's
+                # ``add_ice_candidates_to_conversation_tunnel`` already iterates the
+                # ``candidates`` array internally and each ``add_ice_candidate`` PyO3
+                # call is spawn-and-return, so a batch costs the server ~the same as
+                # a single candidate while collapsing ~N*500ms of client-side round
+                # trips into one.
                 if tunnel_session.buffered_ice_candidates:
                     logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates")
-                    for candidate in tunnel_session.buffered_ice_candidates:
-                        signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                    signal_handler._send_ice_candidates_batch(
+                        tunnel_session.buffered_ice_candidates, commander_tube_id
+                    )
                     tunnel_session.buffered_ice_candidates.clear()
 
                 logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
@@ -1972,8 +1991,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
                                             if tunnel_session.buffered_ice_candidates:
                                                 logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
-                                                for candidate in tunnel_session.buffered_ice_candidates:
-                                                    signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                                                signal_handler._send_ice_candidates_batch(
+                                                    tunnel_session.buffered_ice_candidates, commander_tube_id
+                                                )
                                                 tunnel_session.buffered_ice_candidates.clear()
                                         elif isinstance(data_json, dict) and ("offer" in data_json or data_json.get("type") == "offer"):
                                             logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
