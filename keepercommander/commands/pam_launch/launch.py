@@ -37,7 +37,9 @@ from .connect_timing import (
     PamConnectTiming,
     open_connection_delay_sec,
     webrtc_connection_poll_sec,
+    webrtc_connect_timeout_sec,
 )
+from . import launch_cache
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty, PIXEL_MODE_GUACD, scale_screen_info
 from .terminal_reset import reset_local_terminal_after_pam_session
 from .crlf_merge_delay import (
@@ -631,29 +633,76 @@ class PAMLaunchCommand(Command):
                 return
             _exec_tc.checkpoint('protocol_detected_top')
 
-            # Build the TunnelDAG once for the entire launch. Previously three separate
-            # call sites (here + two inside extract_terminal_settings) each built a fresh
-            # TunnelDAG and paid 2–3 HTTP roundtrips for it. The resolved tdag is threaded
-            # through _get_launch_credential_uid / find_gateway / launch_terminal_connection
-            # so every downstream consumer reuses the same graph.
-            try:
-                _enc_session_token, _enc_transmission_key, _transmission_key = get_keeper_tokens(params)
-                _launch_tdag = TunnelDAG(
-                    params,
-                    _enc_session_token,
-                    _enc_transmission_key,
-                    record_uid,
-                    transmission_key=_transmission_key,
-                )
-            except Exception as _e:
-                logging.debug('Failed to build TunnelDAG up front: %s — falling back to per-call lookups', _e)
-                _launch_tdag = None
-            _exec_tc.checkpoint('dag_built')
+            # Optimistic launch cache: the pre-phase (TunnelDAG build +
+            # find_gateway + online probe) resolves to values that rarely
+            # change between launches of the same record — DAG-linked
+            # launch credential UID, gateway UID, config UID. If we have a
+            # cached entry, use it immediately and spawn a background
+            # refresh so the next launch sees fresh data if anything moved.
+            # See keepercommander/commands/pam_launch/launch_cache.py for
+            # the cache contract.
+            _cache_entry = launch_cache.get(record_uid)
+            _launch_tdag = None  # populated only on cache miss
+            _cached_gateway_info: Optional[Dict[str, Any]] = None
 
-            # Get DAG-linked credential UID early (needed for comparison and validation).
-            # Reuse _launch_tdag so we don't rebuild the DAG.
-            dag_linked_uid = _get_launch_credential_uid(params, record_uid, tdag=_launch_tdag)
-            _exec_tc.checkpoint('dag_linked_uid_resolved')
+            if _cache_entry is not None:
+                # CACHE HIT: skip DAG build + find_gateway + online probe
+                dag_linked_uid = _cache_entry.get('dag_linked_uid')
+                _cached_gateway_info = {
+                    'gateway_uid': _cache_entry['gateway_uid'],
+                    'gateway_name': _cache_entry['gateway_name'],
+                    'config_uid': _cache_entry['config_uid'],
+                    # gateway_proto is only used internally by find_gateway
+                    # to derive gateway_name; nothing downstream reads it.
+                    'gateway_proto': None,
+                }
+                _exec_tc.checkpoint('launch_cache_hit')
+
+                # Kick off a background refresh so the NEXT launch sees
+                # fresh values if anything changed (credential rotation,
+                # gateway reassignment). The fetch_fn does the full DAG
+                # build + find_gateway inline; it must not raise.
+                def _refresh_fetch(_params=params, _record_uid=record_uid, _self=self):
+                    try:
+                        _enc_s, _enc_t, _tk = get_keeper_tokens(_params)
+                        _tdag = TunnelDAG(
+                            _params, _enc_s, _enc_t, _record_uid, transmission_key=_tk,
+                        )
+                        _dag_uid = _get_launch_credential_uid(_params, _record_uid, tdag=_tdag)
+                        _gw = _self.find_gateway(_params, _record_uid, tdag=_tdag)
+                        if not _gw:
+                            return None
+                        return {
+                            'dag_linked_uid': _dag_uid,
+                            'config_uid': _gw.get('config_uid'),
+                            'gateway_uid': _gw['gateway_uid'],
+                            'gateway_name': _gw.get('gateway_name') or 'Unknown',
+                        }
+                    except Exception:
+                        return None
+                launch_cache.spawn_refresh(record_uid, _refresh_fetch)
+            else:
+                # CACHE MISS: build TunnelDAG once and reuse it for both
+                # _get_launch_credential_uid and find_gateway. Values are
+                # written to the cache after find_gateway succeeds below.
+                try:
+                    _enc_session_token, _enc_transmission_key, _transmission_key = get_keeper_tokens(params)
+                    _launch_tdag = TunnelDAG(
+                        params,
+                        _enc_session_token,
+                        _enc_transmission_key,
+                        record_uid,
+                        transmission_key=_transmission_key,
+                    )
+                except Exception as _e:
+                    logging.debug('Failed to build TunnelDAG up front: %s — falling back to per-call lookups', _e)
+                    _launch_tdag = None
+                _exec_tc.checkpoint('dag_built')
+
+                # Get DAG-linked credential UID (shared with downstream
+                # extract_terminal_settings so it doesn't re-resolve).
+                dag_linked_uid = _get_launch_credential_uid(params, record_uid, tdag=_launch_tdag)
+                _exec_tc.checkpoint('dag_linked_uid_resolved')
             if not dag_linked_uid:
                 # Fallback: first entry in pamSettings.connection.userRecords
                 _psf = record.get_typed_field('pamSettings')
@@ -892,36 +941,56 @@ class PAMLaunchCommand(Command):
                             f'No credentials configured for record {record_uid}. '
                             'Configure a linked credential or enable allowSupplyUser/allowSupplyHost.')
 
-            # Find the gateway for this record (reuse tdag to skip another get_leafs roundtrip)
-            gateway_info = self.find_gateway(params, record_uid, tdag=_launch_tdag)
+            # Gateway resolution — cache hit reuses the cached entry, cache
+            # miss calls find_gateway and populates the cache on success.
+            if _cached_gateway_info is not None:
+                gateway_info = _cached_gateway_info
+                logging.debug(
+                    f"Launch cache hit: reusing {gateway_info['gateway_name']} "
+                    f"({gateway_info['gateway_uid']}) — background refresh in-flight"
+                )
+            else:
+                # Cache miss — resolve fresh (reuse _launch_tdag to skip a get_leafs roundtrip).
+                gateway_info = self.find_gateway(params, record_uid, tdag=_launch_tdag)
 
-            if not gateway_info:
-                raise CommandError('pam launch', f'No gateway found for record {record_uid}')
+                if not gateway_info:
+                    raise CommandError('pam launch', f'No gateway found for record {record_uid}')
 
-            logging.debug(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
-            logging.debug(f"Configuration: {gateway_info['config_uid']}")
-            _exec_tc.checkpoint('find_gateway_ok')
+                logging.debug(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
+                logging.debug(f"Configuration: {gateway_info['config_uid']}")
+                _exec_tc.checkpoint('find_gateway_ok')
 
-            # Optionally check if Gateway appears online; if not, log warning and try anyway.
-            try:
-                connected_gateways = router_get_connected_gateways(params)
-                if connected_gateways and connected_gateways.controllers:
-                    connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
-                    gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
-                    if gateway_uid_bytes not in connected_gateway_uids:
-                        # Root logger is ERROR when not DEBUG; use logging.error so this is visible.
-                        logging.error(
-                            'Gateway "%s" (%s) seems offline - trying to connect anyway.',
-                            gateway_info['gateway_name'],
-                            gateway_info['gateway_uid'],
-                        )
+                # Populate the launch cache now that DAG + gateway are both resolved
+                # for this record. Future launches in this session hit the cache.
+                launch_cache.put(record_uid, {
+                    'dag_linked_uid': dag_linked_uid,
+                    'config_uid': gateway_info.get('config_uid'),
+                    'gateway_uid': gateway_info['gateway_uid'],
+                    'gateway_name': gateway_info.get('gateway_name') or 'Unknown',
+                })
+
+                # Optionally check if Gateway appears online; if not, log warning and try anyway.
+                # On cache hit this probe is skipped — the tunnel offer itself will surface
+                # RRC_CONTROLLER_DOWN quickly if the gateway has gone offline.
+                try:
+                    connected_gateways = router_get_connected_gateways(params)
+                    if connected_gateways and connected_gateways.controllers:
+                        connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
+                        gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
+                        if gateway_uid_bytes not in connected_gateway_uids:
+                            # Root logger is ERROR when not DEBUG; use logging.error so this is visible.
+                            logging.error(
+                                'Gateway "%s" (%s) seems offline - trying to connect anyway.',
+                                gateway_info['gateway_name'],
+                                gateway_info['gateway_uid'],
+                            )
+                        else:
+                            logging.debug("✓ Gateway is online and connected")
                     else:
-                        logging.debug("✓ Gateway is online and connected")
-                else:
-                    logging.error('Gateway seems offline - trying to connect anyway.')
-            except Exception as e:
-                logging.debug('Could not verify gateway status: %s. Continuing...', e)
-            _exec_tc.checkpoint('gateway_online_verified')
+                        logging.error('Gateway seems offline - trying to connect anyway.')
+                except Exception as e:
+                    logging.debug('Could not verify gateway status: %s. Continuing...', e)
+                _exec_tc.checkpoint('gateway_online_verified')
 
             if pam_connection_font_size is not None and str(pam_connection_font_size).strip() != '':
                 fs_int = _pam_connection_font_size_int(pam_connection_font_size)
@@ -1157,15 +1226,20 @@ class PAMLaunchCommand(Command):
                 # Wait for WebRTC connection to be established.
                 # Poll tick defaults to 25ms (was 100ms) — cheap FFI call,
                 # tightens P99 handoff latency. Set PAM_WEBRTC_POLL_MS to override.
+                # Timeout defaults to 30s (was 15s) — accommodates TURN-relay
+                # fallback and failed first-pair retries. Set
+                # PAM_WEBRTC_CONNECT_TIMEOUT_SEC to override.
                 logging.debug("Waiting for WebRTC connection...")
-                max_wait = 15
+                max_wait = webrtc_connect_timeout_sec()
                 start_time = time.time()
                 connected = False
                 poll_tick = webrtc_connection_poll_sec()
+                _last_state = None  # kept for diagnostics when we time out
 
                 while time.time() - start_time < max_wait:
                     try:
                         state = tube_registry.get_connection_state(tube_id)
+                        _last_state = state
                         if state and state.lower() == 'connected':
                             logging.debug(f"✓ WebRTC connection established: {state}")
                             connected = True
@@ -1175,6 +1249,30 @@ class PAMLaunchCommand(Command):
                     time.sleep(poll_tick)
 
                 if not connected:
+                    # Capture tube_status too — it distinguishes "ICE still
+                    # gathering" vs "data channel never opened", which is the
+                    # usual question when a timeout surfaces in QA.
+                    _tube_status = None
+                    try:
+                        if hasattr(tube_registry, 'get_tube_status'):
+                            _tube_status = tube_registry.get_tube_status(tube_id)
+                    except Exception as _e:
+                        logging.debug(f"Could not read tube_status on timeout: {_e}")
+                    # Stop the spinner first so the error does not print on the
+                    # same line as the spinner animation ("[ Establishing secure
+                    # session… ]pam launch: ...").
+                    if _connect_spinner is not None and getattr(_connect_spinner, 'running', False):
+                        try:
+                            _connect_spinner.stop()
+                        except Exception:
+                            pass
+                    logging.error(
+                        'pam launch: WebRTC connection not established within %.1fs '
+                        '(last connection_state=%r, tube_status=%r). ICE negotiation '
+                        'stalled — this is usually transient; please re-run the command. '
+                        'Set PAM_WEBRTC_CONNECT_TIMEOUT_SEC=<seconds> to change the timeout.',
+                        max_wait, _last_state, _tube_status,
+                    )
                     raise CommandError('pam launch', "WebRTC connection not established within timeout")
                 _cli_tc.checkpoint('webrtc_data_plane_connected')
 

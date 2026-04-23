@@ -134,6 +134,28 @@ def webrtc_connection_poll_sec() -> float:
     return max(0.001, ms / 1000.0)
 
 
+_PAM_WEBRTC_CONNECT_TIMEOUT_ENV = 'PAM_WEBRTC_CONNECT_TIMEOUT_SEC'
+_PAM_WEBRTC_CONNECT_TIMEOUT_DEFAULT = 16.0  # seconds — see note below
+
+
+def webrtc_connect_timeout_sec() -> float:
+    """Maximum wall-clock to wait for the WebRTC data plane to reach
+    ``connected`` after ``OpenConnection`` is sent.
+
+    Default 16s — one second above the gateway/guacd side's own 15s connect
+    timeout, so the client times out *just after* the remote side would
+    have, instead of hanging on a dead connection. If peer-to-peer ICE
+    has not settled in that window it is almost certainly stuck (state
+    staying at ``Connecting`` / tube_status ``connecting`` indefinitely);
+    extending the local wait further just makes the user stare at a
+    spinner while the remote side has already given up. Fail fast, let
+    the user re-run ``pam launch`` — the retry typically succeeds on a
+    fresh ICE gathering pass. Set ``PAM_WEBRTC_CONNECT_TIMEOUT_SEC`` to
+    override for targeted diagnostics.
+    """
+    return _env_float(_PAM_WEBRTC_CONNECT_TIMEOUT_ENV, _PAM_WEBRTC_CONNECT_TIMEOUT_DEFAULT)
+
+
 class PamConnectTiming:
     """Monotonic checkpoints for ``pam launch`` / tunnel open (debug or PAM_CONNECT_TIMING=1).
 

@@ -6,6 +6,7 @@ and only while the pam launch CLI terminal session is active.
 """
 
 import logging
+import threading
 
 
 def _rust_webrtc_logger_name(name: str) -> bool:
@@ -106,8 +107,19 @@ def enter_pam_launch_terminal_rust_logging():
     return (flt, saved, _original_logger_class)
 
 
-def exit_pam_launch_terminal_rust_logging(token):
-    """Restore Rust/webrtc logger state after pam launch terminal session. Pass token from enter_pam_launch_terminal_rust_logging()."""
+# Grace period (seconds) between pam-launch session exit and actually removing
+# the Rust/webrtc log filter. The Rust tube shutdown runs on its own runtime
+# threads and can emit a final log record AFTER Python's session-exit path has
+# returned control to the REPL — e.g. ``webrtc-sctp stream N not found`` when
+# the channel is torn down. Without a grace period, that late record arrives
+# at a root logger whose filter has already been removed and leaks to the
+# console. We keep the filter in place for a short window so such stragglers
+# are still suppressed.
+_DEFAULT_RUST_LOG_FILTER_GRACE_SEC = 2.5
+
+
+def _do_exit_rust_logging(token):
+    """Actual restoration — runs on the grace-period timer thread."""
     if not token:
         return
     flt, saved = token[0], token[1]
@@ -141,3 +153,24 @@ def exit_pam_launch_terminal_rust_logging(token):
         log.propagate = propagate
         for h in handlers:
             log.addHandler(h)
+
+
+def exit_pam_launch_terminal_rust_logging(token, grace_sec=_DEFAULT_RUST_LOG_FILTER_GRACE_SEC):
+    """Restore Rust/webrtc logger state after pam launch terminal session.
+
+    The filter is removed after ``grace_sec`` seconds (default 2.5s) so that
+    late records from the Rust runtime (e.g. ``webrtc-sctp`` stream teardown
+    messages that arrive just after session exit) are still caught by the
+    filter and do not leak to the console in front of the subsequent
+    ``My Vault>`` prompt. Pass ``grace_sec=0`` to restore immediately.
+    """
+    if not token:
+        return
+    if grace_sec <= 0:
+        _do_exit_rust_logging(token)
+        return
+    # Daemon thread so Commander can exit cleanly even during grace.
+    timer = threading.Timer(grace_sec, _do_exit_rust_logging, args=(token,))
+    timer.daemon = True
+    timer.name = 'pam-launch-rust-log-filter-release'
+    timer.start()
