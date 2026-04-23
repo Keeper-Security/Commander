@@ -161,10 +161,13 @@ class PamConnectTiming:
         self._last = now
         if not do_log:
             return
-        force = os.environ.get(_TIMING_FORCE_ENV, '').strip().lower() in ('1', 'true', 'yes', 'on')
-        level = logging.INFO if force else logging.DEBUG
+        # Always emit at DEBUG. Commander's ``debug --file`` handler installs an
+        # explicit ``record.levelno != INFO`` filter (cli.py::setup_file_logging)
+        # to keep user-facing INFO prints out of the debug log — which ate our
+        # timing lines when PAM_CONNECT_TIMING=1 previously bumped them to INFO.
+        # DEBUG passes that filter and surfaces cleanly whenever debug mode is on.
         _LOG.log(
-            level,
+            logging.DEBUG,
             '%s | %-44s | +%.1f ms (step) | %.1f ms (total)',
             self._label,
             phase,
@@ -177,6 +180,4 @@ class PamConnectTiming:
         if not connect_timing_log_enabled():
             return
         total_ms = (time.perf_counter() - self._t0) * 1000.0
-        force = os.environ.get(_TIMING_FORCE_ENV, '').strip().lower() in ('1', 'true', 'yes', 'on')
-        level = logging.INFO if force else logging.DEBUG
-        _LOG.log(level, '%s | %-44s | TOTAL %.1f ms', self._label, phase, total_ms)
+        _LOG.log(logging.DEBUG, '%s | %-44s | TOTAL %.1f ms', self._label, phase, total_ms)
