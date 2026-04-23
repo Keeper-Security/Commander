@@ -852,7 +852,7 @@ class RecordGetUidCommand(Command):
         }
         ro['pam_configuration_uid'] = None
         ro['gateway_uid'] = None
-        ro['folder_paths'] = []
+        ro['folder'] = None
         ro['configuration_allowed_settings'] = None
 
         try:
@@ -872,7 +872,12 @@ class RecordGetUidCommand(Command):
                 logging.debug('get gateway for record %s: %s', r.record_uid, e)
                 ro['gateway_uid'] = None
 
-            ro['folder_paths'] = [get_folder_path(params, fuid) for fuid in find_folders(params, r.record_uid)]
+            _first_fuid = next(find_folders(params, r.record_uid), None)
+            if _first_fuid:
+                ro['folder'] = {
+                    'uid': _first_fuid,
+                    'path': get_folder_path(params, _first_fuid),
+                }
 
             cfg_uid = ro['pam_configuration_uid']
             if cfg_uid:
