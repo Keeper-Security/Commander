@@ -1219,8 +1219,9 @@ def route_message_to_rust(response_item, tube_registry):
                                 session = get_tunnel_session(tube_id)
                                 if session and session.buffered_ice_candidates:
                                     if hasattr(session, 'signal_handler') and session.signal_handler:
-                                        for candidate in session.buffered_ice_candidates:
-                                            session.signal_handler._send_ice_candidate_immediately(candidate, tube_id)
+                                        session.signal_handler._send_ice_candidates_batch(
+                                            session.buffered_ice_candidates, tube_id
+                                        )
                                         session.buffered_ice_candidates.clear()
                                     else:
                                         logging.warning(f"No signal handler found for tube {tube_id} to send buffered candidates")
@@ -1576,8 +1577,9 @@ class TunnelSignalHandler:
                     # Flush any buffered ICE candidates now that we're connected
                     if session and session.buffered_ice_candidates:
                         logging.debug(f"Flushing {len(session.buffered_ice_candidates)} buffered ICE candidates")
-                        for candidate in session.buffered_ice_candidates:
-                            self._send_ice_candidate_immediately(candidate, tube_id)
+                        self._send_ice_candidates_batch(
+                            session.buffered_ice_candidates, tube_id
+                        )
                         session.buffered_ice_candidates.clear()
 
             elif new_state == "connecting":
@@ -1911,6 +1913,96 @@ class TunnelSignalHandler:
             else:
                 # Other errors - log at error level
                 logging.error(f"Failed to send ICE candidate via HTTP: {e}")
+
+    def _send_ice_candidates_batch(self, candidates_list, tube_id=None):
+        """Send multiple ICE candidates in a single HTTP POST.
+
+        The gateway already iterates ``for candidate in ice_candidates`` inside
+        ``WebRTCSessionAction.add_ice_candidates_to_conversation_tunnel`` and the
+        per-candidate ``add_ice_candidate`` PyO3 binding is spawn-and-return —
+        so one request with N candidates costs the same server-side as one
+        request with one candidate. Client-side we were paying
+        N * ~500 ms sequential round-trips per flush (measured 7 × ~500 ms =
+        ~3.5 s on a typical launch). Sending them batched collapses the flush
+        window to one round-trip.
+
+        Used by all offer-complete flush sites (streaming offer, non-streaming
+        SDP-answer processing, and the tunnel-start flush paths). The
+        single-candidate live path (``_send_ice_candidate_immediately``) stays
+        on the existing per-candidate call since it is already one request.
+        """
+        if not candidates_list:
+            return
+
+        # CRITICAL: Double-check connection state before sending (connection might have been established)
+        if self.connection_connected:
+            logging.debug(f"Skipping ICE candidate batch send - connection already established")
+            return
+
+        # Set flag to serialize sending (prevent parallel sends)
+        self.ice_sending_in_progress = True
+
+        try:
+            # Wire format matches the documented gateway contract:
+            # WebRTCSessionAction: "The 'data' field must contain: {'candidates': [...]}"
+            candidates_payload = {"candidates": list(candidates_list)}
+            string_data = json.dumps(candidates_payload)
+            bytes_data = string_to_bytes(string_data)
+            encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
+
+            logging.debug(f"Sending {len(candidates_list)} ICE candidates to gateway in one batch")
+
+            # Use same router tokens and session as WebSocket when streaming (ALB stickiness)
+            ice_kwargs = {}
+            if self.trickle_ice and self._router_transmission_key is not None:
+                ice_kwargs = {
+                    "transmission_key": self._router_transmission_key,
+                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
+                    "encrypted_session_token": self._router_encrypted_session_token,
+                }
+            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
+                ice_kwargs["http_session"] = self._http_session
+            router_response = router_send_action_to_gateway(
+                params=self.params,
+                destination_gateway_uid_str=self.gateway_uid,
+                gateway_action=GatewayActionWebRTCSession(
+                    conversation_id=self.conversation_id,
+                    message_id=GatewayAction.conversation_id_to_message_id(self.conversation_id),
+                    inputs={
+                        "recordUid": self.record_uid,
+                        'kind': 'icecandidate',
+                        'base64Nonce': self.base64_nonce,
+                        'conversationType': self.conversation_type,
+                        "data": encrypted_data,
+                        "trickleICE": self.trickle_ice,
+                    }
+                ),
+                message_type=pam_pb2.CMT_CONNECT,
+                is_streaming=self.trickle_ice,  # Streaming only for trickle ICE
+                gateway_timeout=GATEWAY_TIMEOUT,
+                **ice_kwargs
+            )
+
+            if self.trickle_ice:
+                logging.debug(
+                    f"{len(candidates_list)} ICE candidates sent via HTTP POST "
+                    "- response expected via WebSocket"
+                )
+            else:
+                logging.debug(f"{len(candidates_list)} ICE candidates sent via HTTP POST")
+
+        except Exception as e:
+            # Same error classification as the single-candidate path
+            error_str = str(e)
+            is_gateway_offline = 'RRC_CONTROLLER_DOWN' in error_str
+            is_bad_state = 'RRC_BAD_STATE' in error_str
+
+            if is_gateway_offline:
+                logging.debug(f"Gateway offline when sending ICE candidate batch: {e}")
+            elif is_bad_state:
+                logging.debug(f"Bad state when sending ICE candidate batch: {e}")
+            else:
+                logging.error(f"Failed to send ICE candidate batch via HTTP: {e}")
 
     def _send_restart_offer(self, restart_sdp, tube_id):
         """Send ICE restart offer via HTTP POST to /send_controller_message with encryption
@@ -2451,8 +2543,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     logging.warning(f"WebSocket not ready after 5s, flushing candidates anyway")
 
             logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after offer sent")
-            for candidate in tunnel_session.buffered_ice_candidates:
-                signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+            signal_handler._send_ice_candidates_batch(
+                tunnel_session.buffered_ice_candidates, commander_tube_id
+            )
             tunnel_session.buffered_ice_candidates.clear()
 
         # Create an entrance object that can be used to monitor connection status
