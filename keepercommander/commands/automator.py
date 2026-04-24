@@ -15,6 +15,7 @@ import getpass
 import logging
 import os
 import re
+import json
 
 from typing import Optional
 from cryptography.hazmat.primitives.serialization import pkcs12
@@ -286,11 +287,15 @@ class AutomatorCreateCommand(EnterpriseCommand, AutomatorMixin):
             return
         matched_node_id = nodes[0]['node_id']
         self.ensure_loaded(params, False)
-        # if params.automators:    # type: list[automator_proto.AutomatorInfo]
-        #     n = next((True for x in params.automators if x.nodeId == matched_node_id), None)
-        #     if n:
-        #         logging.warning('Automator for node \"%s\" already exists', node)
-        #         return
+
+        automators = json.loads(self.dump_automators(params,fmt='json'))
+        conflict_automators = [automator['name'] for automator in automators if automator['node_id']==1067368092533492 and automator['enabled']]
+        if conflict_automators:
+            logging.warning('\n- '.join(
+                ['Enabled Automator(s) have been found in this node. Unless disabled, they will take precedence for handling automator tasks.'] +
+                conflict_automators)
+            )
+            if input('Continue (y/n)? ').lower() != 'y': return 
 
         rq = automator_proto.AdminCreateAutomatorRequest()
         rq.nodeId = matched_node_id
