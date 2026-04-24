@@ -9,23 +9,23 @@ To get help on a particular command, run:
 `help <command>`
 
 
-| Command                                                 | Description                                                         |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `[kd-mkdir]`                                            | Create a new KeeperDrive folder                                     |
-| `[kd-rndir]`                                            | Rename a folder, change its color, or update permission inheritance |
-| `[kd-list]`                                             | List KeeperDrive folders and records                                |
-| `[kd-rmdir]`                                            | Remove one or more KeeperDrive folders                              |
-| `[kd-share-folder]`                                     | Grant or remove a user's access to a folder                         |
-| `[kd-record-add]`                                       | Create a new KeeperDrive record                                     |
-| `[kd-record-update]`                                    | Update an existing KeeperDrive record                               |
-| `[kd-rm]`                                               | Remove (trash or unlink) one or more KeeperDrive records            |
-| `[kd-ln]`                                               | Link a record into a KeeperDrive folder                             |
-| `[kd-shortcut](#kd-shortcut-command)`                   | Manage records that appear in more than one folder                  |
-| `[kd-share-record](#kd-share-record-command)`           | Grant, update, or revoke a user's access to a record                |
-| `[kd-record-permission](#kd-record-permission-command)` | Bulk-update sharing permissions across records in a folder          |
-| `[kd-transfer-record](#kd-transfer-record-command)`     | Transfer record ownership to another user                           |
-| `[kd-record-details](#kd-record-details-command)`       | Get metadata for one or more records                                |
-| `[kd-get](#kd-get-command)`                             | Show full details for a record or folder                            |
+| Command                  | Description                                                         |
+| ------------------------ | ------------------------------------------------------------------- |
+| `[kd-mkdir]`             | Create a new KeeperDrive folder                                     |
+| `[kd-rndir]`             | Rename a folder, change its color, or update permission inheritance |
+| `[kd-list]`              | List KeeperDrive folders and records                                |
+| `[kd-rmdir]`             | Remove one or more KeeperDrive folders                              |
+| `[kd-share-folder]`      | Grant or remove a user's access to a folder                         |
+| `[kd-record-add]`        | Create a new KeeperDrive record                                     |
+| `[kd-record-update]`     | Update an existing KeeperDrive record                               |
+| `[kd-rm]`                | Remove (trash or unlink) one or more KeeperDrive records            |
+| `[kd-ln]`                | Link a record into a KeeperDrive folder                             |
+| `[kd-shortcut]`          | Manage records that appear in more than one folder                  |
+| `[kd-share-record]`      | Grant, update, or revoke a user's access to a record                |
+| `[kd-record-permission]` | Bulk-update sharing permissions across records in a folder          |
+| `[kd-transfer-record]`   | Transfer record ownership to another user                           |
+| `[kd-record-details]`    | Get metadata for one or more records                                |
+| `[kd-get]`               | Show full details for a record or folder                            |
 
 
 **Permission roles** (used across folder and record sharing commands):
@@ -744,25 +744,7 @@ Both `--expire-at` and `--expire-in` are accepted by `kd-share-folder` and `kd-s
 
 ---
 
-## Troubleshooting
 
-
-| Error                                                   | Likely cause                                      | Fix                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `Folder not found`                                      | Local cache is stale                              | Run `sync-down` then retry                                                     |
-| `Record not found in KeeperDrive cache`                 | Cache is stale                                    | Run `sync-down` then retry                                                     |
-| `User not found`                                        | Wrong email or user not in enterprise             | Check email; run `enterprise-down`                                             |
-| `Record has no decrypted key`                           | Sync incomplete                                   | Run `sync-down`                                                                |
-| `Maximum 100 folders per invocation`                    | Too many folders passed to `kd-rmdir`             | Split into batches of ≤ 100                                                    |
-| `Maximum 500 records per invocation`                    | Too many records passed to `kd-rm`                | Split into batches of ≤ 500                                                    |
-| `--folder is required when --operation is unlink`       | Missing `--folder` for unlink                     | Add `--folder <folder>` to the command                                         |
-| `Ownership can only be transferred to a single account` | Multiple `-e` with `-a owner`                     | Specify only one `-e` email when using `-a owner`                              |
-| `You do not have permission to edit this folder.`       | Insufficient folder rights for `kd-rndir`         | Ask the folder owner / a manager to grant the `update_setting` permission      |
-| `You do not have permission to share this folder.`      | Insufficient folder rights for `kd-share-folder`  | Ask the folder owner / a manager to grant the `update_access` permission       |
-| `You do not have permission to delete this folder.`     | Insufficient folder rights for `kd-rmdir`         | Ask the folder owner / a manager to grant the `delete` permission              |
-| `You do not have edit permissions on this record.`      | Insufficient record rights for `kd-record-update` | Ask the record owner to grant the `edit` permission                            |
-| `You do not have permission to share this record.`      | Insufficient record rights for `kd-share-record`  | Ask the record owner / a share-manager to grant the `update_access` permission |
-| `You do not have permission to delete this record.`     | Insufficient record rights for `kd-rm`            | Ask the record owner to grant the `delete` permission                          |
 
 
 ---
