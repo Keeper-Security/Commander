@@ -936,7 +936,7 @@ class PAMTunnelDiagnoseCommand(Command):
         output_format = kwargs.get('format', 'table')
         test_filter = kwargs.get('test_filter')
 
-        server = 'keepersecurity.us' if server == 'govcloud.keepersecurity.us' else params.server  # e.g. "keepersecurity.com"
+        server = 'keepersecurity.us' if params.server == 'govcloud.keepersecurity.us' else params.server  # e.g. "keepersecurity.com"
         krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server}'
         connect_host = f'connect.{server}'
 
