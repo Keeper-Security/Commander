@@ -1029,7 +1029,7 @@ class PAMTunnelDiagnoseCommand(Command):
         print(row.rstrip())
 
         passed_ports = sum(1 for _, ok, _ in port_results if ok)
-        print(f'    {self._check()}  {self._green(str(passed_ports))}/{len(port_results)} sampled ports reachable')
+        print(f'    {self._check()}'+self._green(f'  {str(passed_ports)}/{len(port_results)} sampled ports reachable'))
         print()
 
         # ── section 4: WebRTC connectivity (Rust library) ─────────────────────
