@@ -17,6 +17,13 @@ from .cli_handler import CommandHandler
 from ..decorators.logging import logger
 from ..util.exceptions import ValidationError
 
+
+SERVICE_CONFIG_RECORD_TITLES = (
+    'Commander Service Mode Config',
+    'Commander Service Mode',
+)
+
+
 class ConfigFormatHandler:
     def __init__(self, config_dir: Path, messages: Dict, validation_messages: Dict):
         self.config_dir = config_dir
@@ -50,13 +57,14 @@ class ConfigFormatHandler:
             
         from ..core.globals import get_current_params
         if params := get_current_params():
-            if self.cli_handler.download_config_from_vault(params, 'Commander Service Mode Config', self.config_dir):
-                if json_path.exists():
-                    self.encrypt_config_file(json_path, self.config_dir)
-                    return 'json'
-                if yaml_path.exists():
-                    self.encrypt_config_file(yaml_path, self.config_dir)
-                    return 'yaml'
+            for title in SERVICE_CONFIG_RECORD_TITLES:
+                if self.cli_handler.download_config_from_vault(params, title, self.config_dir):
+                    if json_path.exists():
+                        self.encrypt_config_file(json_path, self.config_dir)
+                        return 'json'
+                    if yaml_path.exists():
+                        self.encrypt_config_file(yaml_path, self.config_dir)
+                        return 'yaml'
         
         return self._get_format_input() if save_type == 'create' else 'json'
     

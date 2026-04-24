@@ -1,9 +1,12 @@
 import sys
 if sys.version_info >= (3, 8):
     import unittest
+    import tempfile
+    from pathlib import Path
     from unittest.mock import patch, MagicMock
     import json
     from keepercommander.params import KeeperParams
+    from keepercommander.service.config.file_handler import ConfigFormatHandler
     from keepercommander.service.config.service_config import ServiceConfig
     from keepercommander.service.util.exceptions import ValidationError
 
@@ -65,6 +68,32 @@ if sys.version_info >= (3, 8):
                 
                 with self.assertRaises(ValidationError):
                     self.service_config.save_config(self.test_config)
+
+        def test_get_config_format_falls_back_to_legacy_vault_title(self):
+            """Test config recovery from the legacy Service Mode record title."""
+            with tempfile.TemporaryDirectory() as temp_dir:
+                config_dir = Path(temp_dir)
+                handler = ConfigFormatHandler(config_dir, {}, {})
+                params = MagicMock(spec=KeeperParams)
+                download_calls = []
+
+                def download_side_effect(_params, title, _config_dir):
+                    download_calls.append(title)
+                    if title == 'Commander Service Mode':
+                        (config_dir / 'service_config.json').write_text('{}')
+                        return True
+                    return False
+
+                handler.cli_handler = MagicMock()
+                handler.cli_handler.download_config_from_vault.side_effect = download_side_effect
+
+                with patch('keepercommander.service.core.globals.get_current_params', return_value=params), \
+                     patch.object(handler, 'encrypt_config_file') as mock_encrypt:
+                    format_type = handler.get_config_format()
+
+                self.assertEqual(format_type, 'json')
+                self.assertEqual(download_calls, ['Commander Service Mode Config', 'Commander Service Mode'])
+                mock_encrypt.assert_called_once_with(config_dir / 'service_config.json', config_dir)
        
         @unittest.skip
         @patch('pathlib.Path.exists')
