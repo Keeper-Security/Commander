@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 from ..pam_import.base import ConnectionProtocol
+from ..pam_import.keeper_ai_settings import get_resource_jit_settings
 from .connect_timing import (
     PamConnectTiming,
     websocket_backend_delay_sec,
@@ -422,6 +423,10 @@ def extract_terminal_settings(
         'allowSupplyUser': False,
         'allowSupplyHost': False,
         'userRecordUid': None,
+        # JIT: mirrors web vault jitSettings.createEphemeral on the PAM resource graph.
+        # When True the gateway must receive credentialType='ephemeral'; the gateway
+        # re-reads jit_settings from the DAG and creates a temp account on the target.
+        'createEphemeral': False,
     }
 
     # Extract hostname and port from record - enforce single non-empty host/pamHostname field.
@@ -542,6 +547,21 @@ def extract_terminal_settings(
 
             # allowSupplyHost is at top level of pamSettings value, not inside connection
             settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
+
+    # JIT settings live on the PAM resource DAG as an encrypted DATA edge ('jit_settings').
+    # If createEphemeral is true, the gateway requires credentialType='ephemeral' and will
+    # reject 'linked'/'userSupplied'. Failure to read jit_settings is non-fatal — it just
+    # means the record is not JIT-configured, which is the normal path.
+    try:
+        jit = get_resource_jit_settings(params, record_uid)
+        if jit and jit.get('createEphemeral'):
+            settings['createEphemeral'] = True
+            logging.debug(
+                f"Record {record_uid} has jit_settings.createEphemeral=true; "
+                "launch will use 'ephemeral' credential type"
+            )
+    except Exception as e:
+        logging.debug(f"Could not read jit_settings for {record_uid}: {e}")
 
     # Final port fallback to protocol default
     if settings['port'] is None:
@@ -675,6 +695,8 @@ def create_connection_context(params: KeeperParams,
         # Required by the offer-building path to distinguish "flag enabled but nothing supplied"
         # from "flag enabled and user actually provided credentials".
         'cliUserOverride': settings.get('cliUserOverride', False),
+        # JIT: resource is configured for ephemeral/JIT accounts.
+        'createEphemeral': settings.get('createEphemeral', False),
     }
 
     # Add protocol-specific settings
@@ -1068,7 +1090,11 @@ def _build_guacamole_connection_settings(
     # Determine how to get credentials based on credential_type
     # Note: Even for 'userSupplied', if we have user_record_uid (from CLI --credential), extract credentials
     # because guacd_params go directly to guacd via our connect instruction
-    if credential_type == 'userSupplied' and not user_record_uid:
+    if credential_type == 'ephemeral':
+        # JIT: gateway creates the target account and injects creds after guacd handshake.
+        # Do NOT pull creds from the pamMachine record — they'd be wrong and misleading.
+        logging.debug("Using ephemeral credential type - leaving handshake credentials empty for gateway to inject")
+    elif credential_type == 'userSupplied' and not user_record_uid:
         # True user-supplied: no credentials provided at all
         # Note: user may not be able to provide via guacamole prompt since STDIN/STDOUT not open yet
         logging.debug("Using userSupplied credential type with no pamUser - leaving credentials empty")
@@ -1432,19 +1458,24 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             # Do NOT change context["conversationType"] - gateway needs the real protocol type
             logging.debug(f"Set webrtc_settings conversationType to 'python_handler' (gateway will receive: {context['conversationType']})")
 
-            # Determine credential type based on allowSupplyHost, allowSupplyUser flags
-            # This matches gateway validation logic:
-            # - If allowSupplyHost=True: must be 'userSupplied'
-            # - If allowSupplyUser=True and no linked user: use 'userSupplied'
-            # - If linked user present: use 'linked'
+            # Determine credential type based on JIT config and allowSupply* flags.
+            # Mirrors the gateway-side decision in the main offer path below.
+            # Precedence: ephemeral (JIT) > linked > userSupplied > None.
             allow_supply_host = context.get('allowSupplyHost', False)
             allow_supply_user = context.get('allowSupplyUser', False)
             user_record_uid = context.get('userRecordUid')
+            create_ephemeral = context.get('createEphemeral', False)
 
             # credential_type is None when using pamMachine credentials directly (backward compatible)
-            # Priority: if user_record_uid is provided (from CLI or record), use 'linked' to send those credentials
             credential_type = None
-            if user_record_uid:
+            if create_ephemeral:
+                # JIT: gateway will inject ephemeral creds at session start. Leave the
+                # guacd handshake creds empty — _build_guacamole_connection_settings
+                # handles the empty-credential path for ephemeral.
+                credential_type = 'ephemeral'
+                user_record_uid = None
+                logging.debug("Using 'ephemeral' credential type (JIT) for python_handler")
+            elif user_record_uid:
                 # Linked user present (from CLI --credential or record) - use linked credentials
                 credential_type = 'linked'
                 logging.debug(f"Using 'linked' credential type with userRecordUid: {user_record_uid}")
@@ -1716,17 +1747,34 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         user_record_uid = context.get('userRecordUid')
         allow_supply_host = context.get('allowSupplyHost', False)
         allow_supply_user = context.get('allowSupplyUser', False)
+        create_ephemeral = context.get('createEphemeral', False)
 
         # Determine credential type for gateway inputs
-        # Gateway credential types:
+        # Gateway credential types (matches web vault useLaunchHandlers.ts):
+        # - 'ephemeral': JIT — gateway creates a temp account on the target from its own
+        #   decrypted jit_settings (client cannot override). Required when
+        #   jit_settings.createEphemeral=true on the PAM resource graph.
         # - 'linked': Look up credential in DAG (for records with DAG-linked pamUser)
         # - 'userSupplied': Skip DAG lookup, credentials from ConnectAs (-cr) or user prompt
         # - None: Use pamMachine credentials directly
-        # Priority: prefer 'linked' when DAG has credentials (even if allowSupply* is enabled).
-        # Use 'userSupplied' only when no linked credential but allowSupply* enabled.
+        # Precedence: ephemeral (JIT) wins over everything because the gateway enforces
+        # it when createEphemeral is set; sending anything else results in a gateway
+        # rejection. We warn if the user also passed -cr so they know it was ignored.
         credential_type_for_gateway = None
         cli_user_override = context.get('cliUserOverride', False)
-        if cli_user_override:
+        if create_ephemeral:
+            credential_type_for_gateway = 'ephemeral'
+            if cli_user_override:
+                logging.warning(
+                    "Record %s has JIT (createEphemeral=true); --credential override "
+                    "is ignored because the gateway creates an ephemeral account.",
+                    record_uid,
+                )
+            # userRecordUid is meaningless for ephemeral — the gateway ignores it and
+            # generates its own username. Clear it so we don't accidentally send one.
+            user_record_uid = None
+            logging.debug("Using 'ephemeral' credential type for gateway (JIT)")
+        elif cli_user_override:
             # User explicitly supplied a different credential via -cr.
             # The -cr record is NOT DAG-linked to this machine so 'linked' would fail;
             # credentials arrive via the ConnectAs payload (built in launch.py after tunnel opens).
@@ -1763,7 +1811,12 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             }
 
             # Add credential type and userRecordUid based on mode
-            if credential_type_for_gateway == 'linked' and user_record_uid:
+            if credential_type_for_gateway == 'ephemeral':
+                # JIT: gateway re-reads jit_settings from its own DAG and creates a temp
+                # account. Do NOT send userRecordUid (meaningless) or allowSupplyUser
+                # (gateway would interpret as userSupplied and reject ephemeral).
+                inputs['credentialType'] = 'ephemeral'
+            elif credential_type_for_gateway == 'linked' and user_record_uid:
                 inputs['credentialType'] = 'linked'
                 inputs['userRecordUid'] = user_record_uid
             elif credential_type_for_gateway == 'userSupplied':
@@ -1820,6 +1873,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                         'gateway_offer_http_attempt_1' if _oa == 0
                         else 'gateway_offer_http_attempt_{}'.format(_oa + 1)
                     )
+                    # Ephemeral/JIT sessions spend 30-90s on remote account creation on
+                    # the gateway (see TunnelTimeouts.jit_account_creation in the gateway);
+                    # the normal 30s offer timeout is too tight. Default 120s, overridable.
+                    if credential_type_for_gateway == 'ephemeral':
+                        try:
+                            _gw_to = int(os.environ.get('PAM_GATEWAY_OFFER_TIMEOUT_EPHEMERAL_MS', '120000'))
+                        except (TypeError, ValueError):
+                            _gw_to = 120000
+                    else:
+                        _gw_to = 30000
                     try:
                         _resp = router_send_action_to_gateway(
                             params=params,
@@ -1831,7 +1894,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                             ),
                             message_type=pam_pb2.CMT_CONNECT,
                             is_streaming=is_streaming,
-                            gateway_timeout=30000,
+                            gateway_timeout=_gw_to,
                             **extra_kwargs,
                         )
                     except requests.exceptions.RequestException as _re:
