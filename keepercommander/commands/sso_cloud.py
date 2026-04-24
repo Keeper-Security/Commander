@@ -50,6 +50,13 @@ sso_cloud_get_parser.add_argument(
 sso_cloud_get_parser.add_argument(
     '--output', dest='output', action='store', help='Path to output file.')
 
+sso_cloud_guide_parser = argparse.ArgumentParser(
+    prog='sso-cloud-guide', description='Show IdP-specific setup guide for an SSO Cloud configuration.')
+sso_cloud_guide_parser.add_argument('target', help='SSO Service Provider ID or Name.')
+sso_cloud_guide_parser.add_argument(
+    '--config', dest='config', action='store',
+    help='Configuration ID or Name. Defaults to the active configuration.')
+
 sso_cloud_config_list_parser = argparse.ArgumentParser(
     prog='sso-cloud-config-list', description='List configurations for an SSO Cloud service provider.')
 sso_cloud_config_list_parser.add_argument('target', help='SSO Service Provider ID or Name.')
@@ -68,9 +75,13 @@ sso_cloud_create_parser.add_argument('--node', dest='node', required=True,
 sso_cloud_create_parser.add_argument('--config-name', dest='config_name', action='store',
                                      default='Default',
                                      help='Name for the SAML2 configuration (default: "Default").')
+sso_cloud_create_parser.add_argument('--domain', dest='domain', action='store',
+                                     help='SSO Enterprise Domain (used for "Enterprise SSO Login").')
 sso_cloud_create_parser.add_argument('--idp-type', dest='idp_type', action='store', required=True,
                                      choices=IDP_TYPE_CHOICES,
-                                     help='Identity provider type (e.g. okta, azure, auth0, generic).')
+                                     help='Identity provider type.')
+sso_cloud_create_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                                     default='table', help='Output format.')
 
 sso_cloud_upload_parser = argparse.ArgumentParser(
     prog='sso-cloud-upload', description='Upload IdP metadata XML file to an SSO Cloud configuration.')
@@ -79,6 +90,8 @@ sso_cloud_upload_parser.add_argument('--file', dest='file', required=True,
                                      help='Path to the IdP metadata XML file.')
 sso_cloud_upload_parser.add_argument('--config', dest='config', action='store',
                                      help='Configuration ID or Name. Defaults to active configuration.')
+sso_cloud_upload_parser.add_argument('--force-authn', dest='force_authn', action='store_true',
+                                     help='Enable ForceAuthn (forces new IdP login session each time).')
 
 sso_cloud_download_parser = argparse.ArgumentParser(
     prog='sso-cloud-download', description='Download Keeper SP metadata XML file.')
@@ -212,10 +225,14 @@ def register_command_info(aliases, command_info):
 class SsoCloudCommand(GroupCommand):
     def __init__(self):
         super(SsoCloudCommand, self).__init__()
-        self.register_command('list', SsoCloudListCommand(), 'List SSO Cloud service providers.')
-        self.register_command('get', SsoCloudGetCommand(), 'View SSO Cloud configuration details.')
         self.register_command('create', SsoCloudCreateCommand(),
                               'Create a new SSO Cloud service provider and configuration.')
+        self.register_command('get', SsoCloudGetCommand(), 'View SSO Cloud configuration details.')
+        self.register_command('guide', SsoCloudGuideCommand(),
+                              'Show IdP-specific setup guide.')
+        self.register_command('list', SsoCloudListCommand(), 'List SSO Cloud service providers.')
+        self.register_command('config-list', SsoCloudConfigListCommand(),
+                              'List configurations for an SSO service provider.')
         self.register_command('upload', SsoCloudUploadMetadataCommand(),
                               'Upload IdP metadata XML to an SSO configuration.')
         self.register_command('download', SsoCloudDownloadMetadataCommand(),
@@ -230,73 +247,108 @@ class SsoCloudCommand(GroupCommand):
                               'View SAML log entries.')
         self.register_command('log-clear', SsoCloudLogClearCommand(),
                               'Clear SAML log entries.')
-        self.register_command('config-list', SsoCloudConfigListCommand(),
-                              'List configurations for an SSO service provider.')
         self.default_verb = 'list'
 
 
+AUTH0_SAML_JSON_TEMPLATE = """\
+{{
+  "audience": "{entity_id}",
+  "mappings": {{
+    "email": "Email",
+    "given_name": "First",
+    "family_name": "Last"
+  }},
+  "createUpnClaim": false,
+  "passthroughClaimsWithNoMapping": false,
+  "mapUnknownClaimsAsIs": false,
+  "mapIdentities": false,
+  "nameIdentifierFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+  "nameIdentifierProbes": [
+    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+  ]
+}}"""
+
 IDP_SETUP_GUIDANCE = {
     'auth0': {
-        'portal': 'Auth0 Admin Portal',
+        'portal_name': 'Auth0',
+        'portal_url': 'https://manage.auth0.com',
         'steps': [
-            'Go to Applications > Create Application > Regular Web App',
-            'Enable Addons > SAML2 WEB APP',
-            'Paste ACS Endpoint into "Application Callback URL"',
-            'Set "audience" to Entity ID in the SAML2 JSON config',
-            'Set attribute mappings: email->Email, given_name->First, family_name->Last',
-            'Save, then go to Usage tab > Download IdP Metadata XML',
+            ('idp',   'Go to Applications > Create Application > Regular Web App'),
+            ('idp',   'Enable Addons > SAML2 WEB APP'),
+            ('idp',   'In the Usage tab > Download IdP Metadata XML'),
+            ('idp',   'In the Settings tab > paste the ACS Endpoint into "Application Callback URL":'),
+            ('value', '{acs_endpoint}'),
+            ('idp',   'Replace the Settings editor JSON with the below (Entity ID pre-filled in audience):'),
+            ('json',  '{auth0_json}'),
+            ('idp',   'Click "Debug" to verify, then Save'),
+            ('cmd',   'sso-cloud upload "{name}" --file <downloaded-metadata.xml>'),
         ],
-        'fields': 'Entity ID (audience), ACS Endpoint (Callback URL)',
     },
     'azure': {
-        'portal': 'Azure Entra Admin Center',
+        'portal_name': 'Azure Entra ID',
+        'portal_url': 'https://portal.azure.com',
         'steps': [
-            'Go to Enterprise Applications > New Application > Create your own application',
-            'Select "Integrate any other application" > Create',
-            'Go to Single sign-on > SAML',
-            'In Basic SAML Configuration: paste Entity ID into "Identifier (Entity ID)"',
-            'Paste ACS Endpoint into "Reply URL (Assertion Consumer Service URL)"',
-            'Paste Login Endpoint into "Sign on URL"',
-            'In Attributes & Claims: verify email, first name, last name mappings',
-            'Download Federation Metadata XML from SAML Signing Certificates',
+            ('cmd',   'sso-cloud download "{name}" --output sp-metadata.xml'),
+            ('idp',   'In Azure portal, navigate to Microsoft Entra ID'),
+            ('idp',   'Go to Enterprise Applications > New Application'),
+            ('idp',   'Search "Keeper Password Manager" > Create'),
+            ('idp',   'Go to Set up Single sign-on > SAML'),
+            ('idp',   'Click "Upload metadata file" and upload sp-metadata.xml'),
+            ('note',  'Azure auto-fills Entity ID and Reply URL from the metadata'),
+            ('idp',   'Paste the IdP Initiated Login Endpoint into "Sign on URL":'),
+            ('value', '{idp_login_endpoint}'),
+            ('idp',   'Save the Basic SAML Configuration'),
+            ('idp',   'Click on "No, I\'ll test later" when asked for the test SSO login'),
+            ('idp',   'In Attributes & Claims card> Edit: delete the 4 extra Additional Claims'),
+            ('note',  'Verify: NameID/Email = user.userprincipalname (or user.mail)'),
+            ('idp',   'Reload page, under SAML Signing Certificate > Download "Federation Metadata XML"'),
+            ('cmd',   'sso-cloud upload "{name}" --file <federation-metadata.xml> --force-authn'),
         ],
-        'fields': 'Entity ID (Identifier), ACS Endpoint (Reply URL), Login Endpoint (Sign on URL)',
     },
     'okta': {
-        'portal': 'Okta Admin Console',
+        'portal_name': 'Okta',
+        'portal_url': 'https://login.okta.com',
         'steps': [
-            'Go to Applications > Create App Integration > SAML 2.0',
-            'Paste ACS Endpoint into "Single sign-on URL"',
-            'Paste Entity ID into "Audience URI (SP Entity ID)"',
-            'Set Name ID format to EmailAddress',
-            'Configure attribute statements: Email, First, Last',
-            'Finish setup, then go to Sign On tab > Download IdP Metadata',
+            ('idp',   'Go to Applications > Create App Integration > SAML 2.0'),
+            ('idp',   'Paste the ACS Endpoint into "Single sign-on URL":'),
+            ('value', '{acs_endpoint}'),
+            ('idp',   'Paste the Entity ID into "Audience URI (SP Entity ID)":'),
+            ('value', '{entity_id}'),
+            ('idp',   'Set Name ID format to EmailAddress'),
+            ('idp',   'Add attribute statements: Email, First, Last'),
+            ('idp',   'Finish, then go to Sign On tab > Download IdP Metadata'),
+            ('cmd',   'sso-cloud upload "{name}" --file <metadata.xml>'),
         ],
-        'fields': 'Entity ID (Audience URI), ACS Endpoint (Single sign-on URL)',
     },
     'google': {
-        'portal': 'Google Workspace Admin Console',
+        'portal_name': 'Google Workspace',
+        'portal_url': 'https://admin.google.com',
         'steps': [
-            'Go to Apps > Web and mobile apps > Add App > Add custom SAML app',
-            'Download IdP Metadata from the Google IdP Information step',
-            'Paste ACS Endpoint into "ACS URL"',
-            'Paste Entity ID into "Entity ID"',
-            'Set Name ID format to EMAIL',
-            'Add attribute mappings for email, first name, last name',
+            ('idp',   'Go to Apps > Web and mobile apps > Add App > Add custom SAML app'),
+            ('idp',   'Download IdP Metadata from the Google IdP Information step'),
+            ('idp',   'Paste the ACS Endpoint into "ACS URL":'),
+            ('value', '{acs_endpoint}'),
+            ('idp',   'Paste the Entity ID into "Entity ID":'),
+            ('value', '{entity_id}'),
+            ('idp',   'Set Name ID format to EMAIL'),
+            ('idp',   'Add attribute mappings for email, first name, last name'),
+            ('cmd',   'sso-cloud upload "{name}" --file <google-idp-metadata.xml>'),
         ],
-        'fields': 'Entity ID, ACS Endpoint (ACS URL)',
     },
     'jumpcloud': {
-        'portal': 'JumpCloud Admin Console',
+        'portal_name': 'JumpCloud',
+        'portal_url': 'https://console.jumpcloud.com',
         'steps': [
-            'Go to SSO Applications > Add New Application > Custom SAML App',
-            'Paste ACS Endpoint into "ACS URL"',
-            'Paste Entity ID into "SP Entity ID"',
-            'Set SAMLSubject NameID to email',
-            'Configure attribute mappings for email, first name, last name',
-            'Activate the application, then download IdP Metadata',
+            ('idp',   'Go to SSO Applications > Add New Application > Custom SAML App'),
+            ('idp',   'Paste the ACS Endpoint into "ACS URL":'),
+            ('value', '{acs_endpoint}'),
+            ('idp',   'Paste the Entity ID into "SP Entity ID":'),
+            ('value', '{entity_id}'),
+            ('idp',   'Set SAMLSubject NameID to email'),
+            ('idp',   'Add attribute mappings for email, first name, last name'),
+            ('idp',   'Activate the application, then download IdP Metadata'),
+            ('cmd',   'sso-cloud upload "{name}" --file <metadata.xml>'),
         ],
-        'fields': 'Entity ID (SP Entity ID), ACS Endpoint (ACS URL)',
     },
 }
 
@@ -323,6 +375,8 @@ IDP_TYPE_NAME_TO_ENUM = {
     'hypr': ssocloud.HYPR,
     'cas': ssocloud.CAS,
 }
+
+IDP_ENUM_TO_KEY = {v: k for k, v in IDP_TYPE_NAME_TO_ENUM.items()}
 
 
 class SsoCloudMixin(object):
@@ -353,7 +407,9 @@ class SsoCloudMixin(object):
             raise CommandError('sso-cloud',
                                f'Multiple SSO service providers match "{target}". Use the SP ID instead.')
 
-        raise CommandError('sso-cloud', f'SSO Service Provider "{target}" not found.')
+        raise CommandError('sso-cloud',
+                           f'SSO Service Provider "{target}" not found. '
+                           f'Run "ed -f" to refresh enterprise data, then "sso list" to verify.')
 
     @staticmethod
     def ensure_cloud_sso(svc, target=''):
@@ -386,7 +442,10 @@ class SsoCloudMixin(object):
             params, list_rq, 'sso/config/sso_cloud_sp_configuration_get',
             rs_type=ssocloud.SsoCloudServiceProviderConfigurationListResponse)
 
-        if not list_rs.configurationItem:
+        owned = [c for c in list_rs.configurationItem
+                 if not c.ssoServiceProviderId or sp_id in c.ssoServiceProviderId]
+
+        if not owned:
             raise CommandError('sso-cloud', f'No configurations found for SP ID {sp_id}.')
 
         config_item = None
@@ -394,13 +453,13 @@ class SsoCloudMixin(object):
             try:
                 config_id = int(config_target)
                 config_item = next(
-                    (c for c in list_rs.configurationItem if c.ssoSpConfigurationId == config_id), None)
+                    (c for c in owned if c.ssoSpConfigurationId == config_id), None)
             except ValueError:
                 pass
 
             if not config_item:
                 config_lower = config_target.lower()
-                matches = [c for c in list_rs.configurationItem if c.name.lower() == config_lower]
+                matches = [c for c in owned if c.name.lower() == config_lower]
                 if len(matches) == 1:
                     config_item = matches[0]
                 elif len(matches) > 1:
@@ -410,9 +469,9 @@ class SsoCloudMixin(object):
             if not config_item:
                 raise CommandError('sso-cloud', f'Configuration "{config_target}" not found.')
         else:
-            config_item = next((c for c in list_rs.configurationItem if c.isSelected), None)
+            config_item = next((c for c in owned if c.isSelected), None)
             if not config_item:
-                config_item = list_rs.configurationItem[0]
+                config_item = owned[0]
 
         get_rq = ssocloud.SsoCloudConfigurationRequest()
         get_rq.ssoServiceProviderId = sp_id
@@ -439,47 +498,85 @@ class SsoCloudMixin(object):
         return value
 
     @staticmethod
-    def show_idp_guidance(config_rs):
-        # type: (ssocloud.SsoCloudConfigurationResponse) -> None
-        """Show IdP-specific setup guidance based on the sso_idp_type_id setting."""
-        idp_type_name = None
+    def _extract_sp_values(config_rs):
+        # type: (ssocloud.SsoCloudConfigurationResponse) -> dict
+        keys = ('sso_sp_entity_id', 'sso_sp_acs_endpoint', 'sso_sp_login_endpoint',
+                'sso_sp_logout_endpoint', 'sso_sp_slo_endpoint',
+                'sso_idp_initiated_login_endpoint', 'sso_sp_domain')
+        result = {}
+        for sv in config_rs.ssoCloudSettingValue:
+            if sv.settingName in keys:
+                result[sv.settingName] = sv.value or ''
+        return result
+
+    @staticmethod
+    def _get_idp_type_name(config_rs):
+        # type: (ssocloud.SsoCloudConfigurationResponse) -> Optional[str]
         for sv in config_rs.ssoCloudSettingValue:
             if sv.settingName == 'sso_idp_type_id' and sv.value:
                 try:
-                    idp_type_id = int(sv.value)
-                    idp_type_name = IDP_TYPE_NAMES.get(idp_type_id, '').lower()
+                    return IDP_ENUM_TO_KEY.get(int(sv.value))
                 except (ValueError, TypeError):
                     pass
-                break
+        return None
+
+    @staticmethod
+    def show_idp_guidance(config_rs, sp_name=''):
+        # type: (ssocloud.SsoCloudConfigurationResponse, str) -> None
+        """Show IdP-specific setup guidance with formatted output."""
+        idp_type_name = SsoCloudMixin._get_idp_type_name(config_rs)
         if not idp_type_name:
             return
         guidance = IDP_SETUP_GUIDANCE.get(idp_type_name)
         if not guidance:
             return
 
-        entity_id = ''
-        acs_endpoint = ''
-        login_endpoint = ''
-        for sv in config_rs.ssoCloudSettingValue:
-            if sv.settingName == 'sso_sp_entity_id':
-                entity_id = sv.value or ''
-            elif sv.settingName == 'sso_sp_acs_endpoint':
-                acs_endpoint = sv.value or ''
-            elif sv.settingName == 'sso_sp_login_endpoint':
-                login_endpoint = sv.value or ''
+        sp = SsoCloudMixin._extract_sp_values(config_rs)
+        portal = guidance['portal_name']
+        display_name = sp_name or str(config_rs.ssoServiceProviderId)
 
-        logging.info('--- %s Setup Guide ---', guidance['portal'])
-        logging.info('Required fields: %s', guidance['fields'])
-        if entity_id:
-            logging.info('  Entity ID:        %s', entity_id)
-        if acs_endpoint:
-            logging.info('  ACS Endpoint:     %s', acs_endpoint)
-        if login_endpoint and idp_type_name in ('azure', 'okta'):
-            logging.info('  Login Endpoint:   %s', login_endpoint)
-        logging.info('')
-        for i, step in enumerate(guidance['steps'], 1):
-            logging.info('  %d. %s', i, step)
-        logging.info('')
+        vals = {
+            'name': display_name,
+            'entity_id': sp.get('sso_sp_entity_id', ''),
+            'acs_endpoint': sp.get('sso_sp_acs_endpoint', ''),
+            'login_endpoint': sp.get('sso_sp_login_endpoint', ''),
+            'idp_login_endpoint': sp.get('sso_idp_initiated_login_endpoint', ''),
+            'slo_endpoint': sp.get('sso_sp_slo_endpoint', ''),
+            'auth0_json': AUTH0_SAML_JSON_TEMPLATE.format(
+                entity_id=sp.get('sso_sp_entity_id', '<ENTITY_ID>')),
+        }
+
+        BAR = '─' * 60
+        CMD_TAG = '[Commander]'
+        IDP_TAG = f'[{portal}]'
+
+        print('')
+        print(f'{portal} SSO Setup Guide')
+        print(BAR)
+        print(guidance.get('portal_url', ''))
+        print('')
+
+        step_num = 0
+        for kind, text in guidance['steps']:
+            filled = text.format(**vals)
+
+            if kind == 'value':
+                print(f'   {filled}')
+                print('')
+            elif kind == 'json':
+                for json_line in filled.splitlines():
+                    print(f'   {json_line}')
+                print('')
+            elif kind == 'note':
+                print(f'   * {filled}')
+            elif kind == 'cmd':
+                step_num += 1
+                print(f'{step_num:>2}. {CMD_TAG}  My Vault> {filled}')
+            else:
+                step_num += 1
+                print(f'{step_num:>2}. {IDP_TAG}  {filled}')
+
+        print('')
 
     @staticmethod
     def dump_configuration(config_rs, fmt=None, filename=None):
@@ -599,8 +696,19 @@ class SsoCloudGetCommand(EnterpriseCommand, SsoCloudMixin):
         config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
         self.dump_configuration(config_rs, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
-        if kwargs.get('format') != 'json':
-            self.show_idp_guidance(config_rs)
+
+class SsoCloudGuideCommand(EnterpriseCommand, SsoCloudMixin):
+    def get_parser(self):
+        return sso_cloud_guide_parser
+
+    def execute(self, params, **kwargs):
+        target = kwargs.get('target')
+        svc = self.find_sso_service(params, target)
+        sp_id = svc['sso_service_provider_id']
+        self.ensure_cloud_sso(svc, target)
+
+        config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
+        self.show_idp_guidance(config_rs, sp_name=svc.get('name', target))
 
 
 class SsoCloudConfigListCommand(EnterpriseCommand, SsoCloudMixin):
@@ -624,6 +732,8 @@ class SsoCloudConfigListCommand(EnterpriseCommand, SsoCloudMixin):
         if fmt and fmt != 'json':
             headers = [field_to_title(x) for x in headers]
         for item in list_rs.configurationItem:
+            if item.ssoServiceProviderId and sp_id not in item.ssoServiceProviderId:
+                continue
             table.append([item.ssoSpConfigurationId, item.name, item.isSelected])
         return dump_report_data(table, headers=headers, fmt=fmt, filename=kwargs.get('output'))
 
@@ -686,46 +796,67 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
         config_id = config_rs.ssoSpConfigurationId
         logging.info('SAML2 Configuration created: "%s" (ID: %s)', config_name, config_id)
 
-        # Step 3: Set IdP type (now required)
+        # Step 3: Set initial configuration settings (IdP type, domain)
+        setting_rq = ssocloud.SsoCloudConfigurationRequest()
+        setting_rq.ssoServiceProviderId = sp_id
+        setting_rq.ssoSpConfigurationId = config_id
+
         idp_type_name = kwargs['idp_type']
         idp_type_enum = IDP_TYPE_NAME_TO_ENUM.get(idp_type_name.lower())
         if idp_type_enum is not None:
-            setting_rq = ssocloud.SsoCloudConfigurationRequest()
-            setting_rq.ssoServiceProviderId = sp_id
-            setting_rq.ssoSpConfigurationId = config_id
             action = ssocloud.SsoCloudSettingAction()
             action.settingName = 'sso_idp_type_id'
             action.operation = ssocloud.SET
             action.value = str(idp_type_enum)
             setting_rq.ssoCloudSettingAction.append(action)
+
+        domain = kwargs.get('domain')
+        if domain:
+            action = ssocloud.SsoCloudSettingAction()
+            action.settingName = 'sso_sp_domain'
+            action.operation = ssocloud.SET
+            action.value = domain
+            setting_rq.ssoCloudSettingAction.append(action)
+
+        if setting_rq.ssoCloudSettingAction:
             api.communicate_rest(
                 params, setting_rq, 'sso/config/sso_cloud_configuration_setting_set',
                 rs_type=ssocloud.SsoCloudConfigurationResponse)
-            logging.info('IdP type set to: %s', IDP_TYPE_NAMES.get(idp_type_enum, idp_type_name))
+            if idp_type_enum is not None:
+                logging.info('IdP type set to: %s', IDP_TYPE_NAMES.get(idp_type_enum, idp_type_name))
+            if domain:
+                logging.info('Enterprise domain set to: %s', domain)
 
         # Refresh enterprise data to pick up the new SP
         api.query_enterprise(params, force=True)
 
-        # Show IdP-specific next steps
-        logging.info('')
-        logging.info('--- Next Steps ---')
-        logging.info('1. Run: sso-cloud get "%s"  to view SP endpoints', name)
-
-        guidance = IDP_SETUP_GUIDANCE.get(idp_type_name.lower())
-        if guidance:
-            logging.info('')
-            logging.info('   %s Configuration (%s):', guidance['portal'], guidance['fields'])
-            for i, step in enumerate(guidance['steps'], 1):
-                logging.info('   %d. %s', i, step)
-            logging.info('')
+        fmt = kwargs.get('format')
+        if fmt == 'json':
+            import json as json_mod
+            result = {
+                'sso_service_provider_id': sp_id,
+                'name': name,
+                'node_id': node_id,
+                'config_id': config_id,
+                'config_name': config_name,
+                'idp_type': idp_type_name,
+            }
+            if domain:
+                result['domain'] = domain
+            try:
+                config_rs = self.get_selected_configuration(params, sp_id)
+                settings = {}
+                for sv in config_rs.ssoCloudSettingValue:
+                    settings[sv.settingName] = sv.value or ''
+                result['settings'] = settings
+            except Exception:
+                pass
+            print(json_mod.dumps(result, indent=2))
         else:
-            logging.info('2. Configure your IdP with Entity ID and ACS Endpoint from the get output')
-            logging.info('3. Download IdP metadata XML from your IdP')
-
-        logging.info('Then upload IdP metadata:')
-        logging.info('   sso-cloud upload "%s" --file <metadata.xml>', name)
-        logging.info('Finally validate:')
-        logging.info('   sso-cloud validate "%s"', name)
+            logging.info('')
+            logging.info('Next steps:')
+            logging.info('  sso-cloud guide "%s"     View IdP-specific setup instructions', name)
+            logging.info('  sso-cloud get "%s"       View configuration details & endpoints', name)
 
 
 class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
@@ -776,6 +907,20 @@ class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
             logging.info('File "%s" uploaded to configuration "%s" (ID: %s).',
                          filename, config_rs.name, config_id)
 
+        if kwargs.get('force_authn'):
+            setting_rq = ssocloud.SsoCloudConfigurationRequest()
+            setting_rq.ssoServiceProviderId = sp_id
+            setting_rq.ssoSpConfigurationId = config_id
+            action = ssocloud.SsoCloudSettingAction()
+            action.settingName = 'sso_idp_force_login_mode'
+            action.operation = ssocloud.SET
+            action.value = 'true'
+            setting_rq.ssoCloudSettingAction.append(action)
+            api.communicate_rest(
+                params, setting_rq, 'sso/config/sso_cloud_configuration_setting_set',
+                rs_type=ssocloud.SsoCloudConfigurationResponse)
+            logging.info('ForceAuthn enabled.')
+
 
 class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
     def get_parser(self):
@@ -789,9 +934,9 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         self.ensure_cloud_sso(svc, target)
 
         server_base = params.rest_context.server_base
-        if server_base.endswith('/'):
-            server_base = server_base[:-1]
-        metadata_url = f'{server_base}/api/rest/sso/saml/metadata/{sp_id}'
+        if not server_base.endswith('/'):
+            server_base += '/'
+        metadata_url = f'{server_base}sso/saml/metadata/{sp_id}'
 
         rs = http_requests.get(metadata_url, timeout=30)
         if rs.status_code != 200:
