@@ -424,15 +424,19 @@ class PAMProjectExtendCommand(Command):
         if not (configuration and isinstance(configuration, vault.TypedRecord) and configuration.version == 6):
             raise CommandError("pam project extend", f"""PAM configuration not found: "{config_name}" """)
 
-        if not (file_name != "" and os.path.isfile(file_name)):
-            raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
-
         data = {}
-        try:
-            with open(file_name, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+        if not (file_name != "" and os.path.isfile(file_name)):
+            try:
+                data = json.loads(file_name)
+            except ValueError as e:
+                raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
+        
+        if not data:
+            try:
+                with open(file_name, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                raise CommandError("pam project extend", f"""Unable to read file "{file_name}": {e}""")
 
         pam_data = data.get("pam_data") if isinstance(data, dict) else {}
         pam_data = pam_data if isinstance(pam_data, dict) else {}
