@@ -3,6 +3,7 @@ import enum
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import string
@@ -52,6 +53,54 @@ except ImportError:
         ConnectionClosed = None
         WEBSOCKETS_VERSION = None
         print("websockets library not available - install with: pip install websockets", file=sys.stderr)
+
+# Regex for SDP attribute: a=keeper-webrtc:X.Y.Z (injected by keeper-pam-webrtc-rs)
+_KEEPER_WEBRTC_VERSION_RE = re.compile(r"a=keeper-webrtc:(\S+)", re.IGNORECASE)
+
+
+def parse_keeper_webrtc_version_from_sdp(sdp):
+    """
+    Parse keeper-pam-webrtc-rs version from SDP attribute a=keeper-webrtc:X.Y.Z.
+
+    The attribute is injected by the Rust module in both offer and answer.
+    Handles SDP that may be base64-encoded.
+
+    Args:
+        sdp: SDP string (plain or base64-encoded).
+
+    Returns:
+        Version string (e.g. "2.1.4") or None if not found.
+    """
+    if not sdp or not isinstance(sdp, str):
+        return None
+    text = sdp
+    if "\n" not in sdp and "\r" not in sdp and len(sdp) > 20:
+        try:
+            decoded = base64.b64decode(sdp, validate=True)
+            text = decoded.decode("utf-8", errors="replace")
+        except Exception:
+            pass
+    m = _KEEPER_WEBRTC_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def set_remote_description_and_parse_version(tube_registry, tube_id, sdp, is_answer):
+    """
+    Call tube_registry.set_remote_description and parse/store remote keeper-pam-webrtc
+    version when is_answer=True. Ensures version is always parsed regardless of which
+    code path delivered the SDP (WebSocket, HTTP, different JSON keys).
+    Returns the parsed version or None.
+    """
+    tube_registry.set_remote_description(tube_id, sdp, is_answer=is_answer)
+    remote_ver = None
+    if is_answer:
+        remote_ver = parse_keeper_webrtc_version_from_sdp(sdp)
+        session = get_tunnel_session(tube_id)
+        if session and remote_ver:
+            session.remote_webrtc_version = remote_ver
+            logging.debug("Remote keeper-pam-webrtc version from SDP: %s", remote_ver)
+    return remote_ver
+
 
 # Constants
 NONCE_LENGTH = 12
