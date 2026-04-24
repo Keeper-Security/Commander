@@ -463,9 +463,6 @@ class ApplyMembershipCommand(Command):
 
     def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
-        if not os.path.exists(file_name):
-            logging.warning('Shared folder membership file "%s" not found', file_name)
-            return
 
         shared_folders = []  # type: List[SharedFolder]
         teams = []     # type: List[Team]

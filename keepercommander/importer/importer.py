@@ -400,15 +400,18 @@ class BaseFileImporter(BaseImporter, abc.ABC):
 
     def execute(self, name, **kwargs):
         # type: (str, ...) -> Iterable[Union[Record, SharedFolder, File]]
+        try:
+            json.loads(name)
+            path = name
+        except ValueError as e:    
+            path = os.path.expanduser(name)
+            if not os.path.isfile(path):
+                ext = self.extension()
+                if ext:
+                    path = path + '.' + ext
 
-        path = os.path.expanduser(name)
-        if not os.path.isfile(path):
-            ext = self.extension()
-            if ext:
-                path = path + '.' + ext
-
-        if not os.path.isfile(path):
-            raise CommandError('import', f'File \'{name}\' does not exist')
+            if not os.path.isfile(path):
+                raise CommandError('import', f'File \'{name}\' does not exist')
 
         yield from self.do_import(path, **kwargs)
 
