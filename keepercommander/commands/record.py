@@ -846,16 +846,62 @@ class RecordGetUidCommand(Command):
             'rotation': None,
             'sessionRecording': None,
             'typescriptRecording': None,
-            'remoteBrowserIsolation': None
+            'remoteBrowserIsolation': None,
+            'aiEnabled': None,
+            'aiSessionTerminate': None,
         }
+        ro['pam_configuration_uid'] = None
+        ro['gateway_uid'] = None
+        ro['folder'] = None
+        ro['configuration_allowed_settings'] = None
 
         try:
             # Get keeper tokens for DAG access
-            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-            from .tunnel.port_forward.TunnelGraph import TunnelDAG
+            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens, get_config_uid, get_gateway_uid_from_record
+            from .tunnel.port_forward.TunnelGraph import TunnelDAG, get_vertex_content
             from ..keeper_dag import EdgeType
 
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+
+            ro['pam_configuration_uid'] = get_config_uid(
+                params, encrypted_session_token, encrypted_transmission_key, r.record_uid) or None
+            try:
+                _gw = get_gateway_uid_from_record(params, vault, r.record_uid)
+                ro['gateway_uid'] = _gw if _gw else None
+            except Exception as e:
+                logging.debug('get gateway for record %s: %s', r.record_uid, e)
+                ro['gateway_uid'] = None
+
+            _first_fuid = next(find_folders(params, r.record_uid), None)
+            if _first_fuid:
+                ro['folder'] = {
+                    'uid': _first_fuid,
+                    'path': get_folder_path(params, _first_fuid),
+                }
+
+            cfg_uid = ro['pam_configuration_uid']
+            if cfg_uid:
+                try:
+                    cfg_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, cfg_uid,
+                                        is_config=True, transmission_key=transmission_key)
+                    cfg_dag.linking_dag.load()
+                    cfg_vertex = cfg_dag.linking_dag.get_vertex(cfg_uid)
+                    cfg_content = get_vertex_content(cfg_vertex) if cfg_vertex else None
+                    ca = (cfg_content or {}).get('allowedSettings')
+                    if ca is not None and isinstance(ca, dict):
+                        ro['configuration_allowed_settings'] = {
+                            'connections': ca.get('connections'),
+                            'tunneling': ca.get('portForwards'),
+                            'rotation': ca.get('rotation'),
+                            'connections_recording': ca.get('sessionRecording'),
+                            'typescript_recording': ca.get('typescriptRecording'),
+                            'remote_browser_isolation': ca.get('remoteBrowserIsolation'),
+                            'ai_threat_detection': ca.get('aiEnabled'),
+                            'ai_terminate_session_on_detection': ca.get('aiSessionTerminate'),
+                        }
+                except Exception as e:
+                    logging.debug('PAM config allowedSettings for %s: %s', cfg_uid, e)
+
             tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid,
                              transmission_key=transmission_key)
 
@@ -889,6 +935,8 @@ class RecordGetUidCommand(Command):
                         ro['pamSettingsEnabled']['sessionRecording'] = allowed_settings.get('sessionRecording')
                         ro['pamSettingsEnabled']['typescriptRecording'] = allowed_settings.get('typescriptRecording')
                         ro['pamSettingsEnabled']['remoteBrowserIsolation'] = allowed_settings.get('remoteBrowserIsolation')
+                        ro['pamSettingsEnabled']['aiEnabled'] = allowed_settings.get('aiEnabled')
+                        ro['pamSettingsEnabled']['aiSessionTerminate'] = allowed_settings.get('aiSessionTerminate')
             except Exception as e:
                 ro['dagDebug']['content_error'] = str(e)
 
