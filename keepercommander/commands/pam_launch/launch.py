@@ -611,6 +611,11 @@ class PAMLaunchCommand(Command):
                 from ..workflow import check_workflow_and_prompt_2fa
                 should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
                 if not should_proceed:
+                    logging.error(
+                        "pam launch aborted for record %s: workflow access is not allowed for connect, "
+                        "or workflow requires MFA and no valid MFA response was provided.",
+                        record_uid,
+                    )
                     return
                 if two_factor_value:
                     kwargs['two_factor_value'] = two_factor_value
