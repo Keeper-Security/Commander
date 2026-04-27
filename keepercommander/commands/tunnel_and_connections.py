@@ -143,9 +143,17 @@ class PAMTunnelListCommand(Command):
 
 
 class PAMTunnelStopCommand(Command):
+    # Note on workflow lease lifecycle: stopping a tunnel intentionally does
+    # NOT call end_workflow on the workflow lease. This matches the web vault
+    # (ConnectionManager.ts:268-303 stops the connection but never releases
+    # the lease). The workflow lease and the tunnel are decoupled — one
+    # checkout window may host many sequential or concurrent tunnels — and
+    # the lease ends via either expiresOn server-side expiry or an explicit
+    # `pam workflow end`. Releasing here would clobber leases the user
+    # checked out manually via `pam workflow start`.
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
     pam_cmd_parser.add_argument('uid', type=str, action='store', nargs='?', help='The Tunnel ID, Conversation ID, or Record UID (omit with --all to stop all tunnels)')
-    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true', 
+    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true',
                                 help='Stop all tunnels (if no UID) or all tunnels matching the UID (if UID provided)')
 
     def get_parser(self):
@@ -569,7 +577,13 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
-        # Workflow access check and 2FA prompt
+        # Workflow access check and 2FA prompt.
+        # Lease lifecycle: when the gate finds WS_READY_TO_START it may
+        # auto-checkout (Phase 2.2), but stopping the tunnel does NOT
+        # release the resulting lease — see PAMTunnelStopCommand. This
+        # mirrors the web vault: one approval window can host many
+        # sequential/concurrent tunnels until expiresOn fires server-side
+        # or the user runs `pam workflow end`.
         two_factor_value = None
         workflow_expires_on_ms = 0
         try:
