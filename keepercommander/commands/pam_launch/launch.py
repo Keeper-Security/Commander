@@ -625,6 +625,20 @@ class PAMLaunchCommand(Command):
             if not isinstance(record, vault.TypedRecord):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+            # PAM-config gate (matches web vault GuacConnectBanner.tsx:37-45):
+            # bail before the workflow gate / lease auto-checkout when the PAM
+            # configuration disables connections for this record.
+            try:
+                from ..workflow.helpers import is_pam_config_action_allowed_for_record
+                if not is_pam_config_action_allowed_for_record(params, record_uid, 'connections'):
+                    logging.error(
+                        "pam launch aborted: connections are disabled by the PAM "
+                        "configuration for record %s.", record_uid,
+                    )
+                    return
+            except ImportError:
+                pass
+
             workflow_expires_on_ms = 0
             workflow_flow_uid = None
             workflow_started_by_launch = False

@@ -577,6 +577,19 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        # PAM-config gate (matches web vault StartPortForwardButton.tsx:160-163):
+        # bail before the workflow gate / lease auto-checkout when the PAM
+        # configuration disables tunneling for this record. The JSON helper
+        # renames the DAG key portForwards → tunneling.
+        try:
+            from .workflow.helpers import is_pam_config_action_allowed_for_record
+            if not is_pam_config_action_allowed_for_record(params, record_uid, 'tunneling'):
+                print(f"{bcolors.FAIL}Tunneling is disabled by the PAM configuration "
+                      f"for record {record_uid}.{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
         # Workflow access check and 2FA prompt.
         # Lease lifecycle: when the gate finds WS_READY_TO_START it may
         # auto-checkout (Phase 2.2), but stopping the tunnel does NOT

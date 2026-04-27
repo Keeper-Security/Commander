@@ -77,6 +77,64 @@ def is_workflow_exempt(params, record_uid):
     return False
 
 
+def is_pam_config_action_allowed_for_record(params: KeeperParams, record_uid: str,
+                                            action_key: str) -> bool:
+    """Best-effort PAM config gate: is the action permitted by the record's
+    PAM configuration's allowedSettings (DAG) ?
+
+    Mirrors web vault `getConfigAllowedSettings(recordUid)[key]` (used by
+    GuacConnectBanner.tsx:37-45 for launch and StartPortForwardButton.tsx:160-163
+    for tunnel). The action_key matches the JSON-mapped names returned by
+    PAMConfigurationListCommand._allowed_settings_dag_to_json:
+
+      'connections'   → launch / connect
+      'tunneling'     → tunnel / port-forward (DAG: portForwards)
+      'rotation'      → rotate
+
+    Returns True (allow) on any lookup failure (no PAM context, missing DAG,
+    not a PAM record, personal account) so non-enterprise contexts aren't
+    blocked. Returns False only when the flag is explicitly False on the
+    PAM config DAG.
+
+    Fast path: launch_cache entry holds a recent config_uid for the record;
+    on cache hit we skip the DAG-leafs round-trip and go straight to the
+    config-vertex read.
+    """
+    import logging as _logging
+    try:
+        config_uid = None
+        try:
+            from ..pam_launch import launch_cache
+            entry = launch_cache.get(record_uid)
+            if entry:
+                config_uid = entry.get('config_uid')
+        except Exception:
+            pass
+
+        if not config_uid:
+            from ... import vault as _vault
+            from ..tunnel.port_forward.tunnel_helpers import get_config_uid_from_record
+            try:
+                config_uid = get_config_uid_from_record(params, _vault, record_uid)
+            except CommandError:
+                return True
+
+        if not config_uid:
+            return True
+
+        from ..discoveryrotation import PAMConfigurationListCommand
+        allowed = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+            params, config_uid,
+        )
+        return allowed.get(action_key) is not False
+    except Exception as e:
+        _logging.debug(
+            'PAM config allowedSettings lookup failed for %s (action=%s): %s',
+            record_uid, action_key, e,
+        )
+        return True
+
+
 def is_gateway_online_for_record(params: KeeperParams, record_uid: str) -> Optional[bool]:
     """Best-effort check: is the gateway for record_uid currently connected to the router?
 
