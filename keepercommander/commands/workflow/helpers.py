@@ -264,8 +264,8 @@ class WorkflowFormatter:
         return f"{seconds} second{'s' if seconds != 1 else ''}"
 
     @staticmethod
-    def build_temporal_filter(allowed_days_str, time_range_str, timezone_str):
-        if not allowed_days_str and not time_range_str and not timezone_str:
+    def build_temporal_filter(allowed_days_str, time_range_str):
+        if not allowed_days_str and not time_range_str:
             return None
 
         temporal = workflow_pb2.TemporalAccessFilter()
@@ -290,10 +290,37 @@ class WorkflowFormatter:
             time_range.endTime = end_minutes
             temporal.timeRanges.append(time_range)
 
-        if timezone_str:
-            temporal.timeZone = timezone_str
+        temporal.timeZone = WorkflowFormatter._get_local_iana_timezone()
 
         return temporal
+
+    @staticmethod
+    def _get_local_iana_timezone():
+        import os
+
+        tz = os.environ.get('TZ')
+        if tz and '/' in tz:
+            return tz
+
+        try:
+            link = os.readlink('/etc/localtime')
+            marker = '/zoneinfo/'
+            idx = link.find(marker)
+            if idx != -1:
+                return link[idx + len(marker):]
+        except (OSError, ValueError):
+            pass
+
+        try:
+            with open('/etc/timezone', 'r') as f:
+                tz = f.read().strip()
+                if tz and '/' in tz:
+                    return tz
+        except (OSError, IOError):
+            pass
+
+        raise CommandError('', 'Could not detect local IANA timezone. '
+                           'Set the TZ environment variable (e.g., TZ=Asia/Kolkata)')
 
     @staticmethod
     def _parse_time_to_minutes(time_str):

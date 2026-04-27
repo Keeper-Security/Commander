@@ -50,8 +50,6 @@ class WorkflowCreateCommand(Command):
                         help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
     parser.add_argument('--time-range', type=str,
                         help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
-    parser.add_argument('--timezone', type=str,
-                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -77,7 +75,7 @@ class WorkflowCreateCommand(Command):
         parameters.accessLength = WorkflowFormatter.parse_duration(kwargs.get('duration', '1d'))
 
         temporal_filter = WorkflowFormatter.build_temporal_filter(
-            kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+            kwargs.get('allowed_days'), kwargs.get('time_range'),
         )
         if temporal_filter:
             parameters.allowedTimes.CopyFrom(temporal_filter)
@@ -303,8 +301,6 @@ class WorkflowUpdateCommand(Command):
                         help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
     parser.add_argument('--time-range', type=str,
                         help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
-    parser.add_argument('--timezone', type=str,
-                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -351,7 +347,7 @@ class WorkflowUpdateCommand(Command):
                 updates_provided = True
 
             temporal_filter = WorkflowFormatter.build_temporal_filter(
-                kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+                kwargs.get('allowed_days'), kwargs.get('time_range'),
             )
             if temporal_filter:
                 parameters.allowedTimes.CopyFrom(temporal_filter)
