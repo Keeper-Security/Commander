@@ -461,8 +461,10 @@ class ShareFolderCommand(Command):
                         logging.warning('Please repeat this command when invitation is accepted.')
                     keys = params.key_cache.get(email)
                     if keys and (keys.rsa or keys.ec):
-                        uo.manageRecords = curr_sf.get('default_manage_records') is True if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
-                        uo.manageUsers = curr_sf.get('default_manage_users') is True if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
+                        current_mr = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_manage_records') is True else folder_pb2.BOOLEAN_FALSE
+                        uo.manageRecords = current_mr if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
+                        current_mu = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_manage_users') is True else folder_pb2.BOOLEAN_FALSE
+                        uo.manageUsers = current_mu if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                         if sf_key:
                             if params.forbid_rsa and keys.ec:
