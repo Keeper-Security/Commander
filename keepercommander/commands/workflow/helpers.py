@@ -77,6 +77,38 @@ def is_workflow_exempt(params, record_uid):
     return False
 
 
+def is_gateway_online_for_record(params: KeeperParams, record_uid: str) -> Optional[bool]:
+    """Best-effort check: is the gateway for record_uid currently connected to the router?
+
+    Returns True / False when known, None when undetermined (e.g. the
+    record has no entry in launch_cache yet, or the router lookup fails).
+    Callers should treat None as "proceed with normal flow" and only act
+    on a definitive False.
+
+    Uses launch_cache.get to avoid an expensive PAM_LINK DAG rebuild on the
+    first launch; subsequent launches resolve the gateway UID instantly.
+    """
+    import logging as _logging
+    try:
+        from ..pam_launch import launch_cache
+        entry = launch_cache.get(record_uid)
+        if not entry:
+            return None
+        gateway_uid_str = entry.get('gateway_uid')
+        if not gateway_uid_str:
+            return None
+        gateway_uid_bytes = utils.base64_url_decode(gateway_uid_str)
+
+        from ..pam.router_helper import router_get_connected_gateways
+        online = router_get_connected_gateways(params)
+        if not online or not online.controllers:
+            return False
+        return any(c.controllerUid == gateway_uid_bytes for c in online.controllers)
+    except Exception as e:
+        _logging.debug("Gateway online probe failed for %s: %s", record_uid, e)
+        return None
+
+
 def start_workflow_for_record(params: KeeperParams, record_uid: str) -> None:
     """Send a start_workflow (check-out) request for the given record."""
     from ..pam.router_helper import _post_request_to_router

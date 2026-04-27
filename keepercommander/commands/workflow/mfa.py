@@ -23,6 +23,7 @@ from ... import vault, utils
 from .helpers import (
     ProtobufRefBuilder,
     WorkflowFormatter,
+    is_gateway_online_for_record,
     is_workflow_exempt,
     prompt_for_reason_ticket,
     sanitize_router_error,
@@ -666,9 +667,16 @@ def check_workflow_for_launch(
 
     two_factor_value = None
     if result.get('require_mfa', False):
-        two_factor_value = WorkflowMfaPrompt(params).prompt()
-        if not two_factor_value:
-            return WorkflowGate(allowed=False)
+        # Match web vault: skip the MFA prompt when the gateway is known to
+        # be offline. The launch will surface its own gateway-offline error
+        # later. is_gateway_online_for_record returns None on first launch
+        # (no cache yet) — in that case keep the prompt to be safe.
+        if is_gateway_online_for_record(params, record_uid) is False:
+            logging.debug("Skipping workflow MFA prompt — gateway is offline.")
+        else:
+            two_factor_value = WorkflowMfaPrompt(params).prompt()
+            if not two_factor_value:
+                return WorkflowGate(allowed=False)
 
     return WorkflowGate(
         allowed=True,
