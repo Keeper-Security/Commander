@@ -553,11 +553,14 @@ class PAMTunnelStartCommand(Command):
 
         # Workflow access check and 2FA prompt
         two_factor_value = None
+        workflow_expires_on_ms = 0
         try:
-            from .workflow import check_workflow_and_prompt_2fa
-            should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
-            if not should_proceed:
+            from .workflow import check_workflow_for_launch
+            gate = check_workflow_for_launch(params, record_uid)
+            if not gate.allowed:
                 return
+            two_factor_value = gate.two_factor_value
+            workflow_expires_on_ms = gate.expires_on_ms
         except ImportError:
             pass
 
@@ -657,8 +660,24 @@ class PAMTunnelStartCommand(Command):
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
-        
+
         if result and result.get("success"):
+            # Workflow lease expiry: close the tube at expiresOn (matches web vault).
+            if workflow_expires_on_ms and workflow_expires_on_ms > 0:
+                import time as _time
+                import threading as _threading
+                seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
+                tube_id = result.get('tube_id')
+                if tube_id and seconds_until_expiry > 0:
+                    def _close_on_lease_expiry(_tube_id=tube_id, _record_uid=record_uid):
+                        try:
+                            print(f"\n{bcolors.WARNING}Tunnel access expired — closing tunnel for {_record_uid}.{bcolors.ENDC}", flush=True)
+                            tube_registry.close_tube(_tube_id, reason=CloseConnectionReasons.Normal)
+                        except Exception as e:
+                            logging.debug(f"Lease-expiry tunnel close failed: {e}")
+                    timer = _threading.Timer(seconds_until_expiry, _close_on_lease_expiry)
+                    timer.daemon = True
+                    timer.start()
             # The helper will show endpoint table when local socket is actually listening
             pass
         else:

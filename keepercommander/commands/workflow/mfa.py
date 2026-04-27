@@ -12,6 +12,7 @@
 import datetime
 import getpass
 import logging
+from typing import NamedTuple, Optional
 
 from ..pam.router_helper import _post_request_to_router
 from ...display import bcolors
@@ -29,10 +30,19 @@ except ImportError:
 _TRANSPORT_ERROR = object()
 
 
+class WorkflowGate(NamedTuple):
+    """Result of the pre-launch workflow gate, consumed by pam launch / pam tunnel."""
+    allowed: bool
+    two_factor_value: Optional[str] = None
+    flow_uid: Optional[bytes] = None
+    expires_on_ms: int = 0
+    started_by_launch: bool = False
+
+
 class WorkflowAccessValidator:
 
-    _DEFAULT_RESULT = {'allowed': True, 'require_mfa': False}
-    _BLOCKED_RESULT = {'allowed': False, 'require_mfa': False}
+    _DEFAULT_RESULT = {'allowed': True, 'require_mfa': False, 'flow_uid': None, 'expires_on_ms': 0}
+    _BLOCKED_RESULT = {'allowed': False, 'require_mfa': False, 'flow_uid': None, 'expires_on_ms': 0}
 
     def __init__(self, params: KeeperParams, record_uid: str):
         self.params = params
@@ -160,17 +170,22 @@ class WorkflowAccessValidator:
     def _evaluate_stage(self, workflow, mfa_required: bool) -> dict:
         if not workflow.status:
             self._print_no_workflow()
-            return {'allowed': False, 'require_mfa': False}
+            return dict(self._BLOCKED_RESULT)
 
         stage = workflow.status.stage
 
         if stage == workflow_pb2.WS_STARTED:
-            return {'allowed': True, 'require_mfa': mfa_required}
+            return {
+                'allowed': True,
+                'require_mfa': mfa_required,
+                'flow_uid': bytes(workflow.flowUid) if workflow.flowUid else None,
+                'expires_on_ms': int(workflow.status.expiresOn) if workflow.status.expiresOn else 0,
+            }
 
         if stage == workflow_pb2.WS_READY_TO_START:
             print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
             print(f"Run: {bcolors.OKBLUE}pam workflow start {self.record_uid}{bcolors.ENDC} to check out the record.\n")
-            return {'allowed': False, 'require_mfa': False}
+            return dict(self._BLOCKED_RESULT)
 
         if stage == workflow_pb2.WS_WAITING:
             conditions = workflow.status.conditions
@@ -179,7 +194,7 @@ class WorkflowAccessValidator:
             if workflow.status.checkedOutBy:
                 print(f"Record is currently checked out by: {workflow.status.checkedOutBy}")
             print("Your request is being processed. Please wait for approval.\n")
-            return {'allowed': False, 'require_mfa': False}
+            return dict(self._BLOCKED_RESULT)
 
         if stage == workflow_pb2.WS_NEEDS_ACTION:
             conditions = workflow.status.conditions
@@ -207,7 +222,7 @@ class WorkflowAccessValidator:
                 print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {flow_uid_str}{bcolors.ENDC} "
                       f"to see details.")
             print()
-            return {'allowed': False, 'require_mfa': False}
+            return dict(self._BLOCKED_RESULT)
 
         self._print_no_workflow()
         return {'allowed': False, 'require_mfa': False}
@@ -425,13 +440,34 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> dict:
     return WorkflowAccessValidator(params, record_uid).validate()
 
 
-def check_workflow_and_prompt_2fa(params: KeeperParams, record_uid: str):
+def check_workflow_for_launch(params: KeeperParams, record_uid: str) -> WorkflowGate:
+    """Pre-launch workflow gate: validate access, prompt for MFA if required,
+    and return the active flow's UID and lease expiry (millis since epoch)
+    so callers can auto check-in and force-disconnect on lease expiry."""
     result = check_workflow_access(params, record_uid)
     if not result.get('allowed', True):
-        return (False, None)
+        return WorkflowGate(allowed=False)
+
+    flow_uid = result.get('flow_uid')
+    expires_on_ms = int(result.get('expires_on_ms') or 0)
+
+    two_factor_value = None
     if result.get('require_mfa', False):
-        value = WorkflowMfaPrompt(params).prompt()
-        if not value:
-            return (False, None)
-        return (True, value)
-    return (True, None)
+        two_factor_value = WorkflowMfaPrompt(params).prompt()
+        if not two_factor_value:
+            return WorkflowGate(allowed=False)
+
+    return WorkflowGate(
+        allowed=True,
+        two_factor_value=two_factor_value,
+        flow_uid=flow_uid,
+        expires_on_ms=expires_on_ms,
+    )
+
+
+def check_workflow_and_prompt_2fa(params: KeeperParams, record_uid: str):
+    """Backward-compatible wrapper around check_workflow_for_launch.
+    Prefer check_workflow_for_launch in new code — it carries flow_uid and
+    expires_on_ms needed for auto check-in and lease-expiry teardown."""
+    gate = check_workflow_for_launch(params, record_uid)
+    return (gate.allowed, gate.two_factor_value)

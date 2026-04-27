@@ -607,18 +607,20 @@ class PAMLaunchCommand(Command):
             if not isinstance(record, vault.TypedRecord):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+            workflow_expires_on_ms = 0
             try:
-                from ..workflow import check_workflow_and_prompt_2fa
-                should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
-                if not should_proceed:
+                from ..workflow import check_workflow_for_launch
+                gate = check_workflow_for_launch(params, record_uid)
+                if not gate.allowed:
                     logging.error(
                         "pam launch aborted for record %s: workflow access is not allowed for connect, "
                         "or workflow requires MFA and no valid MFA response was provided.",
                         record_uid,
                     )
                     return
-                if two_factor_value:
-                    kwargs['two_factor_value'] = two_factor_value
+                if gate.two_factor_value:
+                    kwargs['two_factor_value'] = gate.two_factor_value
+                workflow_expires_on_ms = gate.expires_on_ms
             except ImportError:
                 pass
 
@@ -1086,6 +1088,7 @@ class PAMLaunchCommand(Command):
                         pre_connect_spinner=pre_connect_spinner,
                         preserve_crlf=not bool(kwargs.get('normalize_crlf')),
                         pam_total_tc=_total_tc,
+                        workflow_expires_on_ms=workflow_expires_on_ms,
                     )
                 except BaseException:
                     if pre_connect_spinner is not None and getattr(
@@ -1113,6 +1116,7 @@ class PAMLaunchCommand(Command):
         pre_connect_spinner: Optional[PamLaunchSpinner] = None,
         preserve_crlf: bool = True,
         pam_total_tc: Optional[PamConnectTiming] = None,
+        workflow_expires_on_ms: int = 0,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -1170,6 +1174,7 @@ class PAMLaunchCommand(Command):
                 'If you need to drive pam launch non-interactively use --stdin.',
             )
         shutdown_requested = False
+        lease_expired = False
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1177,6 +1182,27 @@ class PAMLaunchCommand(Command):
             logging.warning("\n\n* Interrupt received - shutting down...")
 
         original_handler = signal.signal(signal.SIGINT, signal_handler_fn)
+
+        # Workflow lease expiry: schedule a hard kill at expiresOn matching
+        # the web vault (immediate teardown, no grace period, no reconnect).
+        # The "Access expired" line is printed AFTER terminal reset in finally
+        # so the message survives reset_local_terminal_after_pam_session().
+        lease_timer = None
+        if workflow_expires_on_ms and workflow_expires_on_ms > 0:
+            import time as _time
+            seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
+            if seconds_until_expiry <= 0:
+                lease_expired = True
+                shutdown_requested = True
+            else:
+                import threading as _threading
+                def _on_lease_expired():
+                    nonlocal shutdown_requested, lease_expired
+                    lease_expired = True
+                    shutdown_requested = True
+                lease_timer = _threading.Timer(seconds_until_expiry, _on_lease_expired)
+                lease_timer.daemon = True
+                lease_timer.start()
 
         rust_log_token = None
         try:
@@ -1676,6 +1702,11 @@ class PAMLaunchCommand(Command):
                 except Exception as e:
                     logging.debug(f"Terminal reset after pam session: {e}")
 
+                # Print lease-expiry notice AFTER terminal reset so the user sees
+                # it on a clean line (the reset can wipe pre-reset stderr writes).
+                if lease_expired:
+                    print('\nAccess expired — session terminated by workflow lease.', flush=True)
+
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
                 try:
@@ -1714,5 +1745,10 @@ class PAMLaunchCommand(Command):
             logging.error(f"Error in PythonHandler CLI session: {e}")
             raise CommandError('pam launch', f'Failed to start CLI session: {e}')
         finally:
+            if lease_timer is not None:
+                try:
+                    lease_timer.cancel()
+                except Exception:
+                    pass
             exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
