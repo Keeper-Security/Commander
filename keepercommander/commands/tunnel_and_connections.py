@@ -577,6 +577,19 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        # Per-user enforcement gate (matches web vault getAllowPortForwards,
+        # pam-enforcement-selectors.ts:48-49). Bail before any further work
+        # when the user's enterprise enforcement disallows PAM tunnels.
+        try:
+            from .workflow.helpers import is_pam_action_allowed_by_enforcement
+            if not is_pam_action_allowed_by_enforcement(
+                    params, 'allow_launch_pam_tunnels'):
+                print(f"{bcolors.FAIL}PAM tunnels are not allowed by your enterprise "
+                      f"enforcement (allow_launch_pam_tunnels).{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
         # PAM-config gate (matches web vault StartPortForwardButton.tsx:160-163):
         # bail before the workflow gate / lease auto-checkout when the PAM
         # configuration disables tunneling for this record. The JSON helper

@@ -77,6 +77,51 @@ def is_workflow_exempt(params, record_uid):
     return False
 
 
+def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: str) -> bool:
+    """Per-user enterprise enforcement gate: is this user permitted to perform
+    the action by their enterprise enforcement profile?
+
+    Mirrors web vault `getAllowConnections` / `getAllowPortForwards`
+    (pam-enforcement-selectors.ts:38-49). The enforcement boolean is already
+    the rolled-up sum of the user's role permissions — no additional role /
+    team / ACL / deny-list checks are needed (verified against WV).
+
+    NOTE — license check intentionally NOT included here. Web vault wraps
+    these enforcement selectors in `mkPam` (pam-enforcement-selectors.ts:33-34)
+    which also requires `state.accountSummary.license?.isPamEnabled`. Commander
+    has historically treated license defensively: we let the gateway / server
+    be the authoritative gate for license-driven failures rather than
+    pre-flighting it client-side. Same approach is used by the rotation
+    enforcement check (`_is_rotation_allowed_by_enforcement` in
+    discoveryrotation.py). The trade-off: an account that has the enforcement
+    granted but no PAM license will pass this gate and fail later at the
+    gateway with a more specific error, instead of getting a "not licensed"
+    refusal up front. If parity becomes important, wrap this with a license
+    check against `params.account_summary` / `params.license`.
+
+    Returns True (allow) by default and only False when the named enforcement
+    is explicitly set to False. Personal / non-enterprise accounts where
+    `params.enforcements` is None, empty, or missing the key are not blocked.
+
+    Defensively swallows any unexpected enforcement payload shape.
+    """
+    import logging as _logging
+    try:
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or not isinstance(enforcements, dict):
+            return True
+        booleans = enforcements.get('booleans') or []
+        if not isinstance(booleans, list):
+            return True
+        for b in booleans:
+            if isinstance(b, dict) and b.get('key') == enforcement_key:
+                return b.get('value') is not False
+        return True
+    except Exception as e:
+        _logging.debug('Enforcement check failed for %s: %s', enforcement_key, e)
+        return True
+
+
 def is_pam_config_action_allowed_for_record(params: KeeperParams, record_uid: str,
                                             action_key: str) -> bool:
     """Best-effort PAM config gate: is the action permitted by the record's

@@ -625,6 +625,21 @@ class PAMLaunchCommand(Command):
             if not isinstance(record, vault.TypedRecord):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+            # Per-user enforcement gate (matches web vault getAllowConnections,
+            # pam-enforcement-selectors.ts:39-40). Bail before any further work
+            # when the user's enterprise enforcement disallows PAM connections.
+            try:
+                from ..workflow.helpers import is_pam_action_allowed_by_enforcement
+                if not is_pam_action_allowed_by_enforcement(
+                        params, 'allow_launch_pam_on_cloud_connection'):
+                    logging.error(
+                        "pam launch aborted: PAM connections are not allowed by "
+                        "your enterprise enforcement (allow_launch_pam_on_cloud_connection).",
+                    )
+                    return
+            except ImportError:
+                pass
+
             # PAM-config gate (matches web vault GuacConnectBanner.tsx:37-45):
             # bail before the workflow gate / lease auto-checkout when the PAM
             # configuration disables connections for this record.
