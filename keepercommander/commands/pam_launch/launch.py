@@ -305,6 +305,12 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--scale', '-s', required=False, dest='scale', type=int, default=None,
                         help='Scale pixel width/height by this percentage (e.g. 50 = half canvas, 200 = double). '
                              'Range: [40-400]. Helps when fullscreen TUI programs show garbled layout.')
+    parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
+                        help='Justification text for workflow access request. Used when the record\'s '
+                             'workflow requires a reason; non-interactive equivalent of the inline prompt.')
+    parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
+                        help='External ticket / reference number for workflow access request. Used when '
+                             'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -610,7 +616,11 @@ class PAMLaunchCommand(Command):
             workflow_expires_on_ms = 0
             try:
                 from ..workflow import check_workflow_for_launch
-                gate = check_workflow_for_launch(params, record_uid)
+                gate = check_workflow_for_launch(
+                    params, record_uid,
+                    reason=kwargs.get('workflow_reason'),
+                    ticket=kwargs.get('workflow_ticket'),
+                )
                 if not gate.allowed:
                     logging.error(
                         "pam launch aborted for record %s: workflow access is not allowed for connect, "

@@ -503,6 +503,12 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
+    pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
+                                help='Justification text for workflow access request. Used when the record\'s '
+                                     'workflow requires a reason; non-interactive equivalent of the inline prompt.')
+    pam_cmd_parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
+                                help='External ticket / reference number for workflow access request. Used when '
+                                     'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -556,7 +562,11 @@ class PAMTunnelStartCommand(Command):
         workflow_expires_on_ms = 0
         try:
             from .workflow import check_workflow_for_launch
-            gate = check_workflow_for_launch(params, record_uid)
+            gate = check_workflow_for_launch(
+                params, record_uid,
+                reason=kwargs.get('workflow_reason'),
+                ticket=kwargs.get('workflow_ticket'),
+            )
             if not gate.allowed:
                 return
             two_factor_value = gate.two_factor_value

@@ -10,12 +10,12 @@
 #
 
 import re
-from typing import List
+from typing import List, Optional, Tuple
 
 from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
-from ... import vault, utils
+from ... import crypto, vault, utils
 
 
 _PROTO_DUMP_RE = re.compile(
@@ -75,6 +75,70 @@ def is_workflow_exempt(params, record_uid):
                     return True
 
     return False
+
+
+def submit_access_request(params: KeeperParams, record_uid: str,
+                          reason: str = '', ticket: str = '') -> None:
+    """Send a workflow access request with optional encrypted reason/ticket.
+
+    Encrypts reason/ticket with the record key (AES-GCM-256), matching
+    web vault request_workflow_access.ts. Caller must hold the record key.
+    """
+    from ..pam.router_helper import _post_request_to_router
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    record = vault.KeeperRecord.load(params, record_uid)
+    record_name = record.title if record else record_uid
+
+    record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
+    if not record_key and (reason or ticket):
+        raise CommandError(
+            '', 'Record key not available — cannot encrypt reason/ticket. '
+                'You do not have sufficient access to this record to send encrypted parameters.',
+        )
+
+    access_request = workflow_pb2.WorkflowAccessRequest()
+    access_request.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record_name))
+    if reason:
+        reason_bytes = reason.encode('utf-8') if isinstance(reason, str) else reason
+        access_request.reason = crypto.encrypt_aes_v2(reason_bytes, record_key)
+    if ticket:
+        ticket_bytes = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
+        access_request.ticket = crypto.encrypt_aes_v2(ticket_bytes, record_key)
+
+    _post_request_to_router(params, 'request_workflow_access', rq_proto=access_request)
+
+
+def prompt_for_reason_ticket(needs_reason: bool, needs_ticket: bool) -> Tuple[Optional[str], Optional[str]]:
+    """Interactively prompt the user for reason and/or ticket using prompt_toolkit.
+
+    Returns (reason, ticket). Either may be None if not requested. Returns
+    (None, None) if the user cancels (Ctrl+C / EOF) or submits empty input
+    for a required field.
+    """
+    from prompt_toolkit import prompt as pt_prompt
+    from ...display import bcolors as _bc
+
+    reason_value = None
+    ticket_value = None
+    try:
+        if needs_reason:
+            print(f"\n{_bc.OKBLUE}Workflow requires a justification.{_bc.ENDC}")
+            print('Type your reason. Press Esc then Enter to submit, or Ctrl+C to cancel.\n')
+            text = pt_prompt('Reason: ', multiline=True).strip()
+            if not text:
+                print(f"{_bc.WARNING}Reason is required — cancelled.{_bc.ENDC}")
+                return None, None
+            reason_value = text
+        if needs_ticket:
+            print(f"\n{_bc.OKBLUE}Workflow requires a ticket / reference number.{_bc.ENDC}")
+            text = pt_prompt('Ticket: ').strip()
+            if not text:
+                print(f"{_bc.WARNING}Ticket is required — cancelled.{_bc.ENDC}")
+                return None, None
+            ticket_value = text
+    except (KeyboardInterrupt, EOFError):
+        return None, None
+    return reason_value, ticket_value
 
 
 class RecordResolver:
