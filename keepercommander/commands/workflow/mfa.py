@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import datetime
 import getpass
 import logging
 
@@ -19,6 +20,11 @@ from ...proto import workflow_pb2, router_pb2
 from ... import vault, utils
 
 from .helpers import ProtobufRefBuilder, WorkflowFormatter, is_workflow_exempt
+
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    ZoneInfo = None
 
 _TRANSPORT_ERROR = object()
 
@@ -48,6 +54,9 @@ class WorkflowAccessValidator:
             return dict(self._DEFAULT_RESULT)
 
         mfa_required = bool(config.parameters and config.parameters.requireMFA)
+
+        if not self._check_allowed_times(config):
+            return dict(self._BLOCKED_RESULT)
 
         no_approvals = config.parameters and config.parameters.approvalsNeeded == 0
         workflow = self._find_active_workflow()
@@ -91,6 +100,62 @@ class WorkflowAccessValidator:
                 if wf.resource and wf.resource.value == self.record_uid_bytes:
                     return wf
         return None
+
+    def _check_allowed_times(self, config) -> bool:
+        if not config.parameters or not config.parameters.HasField('allowedTimes'):
+            return True
+
+        at = config.parameters.allowedTimes
+        if not at.timeRanges and not at.allowedDays:
+            return True
+
+        tz = None
+        if at.timeZone and ZoneInfo is not None:
+            try:
+                tz = ZoneInfo(at.timeZone)
+            except Exception:
+                logging.debug("Unknown timezone '%s'; falling back to local time", at.timeZone)
+
+        now = datetime.datetime.now(tz) if tz else datetime.datetime.now().astimezone()
+
+        # protobuf DayOfWeek: MONDAY=1..SUNDAY=7. Python weekday(): MONDAY=0..SUNDAY=6.
+        if at.allowedDays:
+            current_day = now.weekday() + 1
+            if current_day not in at.allowedDays:
+                self._print_outside_time_window(at, now)
+                return False
+
+        if at.timeRanges:
+            current_minutes = now.hour * 60 + now.minute
+            in_range = False
+            for r in at.timeRanges:
+                if r.startTime <= r.endTime:
+                    if r.startTime <= current_minutes <= r.endTime:
+                        in_range = True
+                        break
+                else:
+                    # range crosses midnight (e.g. 22:00-06:00)
+                    if current_minutes >= r.startTime or current_minutes <= r.endTime:
+                        in_range = True
+                        break
+            if not in_range:
+                self._print_outside_time_window(at, now)
+                return False
+
+        return True
+
+    def _print_outside_time_window(self, at, now):
+        formatted = WorkflowFormatter.format_temporal_filter(at) or {}
+        print(f"\n{bcolors.WARNING}Workflow access is outside the allowed time window.{bcolors.ENDC}")
+        tz_label = at.timeZone or 'local'
+        print(f"Current time ({tz_label}): {now.strftime('%a %H:%M')}")
+        if formatted.get('allowed_days'):
+            print(f"Allowed days: {', '.join(formatted['allowed_days'])}")
+        if formatted.get('time_ranges'):
+            print(f"Allowed times: {', '.join(formatted['time_ranges'])}")
+        if formatted.get('timezone'):
+            print(f"Timezone: {formatted['timezone']}")
+        print()
 
     def _evaluate_stage(self, workflow, mfa_required: bool) -> dict:
         if not workflow.status:
