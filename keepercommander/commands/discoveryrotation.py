@@ -3013,6 +3013,46 @@ class PAMGatewayActionJobCommand(Command):
                               gateway_uid=gateway_uid)
 
 
+def _is_rotation_allowed_by_enforcement(params):
+    # type: (KeeperParams) -> bool
+    """Inspired by web vault getAllowRotation (pam-enforcement-selectors.ts:30).
+
+    Returns True (allow) by default, and only False (deny) when the enterprise
+    enforcement explicitly sets `allow_rotate_credentials` to False (or sets
+    legacy `allow_pam_rotation` to False without any of the newer rotation
+    grants). This is intentionally more permissive than the web vault's
+    default-deny semantics: Commander is also used by personal / non-enterprise
+    accounts where `params.enforcements` is None or an empty dict, and we do
+    not want to block those users on a missing enterprise grant. The gateway
+    remains the authoritative gate when no enforcement context exists.
+
+    Defensively swallows any unexpected enforcement payload shape and allows
+    rotation to proceed in that case.
+    """
+    try:
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or not isinstance(enforcements, dict):
+            return True
+        booleans = enforcements.get('booleans') or []
+        if not isinstance(booleans, list):
+            return True
+        by_key = {}
+        for b in booleans:
+            if isinstance(b, dict):
+                k = b.get('key')
+                if k is not None:
+                    by_key[k] = b.get('value')
+        if 'allow_rotate_credentials' in by_key:
+            return bool(by_key['allow_rotate_credentials'])
+        # Legacy fallback: explicit False on allow_pam_rotation also blocks.
+        if by_key.get('allow_pam_rotation') is False:
+            return False
+        return True
+    except Exception as _e:
+        logging.debug('Rotation enforcement check failed; allowing: %s', _e)
+        return True
+
+
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
@@ -3039,6 +3079,13 @@ class PAMGatewayActionRotateCommand(Command):
         return PAMGatewayActionRotateCommand.parser
 
     def execute(self, params, **kwargs):
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): block at
+        # the enforcement layer before any rotation work is done.
+        if not _is_rotation_allowed_by_enforcement(params):
+            print(f'{bcolors.FAIL}Rotation is not allowed for this account by enterprise '
+                  f'enforcement (allow_rotate_credentials).{bcolors.ENDC}')
+            return
+
         record_uid = kwargs.get('record_uid', '')
         folder = kwargs.get('folder', '')
         recursive = kwargs.get('recursive', False)
@@ -3232,6 +3279,23 @@ class PAMGatewayActionRotateCommand(Command):
             facade.record = pam_config
 
             config_uid = facade.controller_uid
+
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): respect
+        # the per-config rotation switch in allowedSettings on the PAM config DAG.
+        # If the config explicitly disables rotation we skip with the same
+        # "disallowed by config" semantics web vault shows.
+        try:
+            allowed = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+                params, config_uid,
+            )
+            if allowed.get('rotation') is False:
+                print(
+                    f'{bcolors.FAIL}Rotation is disabled by the PAM Configuration '
+                    f'[{config_uid}] for record [{record_uid}].{bcolors.ENDC}'
+                )
+                return
+        except Exception as _e:
+            logging.debug('Skipping per-config rotation gate (lookup failed): %s', _e)
 
         if not resource_uid:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid,
