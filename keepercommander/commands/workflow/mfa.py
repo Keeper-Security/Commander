@@ -218,11 +218,12 @@ class WorkflowAccessValidator:
 
         if stage == workflow_pb2.WS_WAITING:
             conditions = tuple(workflow.status.conditions) if workflow.status.conditions else ()
-            cond_str = WorkflowFormatter.format_conditions(conditions) if conditions else 'approval'
-            print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
-            if workflow.status.checkedOutBy:
-                print(f"Record is currently checked out by: {workflow.status.checkedOutBy}")
-            print("Your request is being processed. Please wait for approval.\n")
+            if not silent_actionable:
+                cond_str = WorkflowFormatter.format_conditions(conditions) if conditions else 'approval'
+                print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
+                if workflow.status.checkedOutBy:
+                    print(f"Record is currently checked out by: {workflow.status.checkedOutBy}")
+                print("Your request is being processed. Please wait for approval.\n")
             return self._blocked(
                 'waiting',
                 flow_uid=bytes(workflow.flowUid) if workflow.flowUid else None,
@@ -245,6 +246,13 @@ class WorkflowAccessValidator:
     def _print_ready_to_start(self):
         print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
         print(f"Run: {bcolors.OKBLUE}pam workflow start {self.record_uid}{bcolors.ENDC} to check out the record.\n")
+
+    def _print_waiting(self, conditions, checked_out_by: str = ''):
+        cond_str = WorkflowFormatter.format_conditions(conditions) if conditions else 'approval'
+        print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
+        if checked_out_by:
+            print(f"Record is currently checked out by: {checked_out_by}")
+        print("Your request is being processed. Please wait for approval.\n")
 
     def _print_needs_action(self, conditions, flow_uid_bytes):
         print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
@@ -485,6 +493,39 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> dict:
     return WorkflowAccessValidator(params, record_uid).validate()
 
 
+_WAIT_POLL_INTERVAL_SECONDS = 8
+
+
+def _poll_until_state_change(validator: 'WorkflowAccessValidator',
+                             timeout_seconds: int) -> Optional[dict]:
+    """Poll the workflow state at _WAIT_POLL_INTERVAL_SECONDS until the
+    state is no longer 'waiting' or until timeout_seconds elapses.
+
+    Returns the new validator result dict on state change, or None on
+    timeout / Ctrl+C / transport error.
+    """
+    import time as _time
+    deadline = _time.time() + max(timeout_seconds, _WAIT_POLL_INTERVAL_SECONDS)
+    print(
+        f"\n{bcolors.OKBLUE}Waiting for approval... "
+        f"(timeout: {timeout_seconds}s; press Ctrl+C to cancel){bcolors.ENDC}"
+    )
+    try:
+        while _time.time() < deadline:
+            _time.sleep(_WAIT_POLL_INTERVAL_SECONDS)
+            r = validator.validate(silent_actionable=True)
+            block_reason = r.get('block_reason')
+            if r.get('allowed', True) or block_reason != 'waiting':
+                # Suppress chatty output on state change; orchestrator will
+                # handle the next state in its own loop iteration.
+                return r
+        print(f"{bcolors.WARNING}Approval not received within {timeout_seconds}s.{bcolors.ENDC}\n")
+        return None
+    except KeyboardInterrupt:
+        print(f"\n{bcolors.WARNING}Wait cancelled.{bcolors.ENDC}\n")
+        return None
+
+
 def check_workflow_for_launch(
     params: KeeperParams,
     record_uid: str,
@@ -492,6 +533,8 @@ def check_workflow_for_launch(
     reason: Optional[str] = None,
     ticket: Optional[str] = None,
     auto_checkout: bool = False,
+    wait: bool = False,
+    wait_timeout: int = 600,
 ) -> WorkflowGate:
     """Pre-launch workflow gate: validate access, optionally submit a missing
     reason/ticket request and check out the record inline, prompt for MFA if
@@ -512,9 +555,10 @@ def check_workflow_for_launch(
     started_by_launch = False
     handled_needs_action = False
     handled_ready_to_start = False
+    handled_waiting = False
 
-    # Up to 3 transitions: needs_action -> ready_to_start -> started.
-    for _attempt in range(3):
+    # Up to 4 transitions: needs_action -> waiting -> ready_to_start -> started.
+    for _attempt in range(4):
         result = validator.validate(silent_actionable=True)
         if result.get('allowed', True):
             break
@@ -588,11 +632,21 @@ def check_workflow_for_launch(
                 return WorkflowGate(allowed=False)
             continue
 
-        # Block reason we don't auto-handle (waiting, no_workflow, transport_error,
-        # outside_time_window, no_status, needs_start) — those validator paths
-        # already printed their own message in non-silent branches; for the
-        # actionable ones suppressed by silent_actionable, fall back to the
-        # explicit print so the user always sees something.
+        if block_reason == 'waiting' and not handled_waiting and wait:
+            handled_waiting = True
+            polled = _poll_until_state_change(validator, wait_timeout)
+            if polled is None:
+                return WorkflowGate(allowed=False)
+            result = polled
+            if result.get('allowed', True):
+                break
+            continue
+
+        # Block reason we don't auto-handle (waiting w/o --wait, no_workflow,
+        # transport_error, outside_time_window, no_status, needs_start) —
+        # those validator paths already printed their own message in non-silent
+        # branches; for the silent-suppressed ones (needs_action, ready_to_start,
+        # waiting) fall back to the explicit print so the user always sees something.
         if block_reason == 'needs_action':
             validator._print_needs_action(
                 result.get('pending_conditions') or (),
@@ -600,6 +654,8 @@ def check_workflow_for_launch(
             )
         elif block_reason == 'ready_to_start':
             validator._print_ready_to_start()
+        elif block_reason == 'waiting':
+            validator._print_waiting(result.get('pending_conditions') or ())
         return WorkflowGate(allowed=False)
 
     if not result.get('allowed', True):

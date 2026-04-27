@@ -316,6 +316,13 @@ class PAMLaunchCommand(Command):
                         help='Auto-confirm workflow check-out when the record is approved but not yet '
                              'checked out (skips the interactive Y/n prompt). The lease is released '
                              'automatically when the launch session ends.')
+    parser.add_argument('--wait', '-w', required=False, dest='workflow_wait',
+                        action='store_true',
+                        help='When the workflow is waiting on approval, poll until approved '
+                             '(or --wait-timeout elapses) instead of exiting immediately.')
+    parser.add_argument('--wait-timeout', '-wt', required=False, dest='workflow_wait_timeout',
+                        type=int, default=600,
+                        help='Maximum seconds to poll for approval when --wait is set (default: 600).')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -628,6 +635,8 @@ class PAMLaunchCommand(Command):
                     reason=kwargs.get('workflow_reason'),
                     ticket=kwargs.get('workflow_ticket'),
                     auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
+                    wait=bool(kwargs.get('workflow_wait')),
+                    wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
                 )
                 if not gate.allowed:
                     logging.error(
