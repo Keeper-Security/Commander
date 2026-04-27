@@ -77,6 +77,18 @@ def is_workflow_exempt(params, record_uid):
     return False
 
 
+def start_workflow_for_record(params: KeeperParams, record_uid: str) -> None:
+    """Send a start_workflow (check-out) request for the given record."""
+    from ..pam.router_helper import _post_request_to_router
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    record = vault.KeeperRecord.load(params, record_uid)
+    record_name = record.title if record else record_uid
+
+    state = workflow_pb2.WorkflowState()
+    state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record_name))
+    _post_request_to_router(params, 'start_workflow', rq_proto=state)
+
+
 def submit_access_request(params: KeeperParams, record_uid: str,
                           reason: str = '', ticket: str = '') -> None:
     """Send a workflow access request with optional encrypted reason/ticket.

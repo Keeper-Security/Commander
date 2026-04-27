@@ -311,6 +311,11 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
                         help='External ticket / reference number for workflow access request. Used when '
                              'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
+    parser.add_argument('--auto-checkout', '-aco', required=False, dest='workflow_auto_checkout',
+                        action='store_true',
+                        help='Auto-confirm workflow check-out when the record is approved but not yet '
+                             'checked out (skips the interactive Y/n prompt). The lease is released '
+                             'automatically when the launch session ends.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -620,6 +625,7 @@ class PAMLaunchCommand(Command):
                     params, record_uid,
                     reason=kwargs.get('workflow_reason'),
                     ticket=kwargs.get('workflow_ticket'),
+                    auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
                 )
                 if not gate.allowed:
                     logging.error(

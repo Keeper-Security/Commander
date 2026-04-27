@@ -26,6 +26,7 @@ from .helpers import (
     is_workflow_exempt,
     prompt_for_reason_ticket,
     sanitize_router_error,
+    start_workflow_for_record,
     submit_access_request,
 )
 
@@ -65,7 +66,7 @@ class WorkflowAccessValidator:
         record = vault.KeeperRecord.load(params, record_uid)
         self.record_name = record.title if record else record_uid
 
-    def validate(self, auto_prompt_actionable: bool = False) -> dict:
+    def validate(self, silent_actionable: bool = False) -> dict:
         if is_workflow_exempt(self.params, self.record_uid):
             return dict(self._DEFAULT_RESULT)
 
@@ -98,7 +99,7 @@ class WorkflowAccessValidator:
             self._print_no_workflow()
             return self._blocked('no_workflow')
 
-        return self._evaluate_stage(workflow, mfa_required, auto_prompt_actionable)
+        return self._evaluate_stage(workflow, mfa_required, silent_actionable)
 
     def _blocked(self, reason: str, **extra) -> dict:
         result = dict(self._BLOCKED_RESULT)
@@ -190,7 +191,7 @@ class WorkflowAccessValidator:
         print()
 
     def _evaluate_stage(self, workflow, mfa_required: bool,
-                        auto_prompt_actionable: bool = False) -> dict:
+                        silent_actionable: bool = False) -> dict:
         if not workflow.status:
             self._print_no_workflow()
             return self._blocked('no_status')
@@ -208,8 +209,8 @@ class WorkflowAccessValidator:
             }
 
         if stage == workflow_pb2.WS_READY_TO_START:
-            print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
-            print(f"Run: {bcolors.OKBLUE}pam workflow start {self.record_uid}{bcolors.ENDC} to check out the record.\n")
+            if not silent_actionable:
+                self._print_ready_to_start()
             return self._blocked(
                 'ready_to_start',
                 flow_uid=bytes(workflow.flowUid) if workflow.flowUid else None,
@@ -230,7 +231,7 @@ class WorkflowAccessValidator:
 
         if stage == workflow_pb2.WS_NEEDS_ACTION:
             conditions = tuple(workflow.status.conditions) if workflow.status.conditions else ()
-            if not auto_prompt_actionable:
+            if not silent_actionable:
                 self._print_needs_action(conditions, workflow.flowUid)
             return self._blocked(
                 'needs_action',
@@ -240,6 +241,10 @@ class WorkflowAccessValidator:
 
         self._print_no_workflow()
         return self._blocked('no_workflow')
+
+    def _print_ready_to_start(self):
+        print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
+        print(f"Run: {bcolors.OKBLUE}pam workflow start {self.record_uid}{bcolors.ENDC} to check out the record.\n")
 
     def _print_needs_action(self, conditions, flow_uid_bytes):
         print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
@@ -486,49 +491,68 @@ def check_workflow_for_launch(
     *,
     reason: Optional[str] = None,
     ticket: Optional[str] = None,
+    auto_checkout: bool = False,
 ) -> WorkflowGate:
     """Pre-launch workflow gate: validate access, optionally submit a missing
-    reason/ticket request inline, prompt for MFA if required, and return the
-    active flow's UID and lease expiry (millis since epoch) so callers can
-    auto check-in and force-disconnect on lease expiry.
+    reason/ticket request and check out the record inline, prompt for MFA if
+    required, and return the active flow's UID and lease expiry (millis since
+    epoch) so callers can auto check-in and force-disconnect on lease expiry.
 
     When the workflow is in WS_NEEDS_ACTION with AC_REASON / AC_TICKET pending,
     the supplied reason/ticket flags are used directly; otherwise the user is
     prompted via prompt_toolkit. After submission the workflow is re-validated
     once so the resulting state (waiting / ready_to_start / started) is shown.
+
+    When the workflow is in WS_READY_TO_START, the user is prompted to check
+    out (or auto_checkout=True confirms automatically). On success the gate
+    re-validates and reports started_by_launch=True so the caller can release
+    the lease in its cleanup path.
     """
     validator = WorkflowAccessValidator(params, record_uid)
-    result = validator.validate(auto_prompt_actionable=True)
+    started_by_launch = False
+    handled_needs_action = False
+    handled_ready_to_start = False
 
-    if not result.get('allowed', True) and result.get('block_reason') == 'needs_action':
-        conditions = result.get('pending_conditions') or ()
-        needs_reason = workflow_pb2.AC_REASON in conditions
-        needs_ticket = workflow_pb2.AC_TICKET in conditions
-        needs_approval_only = (
-            workflow_pb2.AC_APPROVAL in conditions
-            and not needs_reason and not needs_ticket
-        )
+    # Up to 3 transitions: needs_action -> ready_to_start -> started.
+    for _attempt in range(3):
+        result = validator.validate(silent_actionable=True)
+        if result.get('allowed', True):
+            break
+        block_reason = result.get('block_reason')
 
-        final_reason = reason
-        final_ticket = ticket
+        if block_reason == 'needs_action' and not handled_needs_action:
+            handled_needs_action = True
+            conditions = result.get('pending_conditions') or ()
+            needs_reason = workflow_pb2.AC_REASON in conditions
+            needs_ticket = workflow_pb2.AC_TICKET in conditions
+            needs_approval_only = (
+                workflow_pb2.AC_APPROVAL in conditions
+                and not needs_reason and not needs_ticket
+            )
 
-        if needs_reason or needs_ticket:
-            prompt_reason = needs_reason and not final_reason
-            prompt_ticket = needs_ticket and not final_ticket
-            if prompt_reason or prompt_ticket:
-                p_reason, p_ticket = prompt_for_reason_ticket(prompt_reason, prompt_ticket)
-                if prompt_reason:
-                    if p_reason is None:
-                        validator._print_needs_action(conditions, result.get('flow_uid'))
-                        return WorkflowGate(allowed=False)
-                    final_reason = p_reason
-                if prompt_ticket:
-                    if p_ticket is None:
-                        validator._print_needs_action(conditions, result.get('flow_uid'))
-                        return WorkflowGate(allowed=False)
-                    final_ticket = p_ticket
+            final_reason = reason
+            final_ticket = ticket
 
-        if needs_reason or needs_ticket or needs_approval_only:
+            if needs_reason or needs_ticket:
+                prompt_reason = needs_reason and not final_reason
+                prompt_ticket = needs_ticket and not final_ticket
+                if prompt_reason or prompt_ticket:
+                    p_reason, p_ticket = prompt_for_reason_ticket(prompt_reason, prompt_ticket)
+                    if prompt_reason:
+                        if p_reason is None:
+                            validator._print_needs_action(conditions, result.get('flow_uid'))
+                            return WorkflowGate(allowed=False)
+                        final_reason = p_reason
+                    if prompt_ticket:
+                        if p_ticket is None:
+                            validator._print_needs_action(conditions, result.get('flow_uid'))
+                            return WorkflowGate(allowed=False)
+                        final_ticket = p_ticket
+
+            if not (needs_reason or needs_ticket or needs_approval_only):
+                validator._print_needs_action(conditions, result.get('flow_uid'))
+                return WorkflowGate(allowed=False)
+
             try:
                 submit_access_request(
                     params, record_uid,
@@ -539,14 +563,44 @@ def check_workflow_for_launch(
             except Exception as e:
                 logging.error("Failed to submit access request: %s", sanitize_router_error(e))
                 return WorkflowGate(allowed=False)
-            # Re-validate; this time let the validator print whatever new state
-            # we landed in (waiting for approval, ready_to_start, or started).
-            result = validator.validate()
-        else:
-            # Some other actionable condition we don't auto-handle here —
-            # surface the original message and bail.
-            validator._print_needs_action(conditions, result.get('flow_uid'))
-            return WorkflowGate(allowed=False)
+            continue
+
+        if block_reason == 'ready_to_start' and not handled_ready_to_start:
+            handled_ready_to_start = True
+            confirmed = auto_checkout
+            if not confirmed:
+                try:
+                    answer = input(
+                        f"\n{bcolors.OKBLUE}Workflow approved. Check out '{record_uid}' now? [Y/n]: {bcolors.ENDC}"
+                    ).strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    answer = 'n'
+                confirmed = answer in ('', 'y', 'yes')
+            if not confirmed:
+                validator._print_ready_to_start()
+                return WorkflowGate(allowed=False)
+            try:
+                start_workflow_for_record(params, record_uid)
+                print(f"{bcolors.OKGREEN}Checked out.{bcolors.ENDC}\n")
+                started_by_launch = True
+            except Exception as e:
+                logging.error("Failed to check out: %s", sanitize_router_error(e))
+                return WorkflowGate(allowed=False)
+            continue
+
+        # Block reason we don't auto-handle (waiting, no_workflow, transport_error,
+        # outside_time_window, no_status, needs_start) — those validator paths
+        # already printed their own message in non-silent branches; for the
+        # actionable ones suppressed by silent_actionable, fall back to the
+        # explicit print so the user always sees something.
+        if block_reason == 'needs_action':
+            validator._print_needs_action(
+                result.get('pending_conditions') or (),
+                result.get('flow_uid'),
+            )
+        elif block_reason == 'ready_to_start':
+            validator._print_ready_to_start()
+        return WorkflowGate(allowed=False)
 
     if not result.get('allowed', True):
         return WorkflowGate(allowed=False)
@@ -565,6 +619,7 @@ def check_workflow_for_launch(
         two_factor_value=two_factor_value,
         flow_uid=flow_uid,
         expires_on_ms=expires_on_ms,
+        started_by_launch=started_by_launch,
     )
 
 
