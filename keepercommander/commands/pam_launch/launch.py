@@ -619,6 +619,8 @@ class PAMLaunchCommand(Command):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
             workflow_expires_on_ms = 0
+            workflow_flow_uid = None
+            workflow_started_by_launch = False
             try:
                 from ..workflow import check_workflow_for_launch
                 gate = check_workflow_for_launch(
@@ -637,6 +639,8 @@ class PAMLaunchCommand(Command):
                 if gate.two_factor_value:
                     kwargs['two_factor_value'] = gate.two_factor_value
                 workflow_expires_on_ms = gate.expires_on_ms
+                workflow_flow_uid = gate.flow_uid
+                workflow_started_by_launch = gate.started_by_launch
             except ImportError:
                 pass
 
@@ -1105,6 +1109,8 @@ class PAMLaunchCommand(Command):
                         preserve_crlf=not bool(kwargs.get('normalize_crlf')),
                         pam_total_tc=_total_tc,
                         workflow_expires_on_ms=workflow_expires_on_ms,
+                        workflow_flow_uid=workflow_flow_uid,
+                        workflow_started_by_launch=workflow_started_by_launch,
                     )
                 except BaseException:
                     if pre_connect_spinner is not None and getattr(
@@ -1133,6 +1139,8 @@ class PAMLaunchCommand(Command):
         preserve_crlf: bool = True,
         pam_total_tc: Optional[PamConnectTiming] = None,
         workflow_expires_on_ms: int = 0,
+        workflow_flow_uid: Optional[bytes] = None,
+        workflow_started_by_launch: bool = False,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -1766,5 +1774,18 @@ class PAMLaunchCommand(Command):
                     lease_timer.cancel()
                 except Exception:
                     pass
+            # Auto check-in: release the workflow lease only if THIS launch
+            # triggered the checkout (so a pre-existing checkout isn't released)
+            # and the lease hasn't already expired (server already ended it).
+            if (workflow_started_by_launch and not lease_expired
+                    and workflow_flow_uid):
+                try:
+                    from ..workflow.helpers import ProtobufRefBuilder
+                    from ..pam.router_helper import _post_request_to_router
+                    flow_ref = ProtobufRefBuilder.workflow_ref(workflow_flow_uid)
+                    _post_request_to_router(params, 'end_workflow', rq_proto=flow_ref)
+                    logging.debug("Auto check-in: released workflow lease.")
+                except Exception as e:
+                    logging.debug("Auto check-in failed: %s", e)
             exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
