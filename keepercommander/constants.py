@@ -1,4 +1,5 @@
 import enum
+import os
 import sys
 from typing import List, Tuple, Optional
 from datetime import timedelta
@@ -430,8 +431,7 @@ def get_keeper_server_hostname(server):
             return parsed_host
     return server
 
-
-def get_router_host(server_hostname):
+def get_keeper_host_for_services(server_hostname):
     """
     Get the router hostname for a given Keeper server hostname.
 
@@ -446,14 +446,32 @@ def get_router_host(server_hostname):
         The router hostname:
           - 'keepersecurity.com' -> 'connect.keepersecurity.com'
           - 'govcloud.keepersecurity.us' -> 'connect.keepersecurity.us'
-          - 'govcloud.dev.keepersecurity.us' -> 'connect.dev.keepersecurity.us'
-          - 'govcloud.qa.keepersecurity.us' -> 'connect.qa.keepersecurity.us'
+          - 'govcloud.dev.keepersecurity.us' -> 'connect.govcloud.dev.keepersecurity.us'
+          - 'govcloud.qa.keepersecurity.us' -> 'connect.govcloud.qa.keepersecurity.us'
     """
     server_hostname = get_keeper_server_hostname(server_hostname)
+    if not server_hostname:
+        return server_hostname
+    server_hostname = server_hostname.lower()
     # GovCloud environments (.keepersecurity.us) replace 'govcloud.' with 'connect.'
-    if server_hostname and server_hostname.startswith('govcloud.'):
-        return 'connect.' + server_hostname[len('govcloud.'):]
-    return f'connect.{server_hostname}'
+    if server_hostname == 'govcloud.keepersecurity.us':
+        return 'keepersecurity.us'
+    return server_hostname
+
+def get_router_host(server_hostname):
+    krouter_url = os.getenv('KROUTER_URL')
+    if krouter_url:
+        return krouter_url
+
+    return f'connect.{get_keeper_host_for_services(server_hostname)}'
+
+
+def get_relay_host(server_hostname):
+    krelay_url = os.getenv('KRELAY_URL')
+    if krelay_url:
+        return krelay_url
+
+    return f'krelay.{get_keeper_host_for_services(server_hostname)}'
 
 
 # Messages

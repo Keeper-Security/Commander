@@ -37,7 +37,7 @@ from cryptography.hazmat.primitives import serialization
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes, string_to_bytes, bytes_to_string
 
 from ...error import CommandError
-from ...constants import get_keeper_server_hostname
+from ...constants import get_relay_host
 from ... import vault, api
 from ...keeper_dag import EdgeType
 from ...proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
@@ -56,7 +56,6 @@ from ..tunnel.port_forward.tunnel_helpers import (
     get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
-    parse_keeper_webrtc_version_from_sdp,
     set_remote_description_and_parse_version,
 )
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
@@ -1329,10 +1328,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         base64_nonce = bytes_to_base64(nonce)
 
         # Get relay server configuration
-        relay_url = 'krelay.' + get_keeper_server_hostname(params.server)
-        krelay_url = os.getenv('KRELAY_URL')
-        if krelay_url:
-            relay_url = krelay_url
+        relay_url = get_relay_host(params.server)
 
         response = router_get_relay_access_creds(params=params, expire_sec=60000000)
         if response is None:
