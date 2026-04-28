@@ -708,11 +708,12 @@ class PAMLaunchCommand(Command):
                     wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
                 )
                 if not gate.allowed:
-                    logging.error(
-                        "pam launch aborted for record %s: workflow access is not allowed for connect, "
-                        "or workflow requires MFA and no valid MFA response was provided.",
-                        record_uid,
-                    )
+                    # Orchestrator (`check_workflow_for_launch`) already prints
+                    # the user-facing reason for any block_reason it can identify
+                    # (no_workflow / needs_action / waiting / ready_to_start /
+                    # outside_time_window / MFA cancel / submit-failed / etc.),
+                    # so bail silently here instead of stacking a generic
+                    # catch-all on top. Mirrors `pam tunnel start`.
                     return
                 if gate.two_factor_value:
                     kwargs['two_factor_value'] = gate.two_factor_value
