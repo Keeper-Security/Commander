@@ -99,11 +99,22 @@ def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: 
     refusal up front. If parity becomes important, wrap this with a license
     check against `params.account_summary` / `params.license`.
 
-    Returns True (allow) by default and only False when the named enforcement
-    is explicitly set to False. Personal / non-enterprise accounts where
-    `params.enforcements` is None, empty, or missing the key are not blocked.
+    Decision matrix:
+        no enforcement context at all (personal / non-enterprise user):
+            -> allow (gateway is the authoritative gate)
+        enforcement context present, key explicitly true:
+            -> allow
+        enforcement context present, key explicitly false:
+            -> deny
+        enforcement context present, key absent:
+            -> deny (matches WV: `!!enforcements.<key>` evaluates to false
+            for missing keys; also matches Commander's enforcement parser
+            behavior, which converts `--enforcement KEY:false` to None and
+            removes the key, so "absent" is the actual on-the-wire shape
+            of "explicitly disabled")
 
-    Defensively swallows any unexpected enforcement payload shape.
+    Defensively swallows any unexpected enforcement payload shape and falls
+    back to allow.
     """
     import logging as _logging
     try:
@@ -111,12 +122,16 @@ def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: 
         if not enforcements or not isinstance(enforcements, dict):
             return True
         booleans = enforcements.get('booleans') or []
-        if not isinstance(booleans, list):
+        if not isinstance(booleans, list) or not booleans:
+            # Enforcement context but no booleans at all — treat as
+            # "not yet configured" and allow; gateway will gate.
             return True
         for b in booleans:
             if isinstance(b, dict) and b.get('key') == enforcement_key:
-                return b.get('value') is not False
-        return True
+                return bool(b.get('value'))
+        # Enterprise user with a populated enforcement set, but the
+        # specific PAM-grant key is absent. Match WV: deny.
+        return False
     except Exception as e:
         _logging.debug('Enforcement check failed for %s: %s', enforcement_key, e)
         return True

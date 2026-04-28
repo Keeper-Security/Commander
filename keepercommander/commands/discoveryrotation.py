@@ -3017,24 +3017,31 @@ def _is_rotation_allowed_by_enforcement(params):
     # type: (KeeperParams) -> bool
     """Inspired by web vault getAllowRotation (pam-enforcement-selectors.ts:30).
 
-    Returns True (allow) by default, and only False (deny) when the enterprise
-    enforcement explicitly sets `allow_rotate_credentials` to False (or sets
-    legacy `allow_pam_rotation` to False without any of the newer rotation
-    grants). This is intentionally more permissive than the web vault's
-    default-deny semantics: Commander is also used by personal / non-enterprise
-    accounts where `params.enforcements` is None or an empty dict, and we do
-    not want to block those users on a missing enterprise grant. The gateway
-    remains the authoritative gate when no enforcement context exists.
+    Decision matrix:
+      - No enforcement context (None / empty dict / no `booleans`):
+            personal / non-enterprise account — allow (True).
+      - Enterprise context (non-empty `booleans` list):
+            mirror web vault's `!!enforcements.allow_rotate_credentials`
+            semantics — both `allow_rotate_credentials` and the legacy
+            `allow_pam_rotation` key must evaluate truthy. Missing key
+            (Commander parser converts `:false` to None and drops the entry)
+            is treated as deny.
+
+    The Commander enforcement parser converts `:false` -> None (which removes
+    the key from the booleans list entirely), so an absent key in an
+    enterprise account is functionally equivalent to `False` and must deny
+    to match web vault. The gateway remains the authoritative gate, this is
+    the client-side parity with web vault's RotateButton.
 
     Defensively swallows any unexpected enforcement payload shape and allows
-    rotation to proceed in that case.
+    rotation to proceed in that case (fail-open on parse error only).
     """
     try:
         enforcements = getattr(params, 'enforcements', None)
         if not enforcements or not isinstance(enforcements, dict):
             return True
         booleans = enforcements.get('booleans') or []
-        if not isinstance(booleans, list):
+        if not isinstance(booleans, list) or not booleans:
             return True
         by_key = {}
         for b in booleans:
@@ -3044,10 +3051,9 @@ def _is_rotation_allowed_by_enforcement(params):
                     by_key[k] = b.get('value')
         if 'allow_rotate_credentials' in by_key:
             return bool(by_key['allow_rotate_credentials'])
-        # Legacy fallback: explicit False on allow_pam_rotation also blocks.
-        if by_key.get('allow_pam_rotation') is False:
-            return False
-        return True
+        if 'allow_pam_rotation' in by_key:
+            return bool(by_key['allow_pam_rotation'])
+        return False
     except Exception as _e:
         logging.debug('Rotation enforcement check failed; allowing: %s', _e)
         return True
