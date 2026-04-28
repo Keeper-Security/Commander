@@ -26,6 +26,7 @@ from .helpers import (
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
     command_error_handler, check_result,
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
+    classify_share_recipient,
 )
 from .parsers import (
     keeper_drive_mkdir_parser,
@@ -298,14 +299,17 @@ class KeeperDriveShareFolderCommand(Command):
 
     def execute(self, params, **kwargs):
         action = kwargs.get('action') or 'grant'
-        users = kwargs.get('user') or []
+        recipients = kwargs.get('user') or []
         folder_args = kwargs.get('folder') or []
         role = kwargs.get('role') or 'viewer'
 
         if not folder_args:
             raise CommandError('kd-share-folder', 'Folder path or UID is required')
-        if not users:
-            raise CommandError('kd-share-folder', 'Recipient email is required (use -e / --email)')
+        if not recipients:
+            raise CommandError(
+                'kd-share-folder',
+                'Recipient is required (use -e/--email; accepts an email, '
+                'team name, team UID, or @existing)')
 
         expiration = parse_expiration(
             kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-folder')
@@ -315,46 +319,102 @@ class KeeperDriveShareFolderCommand(Command):
             if not folder_uid:
                 raise CommandError('kd-share-folder', f'No such folder: {folder_arg!r}')
             check_folder_share_permission(params, folder_uid, 'kd-share-folder')
-            for email in users:
-                targets = self._expand_users(params, email, folder_uid, folder_arg)
-                if targets is None:
+
+            targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
+            for recipient, is_team in targets:
+                self._apply(params, action, folder_uid, recipient, role,
+                            expiration, as_team=is_team)
+
+    @classmethod
+    def _collect_targets(cls, params, recipients, folder_uid, folder_arg):
+        """Resolve every ``-e`` value into a list of ``(identifier, is_team)`` tuples.
+
+        Mirrors legacy ``share-folder``: each entry is auto-classified as a
+        user (matching ``EMAIL_PATTERN``) or a team (matched against the
+        share-objects / available-teams cache). ``@existing`` / ``@current``
+        expands to all current users *and* teams in the folder (excluding
+        the caller).
+        """
+        targets = []
+        seen = set()
+
+        def add(kind, ident):
+            key = (kind, ident.casefold() if kind == 'user' else ident)
+            if key in seen:
+                return
+            seen.add(key)
+            targets.append((ident, kind == 'team'))
+
+        for raw in recipients:
+            if raw in ('@existing', '@current'):
+                expanded = cls._expand_existing(params, folder_uid, folder_arg)
+                if not expanded:
                     continue
-                for target in targets:
-                    self._apply(params, action, folder_uid, target, role, expiration)
+                for kind, ident in expanded:
+                    add(kind, ident)
+                continue
+
+            classified = classify_share_recipient(params, raw)
+            if classified is None:
+                continue
+            kind, ident = classified
+            add(kind, ident)
+
+        return targets
 
     @staticmethod
-    def _expand_users(params, email, folder_uid, folder_arg):
-        if email not in ('@existing', '@current'):
-            return [email]
-        kd_folder = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {})
-        result = [a.get('username') for a in kd_folder.get('accesses', [])
-                  if a.get('username') and a.get('username') != params.user]
+    def _expand_existing(params, folder_uid, folder_arg):
+        """Expand ``@existing`` / ``@current`` into all users and teams currently
+        on the folder, excluding the caller. Mirrors legacy behaviour
+        (``shared_folder_cache[...]['users']`` + ``['teams']`` union).
+        """
+        from keepercommander.proto import folder_pb2
+        accesses = (getattr(params, 'keeper_drive_folder_accesses', {})
+                    .get(folder_uid, []))
+        at_user = int(folder_pb2.AT_USER)
+        at_team = int(folder_pb2.AT_TEAM)
+
+        result = []
+        for a in accesses:
+            access_type = int(a.get('access_type', 0) or 0)
+            if access_type == at_user:
+                username = a.get('username')
+                if username and username != params.user:
+                    result.append(('user', username))
+            elif access_type == at_team:
+                team_uid = a.get('access_type_uid')
+                if team_uid:
+                    result.append(('team', team_uid))
+
         if not result:
-            logging.info("No existing users found in folder '%s'", folder_arg)
+            logging.info("No existing users or teams found in folder '%s'", folder_arg)
             return None
         return result
 
     @classmethod
-    def _apply(cls, params, action, folder_uid, email, role, expiration):
+    def _apply(cls, params, action, folder_uid, recipient, role, expiration,
+                as_team=False):
         api_name, verb = cls._ACTIONS[action]
         api_func = getattr(_kd, api_name)
-        kw = dict(params=params, folder_uid=folder_uid, user_uid=email)
+        kw = dict(params=params, folder_uid=folder_uid, user_uid=recipient,
+                  as_team=as_team)
         if action != 'remove':
             kw['role'] = role
         if action == 'grant' and expiration is not None:
             kw['expiration_timestamp'] = expiration
+        kind = 'Team' if as_team else 'User'
         try:
             result = api_func(**kw)
             if result['success']:
                 taken = result.get('action_taken', verb)
                 if taken == 'already_had_access':
-                    logging.info("User '%s' already has access", email)
+                    logging.info("%s '%s' already has access", kind, recipient)
                 else:
-                    logging.info("User share '%s' %s", email, verb)
+                    logging.info("%s share '%s' %s", kind, recipient, verb)
             else:
-                logging.warning("User share '%s' failed", email)
-        except ValueError:
-            logging.warning('User %s not found', email)
+                logging.warning("%s share '%s' failed", kind, recipient)
+        except ValueError as e:
+            logging.warning("%s '%s': %s", kind, recipient, e)
         except Exception as e:
             raise CommandError('kd-share-folder', str(e))
 
