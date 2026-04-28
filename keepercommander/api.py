@@ -197,7 +197,7 @@ def get_record(params, record_uid):
     try:
         rec = Record(record_uid)
         data = json.loads(cached_rec['data_unencrypted'])
-        extra = json.loads(cached_rec['extra_unencrypted']) if 'extra_unencrypted' in cached_rec else None
+        extra = json.loads(cached_rec['extra_unencrypted']) if cached_rec.get('extra_unencrypted') else None
         rec.load(data, version=version, revision=cached_rec['revision'], extra=extra)
         if not resolve_record_view_path(params, record_uid):
             rec.mask_password()

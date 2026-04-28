@@ -39,9 +39,12 @@ from .commands.base import CliCommand, GroupCommand
 from .commands.utils import LoginCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, KEEPER_SERVERS
+from .command_categories import COMMAND_CATEGORIES
 from .error import CommandError, Error
 from .params import KeeperParams
 from .subfolder import BaseFolderNode
+
+KEEPER_DRIVE_COMMANDS = COMMAND_CATEGORIES.get('KeeperDrive Commands', set())
 
 current_command = None  # type: Union[None, CliCommand]
 stack = []
@@ -68,7 +71,7 @@ aliases['q'] = 'quit'
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
-def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False):
+def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False, show_keeper_drive=True):
     from .command_categories import get_command_category, get_category_order
     from .display import bcolors
     from colorama import Fore, Style
@@ -140,6 +143,8 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         if category not in categorized_commands:
             continue
         if category == 'Legacy Commands' and not show_legacy:
+            continue
+        if category == 'KeeperDrive Commands' and not show_keeper_drive:
             continue
 
         if category == 'KeeperPAM Commands':
@@ -380,7 +385,9 @@ def do_command(params, command_line):
                 else:
                     cmd = ali
 
-            if cmd in commands or cmd in enterprise_commands or cmd in msp_commands:
+            is_kd_hidden = cmd in KEEPER_DRIVE_COMMANDS and params.is_feature_disallowed('keeper_drive')
+
+            if not is_kd_hidden and (cmd in commands or cmd in enterprise_commands or cmd in msp_commands):
                 command = commands.get(cmd) or enterprise_commands.get(cmd) or msp_commands.get(cmd)
                 global current_command
                 current_command = command
@@ -431,7 +438,10 @@ def do_command(params, command_line):
             else:
                 if not params.session_token and utils.is_email(orig_cmd):
                     return LoginCommand().execute(params, email=orig_cmd, new_login=False)
-                display_command_help(show_enterprise=(params.enterprise is not None))
+                display_command_help(
+                    show_enterprise=(params.enterprise is not None),
+                    show_keeper_drive=not params.is_feature_disallowed('keeper_drive')
+                )
 
 
 def runcommands(params, commands=None, command_delay=0, quiet=False):
@@ -856,7 +866,11 @@ def get_prompt(params):
             break
 
         if f.parent_uid is not None:
-            f = params.folder_cache[f.parent_uid]
+            if f.parent_uid in params.folder_cache:
+                f = params.folder_cache[f.parent_uid]
+            else:
+                # Parent UID not in folder_cache (e.g., KD folders with special root UID)
+                f = params.root_folder
         else:
             if f.type == BaseFolderNode.SharedFolderFolderType:
                 f = params.folder_cache[f.shared_folder_uid]

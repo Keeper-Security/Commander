@@ -152,6 +152,10 @@ def register_commands(commands, aliases, command_info):
     device_management.register_commands(commands)
     device_management.register_command_info(aliases, command_info)
 
+    from . import keeper_drive
+    keeper_drive.register_commands(commands)
+    keeper_drive.register_command_info(aliases, command_info)
+
     if sys.version_info.major == 3 and sys.version_info.minor >= 10 and (utils.is_windows_11() or sys.platform == 'darwin'):
         from ..biometric import BiometricCommand
         commands['biometric'] = BiometricCommand()

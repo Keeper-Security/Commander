@@ -1,25 +1,27 @@
 import record_pb2 as _record_pb2
+import tla_pb2 as _tla_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class RecordType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     password: _ClassVar[RecordType]
 
 class FolderType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     default_folder: _ClassVar[FolderType]
     user_folder: _ClassVar[FolderType]
     shared_folder: _ClassVar[FolderType]
     shared_folder_folder: _ClassVar[FolderType]
 
 class EncryptedKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     no_key: _ClassVar[EncryptedKeyType]
     encrypted_by_data_key: _ClassVar[EncryptedKeyType]
     encrypted_by_public_key: _ClassVar[EncryptedKeyType]
@@ -27,10 +29,74 @@ class EncryptedKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     encrypted_by_public_key_ecc: _ClassVar[EncryptedKeyType]
 
 class SetBooleanValue(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     BOOLEAN_NO_CHANGE: _ClassVar[SetBooleanValue]
     BOOLEAN_TRUE: _ClassVar[SetBooleanValue]
     BOOLEAN_FALSE: _ClassVar[SetBooleanValue]
+
+class FolderUsageType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    UT_UNKNOWN: _ClassVar[FolderUsageType]
+    UT_NORMAL: _ClassVar[FolderUsageType]
+    UT_WORKFLOW: _ClassVar[FolderUsageType]
+    UT_TRASHCAN: _ClassVar[FolderUsageType]
+
+class FolderKeyEncryptionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ENCRYPTED_BY_USER_KEY: _ClassVar[FolderKeyEncryptionType]
+    ENCRYPTED_BY_PARENT_KEY: _ClassVar[FolderKeyEncryptionType]
+    ENCRYPTED_BY_TEAM_KEY: _ClassVar[FolderKeyEncryptionType]
+
+class FolderModifyStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SUCCESS: _ClassVar[FolderModifyStatus]
+    BAD_REQUEST: _ClassVar[FolderModifyStatus]
+    ACCESS_DENIED: _ClassVar[FolderModifyStatus]
+    NOT_FOUND: _ClassVar[FolderModifyStatus]
+
+class FolderPermissionBits(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    noBits: _ClassVar[FolderPermissionBits]
+    canAdd: _ClassVar[FolderPermissionBits]
+    canRemove: _ClassVar[FolderPermissionBits]
+    canDelete: _ClassVar[FolderPermissionBits]
+    canListAccess: _ClassVar[FolderPermissionBits]
+    canUpdateAccess: _ClassVar[FolderPermissionBits]
+    canChangeOwnership: _ClassVar[FolderPermissionBits]
+    canEditRecords: _ClassVar[FolderPermissionBits]
+    canViewRecords: _ClassVar[FolderPermissionBits]
+    canApproveAccess: _ClassVar[FolderPermissionBits]
+    canRequestAccess: _ClassVar[FolderPermissionBits]
+    canUpdateSetting: _ClassVar[FolderPermissionBits]
+    canListRecords: _ClassVar[FolderPermissionBits]
+    canListFolders: _ClassVar[FolderPermissionBits]
+
+class AccessRoleType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    NAVIGATOR: _ClassVar[AccessRoleType]
+    REQUESTOR: _ClassVar[AccessRoleType]
+    VIEWER: _ClassVar[AccessRoleType]
+    SHARED_MANAGER: _ClassVar[AccessRoleType]
+    CONTENT_MANAGER: _ClassVar[AccessRoleType]
+    CONTENT_SHARE_MANAGER: _ClassVar[AccessRoleType]
+    MANAGER: _ClassVar[AccessRoleType]
+    UNRESOLVED: _ClassVar[AccessRoleType]
+
+class AccessType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    AT_UNKNOWN: _ClassVar[AccessType]
+    AT_OWNER: _ClassVar[AccessType]
+    AT_USER: _ClassVar[AccessType]
+    AT_TEAM: _ClassVar[AccessType]
+    AT_ENTERPRISE: _ClassVar[AccessType]
+    AT_FOLDER: _ClassVar[AccessType]
+    AT_APPLICATION: _ClassVar[AccessType]
+
+class ObjectType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    OT_UNKNOWN: _ClassVar[ObjectType]
+    OT_RECORD: _ClassVar[ObjectType]
+    OT_FOLDER: _ClassVar[ObjectType]
 password: RecordType
 default_folder: FolderType
 user_folder: FolderType
@@ -44,9 +110,52 @@ encrypted_by_public_key_ecc: EncryptedKeyType
 BOOLEAN_NO_CHANGE: SetBooleanValue
 BOOLEAN_TRUE: SetBooleanValue
 BOOLEAN_FALSE: SetBooleanValue
+UT_UNKNOWN: FolderUsageType
+UT_NORMAL: FolderUsageType
+UT_WORKFLOW: FolderUsageType
+UT_TRASHCAN: FolderUsageType
+ENCRYPTED_BY_USER_KEY: FolderKeyEncryptionType
+ENCRYPTED_BY_PARENT_KEY: FolderKeyEncryptionType
+ENCRYPTED_BY_TEAM_KEY: FolderKeyEncryptionType
+SUCCESS: FolderModifyStatus
+BAD_REQUEST: FolderModifyStatus
+ACCESS_DENIED: FolderModifyStatus
+NOT_FOUND: FolderModifyStatus
+noBits: FolderPermissionBits
+canAdd: FolderPermissionBits
+canRemove: FolderPermissionBits
+canDelete: FolderPermissionBits
+canListAccess: FolderPermissionBits
+canUpdateAccess: FolderPermissionBits
+canChangeOwnership: FolderPermissionBits
+canEditRecords: FolderPermissionBits
+canViewRecords: FolderPermissionBits
+canApproveAccess: FolderPermissionBits
+canRequestAccess: FolderPermissionBits
+canUpdateSetting: FolderPermissionBits
+canListRecords: FolderPermissionBits
+canListFolders: FolderPermissionBits
+NAVIGATOR: AccessRoleType
+REQUESTOR: AccessRoleType
+VIEWER: AccessRoleType
+SHARED_MANAGER: AccessRoleType
+CONTENT_MANAGER: AccessRoleType
+CONTENT_SHARE_MANAGER: AccessRoleType
+MANAGER: AccessRoleType
+UNRESOLVED: AccessRoleType
+AT_UNKNOWN: AccessType
+AT_OWNER: AccessType
+AT_USER: AccessType
+AT_TEAM: AccessType
+AT_ENTERPRISE: AccessType
+AT_FOLDER: AccessType
+AT_APPLICATION: AccessType
+OT_UNKNOWN: ObjectType
+OT_RECORD: ObjectType
+OT_FOLDER: ObjectType
 
 class EncryptedDataKey(_message.Message):
-    __slots__ = ["encryptedKey", "encryptedKeyType"]
+    __slots__ = ("encryptedKey", "encryptedKeyType")
     ENCRYPTEDKEY_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDKEYTYPE_FIELD_NUMBER: _ClassVar[int]
     encryptedKey: bytes
@@ -54,7 +163,7 @@ class EncryptedDataKey(_message.Message):
     def __init__(self, encryptedKey: _Optional[bytes] = ..., encryptedKeyType: _Optional[_Union[EncryptedKeyType, str]] = ...) -> None: ...
 
 class SharedFolderRecordData(_message.Message):
-    __slots__ = ["folderUid", "recordUid", "userId", "encryptedDataKey"]
+    __slots__ = ("folderUid", "recordUid", "userId", "encryptedDataKey")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     USERID_FIELD_NUMBER: _ClassVar[int]
@@ -66,13 +175,13 @@ class SharedFolderRecordData(_message.Message):
     def __init__(self, folderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., userId: _Optional[int] = ..., encryptedDataKey: _Optional[_Iterable[_Union[EncryptedDataKey, _Mapping]]] = ...) -> None: ...
 
 class SharedFolderRecordDataList(_message.Message):
-    __slots__ = ["sharedFolderRecordData"]
+    __slots__ = ("sharedFolderRecordData",)
     SHAREDFOLDERRECORDDATA_FIELD_NUMBER: _ClassVar[int]
     sharedFolderRecordData: _containers.RepeatedCompositeFieldContainer[SharedFolderRecordData]
     def __init__(self, sharedFolderRecordData: _Optional[_Iterable[_Union[SharedFolderRecordData, _Mapping]]] = ...) -> None: ...
 
 class SharedFolderRecordFix(_message.Message):
-    __slots__ = ["folderUid", "recordUid", "encryptedRecordFolderKey"]
+    __slots__ = ("folderUid", "recordUid", "encryptedRecordFolderKey")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDRECORDFOLDERKEY_FIELD_NUMBER: _ClassVar[int]
@@ -82,13 +191,13 @@ class SharedFolderRecordFix(_message.Message):
     def __init__(self, folderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., encryptedRecordFolderKey: _Optional[bytes] = ...) -> None: ...
 
 class SharedFolderRecordFixList(_message.Message):
-    __slots__ = ["sharedFolderRecordFix"]
+    __slots__ = ("sharedFolderRecordFix",)
     SHAREDFOLDERRECORDFIX_FIELD_NUMBER: _ClassVar[int]
     sharedFolderRecordFix: _containers.RepeatedCompositeFieldContainer[SharedFolderRecordFix]
     def __init__(self, sharedFolderRecordFix: _Optional[_Iterable[_Union[SharedFolderRecordFix, _Mapping]]] = ...) -> None: ...
 
 class RecordRequest(_message.Message):
-    __slots__ = ["recordUid", "recordType", "recordData", "encryptedRecordKey", "folderType", "howLongAgo", "folderUid", "encryptedRecordFolderKey", "extra", "nonSharedData", "fileIds"]
+    __slots__ = ("recordUid", "recordType", "recordData", "encryptedRecordKey", "folderType", "howLongAgo", "folderUid", "encryptedRecordFolderKey", "extra", "nonSharedData", "fileIds")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDTYPE_FIELD_NUMBER: _ClassVar[int]
     RECORDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -114,7 +223,7 @@ class RecordRequest(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., recordType: _Optional[_Union[RecordType, str]] = ..., recordData: _Optional[bytes] = ..., encryptedRecordKey: _Optional[bytes] = ..., folderType: _Optional[_Union[FolderType, str]] = ..., howLongAgo: _Optional[int] = ..., folderUid: _Optional[bytes] = ..., encryptedRecordFolderKey: _Optional[bytes] = ..., extra: _Optional[bytes] = ..., nonSharedData: _Optional[bytes] = ..., fileIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class RecordResponse(_message.Message):
-    __slots__ = ["recordUid", "revision", "status"]
+    __slots__ = ("recordUid", "revision", "status")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -124,7 +233,7 @@ class RecordResponse(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., status: _Optional[str] = ...) -> None: ...
 
 class SharedFolderFields(_message.Message):
-    __slots__ = ["encryptedFolderName", "manageUsers", "manageRecords", "canEdit", "canShare"]
+    __slots__ = ("encryptedFolderName", "manageUsers", "manageRecords", "canEdit", "canShare")
     ENCRYPTEDFOLDERNAME_FIELD_NUMBER: _ClassVar[int]
     MANAGEUSERS_FIELD_NUMBER: _ClassVar[int]
     MANAGERECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -135,16 +244,16 @@ class SharedFolderFields(_message.Message):
     manageRecords: bool
     canEdit: bool
     canShare: bool
-    def __init__(self, encryptedFolderName: _Optional[bytes] = ..., manageUsers: bool = ..., manageRecords: bool = ..., canEdit: bool = ..., canShare: bool = ...) -> None: ...
+    def __init__(self, encryptedFolderName: _Optional[bytes] = ..., manageUsers: _Optional[bool] = ..., manageRecords: _Optional[bool] = ..., canEdit: _Optional[bool] = ..., canShare: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderFolderFields(_message.Message):
-    __slots__ = ["sharedFolderUid"]
+    __slots__ = ("sharedFolderUid",)
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     sharedFolderUid: bytes
     def __init__(self, sharedFolderUid: _Optional[bytes] = ...) -> None: ...
 
 class FolderRequest(_message.Message):
-    __slots__ = ["folderUid", "folderType", "parentFolderUid", "folderData", "encryptedFolderKey", "sharedFolderFields", "sharedFolderFolderFields"]
+    __slots__ = ("folderUid", "folderType", "parentFolderUid", "folderData", "encryptedFolderKey", "sharedFolderFields", "sharedFolderFolderFields")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     FOLDERTYPE_FIELD_NUMBER: _ClassVar[int]
     PARENTFOLDERUID_FIELD_NUMBER: _ClassVar[int]
@@ -162,7 +271,7 @@ class FolderRequest(_message.Message):
     def __init__(self, folderUid: _Optional[bytes] = ..., folderType: _Optional[_Union[FolderType, str]] = ..., parentFolderUid: _Optional[bytes] = ..., folderData: _Optional[bytes] = ..., encryptedFolderKey: _Optional[bytes] = ..., sharedFolderFields: _Optional[_Union[SharedFolderFields, _Mapping]] = ..., sharedFolderFolderFields: _Optional[_Union[SharedFolderFolderFields, _Mapping]] = ...) -> None: ...
 
 class FolderResponse(_message.Message):
-    __slots__ = ["folderUid", "revision", "status"]
+    __slots__ = ("folderUid", "revision", "status")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -172,7 +281,7 @@ class FolderResponse(_message.Message):
     def __init__(self, folderUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., status: _Optional[str] = ...) -> None: ...
 
 class ImportFolderRecordRequest(_message.Message):
-    __slots__ = ["folderRequest", "recordRequest"]
+    __slots__ = ("folderRequest", "recordRequest")
     FOLDERREQUEST_FIELD_NUMBER: _ClassVar[int]
     RECORDREQUEST_FIELD_NUMBER: _ClassVar[int]
     folderRequest: _containers.RepeatedCompositeFieldContainer[FolderRequest]
@@ -180,7 +289,7 @@ class ImportFolderRecordRequest(_message.Message):
     def __init__(self, folderRequest: _Optional[_Iterable[_Union[FolderRequest, _Mapping]]] = ..., recordRequest: _Optional[_Iterable[_Union[RecordRequest, _Mapping]]] = ...) -> None: ...
 
 class ImportFolderRecordResponse(_message.Message):
-    __slots__ = ["folderResponse", "recordResponse"]
+    __slots__ = ("folderResponse", "recordResponse")
     FOLDERRESPONSE_FIELD_NUMBER: _ClassVar[int]
     RECORDRESPONSE_FIELD_NUMBER: _ClassVar[int]
     folderResponse: _containers.RepeatedCompositeFieldContainer[FolderResponse]
@@ -188,7 +297,7 @@ class ImportFolderRecordResponse(_message.Message):
     def __init__(self, folderResponse: _Optional[_Iterable[_Union[FolderResponse, _Mapping]]] = ..., recordResponse: _Optional[_Iterable[_Union[RecordResponse, _Mapping]]] = ...) -> None: ...
 
 class SharedFolderUpdateRecord(_message.Message):
-    __slots__ = ["recordUid", "sharedFolderUid", "teamUid", "canEdit", "canShare", "encryptedRecordKey", "revision", "expiration", "timerNotificationType", "rotateOnExpiration"]
+    __slots__ = ("recordUid", "sharedFolderUid", "teamUid", "canEdit", "canShare", "encryptedRecordKey", "revision", "expiration", "timerNotificationType", "rotateOnExpiration")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
@@ -209,10 +318,10 @@ class SharedFolderUpdateRecord(_message.Message):
     expiration: int
     timerNotificationType: _record_pb2.TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., canEdit: _Optional[_Union[SetBooleanValue, str]] = ..., canShare: _Optional[_Union[SetBooleanValue, str]] = ..., encryptedRecordKey: _Optional[bytes] = ..., revision: _Optional[int] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., canEdit: _Optional[_Union[SetBooleanValue, str]] = ..., canShare: _Optional[_Union[SetBooleanValue, str]] = ..., encryptedRecordKey: _Optional[bytes] = ..., revision: _Optional[int] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderUpdateUser(_message.Message):
-    __slots__ = ["username", "manageUsers", "manageRecords", "sharedFolderKey", "expiration", "timerNotificationType", "typedSharedFolderKey", "rotateOnExpiration"]
+    __slots__ = ("username", "manageUsers", "manageRecords", "sharedFolderKey", "expiration", "timerNotificationType", "typedSharedFolderKey", "rotateOnExpiration")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     MANAGEUSERS_FIELD_NUMBER: _ClassVar[int]
     MANAGERECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -229,10 +338,10 @@ class SharedFolderUpdateUser(_message.Message):
     timerNotificationType: _record_pb2.TimerNotificationType
     typedSharedFolderKey: EncryptedDataKey
     rotateOnExpiration: bool
-    def __init__(self, username: _Optional[str] = ..., manageUsers: _Optional[_Union[SetBooleanValue, str]] = ..., manageRecords: _Optional[_Union[SetBooleanValue, str]] = ..., sharedFolderKey: _Optional[bytes] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., typedSharedFolderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, username: _Optional[str] = ..., manageUsers: _Optional[_Union[SetBooleanValue, str]] = ..., manageRecords: _Optional[_Union[SetBooleanValue, str]] = ..., sharedFolderKey: _Optional[bytes] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., typedSharedFolderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderUpdateTeam(_message.Message):
-    __slots__ = ["teamUid", "manageUsers", "manageRecords", "sharedFolderKey", "expiration", "timerNotificationType", "typedSharedFolderKey", "rotateOnExpiration"]
+    __slots__ = ("teamUid", "manageUsers", "manageRecords", "sharedFolderKey", "expiration", "timerNotificationType", "typedSharedFolderKey", "rotateOnExpiration")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     MANAGEUSERS_FIELD_NUMBER: _ClassVar[int]
     MANAGERECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -249,10 +358,10 @@ class SharedFolderUpdateTeam(_message.Message):
     timerNotificationType: _record_pb2.TimerNotificationType
     typedSharedFolderKey: EncryptedDataKey
     rotateOnExpiration: bool
-    def __init__(self, teamUid: _Optional[bytes] = ..., manageUsers: bool = ..., manageRecords: bool = ..., sharedFolderKey: _Optional[bytes] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., typedSharedFolderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, teamUid: _Optional[bytes] = ..., manageUsers: _Optional[bool] = ..., manageRecords: _Optional[bool] = ..., sharedFolderKey: _Optional[bytes] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., typedSharedFolderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderUpdateV3Request(_message.Message):
-    __slots__ = ["sharedFolderUpdateOperation_dont_use", "sharedFolderUid", "encryptedSharedFolderName", "revision", "forceUpdate", "fromTeamUid", "defaultManageUsers", "defaultManageRecords", "defaultCanEdit", "defaultCanShare", "sharedFolderAddRecord", "sharedFolderAddUser", "sharedFolderAddTeam", "sharedFolderUpdateRecord", "sharedFolderUpdateUser", "sharedFolderUpdateTeam", "sharedFolderRemoveRecord", "sharedFolderRemoveUser", "sharedFolderRemoveTeam", "sharedFolderOwner"]
+    __slots__ = ("sharedFolderUpdateOperation_dont_use", "sharedFolderUid", "encryptedSharedFolderName", "revision", "forceUpdate", "fromTeamUid", "defaultManageUsers", "defaultManageRecords", "defaultCanEdit", "defaultCanShare", "sharedFolderAddRecord", "sharedFolderAddUser", "sharedFolderAddTeam", "sharedFolderUpdateRecord", "sharedFolderUpdateUser", "sharedFolderUpdateTeam", "sharedFolderRemoveRecord", "sharedFolderRemoveUser", "sharedFolderRemoveTeam", "sharedFolderOwner")
     SHAREDFOLDERUPDATEOPERATION_DONT_USE_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDSHAREDFOLDERNAME_FIELD_NUMBER: _ClassVar[int]
@@ -293,16 +402,16 @@ class SharedFolderUpdateV3Request(_message.Message):
     sharedFolderRemoveUser: _containers.RepeatedScalarFieldContainer[str]
     sharedFolderRemoveTeam: _containers.RepeatedScalarFieldContainer[bytes]
     sharedFolderOwner: str
-    def __init__(self, sharedFolderUpdateOperation_dont_use: _Optional[int] = ..., sharedFolderUid: _Optional[bytes] = ..., encryptedSharedFolderName: _Optional[bytes] = ..., revision: _Optional[int] = ..., forceUpdate: bool = ..., fromTeamUid: _Optional[bytes] = ..., defaultManageUsers: _Optional[_Union[SetBooleanValue, str]] = ..., defaultManageRecords: _Optional[_Union[SetBooleanValue, str]] = ..., defaultCanEdit: _Optional[_Union[SetBooleanValue, str]] = ..., defaultCanShare: _Optional[_Union[SetBooleanValue, str]] = ..., sharedFolderAddRecord: _Optional[_Iterable[_Union[SharedFolderUpdateRecord, _Mapping]]] = ..., sharedFolderAddUser: _Optional[_Iterable[_Union[SharedFolderUpdateUser, _Mapping]]] = ..., sharedFolderAddTeam: _Optional[_Iterable[_Union[SharedFolderUpdateTeam, _Mapping]]] = ..., sharedFolderUpdateRecord: _Optional[_Iterable[_Union[SharedFolderUpdateRecord, _Mapping]]] = ..., sharedFolderUpdateUser: _Optional[_Iterable[_Union[SharedFolderUpdateUser, _Mapping]]] = ..., sharedFolderUpdateTeam: _Optional[_Iterable[_Union[SharedFolderUpdateTeam, _Mapping]]] = ..., sharedFolderRemoveRecord: _Optional[_Iterable[bytes]] = ..., sharedFolderRemoveUser: _Optional[_Iterable[str]] = ..., sharedFolderRemoveTeam: _Optional[_Iterable[bytes]] = ..., sharedFolderOwner: _Optional[str] = ...) -> None: ...
+    def __init__(self, sharedFolderUpdateOperation_dont_use: _Optional[int] = ..., sharedFolderUid: _Optional[bytes] = ..., encryptedSharedFolderName: _Optional[bytes] = ..., revision: _Optional[int] = ..., forceUpdate: _Optional[bool] = ..., fromTeamUid: _Optional[bytes] = ..., defaultManageUsers: _Optional[_Union[SetBooleanValue, str]] = ..., defaultManageRecords: _Optional[_Union[SetBooleanValue, str]] = ..., defaultCanEdit: _Optional[_Union[SetBooleanValue, str]] = ..., defaultCanShare: _Optional[_Union[SetBooleanValue, str]] = ..., sharedFolderAddRecord: _Optional[_Iterable[_Union[SharedFolderUpdateRecord, _Mapping]]] = ..., sharedFolderAddUser: _Optional[_Iterable[_Union[SharedFolderUpdateUser, _Mapping]]] = ..., sharedFolderAddTeam: _Optional[_Iterable[_Union[SharedFolderUpdateTeam, _Mapping]]] = ..., sharedFolderUpdateRecord: _Optional[_Iterable[_Union[SharedFolderUpdateRecord, _Mapping]]] = ..., sharedFolderUpdateUser: _Optional[_Iterable[_Union[SharedFolderUpdateUser, _Mapping]]] = ..., sharedFolderUpdateTeam: _Optional[_Iterable[_Union[SharedFolderUpdateTeam, _Mapping]]] = ..., sharedFolderRemoveRecord: _Optional[_Iterable[bytes]] = ..., sharedFolderRemoveUser: _Optional[_Iterable[str]] = ..., sharedFolderRemoveTeam: _Optional[_Iterable[bytes]] = ..., sharedFolderOwner: _Optional[str] = ...) -> None: ...
 
 class SharedFolderUpdateV3RequestV2(_message.Message):
-    __slots__ = ["sharedFoldersUpdateV3"]
+    __slots__ = ("sharedFoldersUpdateV3",)
     SHAREDFOLDERSUPDATEV3_FIELD_NUMBER: _ClassVar[int]
     sharedFoldersUpdateV3: _containers.RepeatedCompositeFieldContainer[SharedFolderUpdateV3Request]
     def __init__(self, sharedFoldersUpdateV3: _Optional[_Iterable[_Union[SharedFolderUpdateV3Request, _Mapping]]] = ...) -> None: ...
 
 class SharedFolderUpdateRecordStatus(_message.Message):
-    __slots__ = ["recordUid", "status"]
+    __slots__ = ("recordUid", "status")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -310,7 +419,7 @@ class SharedFolderUpdateRecordStatus(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., status: _Optional[str] = ...) -> None: ...
 
 class SharedFolderUpdateUserStatus(_message.Message):
-    __slots__ = ["username", "status"]
+    __slots__ = ("username", "status")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     username: str
@@ -318,7 +427,7 @@ class SharedFolderUpdateUserStatus(_message.Message):
     def __init__(self, username: _Optional[str] = ..., status: _Optional[str] = ...) -> None: ...
 
 class SharedFolderUpdateTeamStatus(_message.Message):
-    __slots__ = ["teamUid", "status"]
+    __slots__ = ("teamUid", "status")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     teamUid: bytes
@@ -326,7 +435,7 @@ class SharedFolderUpdateTeamStatus(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., status: _Optional[str] = ...) -> None: ...
 
 class SharedFolderUpdateV3Response(_message.Message):
-    __slots__ = ["revision", "sharedFolderAddRecordStatus", "sharedFolderAddUserStatus", "sharedFolderAddTeamStatus", "sharedFolderUpdateRecordStatus", "sharedFolderUpdateUserStatus", "sharedFolderUpdateTeamStatus", "sharedFolderRemoveRecordStatus", "sharedFolderRemoveUserStatus", "sharedFolderRemoveTeamStatus", "sharedFolderUid", "status"]
+    __slots__ = ("revision", "sharedFolderAddRecordStatus", "sharedFolderAddUserStatus", "sharedFolderAddTeamStatus", "sharedFolderUpdateRecordStatus", "sharedFolderUpdateUserStatus", "sharedFolderUpdateTeamStatus", "sharedFolderRemoveRecordStatus", "sharedFolderRemoveUserStatus", "sharedFolderRemoveTeamStatus", "sharedFolderUid", "status")
     REVISION_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERADDRECORDSTATUS_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERADDUSERSTATUS_FIELD_NUMBER: _ClassVar[int]
@@ -354,13 +463,13 @@ class SharedFolderUpdateV3Response(_message.Message):
     def __init__(self, revision: _Optional[int] = ..., sharedFolderAddRecordStatus: _Optional[_Iterable[_Union[SharedFolderUpdateRecordStatus, _Mapping]]] = ..., sharedFolderAddUserStatus: _Optional[_Iterable[_Union[SharedFolderUpdateUserStatus, _Mapping]]] = ..., sharedFolderAddTeamStatus: _Optional[_Iterable[_Union[SharedFolderUpdateTeamStatus, _Mapping]]] = ..., sharedFolderUpdateRecordStatus: _Optional[_Iterable[_Union[SharedFolderUpdateRecordStatus, _Mapping]]] = ..., sharedFolderUpdateUserStatus: _Optional[_Iterable[_Union[SharedFolderUpdateUserStatus, _Mapping]]] = ..., sharedFolderUpdateTeamStatus: _Optional[_Iterable[_Union[SharedFolderUpdateTeamStatus, _Mapping]]] = ..., sharedFolderRemoveRecordStatus: _Optional[_Iterable[_Union[SharedFolderUpdateRecordStatus, _Mapping]]] = ..., sharedFolderRemoveUserStatus: _Optional[_Iterable[_Union[SharedFolderUpdateUserStatus, _Mapping]]] = ..., sharedFolderRemoveTeamStatus: _Optional[_Iterable[_Union[SharedFolderUpdateTeamStatus, _Mapping]]] = ..., sharedFolderUid: _Optional[bytes] = ..., status: _Optional[str] = ...) -> None: ...
 
 class SharedFolderUpdateV3ResponseV2(_message.Message):
-    __slots__ = ["sharedFoldersUpdateV3Response"]
+    __slots__ = ("sharedFoldersUpdateV3Response",)
     SHAREDFOLDERSUPDATEV3RESPONSE_FIELD_NUMBER: _ClassVar[int]
     sharedFoldersUpdateV3Response: _containers.RepeatedCompositeFieldContainer[SharedFolderUpdateV3Response]
     def __init__(self, sharedFoldersUpdateV3Response: _Optional[_Iterable[_Union[SharedFolderUpdateV3Response, _Mapping]]] = ...) -> None: ...
 
 class GetDeletedSharedFoldersAndRecordsResponse(_message.Message):
-    __slots__ = ["sharedFolders", "sharedFolderRecords", "deletedRecordData", "usernames"]
+    __slots__ = ("sharedFolders", "sharedFolderRecords", "deletedRecordData", "usernames")
     SHAREDFOLDERS_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERRECORDS_FIELD_NUMBER: _ClassVar[int]
     DELETEDRECORDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -372,7 +481,7 @@ class GetDeletedSharedFoldersAndRecordsResponse(_message.Message):
     def __init__(self, sharedFolders: _Optional[_Iterable[_Union[DeletedSharedFolder, _Mapping]]] = ..., sharedFolderRecords: _Optional[_Iterable[_Union[DeletedSharedFolderRecord, _Mapping]]] = ..., deletedRecordData: _Optional[_Iterable[_Union[DeletedRecordData, _Mapping]]] = ..., usernames: _Optional[_Iterable[_Union[Username, _Mapping]]] = ...) -> None: ...
 
 class DeletedSharedFolder(_message.Message):
-    __slots__ = ["sharedFolderUid", "folderUid", "parentUid", "sharedFolderKey", "folderKeyType", "data", "dateDeleted", "revision"]
+    __slots__ = ("sharedFolderUid", "folderUid", "parentUid", "sharedFolderKey", "folderKeyType", "data", "dateDeleted", "revision")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     PARENTUID_FIELD_NUMBER: _ClassVar[int]
@@ -392,7 +501,7 @@ class DeletedSharedFolder(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., folderUid: _Optional[bytes] = ..., parentUid: _Optional[bytes] = ..., sharedFolderKey: _Optional[bytes] = ..., folderKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., data: _Optional[bytes] = ..., dateDeleted: _Optional[int] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class DeletedSharedFolderRecord(_message.Message):
-    __slots__ = ["folderUid", "recordUid", "sharedRecordKey", "dateDeleted", "revision"]
+    __slots__ = ("folderUid", "recordUid", "sharedRecordKey", "dateDeleted", "revision")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     SHAREDRECORDKEY_FIELD_NUMBER: _ClassVar[int]
@@ -406,7 +515,7 @@ class DeletedSharedFolderRecord(_message.Message):
     def __init__(self, folderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., sharedRecordKey: _Optional[bytes] = ..., dateDeleted: _Optional[int] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class DeletedRecordData(_message.Message):
-    __slots__ = ["recordUid", "ownerUid", "revision", "clientModifiedTime", "data", "version"]
+    __slots__ = ("recordUid", "ownerUid", "revision", "clientModifiedTime", "data", "version")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     OWNERUID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
@@ -422,7 +531,7 @@ class DeletedRecordData(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., ownerUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., clientModifiedTime: _Optional[int] = ..., data: _Optional[bytes] = ..., version: _Optional[int] = ...) -> None: ...
 
 class Username(_message.Message):
-    __slots__ = ["accountUid", "username"]
+    __slots__ = ("accountUid", "username")
     ACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     accountUid: bytes
@@ -430,7 +539,7 @@ class Username(_message.Message):
     def __init__(self, accountUid: _Optional[bytes] = ..., username: _Optional[str] = ...) -> None: ...
 
 class RestoreDeletedSharedFoldersAndRecordsRequest(_message.Message):
-    __slots__ = ["folders", "records"]
+    __slots__ = ("folders", "records")
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     folders: _containers.RepeatedCompositeFieldContainer[RestoreSharedObject]
@@ -438,9 +547,353 @@ class RestoreDeletedSharedFoldersAndRecordsRequest(_message.Message):
     def __init__(self, folders: _Optional[_Iterable[_Union[RestoreSharedObject, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[RestoreSharedObject, _Mapping]]] = ...) -> None: ...
 
 class RestoreSharedObject(_message.Message):
-    __slots__ = ["folderUid", "recordUids"]
+    __slots__ = ("folderUid", "recordUids")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUIDS_FIELD_NUMBER: _ClassVar[int]
     folderUid: bytes
     recordUids: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, folderUid: _Optional[bytes] = ..., recordUids: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class FolderData(_message.Message):
+    __slots__ = ("folderUid", "parentUid", "data", "type", "inheritUserPermissions", "folderKey", "ownerInfo", "dateCreated", "lastModified")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    PARENTUID_FIELD_NUMBER: _ClassVar[int]
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    INHERITUSERPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+    FOLDERKEY_FIELD_NUMBER: _ClassVar[int]
+    OWNERINFO_FIELD_NUMBER: _ClassVar[int]
+    DATECREATED_FIELD_NUMBER: _ClassVar[int]
+    LASTMODIFIED_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    parentUid: bytes
+    data: bytes
+    type: FolderUsageType
+    inheritUserPermissions: SetBooleanValue
+    folderKey: bytes
+    ownerInfo: UserInfo
+    dateCreated: int
+    lastModified: int
+    def __init__(self, folderUid: _Optional[bytes] = ..., parentUid: _Optional[bytes] = ..., data: _Optional[bytes] = ..., type: _Optional[_Union[FolderUsageType, str]] = ..., inheritUserPermissions: _Optional[_Union[SetBooleanValue, str]] = ..., folderKey: _Optional[bytes] = ..., ownerInfo: _Optional[_Union[UserInfo, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ...) -> None: ...
+
+class FolderKey(_message.Message):
+    __slots__ = ("folderUid", "parentUid", "folderKey", "encryptedBy")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    PARENTUID_FIELD_NUMBER: _ClassVar[int]
+    FOLDERKEY_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDBY_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    parentUid: bytes
+    folderKey: bytes
+    encryptedBy: FolderKeyEncryptionType
+    def __init__(self, folderUid: _Optional[bytes] = ..., parentUid: _Optional[bytes] = ..., folderKey: _Optional[bytes] = ..., encryptedBy: _Optional[_Union[FolderKeyEncryptionType, str]] = ...) -> None: ...
+
+class FolderAddRequest(_message.Message):
+    __slots__ = ("folderData",)
+    FOLDERDATA_FIELD_NUMBER: _ClassVar[int]
+    folderData: _containers.RepeatedCompositeFieldContainer[FolderData]
+    def __init__(self, folderData: _Optional[_Iterable[_Union[FolderData, _Mapping]]] = ...) -> None: ...
+
+class FolderModifyResult(_message.Message):
+    __slots__ = ("folderUid", "status", "message")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    status: FolderModifyStatus
+    message: str
+    def __init__(self, folderUid: _Optional[bytes] = ..., status: _Optional[_Union[FolderModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+
+class FolderAddResponse(_message.Message):
+    __slots__ = ("folderAddResults",)
+    FOLDERADDRESULTS_FIELD_NUMBER: _ClassVar[int]
+    folderAddResults: _containers.RepeatedCompositeFieldContainer[FolderModifyResult]
+    def __init__(self, folderAddResults: _Optional[_Iterable[_Union[FolderModifyResult, _Mapping]]] = ...) -> None: ...
+
+class FolderUpdateRequest(_message.Message):
+    __slots__ = ("folderData",)
+    FOLDERDATA_FIELD_NUMBER: _ClassVar[int]
+    folderData: _containers.RepeatedCompositeFieldContainer[FolderData]
+    def __init__(self, folderData: _Optional[_Iterable[_Union[FolderData, _Mapping]]] = ...) -> None: ...
+
+class FolderUpdateResponse(_message.Message):
+    __slots__ = ("folderUpdateResults",)
+    FOLDERUPDATERESULTS_FIELD_NUMBER: _ClassVar[int]
+    folderUpdateResults: _containers.RepeatedCompositeFieldContainer[FolderModifyResult]
+    def __init__(self, folderUpdateResults: _Optional[_Iterable[_Union[FolderModifyResult, _Mapping]]] = ...) -> None: ...
+
+class FolderPermissions(_message.Message):
+    __slots__ = ("canAdd", "canRemove", "canDelete", "canListAccess", "canUpdateAccess", "canChangeOwnership", "canEditRecords", "canViewRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting", "canListRecords", "canListFolders")
+    CANADD_FIELD_NUMBER: _ClassVar[int]
+    CANREMOVE_FIELD_NUMBER: _ClassVar[int]
+    CANDELETE_FIELD_NUMBER: _ClassVar[int]
+    CANLISTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANCHANGEOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
+    CANEDITRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANVIEWRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANAPPROVEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANREQUESTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATESETTING_FIELD_NUMBER: _ClassVar[int]
+    CANLISTRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANLISTFOLDERS_FIELD_NUMBER: _ClassVar[int]
+    canAdd: bool
+    canRemove: bool
+    canDelete: bool
+    canListAccess: bool
+    canUpdateAccess: bool
+    canChangeOwnership: bool
+    canEditRecords: bool
+    canViewRecords: bool
+    canApproveAccess: bool
+    canRequestAccess: bool
+    canUpdateSetting: bool
+    canListRecords: bool
+    canListFolders: bool
+    def __init__(self, canAdd: _Optional[bool] = ..., canRemove: _Optional[bool] = ..., canDelete: _Optional[bool] = ..., canListAccess: _Optional[bool] = ..., canUpdateAccess: _Optional[bool] = ..., canChangeOwnership: _Optional[bool] = ..., canEditRecords: _Optional[bool] = ..., canViewRecords: _Optional[bool] = ..., canApproveAccess: _Optional[bool] = ..., canRequestAccess: _Optional[bool] = ..., canUpdateSetting: _Optional[bool] = ..., canListRecords: _Optional[bool] = ..., canListFolders: _Optional[bool] = ...) -> None: ...
+
+class Capabilities(_message.Message):
+    __slots__ = ("canAdd", "canRemove", "canDelete", "canListAccess", "canUpdateAccess", "canChangeOwnership", "canEditRecords", "canViewRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting", "canListRecords", "canListFolders")
+    CANADD_FIELD_NUMBER: _ClassVar[int]
+    CANREMOVE_FIELD_NUMBER: _ClassVar[int]
+    CANDELETE_FIELD_NUMBER: _ClassVar[int]
+    CANLISTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANCHANGEOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
+    CANEDITRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANVIEWRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANAPPROVEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANREQUESTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATESETTING_FIELD_NUMBER: _ClassVar[int]
+    CANLISTRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANLISTFOLDERS_FIELD_NUMBER: _ClassVar[int]
+    canAdd: SetBooleanValue
+    canRemove: SetBooleanValue
+    canDelete: SetBooleanValue
+    canListAccess: SetBooleanValue
+    canUpdateAccess: SetBooleanValue
+    canChangeOwnership: SetBooleanValue
+    canEditRecords: SetBooleanValue
+    canViewRecords: SetBooleanValue
+    canApproveAccess: SetBooleanValue
+    canRequestAccess: SetBooleanValue
+    canUpdateSetting: SetBooleanValue
+    canListRecords: SetBooleanValue
+    canListFolders: SetBooleanValue
+    def __init__(self, canAdd: _Optional[_Union[SetBooleanValue, str]] = ..., canRemove: _Optional[_Union[SetBooleanValue, str]] = ..., canDelete: _Optional[_Union[SetBooleanValue, str]] = ..., canListAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canUpdateAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeOwnership: _Optional[_Union[SetBooleanValue, str]] = ..., canEditRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canViewRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canApproveAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canRequestAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canUpdateSetting: _Optional[_Union[SetBooleanValue, str]] = ..., canListRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canListFolders: _Optional[_Union[SetBooleanValue, str]] = ...) -> None: ...
+
+class FolderRecordUpdateRequest(_message.Message):
+    __slots__ = ("folderUid", "addRecords", "updateRecords", "removeRecords")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ADDRECORDS_FIELD_NUMBER: _ClassVar[int]
+    UPDATERECORDS_FIELD_NUMBER: _ClassVar[int]
+    REMOVERECORDS_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    addRecords: _containers.RepeatedCompositeFieldContainer[RecordMetadata]
+    updateRecords: _containers.RepeatedCompositeFieldContainer[RecordMetadata]
+    removeRecords: _containers.RepeatedCompositeFieldContainer[RecordMetadata]
+    def __init__(self, folderUid: _Optional[bytes] = ..., addRecords: _Optional[_Iterable[_Union[RecordMetadata, _Mapping]]] = ..., updateRecords: _Optional[_Iterable[_Union[RecordMetadata, _Mapping]]] = ..., removeRecords: _Optional[_Iterable[_Union[RecordMetadata, _Mapping]]] = ...) -> None: ...
+
+class RecordMetadata(_message.Message):
+    __slots__ = ("recordUid", "encryptedRecordKey", "encryptedRecordKeyType", "tlaProperties")
+    RECORDUID_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDRECORDKEY_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDRECORDKEYTYPE_FIELD_NUMBER: _ClassVar[int]
+    TLAPROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    recordUid: bytes
+    encryptedRecordKey: bytes
+    encryptedRecordKeyType: EncryptedKeyType
+    tlaProperties: _tla_pb2.TLAProperties
+    def __init__(self, recordUid: _Optional[bytes] = ..., encryptedRecordKey: _Optional[bytes] = ..., encryptedRecordKeyType: _Optional[_Union[EncryptedKeyType, str]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ...) -> None: ...
+
+class FolderRecord(_message.Message):
+    __slots__ = ("folderUid", "recordMetadata", "folderKeyEncryptionType")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    RECORDMETADATA_FIELD_NUMBER: _ClassVar[int]
+    FOLDERKEYENCRYPTIONTYPE_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    recordMetadata: RecordMetadata
+    folderKeyEncryptionType: FolderKeyEncryptionType
+    def __init__(self, folderUid: _Optional[bytes] = ..., recordMetadata: _Optional[_Union[RecordMetadata, _Mapping]] = ..., folderKeyEncryptionType: _Optional[_Union[FolderKeyEncryptionType, str]] = ...) -> None: ...
+
+class FolderRecordUpdateResponse(_message.Message):
+    __slots__ = ("folderUid", "folderRecordUpdateResult")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    FOLDERRECORDUPDATERESULT_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    folderRecordUpdateResult: _containers.RepeatedCompositeFieldContainer[FolderRecordUpdateResult]
+    def __init__(self, folderUid: _Optional[bytes] = ..., folderRecordUpdateResult: _Optional[_Iterable[_Union[FolderRecordUpdateResult, _Mapping]]] = ...) -> None: ...
+
+class FolderRecordUpdateResult(_message.Message):
+    __slots__ = ("recordUid", "status", "message")
+    RECORDUID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    recordUid: bytes
+    status: FolderModifyStatus
+    message: str
+    def __init__(self, recordUid: _Optional[bytes] = ..., status: _Optional[_Union[FolderModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+
+class FolderAccessData(_message.Message):
+    __slots__ = ("folderUid", "accessTypeUid", "accessType", "accessRoleType", "folderKey", "inherited", "hidden", "permissions", "tlaProperties", "dateCreated", "lastModified", "deniedAccess")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
+    ACCESSROLETYPE_FIELD_NUMBER: _ClassVar[int]
+    FOLDERKEY_FIELD_NUMBER: _ClassVar[int]
+    INHERITED_FIELD_NUMBER: _ClassVar[int]
+    HIDDEN_FIELD_NUMBER: _ClassVar[int]
+    PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+    TLAPROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    DATECREATED_FIELD_NUMBER: _ClassVar[int]
+    LASTMODIFIED_FIELD_NUMBER: _ClassVar[int]
+    DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    accessTypeUid: bytes
+    accessType: AccessType
+    accessRoleType: AccessRoleType
+    folderKey: EncryptedDataKey
+    inherited: bool
+    hidden: bool
+    permissions: FolderPermissions
+    tlaProperties: _tla_pb2.TLAProperties
+    dateCreated: int
+    lastModified: int
+    deniedAccess: bool
+    def __init__(self, folderUid: _Optional[bytes] = ..., accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., folderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., permissions: _Optional[_Union[FolderPermissions, _Mapping]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., deniedAccess: _Optional[bool] = ...) -> None: ...
+
+class RevokedAccess(_message.Message):
+    __slots__ = ("folderUid", "actorUid", "accessType")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ACTORUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    actorUid: bytes
+    accessType: AccessType
+    def __init__(self, folderUid: _Optional[bytes] = ..., actorUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ...) -> None: ...
+
+class FolderRemoved(_message.Message):
+    __slots__ = ("folder_uid",)
+    FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
+    folder_uid: bytes
+    def __init__(self, folder_uid: _Optional[bytes] = ...) -> None: ...
+
+class RecordAccessData(_message.Message):
+    __slots__ = ("accessTypeUid", "accessType", "recordUid", "accessRoleType", "owner", "inherited", "hidden", "deniedAccess", "can_view_title", "can_edit", "can_view", "can_list_access", "can_update_access", "can_delete", "can_change_ownership", "can_request_access", "can_approve_access", "dateCreated", "lastModified", "tlaProperties")
+    ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
+    RECORDUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSROLETYPE_FIELD_NUMBER: _ClassVar[int]
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    INHERITED_FIELD_NUMBER: _ClassVar[int]
+    HIDDEN_FIELD_NUMBER: _ClassVar[int]
+    DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_VIEW_TITLE_FIELD_NUMBER: _ClassVar[int]
+    CAN_EDIT_FIELD_NUMBER: _ClassVar[int]
+    CAN_VIEW_FIELD_NUMBER: _ClassVar[int]
+    CAN_LIST_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_UPDATE_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_DELETE_FIELD_NUMBER: _ClassVar[int]
+    CAN_CHANGE_OWNERSHIP_FIELD_NUMBER: _ClassVar[int]
+    CAN_REQUEST_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_APPROVE_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    DATECREATED_FIELD_NUMBER: _ClassVar[int]
+    LASTMODIFIED_FIELD_NUMBER: _ClassVar[int]
+    TLAPROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    accessTypeUid: bytes
+    accessType: AccessType
+    recordUid: bytes
+    accessRoleType: AccessRoleType
+    owner: bool
+    inherited: bool
+    hidden: bool
+    deniedAccess: bool
+    can_view_title: bool
+    can_edit: bool
+    can_view: bool
+    can_list_access: bool
+    can_update_access: bool
+    can_delete: bool
+    can_change_ownership: bool
+    can_request_access: bool
+    can_approve_access: bool
+    dateCreated: int
+    lastModified: int
+    tlaProperties: _tla_pb2.TLAProperties
+    def __init__(self, accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., recordUid: _Optional[bytes] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., owner: _Optional[bool] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., deniedAccess: _Optional[bool] = ..., can_view_title: _Optional[bool] = ..., can_edit: _Optional[bool] = ..., can_view: _Optional[bool] = ..., can_list_access: _Optional[bool] = ..., can_update_access: _Optional[bool] = ..., can_delete: _Optional[bool] = ..., can_change_ownership: _Optional[bool] = ..., can_request_access: _Optional[bool] = ..., can_approve_access: _Optional[bool] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ...) -> None: ...
+
+class AccessData(_message.Message):
+    __slots__ = ("accessTypeUid", "accessRoleType", "deniedAccess", "inherited", "hidden", "capabilities")
+    ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSROLETYPE_FIELD_NUMBER: _ClassVar[int]
+    DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
+    INHERITED_FIELD_NUMBER: _ClassVar[int]
+    HIDDEN_FIELD_NUMBER: _ClassVar[int]
+    CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+    accessTypeUid: bytes
+    accessRoleType: AccessRoleType
+    deniedAccess: bool
+    inherited: bool
+    hidden: bool
+    capabilities: Capabilities
+    def __init__(self, accessTypeUid: _Optional[bytes] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., deniedAccess: _Optional[bool] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., capabilities: _Optional[_Union[Capabilities, _Mapping]] = ...) -> None: ...
+
+class FolderAccessRequest(_message.Message):
+    __slots__ = ("folderAccessAdds", "folderAccessUpdates", "folderAccessRemoves")
+    FOLDERACCESSADDS_FIELD_NUMBER: _ClassVar[int]
+    FOLDERACCESSUPDATES_FIELD_NUMBER: _ClassVar[int]
+    FOLDERACCESSREMOVES_FIELD_NUMBER: _ClassVar[int]
+    folderAccessAdds: _containers.RepeatedCompositeFieldContainer[FolderAccessData]
+    folderAccessUpdates: _containers.RepeatedCompositeFieldContainer[FolderAccessData]
+    folderAccessRemoves: _containers.RepeatedCompositeFieldContainer[FolderAccessData]
+    def __init__(self, folderAccessAdds: _Optional[_Iterable[_Union[FolderAccessData, _Mapping]]] = ..., folderAccessUpdates: _Optional[_Iterable[_Union[FolderAccessData, _Mapping]]] = ..., folderAccessRemoves: _Optional[_Iterable[_Union[FolderAccessData, _Mapping]]] = ...) -> None: ...
+
+class FolderAccessResult(_message.Message):
+    __slots__ = ("folderUid", "accessUid", "accessType", "status", "message")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    accessUid: bytes
+    accessType: AccessType
+    status: FolderModifyStatus
+    message: str
+    def __init__(self, folderUid: _Optional[bytes] = ..., accessUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., status: _Optional[_Union[FolderModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+
+class FolderAccessResponse(_message.Message):
+    __slots__ = ("folderAccessResults",)
+    FOLDERACCESSRESULTS_FIELD_NUMBER: _ClassVar[int]
+    folderAccessResults: _containers.RepeatedCompositeFieldContainer[FolderAccessResult]
+    def __init__(self, folderAccessResults: _Optional[_Iterable[_Union[FolderAccessResult, _Mapping]]] = ...) -> None: ...
+
+class UserInfo(_message.Message):
+    __slots__ = ("accountUid", "username")
+    ACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
+    USERNAME_FIELD_NUMBER: _ClassVar[int]
+    accountUid: bytes
+    username: str
+    def __init__(self, accountUid: _Optional[bytes] = ..., username: _Optional[str] = ...) -> None: ...
+
+class RecordData(_message.Message):
+    __slots__ = ("user", "data", "recordUid")
+    USER_FIELD_NUMBER: _ClassVar[int]
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    RECORDUID_FIELD_NUMBER: _ClassVar[int]
+    user: UserInfo
+    data: bytes
+    recordUid: bytes
+    def __init__(self, user: _Optional[_Union[UserInfo, _Mapping]] = ..., data: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ...) -> None: ...
+
+class RecordKey(_message.Message):
+    __slots__ = ("user_uid", "record_uid", "record_key", "encrypted_key_type")
+    USER_UID_FIELD_NUMBER: _ClassVar[int]
+    RECORD_UID_FIELD_NUMBER: _ClassVar[int]
+    RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTED_KEY_TYPE_FIELD_NUMBER: _ClassVar[int]
+    user_uid: bytes
+    record_uid: bytes
+    record_key: bytes
+    encrypted_key_type: EncryptedKeyType
+    def __init__(self, user_uid: _Optional[bytes] = ..., record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., encrypted_key_type: _Optional[_Union[EncryptedKeyType, str]] = ...) -> None: ...

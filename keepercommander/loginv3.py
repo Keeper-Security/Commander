@@ -565,6 +565,9 @@ class LoginV3Flow:
         params.forbid_rsa = acct_summary_dict_snake_case.get('forbid_key_type2') is True
         params.is_enterprise_admin = acct_summary_dict_snake_case.get('is_enterprise_admin') is True
 
+        # disallowed features
+        params.disallowed_features = list(acct_summary.disallowedFeatures) if acct_summary.disallowedFeatures else []
+
         # settings
         params.settings = acct_summary_dict_snake_case['settings']
 
