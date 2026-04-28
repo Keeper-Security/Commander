@@ -99,6 +99,29 @@ class WorkflowCreateCommand(Command):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
+        # Pre-check: surface the "already exists" condition with a clear,
+        # actionable message instead of letting the user discover it via the
+        # raw server error from create_workflow_config. Server-side error
+        # path is still the authoritative gate; this is just nicer UX.
+        try:
+            existing = _post_request_to_router(
+                params, 'read_workflow_config',
+                rq_proto=ProtobufRefBuilder.record_ref(record_uid_bytes, record.title),
+                rs_type=workflow_pb2.WorkflowConfig,
+            )
+        except Exception as e:
+            logging.debug('Pre-check read_workflow_config failed: %s', e)
+            existing = None
+        if existing:
+            raise CommandError(
+                '',
+                f'Workflow already configured for "{record.title}" ({record_uid}).\n'
+                f'  Modify it:           pam workflow update {record_uid} ...\n'
+                f'  Inspect it:          pam workflow read {record_uid}\n'
+                f'  Remove and recreate: pam workflow delete {record_uid} && '
+                f'pam workflow create {record_uid} ...'
+            )
+
         approvals = kwargs.get('approvals_needed', 1)
         if approvals < 0:
             raise CommandError('', 'Approvals needed must be 0 or greater')
