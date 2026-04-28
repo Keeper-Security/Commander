@@ -3022,10 +3022,12 @@ def _is_rotation_allowed_by_enforcement(params):
             personal / non-enterprise account — allow (True).
       - Enterprise context (non-empty `booleans` list):
             mirror web vault's `!!enforcements.allow_rotate_credentials`
-            semantics — both `allow_rotate_credentials` and the legacy
-            `allow_pam_rotation` key must evaluate truthy. Missing key
+            semantics — single key, must evaluate truthy. Missing key
             (Commander parser converts `:false` to None and drops the entry)
-            is treated as deny.
+            is treated as deny. The legacy `allow_pam_rotation` umbrella
+            is intentionally NOT consulted here so an admin who explicitly
+            disables rotation via `allow_rotate_credentials:false` is
+            honored even if the umbrella key is still on by default.
 
     The Commander enforcement parser converts `:false` -> None (which removes
     the key from the booleans list entirely), so an absent key in an
@@ -3043,16 +3045,9 @@ def _is_rotation_allowed_by_enforcement(params):
         booleans = enforcements.get('booleans') or []
         if not isinstance(booleans, list) or not booleans:
             return True
-        by_key = {}
         for b in booleans:
-            if isinstance(b, dict):
-                k = b.get('key')
-                if k is not None:
-                    by_key[k] = b.get('value')
-        if 'allow_rotate_credentials' in by_key:
-            return bool(by_key['allow_rotate_credentials'])
-        if 'allow_pam_rotation' in by_key:
-            return bool(by_key['allow_pam_rotation'])
+            if isinstance(b, dict) and b.get('key') == 'allow_rotate_credentials':
+                return bool(b.get('value'))
         return False
     except Exception as _e:
         logging.debug('Rotation enforcement check failed; allowing: %s', _e)
