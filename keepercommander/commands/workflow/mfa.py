@@ -94,11 +94,30 @@ class WorkflowAccessValidator:
                 self._print_transport_error('verify workflow state')
                 return self._blocked('transport_error')
         if workflow is None:
+            # Carry the workflow config's required-field flags back so the
+            # orchestrator can inline-prompt + submit the initial access
+            # request from no_workflow state, matching web vault's "click
+            # Launch -> reason/ticket dialog" first-time flow.
+            requires_reason = bool(config.parameters and config.parameters.requireReason)
+            requires_ticket = bool(config.parameters and config.parameters.requireTicket)
+            approvals_needed = int(config.parameters.approvalsNeeded) if config.parameters else 0
             if no_approvals:
-                self._print_needs_start()
-                return self._blocked('needs_start')
-            self._print_no_workflow()
-            return self._blocked('no_workflow')
+                if not silent_actionable:
+                    self._print_needs_start()
+                return self._blocked(
+                    'needs_start',
+                    requires_reason=requires_reason,
+                    requires_ticket=requires_ticket,
+                    approvals_needed=approvals_needed,
+                )
+            if not silent_actionable:
+                self._print_no_workflow()
+            return self._blocked(
+                'no_workflow',
+                requires_reason=requires_reason,
+                requires_ticket=requires_ticket,
+                approvals_needed=approvals_needed,
+            )
 
         return self._evaluate_stage(workflow, mfa_required, silent_actionable)
 
@@ -545,28 +564,92 @@ def check_workflow_for_launch(
     required, and return the active flow's UID and lease expiry (millis since
     epoch) so callers can auto check-in and force-disconnect on lease expiry.
 
-    When the workflow is in WS_NEEDS_ACTION with AC_REASON / AC_TICKET pending,
-    the supplied reason/ticket flags are used directly; otherwise the user is
-    prompted via prompt_toolkit. After submission the workflow is re-validated
-    once so the resulting state (waiting / ready_to_start / started) is shown.
+    Three actionable validator states are auto-handled:
 
-    When the workflow is in WS_READY_TO_START, the user is prompted to check
-    out (or auto_checkout=True confirms automatically). On success the gate
-    re-validates and reports started_by_launch=True so the caller can release
-    the lease in its cleanup path.
+    * **`'no_workflow'` / `'needs_start'`** — workflow config exists on the
+      record but no flow process exists yet for the user (first-time access).
+      If the config requires a reason / ticket, the supplied --reason /
+      --ticket flags are used or the user is prompted inline; the initial
+      access request is submitted via `submit_access_request`. Mirrors web
+      vault's "click Launch -> reason/ticket dialog" on first-time access.
+
+    * **`'needs_action'`** — flow exists in WS_NEEDS_ACTION with
+      AC_REASON / AC_TICKET pending; same prompt+submit logic but driven off
+      the conditions list returned by the server.
+
+    * **`'ready_to_start'`** — flow approved but not yet checked out; user is
+      prompted (or `auto_checkout=True` confirms automatically), then
+      `start_workflow` is called and the gate reports `started_by_launch=True`
+      so the caller can release the lease in its cleanup path.
+
+    Optional `wait=True` polls past `'waiting'` until approval or
+    `wait_timeout` elapses.
     """
     validator = WorkflowAccessValidator(params, record_uid)
     started_by_launch = False
     handled_needs_action = False
     handled_ready_to_start = False
     handled_waiting = False
+    handled_no_workflow = False
 
-    # Up to 4 transitions: needs_action -> waiting -> ready_to_start -> started.
-    for _attempt in range(4):
+    # Up to 5 transitions:
+    # no_workflow -> needs_action -> waiting -> ready_to_start -> started.
+    for _attempt in range(5):
         result = validator.validate(silent_actionable=True)
         if result.get('allowed', True):
             break
         block_reason = result.get('block_reason')
+
+        if (block_reason in ('no_workflow', 'needs_start')
+                and not handled_no_workflow):
+            # First-time access on a workflow-protected record: no flow row
+            # exists for this user yet. Match web vault's "click Launch ->
+            # reason/ticket dialog" first-time flow by inline-prompting
+            # for the required fields (driven off the workflow config's
+            # require* flags carried in the validator result) and submitting
+            # the initial access request. Re-validate to land in waiting /
+            # needs_action / ready_to_start / started naturally.
+            handled_no_workflow = True
+            requires_reason = bool(result.get('requires_reason'))
+            requires_ticket = bool(result.get('requires_ticket'))
+            approvals_needed = int(result.get('approvals_needed') or 0)
+
+            final_reason = reason
+            final_ticket = ticket
+
+            if requires_reason or requires_ticket:
+                prompt_reason = requires_reason and not final_reason
+                prompt_ticket = requires_ticket and not final_ticket
+                if prompt_reason or prompt_ticket:
+                    p_reason, p_ticket = prompt_for_reason_ticket(prompt_reason, prompt_ticket)
+                    if prompt_reason:
+                        if p_reason is None:
+                            if block_reason == 'needs_start':
+                                validator._print_needs_start()
+                            else:
+                                validator._print_no_workflow()
+                            return WorkflowGate(allowed=False)
+                        final_reason = p_reason
+                    if prompt_ticket:
+                        if p_ticket is None:
+                            if block_reason == 'needs_start':
+                                validator._print_needs_start()
+                            else:
+                                validator._print_no_workflow()
+                            return WorkflowGate(allowed=False)
+                        final_ticket = p_ticket
+
+            try:
+                submit_access_request(
+                    params, record_uid,
+                    reason=final_reason or '',
+                    ticket=final_ticket or '',
+                )
+                print(f"\n{bcolors.OKGREEN}Access request submitted.{bcolors.ENDC}\n")
+            except Exception as e:
+                logging.error("Failed to submit access request: %s", sanitize_router_error(e))
+                return WorkflowGate(allowed=False)
+            continue
 
         if block_reason == 'needs_action' and not handled_needs_action:
             handled_needs_action = True
@@ -646,11 +729,12 @@ def check_workflow_for_launch(
                 break
             continue
 
-        # Block reason we don't auto-handle (waiting w/o --wait, no_workflow,
-        # transport_error, outside_time_window, no_status, needs_start) —
-        # those validator paths already printed their own message in non-silent
-        # branches; for the silent-suppressed ones (needs_action, ready_to_start,
-        # waiting) fall back to the explicit print so the user always sees something.
+        # Block reason we don't auto-handle (waiting w/o --wait,
+        # transport_error, outside_time_window, no_status, or a re-visit of
+        # an already-handled actionable). Validator paths print their own
+        # message in non-silent branches; for the silent-suppressed ones
+        # (needs_action, ready_to_start, waiting, no_workflow, needs_start)
+        # fall back to the explicit print so the user always sees something.
         if block_reason == 'needs_action':
             validator._print_needs_action(
                 result.get('pending_conditions') or (),
@@ -660,6 +744,10 @@ def check_workflow_for_launch(
             validator._print_ready_to_start()
         elif block_reason == 'waiting':
             validator._print_waiting(result.get('pending_conditions') or ())
+        elif block_reason == 'no_workflow':
+            validator._print_no_workflow()
+        elif block_reason == 'needs_start':
+            validator._print_needs_start()
         return WorkflowGate(allowed=False)
 
     if not result.get('allowed', True):
