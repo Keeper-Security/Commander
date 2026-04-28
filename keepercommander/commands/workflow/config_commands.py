@@ -474,6 +474,24 @@ class WorkflowDeleteCommand(Command):
         record_uid_bytes = utils.base64_url_decode(record_uid)
         ref = ProtobufRefBuilder.record_ref(record_uid_bytes, record.title)
 
+        # Pre-check: server-side delete_workflow_config is idempotent and
+        # returns success even when no config exists, so without this check
+        # repeat calls all print "deleted successfully" — confusing in
+        # interactive use. Verify there's actually something to delete first.
+        try:
+            existing = _post_request_to_router(
+                params, 'read_workflow_config',
+                rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
+            )
+        except Exception as e:
+            logging.debug('Pre-check read_workflow_config failed: %s', e)
+            existing = None
+        if not existing:
+            raise CommandError(
+                '',
+                f'No workflow configured for "{record.title}" ({record_uid}). Nothing to delete.'
+            )
+
         try:
             _post_request_to_router(params, 'delete_workflow_config', rq_proto=ref)
 
