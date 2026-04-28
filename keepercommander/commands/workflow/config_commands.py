@@ -85,9 +85,13 @@ class WorkflowCreateCommand(Command):
         try:
             _post_request_to_router(params, 'create_workflow_config', rq_proto=parameters)
 
+            # Auto-add the creator as an approver only when the workflow
+            # actually requires approvals — at approvalsNeeded=0 nobody is
+            # going to be asked to approve, so the auto-add is a no-op that
+            # just clutters the output with "Approver added: ... (record owner)".
             owner_email = params.user
             owner_added = False
-            if owner_email:
+            if owner_email and parameters.approvalsNeeded > 0:
                 try:
                     approver_config = workflow_pb2.WorkflowConfig()
                     approver_config.parameters.resource.CopyFrom(
