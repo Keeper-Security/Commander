@@ -31,7 +31,7 @@ from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
 from .... import crypto, utils, rest_api, api
-from ....constants import get_keeper_server_hostname
+from ....constants import get_relay_host
 
 # Import the websockets library for async WebSocket communication
 # Support both websockets 15.0.1+ (asyncio) and legacy 11.0.3 (sync) versions
@@ -752,10 +752,7 @@ def get_gateway_uid_from_record(params, vault, record_uid):
 def create_rust_webrtc_settings(params, host, port, target_host, target_port, socks, nonce, ):
     """Create WebRTC settings for the Rust implementation"""
     # Get relay server configuration
-    relay_url = 'krelay.' + get_keeper_server_hostname(params.server)
-    krelay_url = os.getenv('KRELAY_URL')
-    if krelay_url:
-        relay_url = krelay_url
+    relay_url = get_relay_host(params.server)
 
     response = router_get_relay_access_creds(params=params, expire_sec=60000000)
     if response is None:
@@ -2284,7 +2281,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             trickle_ice=trickle_ice,  # Use trickle ICE for real-time candidate exchange
             callback_token=webrtc_settings["callback_token"],
             ksm_config="",
-            krelay_server="krelay." + get_keeper_server_hostname(params.server),
+            krelay_server=get_relay_host(params.server),
             client_version="Commander-Python",
             offer=None,  # Let Rust create the offer
             signal_callback=signal_handler.signal_from_rust

@@ -26,14 +26,14 @@ from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
-    remove_field, start_rust_tunnel, get_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
+    remove_field, start_rust_tunnel, get_tunnel_session, CloseConnectionReasons
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders
 from ..utils import value_to_boolean
-from ..constants import get_keeper_server_hostname
+from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname
 
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
@@ -954,8 +954,8 @@ class PAMTunnelDiagnoseCommand(Command):
 
         server = params.server  # e.g. "keepersecurity.com" or "https://qa.keepersecurity.com"
         server_host = get_keeper_server_hostname(server)
-        krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server_host}'
-        connect_host = f'connect.{server_host}'
+        krelay_server = get_relay_host(params.server)
+        connect_host = get_router_host(params.server)
 
         # ── header ────────────────────────────────────────────────────────────
         self._print_header()
