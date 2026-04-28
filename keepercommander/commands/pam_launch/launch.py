@@ -519,12 +519,51 @@ class PAMLaunchCommand(Command):
 
         logging.debug(f"Found gateway UID for record: {gateway_uid}")
 
-        # Get all gateways to find the matching one
+        # Get all gateways to find the matching one. This is the strict
+        # enterprise-wide list filtered by the user's gateway-visibility
+        # permissions; it can return empty / miss the gateway for KSM-app
+        # members who are not the app owner, even when the user has access to
+        # the PAM Configuration record itself.
         all_gateways = get_all_gateways(params)
 
         # Find the gateway by UID
         gateway_uid_bytes = url_safe_str_to_bytes(gateway_uid)
         gateway_proto = next((g for g in all_gateways if g.controllerUid == gateway_uid_bytes), None)
+
+        # Fallback: web vault uses the per-config endpoint
+        # `pam/get_configuration_controller` rather than enumerating
+        # `pam/get_controllers`. That endpoint resolves the gateway for THIS
+        # config without requiring enterprise-wide gateway visibility, so
+        # non-Owner KSM-app members can still launch through gateways tied to
+        # configs they have access to. Mirrors WV's LaunchButton.tsx ->
+        # getControllerUidForConfigUid -> get-controller-for-config-uid.ts ->
+        # api-pam.ts (`pam/get_configuration_controller`).
+        if not gateway_proto:
+            # Resolve config_uid early if we don't have it yet — it's needed
+            # for the per-config lookup. This is the same lookup that runs
+            # below for the return value, just hoisted up for the fallback.
+            if config_uid is None:
+                try:
+                    config_uid = get_config_uid_from_record(params, vault, record_uid)
+                except Exception as e:
+                    logging.debug('find_gateway: config_uid resolution for fallback failed: %s', e)
+            if config_uid:
+                try:
+                    from ..pam.config_helper import configuration_controller_get
+                    controller = configuration_controller_get(
+                        params, url_safe_str_to_bytes(config_uid),
+                    )
+                    if controller and controller.controllerUid == gateway_uid_bytes:
+                        gateway_proto = controller
+                        logging.debug(
+                            'find_gateway: resolved gateway via '
+                            'pam/get_configuration_controller fallback'
+                        )
+                except Exception as e:
+                    logging.debug(
+                        'find_gateway: pam/get_configuration_controller '
+                        'fallback failed: %s', e,
+                    )
 
         if not gateway_proto:
             raise CommandError('pam launch', f'Gateway {gateway_uid} not found in available gateways.')
@@ -532,7 +571,8 @@ class PAMLaunchCommand(Command):
         gateway_name = gateway_proto.controllerName if gateway_proto else 'Unknown'
         logging.debug(f"Found gateway: {gateway_name} ({gateway_uid})")
 
-        # Get the configuration UID (already resolved from tdag when present)
+        # Get the configuration UID (already resolved from tdag when present
+        # OR by the fallback above)
         if config_uid is None:
             config_uid = get_config_uid_from_record(params, vault, record_uid)
 
