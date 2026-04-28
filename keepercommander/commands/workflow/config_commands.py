@@ -25,6 +25,39 @@ from ... import utils
 from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
 
 
+def _add_approvers_to_workflow(params, record_uid, record_name,
+                               users=None, teams=None,
+                               is_escalation=False, escalation_after_ms=0):
+    """Send add_workflow_approvers for the given users / teams. Shared by
+    `pam workflow create` (when --approver flags are supplied) and
+    `pam workflow add-approver` so both go through one code path.
+
+    Caller is responsible for de-duplicating the user / team lists. Raises
+    on transport error; caller decides how to surface.
+    """
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    config = workflow_pb2.WorkflowConfig()
+    config.parameters.resource.CopyFrom(
+        ProtobufRefBuilder.record_ref(record_uid_bytes, record_name)
+    )
+    for user_email in (users or []):
+        approver = workflow_pb2.WorkflowApprover()
+        approver.user = user_email
+        approver.escalation = is_escalation
+        if escalation_after_ms:
+            approver.escalationAfterMs = escalation_after_ms
+        config.approvers.append(approver)
+    for team_input in (teams or []):
+        resolved_team_uid = RecordResolver.validate_team(params, team_input)
+        approver = workflow_pb2.WorkflowApprover()
+        approver.teamUid = utils.base64_url_decode(resolved_team_uid)
+        approver.escalation = is_escalation
+        if escalation_after_ms:
+            approver.escalationAfterMs = escalation_after_ms
+        config.approvers.append(approver)
+    _post_request_to_router(params, 'add_workflow_approvers', rq_proto=config)
+
+
 class WorkflowCreateCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow create',
@@ -52,6 +85,10 @@ class WorkflowCreateCommand(Command):
                         help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
     parser.add_argument('--timezone', type=str,
                         help='Timezone for allowed times (e.g., "America/New_York")')
+    parser.add_argument('-u', '--approver', action='append',
+                        help='User email to add as an approver. Pass multiple times to '
+                             'add several. Required when --approvals-needed > 0. '
+                             'Duplicates are removed automatically.')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -65,6 +102,24 @@ class WorkflowCreateCommand(Command):
         approvals = kwargs.get('approvals_needed', 1)
         if approvals < 0:
             raise CommandError('', 'Approvals needed must be 0 or greater')
+
+        # Normalize and de-duplicate the approver list (preserves first-seen order).
+        approvers = list(dict.fromkeys(
+            a.strip() for a in (kwargs.get('approver') or []) if a and a.strip()
+        ))
+
+        if approvals > 0 and not approvers:
+            raise CommandError(
+                '',
+                'At least one --approver is required when --approvals-needed > 0. '
+                'Pass --approver <email> for each approver, or use --approvals-needed 0 '
+                'for a workflow that does not need approval.'
+            )
+        if approvers and approvals == 0:
+            logging.warning(
+                "--approver(s) supplied but --approvals-needed is 0 — approvers will "
+                "be recorded but no approval will ever be required."
+            )
 
         parameters = workflow_pb2.WorkflowParameters()
         parameters.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
@@ -85,27 +140,23 @@ class WorkflowCreateCommand(Command):
         try:
             _post_request_to_router(params, 'create_workflow_config', rq_proto=parameters)
 
-            # Auto-add the creator as an approver only when the workflow
-            # actually requires approvals — at approvalsNeeded=0 nobody is
-            # going to be asked to approve, so the auto-add is a no-op that
-            # just clutters the output with "Approver added: ... (record owner)".
-            owner_email = params.user
-            owner_added = False
-            if owner_email and parameters.approvalsNeeded > 0:
+            # Step 2: send the explicit approver list (if any). Mirrors web vault
+            # which issues create_workflow_config + add_workflow_approvers as two
+            # separate calls (save-workflow-settings.ts:78-99). No silent
+            # auto-add of the creator / record-owner.
+            approvers_added = []
+            if approvers:
                 try:
-                    approver_config = workflow_pb2.WorkflowConfig()
-                    approver_config.parameters.resource.CopyFrom(
-                        ProtobufRefBuilder.record_ref(record_uid_bytes, record.title)
+                    _add_approvers_to_workflow(
+                        params, record_uid, record.title, users=approvers,
                     )
-                    approver = workflow_pb2.WorkflowApprover()
-                    approver.user = owner_email
-                    approver_config.approvers.append(approver)
-                    _post_request_to_router(params, 'add_workflow_approvers', rq_proto=approver_config)
-                    owner_added = True
+                    approvers_added = list(approvers)
                 except Exception as e:
-                    logging.debug('Failed to auto-add owner as approver: %s', e, exc_info=True)
-                    print(f"\n{bcolors.WARNING}Workflow created, but failed to add you as approver automatically.{bcolors.ENDC}")
-                    print(f"Run: pam workflow add-approver {record_uid} --user {owner_email}")
+                    logging.debug('Failed to add approvers: %s', e, exc_info=True)
+                    print(f"\n{bcolors.WARNING}Workflow created, but failed to add "
+                          f"approvers: {sanitize_router_error(e)}{bcolors.ENDC}")
+                    print(f"Run: pam workflow add-approver {record_uid} "
+                          f"{' '.join(f'--user {u}' for u in approvers)}")
 
             if kwargs.get('format') == 'json':
                 result = {
@@ -120,7 +171,7 @@ class WorkflowCreateCommand(Command):
                         'require_mfa': parameters.requireMFA,
                         'access_duration': WorkflowFormatter.format_duration(parameters.accessLength),
                     },
-                    'owner_approver': owner_email if owner_added else None,
+                    'approvers': approvers_added,
                 }
                 print(json.dumps(result, indent=2))
             else:
@@ -135,8 +186,10 @@ class WorkflowCreateCommand(Command):
                     print("Requires ticket: Yes")
                 if parameters.requireMFA:
                     print("Requires MFA: Yes")
-                if owner_added:
-                    print(f"\nApprover added: {owner_email} (record owner)")
+                if approvers_added:
+                    print(f"Approvers: {', '.join(approvers_added)}")
+                elif parameters.approvalsNeeded == 0:
+                    pass  # no approvers needed, no nag
                 else:
                     print(f"\n{bcolors.WARNING}Note: Add approvers with: "
                           f"pam workflow add-approver {record_uid} --user <email>{bcolors.ENDC}")
@@ -434,8 +487,13 @@ class WorkflowAddApproversCommand(Command):
         return WorkflowAddApproversCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
-        users = kwargs.get('user') or []
-        teams = kwargs.get('team') or []
+        # De-duplicate user / team lists (preserve first-seen order).
+        users = list(dict.fromkeys(
+            u.strip() for u in (kwargs.get('user') or []) if u and u.strip()
+        ))
+        teams = list(dict.fromkeys(
+            t.strip() for t in (kwargs.get('team') or []) if t and t.strip()
+        ))
         is_escalation = kwargs.get('escalation', False)
         escalation_after = kwargs.get('escalation_after')
 
@@ -450,30 +508,14 @@ class WorkflowAddApproversCommand(Command):
             escalation_after_ms = WorkflowFormatter.parse_duration(escalation_after)
 
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
-        record_uid_bytes = utils.base64_url_decode(record_uid)
-
-        config = workflow_pb2.WorkflowConfig()
-        config.parameters.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
-
-        for user_email in users:
-            approver = workflow_pb2.WorkflowApprover()
-            approver.user = user_email
-            approver.escalation = is_escalation
-            if escalation_after_ms:
-                approver.escalationAfterMs = escalation_after_ms
-            config.approvers.append(approver)
-
-        for team_input in teams:
-            resolved_team_uid = RecordResolver.validate_team(params, team_input)
-            approver = workflow_pb2.WorkflowApprover()
-            approver.teamUid = utils.base64_url_decode(resolved_team_uid)
-            approver.escalation = is_escalation
-            if escalation_after_ms:
-                approver.escalationAfterMs = escalation_after_ms
-            config.approvers.append(approver)
 
         try:
-            _post_request_to_router(params, 'add_workflow_approvers', rq_proto=config)
+            _add_approvers_to_workflow(
+                params, record_uid, record.title,
+                users=users, teams=teams,
+                is_escalation=is_escalation,
+                escalation_after_ms=escalation_after_ms,
+            )
 
             total = len(users) + len(teams)
             if kwargs.get('format') == 'json':
