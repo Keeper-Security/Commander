@@ -160,16 +160,19 @@ class WorkflowAccessValidator:
                 return False
 
         if at.timeRanges:
-            current_minutes = now.hour * 60 + now.minute
+            # TimeOfDayRange.startTime / .endTime are HHMM-encoded integers
+            # (server-validated: HH in 0-23, MM in 0-59). e.g. 03:00 -> 300,
+            # 17:30 -> 1730. Compare current wall-clock in the same encoding.
+            current_hhmm = now.hour * 100 + now.minute
             in_range = False
             for r in at.timeRanges:
                 if r.startTime <= r.endTime:
-                    if r.startTime <= current_minutes <= r.endTime:
+                    if r.startTime <= current_hhmm <= r.endTime:
                         in_range = True
                         break
                 else:
                     # range crosses midnight (e.g. 22:00-06:00)
-                    if current_minutes >= r.startTime or current_minutes <= r.endTime:
+                    if current_hhmm >= r.startTime or current_hhmm <= r.endTime:
                         in_range = True
                         break
             if not in_range:

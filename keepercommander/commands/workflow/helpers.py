@@ -494,11 +494,11 @@ class WorkflowFormatter:
             if '-' not in time_range_str:
                 raise CommandError('', 'Time range must be in HH:MM-HH:MM format (e.g., "09:00-17:00")')
             start_str, end_str = time_range_str.split('-', 1)
-            start_minutes = WorkflowFormatter._parse_time_to_minutes(start_str.strip())
-            end_minutes = WorkflowFormatter._parse_time_to_minutes(end_str.strip())
+            start_hhmm = WorkflowFormatter._parse_time_to_hhmm(start_str.strip())
+            end_hhmm = WorkflowFormatter._parse_time_to_hhmm(end_str.strip())
             time_range = workflow_pb2.TimeOfDayRange()
-            time_range.startTime = start_minutes
-            time_range.endTime = end_minutes
+            time_range.startTime = start_hhmm
+            time_range.endTime = end_hhmm
             temporal.timeRanges.append(time_range)
 
         if timezone_str:
@@ -507,14 +507,18 @@ class WorkflowFormatter:
         return temporal
 
     @staticmethod
-    def _parse_time_to_minutes(time_str):
+    def _parse_time_to_hhmm(time_str):
+        """Parse 'HH:MM' into the HHMM integer encoding the server expects on
+        TimeOfDayRange.startTime / .endTime — e.g. '03:00' -> 300, '17:30' -> 1730.
+        Server validates: HHMM integer with HH in 0-23 and MM in 0-59.
+        """
         try:
             parts = time_str.split(':')
             h = int(parts[0])
             m = int(parts[1]) if len(parts) > 1 else 0
             if not (0 <= h <= 23 and 0 <= m <= 59):
                 raise ValueError
-            return h * 60 + m
+            return h * 100 + m
         except (ValueError, IndexError):
             raise CommandError('', f'Invalid time format: "{time_str}". Use HH:MM (e.g., "09:00")')
 
@@ -528,8 +532,8 @@ class WorkflowFormatter:
         if at.timeRanges:
             ranges = []
             for tr in at.timeRanges:
-                sh, sm = divmod(tr.startTime, 60)
-                eh, em = divmod(tr.endTime, 60)
+                sh, sm = divmod(tr.startTime, 100)
+                eh, em = divmod(tr.endTime, 100)
                 ranges.append(f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}")
             result['time_ranges'] = ranges
         if at.timeZone:
