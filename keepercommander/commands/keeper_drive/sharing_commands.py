@@ -98,18 +98,19 @@ class KeeperDriveShareRecordCommand(Command):
                 params=params, record_uid=record_uid, new_owner_email=email), 'owner')
 
         if action == 'grant':
-            already_shared = KeeperDriveShareRecordCommand._is_already_shared(
-                params, record_uid, email)
-            if already_shared:
+            if KeeperDriveShareRecordCommand._is_already_shared(
+                    params, record_uid, email):
                 logging.debug(
-                    "Record '%s' is already shared with '%s'; switching to update.",
+                    "Record '%s' is already shared with user '%s'; switching to update.",
                     record_uid, email)
                 return (_kd.update_record_share_v3(
                     params=params, record_uid=record_uid, recipient_email=email,
-                    access_role_type=access_role_type, expiration_timestamp=expiration), 'update')
+                    access_role_type=access_role_type,
+                    expiration_timestamp=expiration), 'update')
             return (_kd.share_record_v3(
                 params=params, record_uid=record_uid, recipient_email=email,
-                access_role_type=access_role_type, expiration_timestamp=expiration), 'grant')
+                access_role_type=access_role_type,
+                expiration_timestamp=expiration), 'grant')
 
         return (_kd.unshare_record_v3(
             params=params, record_uid=record_uid, recipient_email=email), 'revoke')
@@ -119,12 +120,14 @@ class KeeperDriveShareRecordCommand(Command):
         """Return True if *email* already has a non-owner share on *record_uid*."""
         try:
             access_result = _kd.get_record_accesses_v3(params, [record_uid])
-            return any(
-                a.get('accessor_name', '').casefold() == email.casefold()
-                and not a.get('owner', False)
-                for a in access_result.get('record_accesses', [])
-                if a.get('record_uid') == record_uid
-            )
+            for a in access_result.get('record_accesses', []):
+                if a.get('record_uid') != record_uid or a.get('owner', False):
+                    continue
+                if a.get('access_type') and a.get('access_type') != 'AT_USER':
+                    continue
+                if a.get('accessor_name', '').casefold() == email.casefold():
+                    return True
+            return False
         except Exception as exc:
             logging.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
             return False
@@ -145,10 +148,10 @@ class KeeperDriveShareRecordCommand(Command):
                 logging.warning("Share invitation has been sent to '%s'", email)
                 logging.warning('Please repeat this command when invitation is accepted.')
             elif res['success']:
-                logging.info('Record "%s" access permissions has been %s user \'%s\'',
+                logging.info('Record "%s" access permissions has been %s \'%s\'',
                              uid, verbs.get(action, action), email)
             else:
-                logging.info('Failed to %s record "%s" access for user \'%s\': %s',
+                logging.info('Failed to %s record "%s" access for \'%s\': %s',
                              action, uid, email, res['message'])
 
     @staticmethod

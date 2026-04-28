@@ -95,7 +95,8 @@ keeper_drive_share_folder_parser.add_argument(
     help="shared folder action: grant (default, also updates existing shares), remove")
 keeper_drive_share_folder_parser.add_argument(
     '-e', '--email', dest='user', action='append', metavar='USER',
-    help='account email or @existing for all users in the folder')
+    help='account email, team name/UID, or @existing for all users '
+         'and teams in the folder')
 keeper_drive_share_folder_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[

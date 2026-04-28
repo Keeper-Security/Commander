@@ -45,6 +45,7 @@ class FolderKeyEncryptionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     __slots__ = ()
     ENCRYPTED_BY_USER_KEY: _ClassVar[FolderKeyEncryptionType]
     ENCRYPTED_BY_PARENT_KEY: _ClassVar[FolderKeyEncryptionType]
+    ENCRYPTED_BY_TEAM_KEY: _ClassVar[FolderKeyEncryptionType]
 
 class FolderModifyStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -115,6 +116,7 @@ UT_WORKFLOW: FolderUsageType
 UT_TRASHCAN: FolderUsageType
 ENCRYPTED_BY_USER_KEY: FolderKeyEncryptionType
 ENCRYPTED_BY_PARENT_KEY: FolderKeyEncryptionType
+ENCRYPTED_BY_TEAM_KEY: FolderKeyEncryptionType
 SUCCESS: FolderModifyStatus
 BAD_REQUEST: FolderModifyStatus
 ACCESS_DENIED: FolderModifyStatus
@@ -733,7 +735,7 @@ class FolderRecordUpdateResult(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., status: _Optional[_Union[FolderModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class FolderAccessData(_message.Message):
-    __slots__ = ("folderUid", "accessTypeUid", "accessType", "accessRoleType", "folderKey", "inherited", "hidden", "permissions", "tlaProperties", "dateCreated", "lastModified")
+    __slots__ = ("folderUid", "accessTypeUid", "accessType", "accessRoleType", "folderKey", "inherited", "hidden", "permissions", "tlaProperties", "dateCreated", "lastModified", "deniedAccess")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -745,6 +747,7 @@ class FolderAccessData(_message.Message):
     TLAPROPERTIES_FIELD_NUMBER: _ClassVar[int]
     DATECREATED_FIELD_NUMBER: _ClassVar[int]
     LASTMODIFIED_FIELD_NUMBER: _ClassVar[int]
+    DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
     folderUid: bytes
     accessTypeUid: bytes
     accessType: AccessType
@@ -756,19 +759,10 @@ class FolderAccessData(_message.Message):
     tlaProperties: _tla_pb2.TLAProperties
     dateCreated: int
     lastModified: int
-    def __init__(self, folderUid: _Optional[bytes] = ..., accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., folderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., permissions: _Optional[_Union[FolderPermissions, _Mapping]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ...) -> None: ...
+    deniedAccess: bool
+    def __init__(self, folderUid: _Optional[bytes] = ..., accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., folderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., permissions: _Optional[_Union[FolderPermissions, _Mapping]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., deniedAccess: _Optional[bool] = ...) -> None: ...
 
 class RevokedAccess(_message.Message):
-    __slots__ = ("folderUid", "actorUid", "accessType")
-    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
-    ACTORUID_FIELD_NUMBER: _ClassVar[int]
-    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
-    folderUid: bytes
-    actorUid: bytes
-    accessType: AccessType
-    def __init__(self, folderUid: _Optional[bytes] = ..., actorUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ...) -> None: ...
-
-class DeniedAccess(_message.Message):
     __slots__ = ("folderUid", "actorUid", "accessType")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     ACTORUID_FIELD_NUMBER: _ClassVar[int]

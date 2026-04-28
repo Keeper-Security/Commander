@@ -152,6 +152,54 @@ def resolve_folder_uid(params, identifier):
     return _kd.resolve_folder_identifier(params, identifier)
 
 
+def classify_share_recipient(params, recipient):
+    """Classify a single ``-e/--email`` value as a user or a team.
+
+    Mirrors the legacy ``share-folder`` resolution exactly:
+      1. If *recipient* matches ``EMAIL_PATTERN`` → ``('user', email_lower)``.
+      2. Otherwise look it up in ``api.get_share_objects(params)['teams']``
+         (cap of 500 entries) and, if needed, ``params.available_team_cache``.
+         A match by team name *or* team UID returns ``('team', team_uid_b64)``.
+      3. No match → logs the same warning as legacy and returns ``None``.
+      4. Multiple matches → logs the same warning and returns ``None``.
+
+    Returns ``(kind, identifier)`` or ``None``.
+    """
+    from ... import constants, api
+
+    if re.match(constants.EMAIL_PATTERN, recipient):
+        return 'user', recipient.lower()
+
+    try:
+        teams = api.get_share_objects(params).get('teams', {}) or {}
+    except Exception:
+        teams = {}
+    teams_map = {uid: t.get('name') for uid, t in teams.items()}
+
+    if len(teams_map) >= 500:
+        try:
+            api.load_available_teams(params)
+            teams_map.update({t.get('team_uid'): t.get('team_name')
+                              for t in (params.available_team_cache or [])})
+        except Exception:
+            pass
+
+    matches = [uid for uid, name in teams_map.items()
+               if recipient in (name, uid)]
+
+    if len(matches) == 1:
+        return 'team', matches[0]
+
+    if not matches:
+        logger.warning('User "%s" could not be resolved as email or team',
+                       recipient)
+    else:
+        logger.warning(
+            'Multiple matches were found for team "%s". Try using its UID -- '
+            'which can be found via `list-team` -- instead', recipient)
+    return None
+
+
 def find_folder_location(params, record_uid):
     """Return the display name of the first folder containing *record_uid*."""
     kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})

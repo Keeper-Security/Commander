@@ -20,6 +20,7 @@ from .common import (
     get_folder_key, get_user_public_key, resolve_user_uid_bytes,
     resolve_uid_email, encrypt_for_recipient, load_user_public_key,
     parse_folder_access_result,
+    resolve_team_identifier, get_team_keys, encrypt_for_team,
 )
 from .permissions import (
     FolderUsageType, SetBooleanValue, resolve_role_name, ROLE_NAME_MAP,
@@ -285,47 +286,89 @@ def update_folders_batch_v3(params, folder_updates):
 # High-level: folder access grant / update / revoke
 # ══════════════════════════════════════════════════════════════════════════
 
+def _resolve_accessor(params, accessor_uid, as_team):
+    """Resolve a user/team identifier to (uid_bytes, label, access_type_enum).
+    """
+    if as_team:
+        resolved = resolve_team_identifier(params, accessor_uid)
+        if not resolved:
+            raise ValueError(f"Team '{accessor_uid}' not found")
+        team_uid_b64, team_uid_bytes = resolved
+        return team_uid_bytes, team_uid_b64, folder_pb2.AT_TEAM
+
+    is_email = '@' in accessor_uid
+    if is_email:
+        _, _, uid_bytes, _ = get_user_public_key(params, accessor_uid)
+        return uid_bytes, accessor_uid, folder_pb2.AT_USER
+
+    uid_bytes = resolve_user_uid_bytes(params, accessor_uid)
+    return uid_bytes, accessor_uid, folder_pb2.AT_USER
+
+
 def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
-                           share_folder_key=True, expiration_timestamp=None):
+                           share_folder_key=True, expiration_timestamp=None,
+                           as_team=False):
+    """Grant a user *or team* access to a KeeperDrive folder.
+    """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved
 
-    is_email = '@' in user_uid
-    user_email = user_uid if is_email else None
     actual_uid_bytes = None
+    user_email = None
     user_public_key = None
     use_ecc = False
+    team_keys = None
 
-    if is_email:
-        try:
-            user_public_key, use_ecc, actual_uid_bytes, _inv = get_user_public_key(params, user_email)
-        except Exception as e:
-            raise ValueError(f"User '{user_email}' not found or has no public key. {e}")
+    if as_team:
+        resolved_team = resolve_team_identifier(params, user_uid)
+        if not resolved_team:
+            raise ValueError(f"Team '{user_uid}' not found")
+        team_uid_b64, actual_uid_bytes = resolved_team
+        if share_folder_key:
+            team_keys = get_team_keys(params, team_uid_b64)
+        access_type_enum = folder_pb2.AT_TEAM
+        access_type_label = 'AT_TEAM'
+        identifier_label = team_uid_b64
     else:
-        actual_uid_bytes, user_email = resolve_uid_email(params, user_uid)
-        if not actual_uid_bytes:
-            raise ValueError(f"Invalid user UID: {user_uid}")
+        is_email = '@' in user_uid
+        user_email = user_uid if is_email else None
+        if is_email:
+            try:
+                user_public_key, use_ecc, actual_uid_bytes, _inv = get_user_public_key(params, user_email)
+            except Exception as e:
+                raise ValueError(f"User '{user_email}' not found or has no public key. {e}")
+        else:
+            actual_uid_bytes, user_email = resolve_uid_email(params, user_uid)
+            if not actual_uid_bytes:
+                raise ValueError(f"Invalid user UID: {user_uid}")
+        access_type_enum = folder_pb2.AT_USER
+        access_type_label = 'AT_USER'
+        identifier_label = user_uid
 
     access_role = resolve_role_name(role)
     target_role_name = folder_pb2.AccessRoleType.Name(access_role)
 
     if actual_uid_bytes:
-        existing = _check_existing_access(params, folder_uid, actual_uid_bytes, target_role_name)
+        existing = _check_existing_access(params, folder_uid, actual_uid_bytes,
+                                          target_role_name, access_type_label)
         if existing is not None:
             if existing == target_role_name:
-                return {'folder_uid': folder_uid, 'user_uid': user_uid,
-                        'status': 'SUCCESS', 'message': f"User already has {role} access",
+                return {'folder_uid': folder_uid, 'user_uid': identifier_label,
+                        'access_type': access_type_label,
+                        'status': 'SUCCESS',
+                        'message': f"{'Team' if as_team else 'User'} already has {role} access",
                         'success': True, 'action_taken': 'already_had_access'}
-            result = update_folder_access_v3(params, folder_uid, user_uid, role=role)
+            result = update_folder_access_v3(params, folder_uid, identifier_label,
+                                             role=role, as_team=as_team)
             result['action_taken'] = 'updated'
             return result
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
     ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = folder_pb2.AT_USER
+    ad.accessType = access_type_enum
     ad.accessRoleType = access_role
     ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
 
@@ -334,37 +377,50 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
 
     if share_folder_key:
         fk = get_folder_key(params, folder_uid)
-        if not user_public_key:
-            user_public_key, use_ecc = load_user_public_key(params, user_email)
-        efk = encrypt_for_recipient(fk, user_public_key, use_ecc)
         ek = folder_pb2.EncryptedDataKey()
-        ek.encryptedKey = efk
-        ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
-                               else folder_pb2.encrypted_by_public_key)
+        if as_team:
+            # v3 folder team grants must use the team's *asymmetric* public
+            # key (server rejects AES with "Key type 2 required").
+            efk, key_type = encrypt_for_team(
+                fk, team_keys, prefer_aes=False,
+                forbid_rsa=getattr(params, 'forbid_rsa', False))
+            ek.encryptedKey = efk
+            ek.encryptedKeyType = key_type
+        else:
+            if not user_public_key:
+                user_public_key, use_ecc = load_user_public_key(params, user_email)
+            efk = encrypt_for_recipient(fk, user_public_key, use_ecc)
+            ek.encryptedKey = efk
+            ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
+                                   else folder_pb2.encrypted_by_public_key)
         ad.folderKey.CopyFrom(ek)
 
     response = folder_access_update_v3(params, folder_access_adds=[ad])
-    result = parse_folder_access_result(response, folder_uid, user_uid,
+    result = parse_folder_access_result(response, folder_uid, identifier_label,
                                         'Access granted successfully')
+    result['access_type'] = access_type_label
     result.setdefault('action_taken', 'granted' if result['success'] else 'grant_failed')
     return result
 
 
-def _check_existing_access(params, folder_uid, uid_bytes, target_role_name):
-    """Return existing role name or None."""
+def _check_existing_access(params, folder_uid, uid_bytes, target_role_name,
+                            access_type_label='AT_USER'):
+    """Return existing role name (for the matching access_type) or None."""
     try:
         uid_encoded = utils.base64_url_encode(uid_bytes)
         info = get_folder_access_v3(params, [folder_uid], resolve_usernames=False)
         if info.get('results'):
             for a in info['results'][0].get('accessors', []):
-                if a.get('access_type') == 'AT_USER' and a.get('accessor_uid') == uid_encoded:
+                if (a.get('access_type') == access_type_label
+                        and a.get('accessor_uid') == uid_encoded):
                     return a.get('role')
     except Exception:
         pass
     return None
 
 
-def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None):
+def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None,
+                            as_team=False):
     if role is None and hidden is None:
         raise ValueError("At least one field (role or hidden) required")
     resolved = resolve_folder_identifier(params, folder_uid)
@@ -372,17 +428,15 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved
 
-    if '@' in user_uid:
-        _, _, actual_uid_bytes, _ = get_user_public_key(params, user_uid)
-    else:
-        actual_uid_bytes = resolve_user_uid_bytes(params, user_uid)
+    actual_uid_bytes, identifier_label, access_type_enum = _resolve_accessor(
+        params, user_uid, as_team)
     if not actual_uid_bytes:
-        raise ValueError(f"User '{user_uid}' not found")
+        raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
     ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = folder_pb2.AT_USER
+    ad.accessType = access_type_enum
     if role:
         resolved_role = resolve_role_name(role)
         ad.accessRoleType = resolved_role
@@ -391,94 +445,135 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
         ad.hidden = hidden
 
     response = folder_access_update_v3(params, folder_access_updates=[ad])
-    return parse_folder_access_result(response, folder_uid, user_uid,
-                                      'Access updated successfully')
+    result = parse_folder_access_result(response, folder_uid, identifier_label,
+                                        'Access updated successfully')
+    result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    return result
 
 
-def revoke_folder_access_v3(params, folder_uid, user_uid):
+def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved
 
-    if '@' in user_uid:
-        _, _, actual_uid_bytes, _ = get_user_public_key(params, user_uid)
-    else:
-        actual_uid_bytes = resolve_user_uid_bytes(params, user_uid)
+    actual_uid_bytes, identifier_label, access_type_enum = _resolve_accessor(
+        params, user_uid, as_team)
     if not actual_uid_bytes:
-        raise ValueError(f"User '{user_uid}' not found")
+        raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
     ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = folder_pb2.AT_USER
+    ad.accessType = access_type_enum
 
     response = folder_access_update_v3(params, folder_access_removes=[ad])
-    return parse_folder_access_result(response, folder_uid, user_uid,
-                                      'Access revoked successfully')
+    result = parse_folder_access_result(response, folder_uid, identifier_label,
+                                        'Access revoked successfully')
+    result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    return result
 
 
 def manage_folder_access_batch_v3(params, access_grants=None,
                                    access_updates=None, access_revokes=None):
+    """Apply a batch of folder access grants/updates/revokes.
+    """
     adds, updates, removes = [], [], []
     tracking = []
+    forbid_rsa = getattr(params, 'forbid_rsa', False)
 
     for spec in (access_grants or []):
         fuid = resolve_folder_identifier(params, spec['folder_uid'])
         if not fuid:
             raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        uid_bytes, email = resolve_uid_email(params, spec['user_uid'])
-        if not uid_bytes:
-            raise ValueError(f"User '{spec['user_uid']}' not found")
+        as_team = bool(spec.get('as_team'))
         role = spec.get('role', 'viewer')
         fk = get_folder_key(params, fuid)
-        pk, use_ecc = load_user_public_key(params, email)
-        efk = encrypt_for_recipient(fk, pk, use_ecc)
 
         ad = folder_pb2.FolderAccessData()
         ad.folderUid = utils.base64_url_decode(fuid)
-        ad.accessTypeUid = uid_bytes
-        ad.accessType = folder_pb2.AT_USER
         ad.accessRoleType = resolve_role_name(role)
+
         ek = folder_pb2.EncryptedDataKey()
-        ek.encryptedKey = efk
-        ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
-                               else folder_pb2.encrypted_by_public_key)
+        if as_team:
+            resolved_team = resolve_team_identifier(params, spec['user_uid'])
+            if not resolved_team:
+                raise ValueError(f"Team '{spec['user_uid']}' not found")
+            team_uid_b64, uid_bytes = resolved_team
+            team_keys = get_team_keys(params, team_uid_b64)
+           
+            efk, key_type = encrypt_for_team(fk, team_keys, prefer_aes=False,
+                                              forbid_rsa=forbid_rsa)
+            ek.encryptedKey = efk
+            ek.encryptedKeyType = key_type
+            ad.accessType = folder_pb2.AT_TEAM
+        else:
+            uid_bytes, email = resolve_uid_email(params, spec['user_uid'])
+            if not uid_bytes:
+                raise ValueError(f"User '{spec['user_uid']}' not found")
+            pk, use_ecc = load_user_public_key(params, email)
+            efk = encrypt_for_recipient(fk, pk, use_ecc)
+            ek.encryptedKey = efk
+            ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
+                                   else folder_pb2.encrypted_by_public_key)
+            ad.accessType = folder_pb2.AT_USER
+
+        ad.accessTypeUid = uid_bytes
         ad.folderKey.CopyFrom(ek)
         adds.append(ad)
-        tracking.append(('grant', fuid, spec['user_uid'], spec))
+        tracking.append(('grant', fuid, spec['user_uid'], spec, as_team))
 
     for spec in (access_updates or []):
         fuid = resolve_folder_identifier(params, spec['folder_uid'])
         if not fuid:
             raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
-        if not uid_bytes:
-            raise ValueError(f"User '{spec['user_uid']}' not found")
+        as_team = bool(spec.get('as_team'))
+        if as_team:
+            resolved_team = resolve_team_identifier(params, spec['user_uid'])
+            if not resolved_team:
+                raise ValueError(f"Team '{spec['user_uid']}' not found")
+            _, uid_bytes = resolved_team
+            access_type_enum = folder_pb2.AT_TEAM
+        else:
+            uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
+            if not uid_bytes:
+                raise ValueError(f"User '{spec['user_uid']}' not found")
+            access_type_enum = folder_pb2.AT_USER
+
         ad = folder_pb2.FolderAccessData()
         ad.folderUid = utils.base64_url_decode(fuid)
         ad.accessTypeUid = uid_bytes
-        ad.accessType = folder_pb2.AT_USER
+        ad.accessType = access_type_enum
         if spec.get('role'):
             ad.accessRoleType = resolve_role_name(spec['role'])
         if spec.get('hidden') is not None:
             ad.hidden = spec['hidden']
         updates.append(ad)
-        tracking.append(('update', fuid, spec['user_uid'], spec))
+        tracking.append(('update', fuid, spec['user_uid'], spec, as_team))
 
     for spec in (access_revokes or []):
         fuid = resolve_folder_identifier(params, spec['folder_uid'])
         if not fuid:
             raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
-        if not uid_bytes:
-            raise ValueError(f"User '{spec['user_uid']}' not found")
+        as_team = bool(spec.get('as_team'))
+        if as_team:
+            resolved_team = resolve_team_identifier(params, spec['user_uid'])
+            if not resolved_team:
+                raise ValueError(f"Team '{spec['user_uid']}' not found")
+            _, uid_bytes = resolved_team
+            access_type_enum = folder_pb2.AT_TEAM
+        else:
+            uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
+            if not uid_bytes:
+                raise ValueError(f"User '{spec['user_uid']}' not found")
+            access_type_enum = folder_pb2.AT_USER
+
         ad = folder_pb2.FolderAccessData()
         ad.folderUid = utils.base64_url_decode(fuid)
         ad.accessTypeUid = uid_bytes
-        ad.accessType = folder_pb2.AT_USER
+        ad.accessType = access_type_enum
         removes.append(ad)
-        tracking.append(('revoke', fuid, spec['user_uid'], spec))
+        tracking.append(('revoke', fuid, spec['user_uid'], spec, as_team))
 
     response = folder_access_update_v3(
         params,
@@ -487,17 +582,19 @@ def manage_folder_access_batch_v3(params, access_grants=None,
         folder_access_removes=removes or None)
 
     results = [{'operation': op, 'folder_uid': f, 'user_uid': u,
+                'access_type': 'AT_TEAM' if at else 'AT_USER',
                 'status': 'SUCCESS', 'message': f'{op.capitalize()} completed', 'success': True}
-               for op, f, u, _ in tracking]
+               for op, f, u, _, at in tracking]
 
     if response.folderAccessResults:
         for r in response.folderAccessResults:
             f = utils.base64_url_encode(r.folderUid)
             u = utils.base64_url_encode(r.accessUid) if r.accessUid else 'unknown'
-            for i, (op, tf, tu, _) in enumerate(tracking):
+            for i, (op, tf, tu, _, at) in enumerate(tracking):
                 if tf == f and tu == u:
                     results[i] = {
                         'operation': op, 'folder_uid': f, 'user_uid': u,
+                        'access_type': 'AT_TEAM' if at else 'AT_USER',
                         'status': folder_pb2.FolderModifyStatus.Name(r.status),
                         'message': r.message, 'success': False}
                     break

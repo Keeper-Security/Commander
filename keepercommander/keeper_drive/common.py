@@ -120,6 +120,126 @@ def resolve_user_uid_bytes(params, user_identifier: str) -> Optional[bytes]:
         return None
 
 
+
+def resolve_team_uid_bytes(params, team_identifier: str) -> Optional[bytes]:
+    """Resolve a team name or base64-url team UID to raw UID bytes.
+    """
+    if not team_identifier:
+        return None
+
+    team_cache = getattr(params, 'team_cache', None) or {}
+    if team_identifier in team_cache:
+        return utils.base64_url_decode(team_identifier)
+    lower = team_identifier.lower()
+    for uid, t in team_cache.items():
+        name = t.get('name') if isinstance(t, dict) else getattr(t, 'name', None)
+        if name and name.lower() == lower:
+            return utils.base64_url_decode(uid)
+
+    try:
+        share_objects = api.get_share_objects(params).get('teams', {}) or {}
+    except Exception:
+        share_objects = {}
+    if team_identifier in share_objects:
+        return utils.base64_url_decode(team_identifier)
+    for uid, t in share_objects.items():
+        name = (t.get('name') if isinstance(t, dict) else None) or ''
+        if name.lower() == lower:
+            return utils.base64_url_decode(uid)
+
+    if len(share_objects) >= 500 or getattr(params, 'available_team_cache', None) is None:
+        try:
+            api.load_available_teams(params)
+        except Exception:
+            pass
+    for t in (getattr(params, 'available_team_cache', None) or []):
+        uid = t.get('team_uid')
+        name = t.get('team_name', '')
+        if uid and (uid == team_identifier or name.lower() == lower):
+            return utils.base64_url_decode(uid)
+
+    try:
+        decoded = utils.base64_url_decode(team_identifier)
+        return decoded if decoded else None
+    except Exception:
+        return None
+
+
+def resolve_team_identifier(params, team_identifier: str) -> Optional[Tuple[str, bytes]]:
+    """Resolve a team name/UID to ``(team_uid_b64, team_uid_bytes)`` or ``None``."""
+    uid_bytes = resolve_team_uid_bytes(params, team_identifier)
+    if not uid_bytes:
+        return None
+    return utils.base64_url_encode(uid_bytes), uid_bytes
+
+
+def get_team_keys(params, team_uid_b64: str):
+    """Return the cached ``PublicKeys`` for a team, loading them if needed.
+    """
+    from ..params import PublicKeys
+
+    api.load_team_keys(params, [team_uid_b64])
+    keys = params.key_cache.get(team_uid_b64)
+
+    has_asym = bool(keys and (getattr(keys, 'rsa', None) or getattr(keys, 'ec', None)))
+    if not has_asym:
+        try:
+            rq = {'command': 'team_get_keys', 'teams': [team_uid_b64]}
+            rs = api.communicate(params, rq)
+            existing_aes = getattr(keys, 'aes', None) if keys else None
+            rsa_pub = b''
+            ec_pub = b''
+            for tk in (rs or {}).get('keys', []):
+                if tk.get('team_uid') != team_uid_b64 or 'key' not in tk:
+                    continue
+                key_type = tk.get('type')
+                encrypted_key = utils.base64_url_decode(tk['key'])
+                if key_type == -1:
+                    ec_pub = encrypted_key
+                elif key_type == -3:
+                    rsa_pub = encrypted_key
+            if rsa_pub or ec_pub:
+                params.key_cache[team_uid_b64] = PublicKeys(
+                    aes=existing_aes, rsa=rsa_pub, ec=ec_pub)
+                keys = params.key_cache[team_uid_b64]
+        except Exception as exc:
+            logger.debug("team_get_keys fallback failed for %s: %s",
+                         team_uid_b64, exc)
+
+    if not keys:
+        raise ValueError(f"Team key not found for team {team_uid_b64}")
+    return keys
+
+
+def encrypt_for_team(plaintext_key: bytes, team_keys,
+                     prefer_aes: bool = False,
+                     forbid_rsa: bool = False) -> Tuple[bytes, int]:
+    """Encrypt *plaintext_key* using the best available team key.
+    """
+    aes = getattr(team_keys, 'aes', None)
+    ec_bytes = getattr(team_keys, 'ec', None)
+    rsa_bytes = getattr(team_keys, 'rsa', None)
+
+    if prefer_aes and aes:
+        if forbid_rsa:
+            return (crypto.encrypt_aes_v2(plaintext_key, aes),
+                    folder_pb2.encrypted_by_data_key_gcm)
+        return (crypto.encrypt_aes_v1(plaintext_key, aes),
+                folder_pb2.encrypted_by_data_key)
+
+    if rsa_bytes and not forbid_rsa:
+        rsa_key = crypto.load_rsa_public_key(rsa_bytes)
+        return (crypto.encrypt_rsa(plaintext_key, rsa_key),
+                folder_pb2.encrypted_by_public_key)
+
+    if ec_bytes:
+        ec_key = crypto.load_ec_public_key(ec_bytes)
+        return (crypto.encrypt_ec(plaintext_key, ec_key),
+                folder_pb2.encrypted_by_public_key_ecc)
+
+    raise ValueError("No public key found for team")
+
+
 def resolve_uid_email(params, user_identifier: str) -> Tuple[Optional[bytes], str]:
     """Resolve user identifier and return (uid_bytes, email_str).
 
