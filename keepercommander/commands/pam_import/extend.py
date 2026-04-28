@@ -63,6 +63,7 @@ from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
 from ... import api, crypto, utils, vault, vault_extensions, record_management
+from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -279,7 +280,7 @@ def _collect_all_folder_uids_under_ksm(ksm_shared_folders: list) -> set:
         tree = shf.get("folder_tree") or {}
 
         def walk(t):
-            for name, node in (t or {}).items():
+            for _, node in (t or {}).items():
                 uid = (node or {}).get("uid")
                 if uid:
                     out.add(uid)
@@ -339,7 +340,7 @@ def _folder_uids_under_shf(shf: dict) -> set:
     tree = shf.get("folder_tree") or {}
 
     def walk(t):
-        for name, node in (t or {}).items():
+        for _, node in (t or {}).items():
             uid = (node or {}).get("uid")
             if uid:
                 out.add(uid)
@@ -410,6 +411,8 @@ class PAMProjectExtendCommand(Command):
         config_name = str(kwargs.get("config") or "")
 
         api.sync_down(params)
+        # no need to populate params.enterprise (users/teams caches).
+        # since extend only adds new records to existing folders
 
         configuration = None
         if config_name in params.record_cache:
@@ -428,7 +431,7 @@ class PAMProjectExtendCommand(Command):
         if not (file_name != "" and os.path.isfile(file_name)):
             try:
                 data = json.loads(file_name)
-            except ValueError as e:
+            except ValueError:
                 raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
         
         if not data:
