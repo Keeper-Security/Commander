@@ -9,7 +9,18 @@
 # Contact: ops@keepersecurity.com
 #
 
-__all__ = ['PAMWorkflowCommand', 'check_workflow_access', 'check_workflow_and_prompt_2fa']
+__all__ = [
+    'PAMWorkflowCommand',
+    'WorkflowGate',
+    'check_workflow_access',
+    'check_workflow_and_prompt_2fa',
+    'check_workflow_for_launch',
+]
 
 from .registry import PAMWorkflowCommand
-from .mfa import check_workflow_access, check_workflow_and_prompt_2fa
+from .mfa import (
+    WorkflowGate,
+    check_workflow_access,
+    check_workflow_and_prompt_2fa,
+    check_workflow_for_launch,
+)

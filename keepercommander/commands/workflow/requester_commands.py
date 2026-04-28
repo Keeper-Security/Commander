@@ -18,9 +18,16 @@ from ...display import bcolors
 from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
-from ... import crypto, utils
+from ... import utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, sanitize_router_error, is_workflow_exempt, print_exempt_message
+from .helpers import (
+    RecordResolver,
+    ProtobufRefBuilder,
+    sanitize_router_error,
+    is_workflow_exempt,
+    print_exempt_message,
+    submit_access_request,
+)
 
 
 class WorkflowRequestAccessCommand(Command):
@@ -62,28 +69,11 @@ class WorkflowRequestAccessCommand(Command):
         if is_workflow_exempt(params, record_uid):
             print_exempt_message(kwargs.get('format', 'table'))
             return
-        record_uid_bytes = utils.base64_url_decode(record_uid)
         reason = kwargs.get('reason') or ''
         ticket = kwargs.get('ticket') or ''
 
-        record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
-        if not record_key and (reason or ticket):
-            raise CommandError(
-                '', 'Record key not available — cannot encrypt reason/ticket. '
-                    'You do not have sufficient access to this record to send encrypted parameters.',
-            )
-
-        access_request = workflow_pb2.WorkflowAccessRequest()
-        access_request.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
-        if reason:
-            reason_bytes = reason.encode('utf-8') if isinstance(reason, str) else reason
-            access_request.reason = crypto.encrypt_aes_v2(reason_bytes, record_key)
-        if ticket:
-            ticket_bytes = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
-            access_request.ticket = crypto.encrypt_aes_v2(ticket_bytes, record_key)
-
         try:
-            _post_request_to_router(params, 'request_workflow_access', rq_proto=access_request)
+            submit_access_request(params, record_uid, reason=reason, ticket=ticket)
 
             if kwargs.get('format') == 'json':
                 result = {

@@ -10,12 +10,12 @@
 #
 
 import re
-from typing import List
+from typing import List, Optional, Tuple
 
 from ...error import CommandError
 from ...params import KeeperParams
 from ...proto import workflow_pb2, GraphSync_pb2
-from ... import vault, utils
+from ... import crypto, vault, utils
 
 
 _PROTO_DUMP_RE = re.compile(
@@ -75,6 +75,232 @@ def is_workflow_exempt(params, record_uid):
                     return True
 
     return False
+
+
+def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: str) -> bool:
+    """Per-user enterprise enforcement gate: is this user permitted to perform
+    the action by their enterprise enforcement profile?
+
+    Mirrors web vault `getAllowConnections` / `getAllowPortForwards`
+    (pam-enforcement-selectors.ts:38-49). The enforcement boolean is already
+    the rolled-up sum of the user's role permissions — no additional role /
+    team / ACL / deny-list checks are needed (verified against WV).
+
+    NOTE — license check intentionally NOT included here. Web vault wraps
+    these enforcement selectors in `mkPam` (pam-enforcement-selectors.ts:33-34)
+    which also requires `state.accountSummary.license?.isPamEnabled`. Commander
+    has historically treated license defensively: we let the gateway / server
+    be the authoritative gate for license-driven failures rather than
+    pre-flighting it client-side. Same approach is used by the rotation
+    enforcement check (`_is_rotation_allowed_by_enforcement` in
+    discoveryrotation.py). The trade-off: an account that has the enforcement
+    granted but no PAM license will pass this gate and fail later at the
+    gateway with a more specific error, instead of getting a "not licensed"
+    refusal up front. If parity becomes important, wrap this with a license
+    check against `params.account_summary` / `params.license`.
+
+    Decision matrix:
+        no enforcement context at all (personal / non-enterprise user):
+            -> allow (gateway is the authoritative gate)
+        enforcement context present, key explicitly true:
+            -> allow
+        enforcement context present, key explicitly false:
+            -> deny
+        enforcement context present, key absent:
+            -> deny (matches WV: `!!enforcements.<key>` evaluates to false
+            for missing keys; also matches Commander's enforcement parser
+            behavior, which converts `--enforcement KEY:false` to None and
+            removes the key, so "absent" is the actual on-the-wire shape
+            of "explicitly disabled")
+
+    Defensively swallows any unexpected enforcement payload shape and falls
+    back to allow.
+    """
+    import logging as _logging
+    try:
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or not isinstance(enforcements, dict):
+            return True
+        booleans = enforcements.get('booleans') or []
+        if not isinstance(booleans, list) or not booleans:
+            # Enforcement context but no booleans at all — treat as
+            # "not yet configured" and allow; gateway will gate.
+            return True
+        for b in booleans:
+            if isinstance(b, dict) and b.get('key') == enforcement_key:
+                return bool(b.get('value'))
+        # Enterprise user with a populated enforcement set, but the
+        # specific PAM-grant key is absent. Match WV: deny.
+        return False
+    except Exception as e:
+        _logging.debug('Enforcement check failed for %s: %s', enforcement_key, e)
+        return True
+
+
+def is_pam_config_action_allowed_for_record(params: KeeperParams, record_uid: str,
+                                            action_key: str) -> bool:
+    """Best-effort PAM config gate: is the action permitted by the record's
+    PAM configuration's allowedSettings (DAG) ?
+
+    Mirrors web vault `getConfigAllowedSettings(recordUid)[key]` (used by
+    GuacConnectBanner.tsx:37-45 for launch and StartPortForwardButton.tsx:160-163
+    for tunnel). The action_key matches the JSON-mapped names returned by
+    PAMConfigurationListCommand._allowed_settings_dag_to_json:
+
+      'connections'   → launch / connect
+      'tunneling'     → tunnel / port-forward (DAG: portForwards)
+      'rotation'      → rotate
+
+    Returns True (allow) on any lookup failure (no PAM context, missing DAG,
+    not a PAM record, personal account) so non-enterprise contexts aren't
+    blocked. Returns False only when the flag is explicitly False on the
+    PAM config DAG.
+
+    Fast path: launch_cache entry holds a recent config_uid for the record;
+    on cache hit we skip the DAG-leafs round-trip and go straight to the
+    config-vertex read.
+    """
+    import logging as _logging
+    try:
+        config_uid = None
+        try:
+            from ..pam_launch import launch_cache
+            entry = launch_cache.get(record_uid)
+            if entry:
+                config_uid = entry.get('config_uid')
+        except Exception:
+            pass
+
+        if not config_uid:
+            from ... import vault as _vault
+            from ..tunnel.port_forward.tunnel_helpers import get_config_uid_from_record
+            try:
+                config_uid = get_config_uid_from_record(params, _vault, record_uid)
+            except CommandError:
+                return True
+
+        if not config_uid:
+            return True
+
+        from ..discoveryrotation import PAMConfigurationListCommand
+        allowed = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+            params, config_uid,
+        )
+        return allowed.get(action_key) is not False
+    except Exception as e:
+        _logging.debug(
+            'PAM config allowedSettings lookup failed for %s (action=%s): %s',
+            record_uid, action_key, e,
+        )
+        return True
+
+
+def is_gateway_online_for_record(params: KeeperParams, record_uid: str) -> Optional[bool]:
+    """Best-effort check: is the gateway for record_uid currently connected to the router?
+
+    Returns True / False when known, None when undetermined (e.g. the
+    record has no entry in launch_cache yet, or the router lookup fails).
+    Callers should treat None as "proceed with normal flow" and only act
+    on a definitive False.
+
+    Uses launch_cache.get to avoid an expensive PAM_LINK DAG rebuild on the
+    first launch; subsequent launches resolve the gateway UID instantly.
+    """
+    import logging as _logging
+    try:
+        from ..pam_launch import launch_cache
+        entry = launch_cache.get(record_uid)
+        if not entry:
+            return None
+        gateway_uid_str = entry.get('gateway_uid')
+        if not gateway_uid_str:
+            return None
+        gateway_uid_bytes = utils.base64_url_decode(gateway_uid_str)
+
+        from ..pam.router_helper import router_get_connected_gateways
+        online = router_get_connected_gateways(params)
+        if not online or not online.controllers:
+            return False
+        return any(c.controllerUid == gateway_uid_bytes for c in online.controllers)
+    except Exception as e:
+        _logging.debug("Gateway online probe failed for %s: %s", record_uid, e)
+        return None
+
+
+def start_workflow_for_record(params: KeeperParams, record_uid: str) -> None:
+    """Send a start_workflow (check-out) request for the given record."""
+    from ..pam.router_helper import _post_request_to_router
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    record = vault.KeeperRecord.load(params, record_uid)
+    record_name = record.title if record else record_uid
+
+    state = workflow_pb2.WorkflowState()
+    state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record_name))
+    _post_request_to_router(params, 'start_workflow', rq_proto=state)
+
+
+def submit_access_request(params: KeeperParams, record_uid: str,
+                          reason: str = '', ticket: str = '') -> None:
+    """Send a workflow access request with optional encrypted reason/ticket.
+
+    Encrypts reason/ticket with the record key (AES-GCM-256), matching
+    web vault request_workflow_access.ts. Caller must hold the record key.
+    """
+    from ..pam.router_helper import _post_request_to_router
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    record = vault.KeeperRecord.load(params, record_uid)
+    record_name = record.title if record else record_uid
+
+    record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
+    if not record_key and (reason or ticket):
+        raise CommandError(
+            '', 'Record key not available — cannot encrypt reason/ticket. '
+                'You do not have sufficient access to this record to send encrypted parameters.',
+        )
+
+    access_request = workflow_pb2.WorkflowAccessRequest()
+    access_request.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record_name))
+    if reason:
+        reason_bytes = reason.encode('utf-8') if isinstance(reason, str) else reason
+        access_request.reason = crypto.encrypt_aes_v2(reason_bytes, record_key)
+    if ticket:
+        ticket_bytes = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
+        access_request.ticket = crypto.encrypt_aes_v2(ticket_bytes, record_key)
+
+    _post_request_to_router(params, 'request_workflow_access', rq_proto=access_request)
+
+
+def prompt_for_reason_ticket(needs_reason: bool, needs_ticket: bool) -> Tuple[Optional[str], Optional[str]]:
+    """Interactively prompt the user for reason and/or ticket using prompt_toolkit.
+
+    Returns (reason, ticket). Either may be None if not requested. Returns
+    (None, None) if the user cancels (Ctrl+C / EOF) or submits empty input
+    for a required field.
+    """
+    from prompt_toolkit import prompt as pt_prompt
+    from ...display import bcolors as _bc
+
+    reason_value = None
+    ticket_value = None
+    try:
+        if needs_reason:
+            print(f"\n{_bc.OKBLUE}Workflow requires a justification.{_bc.ENDC}")
+            print('Type your reason. Press Esc then Enter to submit, or Ctrl+C to cancel.\n')
+            text = pt_prompt('Reason: ', multiline=True).strip()
+            if not text:
+                print(f"{_bc.WARNING}Reason is required — cancelled.{_bc.ENDC}")
+                return None, None
+            reason_value = text
+        if needs_ticket:
+            print(f"\n{_bc.OKBLUE}Workflow requires a ticket / reference number.{_bc.ENDC}")
+            text = pt_prompt('Ticket: ').strip()
+            if not text:
+                print(f"{_bc.WARNING}Ticket is required — cancelled.{_bc.ENDC}")
+                return None, None
+            ticket_value = text
+    except (KeyboardInterrupt, EOFError):
+        return None, None
+    return reason_value, ticket_value
 
 
 class RecordResolver:
@@ -283,11 +509,11 @@ class WorkflowFormatter:
             if '-' not in time_range_str:
                 raise CommandError('', 'Time range must be in HH:MM-HH:MM format (e.g., "09:00-17:00")')
             start_str, end_str = time_range_str.split('-', 1)
-            start_minutes = WorkflowFormatter._parse_time_to_minutes(start_str.strip())
-            end_minutes = WorkflowFormatter._parse_time_to_minutes(end_str.strip())
+            start_hhmm = WorkflowFormatter._parse_time_to_hhmm(start_str.strip())
+            end_hhmm = WorkflowFormatter._parse_time_to_hhmm(end_str.strip())
             time_range = workflow_pb2.TimeOfDayRange()
-            time_range.startTime = start_minutes
-            time_range.endTime = end_minutes
+            time_range.startTime = start_hhmm
+            time_range.endTime = end_hhmm
             temporal.timeRanges.append(time_range)
 
         if timezone_str:
@@ -296,14 +522,18 @@ class WorkflowFormatter:
         return temporal
 
     @staticmethod
-    def _parse_time_to_minutes(time_str):
+    def _parse_time_to_hhmm(time_str):
+        """Parse 'HH:MM' into the HHMM integer encoding the server expects on
+        TimeOfDayRange.startTime / .endTime — e.g. '03:00' -> 300, '17:30' -> 1730.
+        Server validates: HHMM integer with HH in 0-23 and MM in 0-59.
+        """
         try:
             parts = time_str.split(':')
             h = int(parts[0])
             m = int(parts[1]) if len(parts) > 1 else 0
             if not (0 <= h <= 23 and 0 <= m <= 59):
                 raise ValueError
-            return h * 60 + m
+            return h * 100 + m
         except (ValueError, IndexError):
             raise CommandError('', f'Invalid time format: "{time_str}". Use HH:MM (e.g., "09:00")')
 
@@ -317,8 +547,8 @@ class WorkflowFormatter:
         if at.timeRanges:
             ranges = []
             for tr in at.timeRanges:
-                sh, sm = divmod(tr.startTime, 60)
-                eh, em = divmod(tr.endTime, 60)
+                sh, sm = divmod(tr.startTime, 100)
+                eh, em = divmod(tr.endTime, 100)
                 ranges.append(f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}")
             result['time_ranges'] = ranges
         if at.timeZone:

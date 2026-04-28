@@ -35,6 +35,15 @@ from ..subfolder import find_folders
 from ..utils import value_to_boolean
 from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname
 
+# Per-record map of pending lease-expiry timers. Used by PAMTunnelStartCommand
+# to cancel any prior timer for the same record before scheduling a new one,
+# so a re-run of `pam tunnel start` in the same shell session doesn't leave
+# the original timer alive and produce duplicate "Tunnel access expired"
+# messages from the prior tunnel.
+_LEASE_EXPIRY_TIMERS_BY_RECORD = {}    # type: dict[str, threading.Timer]
+import threading as _lease_threading_module  # noqa: E402  (used only by the tunnel-start timer)
+
+
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
 
@@ -143,9 +152,17 @@ class PAMTunnelListCommand(Command):
 
 
 class PAMTunnelStopCommand(Command):
+    # Note on workflow lease lifecycle: stopping a tunnel intentionally does
+    # NOT call end_workflow on the workflow lease. This matches the web vault
+    # (ConnectionManager.ts:268-303 stops the connection but never releases
+    # the lease). The workflow lease and the tunnel are decoupled — one
+    # checkout window may host many sequential or concurrent tunnels — and
+    # the lease ends via either expiresOn server-side expiry or an explicit
+    # `pam workflow end`. Releasing here would clobber leases the user
+    # checked out manually via `pam workflow start`.
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
     pam_cmd_parser.add_argument('uid', type=str, action='store', nargs='?', help='The Tunnel ID, Conversation ID, or Record UID (omit with --all to stop all tunnels)')
-    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true', 
+    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true',
                                 help='Stop all tunnels (if no UID) or all tunnels matching the UID (if UID provided)')
 
     def get_parser(self):
@@ -503,6 +520,24 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
+    pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
+                                help='Justification text for workflow access request. Used when the record\'s '
+                                     'workflow requires a reason; non-interactive equivalent of the inline prompt.')
+    pam_cmd_parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
+                                help='External ticket / reference number for workflow access request. Used when '
+                                     'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
+    pam_cmd_parser.add_argument('--auto-checkout', '-aco', required=False, dest='workflow_auto_checkout',
+                                action='store_true',
+                                help='Auto-confirm workflow check-out when the record is approved but not yet '
+                                     'checked out (skips the interactive Y/n prompt). The lease is released '
+                                     'automatically when the tunnel ends.')
+    pam_cmd_parser.add_argument('--wait', '-w', required=False, dest='workflow_wait',
+                                action='store_true',
+                                help='When the workflow is waiting on approval, poll until approved '
+                                     '(or --wait-timeout elapses) instead of exiting immediately.')
+    pam_cmd_parser.add_argument('--wait-timeout', '-wt', required=False, dest='workflow_wait_timeout',
+                                type=int, default=600,
+                                help='Maximum seconds to poll for approval when --wait is set (default: 600).')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -551,13 +586,55 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
-        # Workflow access check and 2FA prompt
-        two_factor_value = None
+        # Per-user enforcement gate (matches web vault getAllowPortForwards,
+        # pam-enforcement-selectors.ts:48-49). Bail before any further work
+        # when the user's enterprise enforcement disallows PAM tunnels.
         try:
-            from .workflow import check_workflow_and_prompt_2fa
-            should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
-            if not should_proceed:
+            from .workflow.helpers import is_pam_action_allowed_by_enforcement
+            if not is_pam_action_allowed_by_enforcement(
+                    params, 'allow_launch_pam_tunnels'):
+                print(f"{bcolors.FAIL}PAM tunnels are not allowed by your enterprise "
+                      f"enforcement (allow_launch_pam_tunnels).{bcolors.ENDC}")
                 return
+        except ImportError:
+            pass
+
+        # PAM-config gate (matches web vault StartPortForwardButton.tsx:160-163):
+        # bail before the workflow gate / lease auto-checkout when the PAM
+        # configuration disables tunneling for this record. The JSON helper
+        # renames the DAG key portForwards → tunneling.
+        try:
+            from .workflow.helpers import is_pam_config_action_allowed_for_record
+            if not is_pam_config_action_allowed_for_record(params, record_uid, 'tunneling'):
+                print(f"{bcolors.FAIL}Tunneling is disabled by the PAM configuration "
+                      f"for record {record_uid}.{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
+        # Workflow access check and 2FA prompt.
+        # Lease lifecycle: when the gate finds WS_READY_TO_START it may
+        # auto-checkout (Phase 2.2), but stopping the tunnel does NOT
+        # release the resulting lease — see PAMTunnelStopCommand. This
+        # mirrors the web vault: one approval window can host many
+        # sequential/concurrent tunnels until expiresOn fires server-side
+        # or the user runs `pam workflow end`.
+        two_factor_value = None
+        workflow_expires_on_ms = 0
+        try:
+            from .workflow import check_workflow_for_launch
+            gate = check_workflow_for_launch(
+                params, record_uid,
+                reason=kwargs.get('workflow_reason'),
+                ticket=kwargs.get('workflow_ticket'),
+                auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
+                wait=bool(kwargs.get('workflow_wait')),
+                wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
+            )
+            if not gate.allowed:
+                return
+            two_factor_value = gate.two_factor_value
+            workflow_expires_on_ms = gate.expires_on_ms
         except ImportError:
             pass
 
@@ -657,8 +734,77 @@ class PAMTunnelStartCommand(Command):
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
-        
+
         if result and result.get("success"):
+            # Workflow lease expiry handling.
+            #
+            # Behavior note: at expiresOn we want to terminate the tunnel and
+            # any in-flight forwarded connections (web-vault-equivalent hard
+            # disconnect). However:
+            #   * tube_registry.close_tube(tube_id) is a SOFT close —
+            #     it marks the tube closed and stops new channel creation but
+            #     does NOT terminate already-open forwarded channels. An SSH
+            #     session active through the tube keeps relaying bytes until
+            #     the SSH client itself closes (you'll see TURN
+            #     "fail to refresh permissions" warnings while the existing
+            #     5-tuple keeps flowing).
+            #   * The local TCP listener is owned by Rust
+            #     (keeper_pam_webrtc_rs); Python has no handle to force-close
+            #     it from here.
+            # So a true hard-kill is not currently possible from the Python
+            # layer. The server-side workflow lease still becomes invalid at
+            # expiresOn (the gateway will refuse new auth requests); only the
+            # already-running SSH session survives until natural disconnect.
+            #
+            # The previous implementation called
+            # `tube_registry.close_tube(_tube_id, reason=CloseConnectionReasons.Normal)`
+            # but it was a no-op against active channels and produced
+            # confusing "fail to refresh permissions" noise from the TURN
+            # relay. Kept commented out below for reference if a future
+            # keeper_pam_webrtc_rs release adds a hard-kill primitive.
+            if workflow_expires_on_ms and workflow_expires_on_ms > 0:
+                import time as _time
+                seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
+                tube_id = result.get('tube_id')
+                if tube_id and seconds_until_expiry > 0:
+                    # Dedup: cancel any pending lease-expiry timer for this
+                    # record from a previous `pam tunnel start` in the same
+                    # shell session. Without this, a re-run of the command
+                    # leaves the prior timer scheduled and duplicate
+                    # "Tunnel access lease expired" messages fire.
+                    prior = _LEASE_EXPIRY_TIMERS_BY_RECORD.pop(record_uid, None)
+                    if prior is not None:
+                        try:
+                            prior.cancel()
+                        except Exception:
+                            pass
+
+                    def _close_on_lease_expiry(_tube_id=tube_id, _record_uid=record_uid):
+                        try:
+                            print(
+                                f"\n{bcolors.WARNING}Tunnel access lease expired for "
+                                f"{_record_uid}. Server will refuse new auth requests; "
+                                f"any in-flight SSH session will continue until you "
+                                f"disconnect it.{bcolors.ENDC}",
+                                flush=True,
+                            )
+                            # Soft-close — kept commented out: doesn't actually
+                            # terminate active forwarded channels, only emits
+                            # TURN permission-refresh errors. Re-enable once
+                            # keeper_pam_webrtc_rs provides a hard-kill that
+                            # also drops the local listener.
+                            # tube_registry.close_tube(_tube_id, reason=CloseConnectionReasons.Normal)
+                        except Exception as e:
+                            logging.debug(f"Lease-expiry tunnel notice failed: {e}")
+                        finally:
+                            _LEASE_EXPIRY_TIMERS_BY_RECORD.pop(_record_uid, None)
+
+                    timer = _lease_threading_module.Timer(
+                        seconds_until_expiry, _close_on_lease_expiry,
+                    )
+                    timer.daemon = True
+                    _LEASE_EXPIRY_TIMERS_BY_RECORD[record_uid] = timer
+                    timer.start()
             # The helper will show endpoint table when local socket is actually listening
             pass
         else:

@@ -3013,6 +3013,47 @@ class PAMGatewayActionJobCommand(Command):
                               gateway_uid=gateway_uid)
 
 
+def _is_rotation_allowed_by_enforcement(params):
+    # type: (KeeperParams) -> bool
+    """Inspired by web vault getAllowRotation (pam-enforcement-selectors.ts:30).
+
+    Decision matrix:
+      - No enforcement context (None / empty dict / no `booleans`):
+            personal / non-enterprise account — allow (True).
+      - Enterprise context (non-empty `booleans` list):
+            mirror web vault's `!!enforcements.allow_rotate_credentials`
+            semantics — single key, must evaluate truthy. Missing key
+            (Commander parser converts `:false` to None and drops the entry)
+            is treated as deny. The legacy `allow_pam_rotation` umbrella
+            is intentionally NOT consulted here so an admin who explicitly
+            disables rotation via `allow_rotate_credentials:false` is
+            honored even if the umbrella key is still on by default.
+
+    The Commander enforcement parser converts `:false` -> None (which removes
+    the key from the booleans list entirely), so an absent key in an
+    enterprise account is functionally equivalent to `False` and must deny
+    to match web vault. The gateway remains the authoritative gate, this is
+    the client-side parity with web vault's RotateButton.
+
+    Defensively swallows any unexpected enforcement payload shape and allows
+    rotation to proceed in that case (fail-open on parse error only).
+    """
+    try:
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or not isinstance(enforcements, dict):
+            return True
+        booleans = enforcements.get('booleans') or []
+        if not isinstance(booleans, list) or not booleans:
+            return True
+        for b in booleans:
+            if isinstance(b, dict) and b.get('key') == 'allow_rotate_credentials':
+                return bool(b.get('value'))
+        return False
+    except Exception as _e:
+        logging.debug('Rotation enforcement check failed; allowing: %s', _e)
+        return True
+
+
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
@@ -3039,6 +3080,13 @@ class PAMGatewayActionRotateCommand(Command):
         return PAMGatewayActionRotateCommand.parser
 
     def execute(self, params, **kwargs):
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): block at
+        # the enforcement layer before any rotation work is done.
+        if not _is_rotation_allowed_by_enforcement(params):
+            print(f'{bcolors.FAIL}Rotation is not allowed for this account by enterprise '
+                  f'enforcement (allow_rotate_credentials).{bcolors.ENDC}')
+            return
+
         record_uid = kwargs.get('record_uid', '')
         folder = kwargs.get('folder', '')
         recursive = kwargs.get('recursive', False)
@@ -3232,6 +3280,23 @@ class PAMGatewayActionRotateCommand(Command):
             facade.record = pam_config
 
             config_uid = facade.controller_uid
+
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): respect
+        # the per-config rotation switch in allowedSettings on the PAM config DAG.
+        # If the config explicitly disables rotation we skip with the same
+        # "disallowed by config" semantics web vault shows.
+        try:
+            allowed = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+                params, config_uid,
+            )
+            if allowed.get('rotation') is False:
+                print(
+                    f'{bcolors.FAIL}Rotation is disabled by the PAM Configuration '
+                    f'[{config_uid}] for record [{record_uid}].{bcolors.ENDC}'
+                )
+                return
+        except Exception as _e:
+            logging.debug('Skipping per-config rotation gate (lookup failed): %s', _e)
 
         if not resource_uid:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid,

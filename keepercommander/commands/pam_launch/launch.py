@@ -305,6 +305,24 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--scale', '-s', required=False, dest='scale', type=int, default=None,
                         help='Scale pixel width/height by this percentage (e.g. 50 = half canvas, 200 = double). '
                              'Range: [40-400]. Helps when fullscreen TUI programs show garbled layout.')
+    parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
+                        help='Justification text for workflow access request. Used when the record\'s '
+                             'workflow requires a reason; non-interactive equivalent of the inline prompt.')
+    parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
+                        help='External ticket / reference number for workflow access request. Used when '
+                             'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
+    parser.add_argument('--auto-checkout', '-aco', required=False, dest='workflow_auto_checkout',
+                        action='store_true',
+                        help='Auto-confirm workflow check-out when the record is approved but not yet '
+                             'checked out (skips the interactive Y/n prompt). The lease is released '
+                             'automatically when the launch session ends.')
+    parser.add_argument('--wait', '-w', required=False, dest='workflow_wait',
+                        action='store_true',
+                        help='When the workflow is waiting on approval, poll until approved '
+                             '(or --wait-timeout elapses) instead of exiting immediately.')
+    parser.add_argument('--wait-timeout', '-wt', required=False, dest='workflow_wait_timeout',
+                        type=int, default=600,
+                        help='Maximum seconds to poll for approval when --wait is set (default: 600).')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -501,12 +519,51 @@ class PAMLaunchCommand(Command):
 
         logging.debug(f"Found gateway UID for record: {gateway_uid}")
 
-        # Get all gateways to find the matching one
+        # Get all gateways to find the matching one. This is the strict
+        # enterprise-wide list filtered by the user's gateway-visibility
+        # permissions; it can return empty / miss the gateway for KSM-app
+        # members who are not the app owner, even when the user has access to
+        # the PAM Configuration record itself.
         all_gateways = get_all_gateways(params)
 
         # Find the gateway by UID
         gateway_uid_bytes = url_safe_str_to_bytes(gateway_uid)
         gateway_proto = next((g for g in all_gateways if g.controllerUid == gateway_uid_bytes), None)
+
+        # Fallback: web vault uses the per-config endpoint
+        # `pam/get_configuration_controller` rather than enumerating
+        # `pam/get_controllers`. That endpoint resolves the gateway for THIS
+        # config without requiring enterprise-wide gateway visibility, so
+        # non-Owner KSM-app members can still launch through gateways tied to
+        # configs they have access to. Mirrors WV's LaunchButton.tsx ->
+        # getControllerUidForConfigUid -> get-controller-for-config-uid.ts ->
+        # api-pam.ts (`pam/get_configuration_controller`).
+        if not gateway_proto:
+            # Resolve config_uid early if we don't have it yet — it's needed
+            # for the per-config lookup. This is the same lookup that runs
+            # below for the return value, just hoisted up for the fallback.
+            if config_uid is None:
+                try:
+                    config_uid = get_config_uid_from_record(params, vault, record_uid)
+                except Exception as e:
+                    logging.debug('find_gateway: config_uid resolution for fallback failed: %s', e)
+            if config_uid:
+                try:
+                    from ..pam.config_helper import configuration_controller_get
+                    controller = configuration_controller_get(
+                        params, url_safe_str_to_bytes(config_uid),
+                    )
+                    if controller and controller.controllerUid == gateway_uid_bytes:
+                        gateway_proto = controller
+                        logging.debug(
+                            'find_gateway: resolved gateway via '
+                            'pam/get_configuration_controller fallback'
+                        )
+                except Exception as e:
+                    logging.debug(
+                        'find_gateway: pam/get_configuration_controller '
+                        'fallback failed: %s', e,
+                    )
 
         if not gateway_proto:
             raise CommandError('pam launch', f'Gateway {gateway_uid} not found in available gateways.')
@@ -514,7 +571,8 @@ class PAMLaunchCommand(Command):
         gateway_name = gateway_proto.controllerName if gateway_proto else 'Unknown'
         logging.debug(f"Found gateway: {gateway_name} ({gateway_uid})")
 
-        # Get the configuration UID (already resolved from tdag when present)
+        # Get the configuration UID (already resolved from tdag when present
+        # OR by the fallback above)
         if config_uid is None:
             config_uid = get_config_uid_from_record(params, vault, record_uid)
 
@@ -607,18 +665,61 @@ class PAMLaunchCommand(Command):
             if not isinstance(record, vault.TypedRecord):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+            # Per-user enforcement gate (matches web vault getAllowConnections,
+            # pam-enforcement-selectors.ts:39-40). Bail before any further work
+            # when the user's enterprise enforcement disallows PAM connections.
             try:
-                from ..workflow import check_workflow_and_prompt_2fa
-                should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
-                if not should_proceed:
+                from ..workflow.helpers import is_pam_action_allowed_by_enforcement
+                if not is_pam_action_allowed_by_enforcement(
+                        params, 'allow_launch_pam_on_cloud_connection'):
                     logging.error(
-                        "pam launch aborted for record %s: workflow access is not allowed for connect, "
-                        "or workflow requires MFA and no valid MFA response was provided.",
-                        record_uid,
+                        "pam launch aborted: PAM connections are not allowed by "
+                        "your enterprise enforcement (allow_launch_pam_on_cloud_connection).",
                     )
                     return
-                if two_factor_value:
-                    kwargs['two_factor_value'] = two_factor_value
+            except ImportError:
+                pass
+
+            # PAM-config gate (matches web vault GuacConnectBanner.tsx:37-45):
+            # bail before the workflow gate / lease auto-checkout when the PAM
+            # configuration disables connections for this record.
+            try:
+                from ..workflow.helpers import is_pam_config_action_allowed_for_record
+                if not is_pam_config_action_allowed_for_record(params, record_uid, 'connections'):
+                    logging.error(
+                        "pam launch aborted: connections are disabled by the PAM "
+                        "configuration for record %s.", record_uid,
+                    )
+                    return
+            except ImportError:
+                pass
+
+            workflow_expires_on_ms = 0
+            workflow_flow_uid = None
+            workflow_started_by_launch = False
+            try:
+                from ..workflow import check_workflow_for_launch
+                gate = check_workflow_for_launch(
+                    params, record_uid,
+                    reason=kwargs.get('workflow_reason'),
+                    ticket=kwargs.get('workflow_ticket'),
+                    auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
+                    wait=bool(kwargs.get('workflow_wait')),
+                    wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
+                )
+                if not gate.allowed:
+                    # Orchestrator (`check_workflow_for_launch`) already prints
+                    # the user-facing reason for any block_reason it can identify
+                    # (no_workflow / needs_action / waiting / ready_to_start /
+                    # outside_time_window / MFA cancel / submit-failed / etc.),
+                    # so bail silently here instead of stacking a generic
+                    # catch-all on top. Mirrors `pam tunnel start`.
+                    return
+                if gate.two_factor_value:
+                    kwargs['two_factor_value'] = gate.two_factor_value
+                workflow_expires_on_ms = gate.expires_on_ms
+                workflow_flow_uid = gate.flow_uid
+                workflow_started_by_launch = gate.started_by_launch
             except ImportError:
                 pass
 
@@ -1086,6 +1187,9 @@ class PAMLaunchCommand(Command):
                         pre_connect_spinner=pre_connect_spinner,
                         preserve_crlf=not bool(kwargs.get('normalize_crlf')),
                         pam_total_tc=_total_tc,
+                        workflow_expires_on_ms=workflow_expires_on_ms,
+                        workflow_flow_uid=workflow_flow_uid,
+                        workflow_started_by_launch=workflow_started_by_launch,
                     )
                 except BaseException:
                     if pre_connect_spinner is not None and getattr(
@@ -1113,6 +1217,9 @@ class PAMLaunchCommand(Command):
         pre_connect_spinner: Optional[PamLaunchSpinner] = None,
         preserve_crlf: bool = True,
         pam_total_tc: Optional[PamConnectTiming] = None,
+        workflow_expires_on_ms: int = 0,
+        workflow_flow_uid: Optional[bytes] = None,
+        workflow_started_by_launch: bool = False,
     ):
         """
         Start CLI session using PythonHandler protocol mode.
@@ -1170,6 +1277,7 @@ class PAMLaunchCommand(Command):
                 'If you need to drive pam launch non-interactively use --stdin.',
             )
         shutdown_requested = False
+        lease_expired = False
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1177,6 +1285,27 @@ class PAMLaunchCommand(Command):
             logging.warning("\n\n* Interrupt received - shutting down...")
 
         original_handler = signal.signal(signal.SIGINT, signal_handler_fn)
+
+        # Workflow lease expiry: schedule a hard kill at expiresOn matching
+        # the web vault (immediate teardown, no grace period, no reconnect).
+        # The "Access expired" line is printed AFTER terminal reset in finally
+        # so the message survives reset_local_terminal_after_pam_session().
+        lease_timer = None
+        if workflow_expires_on_ms and workflow_expires_on_ms > 0:
+            import time as _time
+            seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
+            if seconds_until_expiry <= 0:
+                lease_expired = True
+                shutdown_requested = True
+            else:
+                import threading as _threading
+                def _on_lease_expired():
+                    nonlocal shutdown_requested, lease_expired
+                    lease_expired = True
+                    shutdown_requested = True
+                lease_timer = _threading.Timer(seconds_until_expiry, _on_lease_expired)
+                lease_timer.daemon = True
+                lease_timer.start()
 
         rust_log_token = None
         try:
@@ -1676,6 +1805,11 @@ class PAMLaunchCommand(Command):
                 except Exception as e:
                     logging.debug(f"Terminal reset after pam session: {e}")
 
+                # Print lease-expiry notice AFTER terminal reset so the user sees
+                # it on a clean line (the reset can wipe pre-reset stderr writes).
+                if lease_expired:
+                    print('\nAccess expired — session terminated by workflow lease.', flush=True)
+
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
                 try:
@@ -1714,5 +1848,23 @@ class PAMLaunchCommand(Command):
             logging.error(f"Error in PythonHandler CLI session: {e}")
             raise CommandError('pam launch', f'Failed to start CLI session: {e}')
         finally:
+            if lease_timer is not None:
+                try:
+                    lease_timer.cancel()
+                except Exception:
+                    pass
+            # Auto check-in: release the workflow lease only if THIS launch
+            # triggered the checkout (so a pre-existing checkout isn't released)
+            # and the lease hasn't already expired (server already ended it).
+            if (workflow_started_by_launch and not lease_expired
+                    and workflow_flow_uid):
+                try:
+                    from ..workflow.helpers import ProtobufRefBuilder
+                    from ..pam.router_helper import _post_request_to_router
+                    flow_ref = ProtobufRefBuilder.workflow_ref(workflow_flow_uid)
+                    _post_request_to_router(params, 'end_workflow', rq_proto=flow_ref)
+                    logging.debug("Auto check-in: released workflow lease.")
+                except Exception as e:
+                    logging.debug("Auto check-in failed: %s", e)
             exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
