@@ -71,10 +71,29 @@ class WorkflowAccessValidator:
         if is_workflow_exempt(self.params, self.record_uid):
             return dict(self._DEFAULT_RESULT)
 
+        # Workflow REST endpoints (`read_workflow_config`,
+        # `get_user_access_state`, `get_workflow_state`) are not yet deployed
+        # on every router. On a router that doesn't expose them, the call
+        # raises (404 / unsupported / RRC error) and `_post_request_to_router`
+        # bubbles it up; the wrappers below convert that into _TRANSPORT_ERROR.
+        # We can't tell from the wire whether the failure is "endpoint not
+        # deployed" (prod today) or "endpoint deployed but momentarily
+        # unreachable" (transient QA hiccup). Erring on the side of legacy
+        # compatibility: treat _TRANSPORT_ERROR as "no workflow protection
+        # on this record, defer to the gateway." The gateway is the
+        # authoritative gate on prod; on QA the workflow service still
+        # enforces server-side, so a flaky read just relaxes the *client*
+        # gate without opening a real security gap. Old behavior (block
+        # with a banner) was correct for QA but a hard regression on prod
+        # legacy launches that have never seen workflow.
         config = self._read_workflow_config()
         if config is _TRANSPORT_ERROR:
-            self._print_transport_error('read workflow configuration')
-            return self._blocked('transport_error')
+            logging.debug(
+                'read_workflow_config unavailable for %s; falling through to '
+                'allow (gateway will gate). Likely router without workflow API.',
+                self.record_uid,
+            )
+            return dict(self._DEFAULT_RESULT)
         if config is None:
             return dict(self._DEFAULT_RESULT)
 
@@ -86,13 +105,19 @@ class WorkflowAccessValidator:
         no_approvals = config.parameters and config.parameters.approvalsNeeded == 0
         workflow = self._find_active_workflow()
         if workflow is _TRANSPORT_ERROR:
-            self._print_transport_error('verify workflow access state')
-            return self._blocked('transport_error')
+            logging.debug(
+                'get_user_access_state unavailable for %s; treating as no '
+                'active flow and allowing. Gateway will gate.', self.record_uid,
+            )
+            return dict(self._DEFAULT_RESULT)
         if workflow is None and no_approvals:
             workflow = self._get_workflow_state_by_record()
             if workflow is _TRANSPORT_ERROR:
-                self._print_transport_error('verify workflow state')
-                return self._blocked('transport_error')
+                logging.debug(
+                    'get_workflow_state unavailable for %s; allowing. Gateway '
+                    'will gate.', self.record_uid,
+                )
+                return dict(self._DEFAULT_RESULT)
         if workflow is None:
             # Carry the workflow config's required-field flags back so the
             # orchestrator can inline-prompt + submit the initial access
