@@ -159,38 +159,31 @@ process_ksm_config() {
 # DEVICE SETUP AND AUTHENTICATION FUNCTIONS
 # =============================================================================
 
-# Setup device registration and persistent login
+# Setup device registration and persistent login.
+# All three steps run in a single Commander process so login + vault sync
+# only happens once instead of three times.
 setup_device() {
     local user="$1"
     local password="$2"
     local server="$3"
-    
-    # Step 1: Register device
-    log "Registering device..."
+
+    log "Running device setup (register, persistent login, timeout)..."
+    local setup_script
+    setup_script=$(mktemp /tmp/keeper_setup_XXXXXX.cmd)
+    cat > "${setup_script}" <<CMDS
+this-device register
+this-device persistent-login on
+this-device timeout ${DEVICE_TIMEOUT}
+CMDS
+
     if ! python3 keeper.py --user "${user}" --password "${password}" \
-        --server "${server}" this-device register; then
-        log "ERROR: Device registration failed"
-        exit 1
-    fi
-    
-    # Step 2: Enable persistent login
-    log "Enabling persistent login..."
-    if ! python3 keeper.py --user "${user}" --password "${password}" \
-        --server "${server}" this-device persistent-login on; then
-        log "ERROR: Persistent login setup failed"
+        --server "${server}" "${setup_script}"; then
+        log "ERROR: Device setup failed"
+        rm -f "${setup_script}"
         exit 1
     fi
 
-    # Step 3: Set timeout
-    log "Setting device logout timeout to 30 Days..."
-    if ! python3 keeper.py --user "${user}" --password "${password}" \
-        --server "${server}" this-device timeout "${DEVICE_TIMEOUT}" \
-        > /dev/null; then
-        log "ERROR: Timeout setup failed"
-        exit 1
-    fi
-    
-    log "Device Logout Timeout set successfully"
+    rm -f "${setup_script}"
     log "Device setup completed successfully"
 }
 

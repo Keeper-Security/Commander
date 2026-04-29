@@ -130,14 +130,11 @@ class ServiceManager:
             werkzeug_logger.addFilter(SSLHandshakeFilter())
 
             if config_data.get("run_mode") == "background":
-
-                service_module = "keepercommander.service.core.service_app"  # Use module path instead of file path
                 
                 # Detect if running as PyInstaller executable
                 is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
                 
                 # Create logs directory for subprocess output in user-writable location
-                # Use utils.get_default_path() to avoid permission issues in packaged apps
                 log_dir = os.path.join(utils.get_default_path(), "service_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, "service_subprocess.log")
@@ -145,102 +142,55 @@ class ServiceManager:
                 try:
                     python_executable = sys.executable
                     
+                    # Set up environment for subprocess
+                    subprocess_env = os.environ.copy()
+                    
                     if is_frozen:
-                        # Running as PyInstaller executable - create a wrapper script and execute it
-                        # PyInstaller executables can execute Python files, but we need to use the right approach
-                        wrapper_script = os.path.join(log_dir, "service_wrapper.py")
-                        wrapper_content = """# Service wrapper for PyInstaller executable
-import sys
-import os
-
-# Set flag to indicate we're running in service mode (bypass main entry point)
-os.environ['KEEPER_SERVICE_BACKGROUND'] = '1'
-
-# Ensure we can import the service module
-if hasattr(sys, '_MEIPASS'):
-    if sys._MEIPASS not in sys.path:
-        sys.path.insert(0, sys._MEIPASS)
-
-# Clear sys.argv to avoid argument parsing issues
-sys.argv = [sys.argv[0]]
-
-# Import and run the service module directly
-from keepercommander.service.app import create_app
-from keepercommander.service.config.service_config import ServiceConfig
-from keepercommander.service.core.service_manager import ServiceManager
-
-flask_app = create_app()
-
-service_config = ServiceConfig()
-config_data = service_config.load_config()
-
-try:
-    from keepercommander.service.core.globals import ensure_params_loaded
-    print("Pre-loading Keeper parameters for background mode...")
-    ensure_params_loaded()
-    print("Keeper parameters loaded successfully")
-except Exception as e:
-    print("Warning: Failed to pre-load parameters during startup: " + str(e))
-    print("Parameters will be loaded on first API call if needed")
-
-if not (port := config_data.get("port")):
-    print("Error: Service configuration is incomplete. Please configure the service port in service_config")
-    sys.exit(1)
-
-ssl_context = ServiceManager.get_ssl_context(config_data)
-
-flask_app.run(
-    host='0.0.0.0',
-    port=port,
-    ssl_context=ssl_context
-)
-"""
-                        with open(wrapper_script, 'w') as f:
-                            f.write(wrapper_content)
-                        # Use the executable to run the Python script directly
-                        # PyInstaller executables can execute .py files if we use the right method
-                        cmd = [python_executable, wrapper_script]
+                        # Running as PyInstaller executable - set env var to trigger service mode
+                        # The executable will detect KEEPER_SERVICE_MODE and start the service directly
+                        subprocess_env['KEEPER_SERVICE_MODE'] = '1'
+                        cmd = [python_executable]
                     else:
                         # Running as Python script - use -m flag
-                        cmd = [python_executable, '-m', service_module]
+                        cmd = [python_executable, '-m', 'keepercommander.service.core.service_app']
                     
-                    # Open log file in append mode and keep it open for the subprocess
-                    # Use 'a' mode to append, and don't close the file handle immediately
-                    log_f = open(log_file, 'a', buffering=1)  # Line buffering
+                    # Open log file in append mode with line buffering
+                    log_f = open(log_file, 'a', buffering=1)
                     
                     try:
                         if sys.platform == "win32":
-                            subprocess.DETACHED_PROCESS = 0x00000008
-                            cls = subprocess.Popen(
+                            # Windows creation flags to run subprocess completely hidden
+                            CREATE_NO_WINDOW = 0x08000000
+                            DETACHED_PROCESS = 0x00000008
+                            CREATE_NEW_PROCESS_GROUP = 0x00000200
+                            
+                            process = subprocess.Popen(
                                 cmd,
-                                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                                 stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                stdin=subprocess.DEVNULL,  # Close stdin to avoid issues
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
+                                stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL,
+                                cwd=os.getcwd(),
+                                env=subprocess_env
                             )
                         else:
-                            # For macOS and Linux - improved subprocess handling
-                            cls = subprocess.Popen(
+                            # For macOS and Linux
+                            process = subprocess.Popen(
                                 cmd,
                                 stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                stdin=subprocess.DEVNULL,  # Close stdin to avoid issues
+                                stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL,
                                 preexec_fn=os.setpgrp,
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
+                                cwd=os.getcwd(),
+                                env=subprocess_env
                             )
-                        # Don't close log_f here - let the subprocess handle it
-                        # The file will be closed when the subprocess exits
                     except Exception:
-                        # Only close on error
                         log_f.close()
                         raise
                     
                     logger.debug(f"Service subprocess logs available at: {log_file}")
-                    print(f"Commander Service started with PID: {cls.pid}")
-                    ProcessInfo.save(cls.pid, is_running, ngrok_pid)
+                    print(f"Commander Service started with PID: {process.pid}")
+                    ProcessInfo.save(process.pid, is_running, ngrok_pid)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -342,9 +292,6 @@ flask_app.run(
                     )
                 finally:
                     cleanup_cloudflare_on_foreground_exit()
-
-            # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
@@ -533,7 +480,15 @@ flask_app.run(
         try:
             if sys.platform.startswith("win"):  #  Windows
                 logger.debug(f"Using Windows taskkill for PID {pid}")
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=True)
+                # CREATE_NO_WINDOW to prevent flashing console window
+                CREATE_NO_WINDOW = 0x08000000
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    check=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 return True
             else:  #  Linux & macOS
                 try:

@@ -490,6 +490,8 @@ class SyncDownCommand(Command):
 
 class ThisDeviceCommand(Command):
 
+    skip_sync_on_auth = True
+
     def get_parser(self):
         return this_device_parser
 

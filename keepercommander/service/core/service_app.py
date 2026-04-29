@@ -9,17 +9,25 @@
 # Contact: ops@keepersecurity.com
 #
 
-from ...service.app import create_app
-from ...service.config.service_config import ServiceConfig
-from ...service.core.service_manager import ServiceManager
-
-flask_app = create_app()
+import sys
 
 
-if __name__ == '__main__':
+def run_background_service():
+    """
+    Run the Flask service in background mode.
+    This function is called both when running as a module (-m) and 
+    when the frozen executable receives --service-background flag.
+    """
+    from ...service.app import create_app
+    from ...service.config.service_config import ServiceConfig
+    from ...service.core.service_manager import ServiceManager
+    
+    flask_app = create_app()
+    
     service_config = ServiceConfig()
     config_data = service_config.load_config()
     
+    # Pre-load Keeper parameters for background mode
     try:
         from ...service.core.globals import ensure_params_loaded
         print("Pre-loading Keeper parameters for background mode...")
@@ -29,10 +37,10 @@ if __name__ == '__main__':
         print(f"Warning: Failed to pre-load parameters during startup: {e}")
         print("Parameters will be loaded on first API call if needed")
     
-    ssl_context = None
-    
-    if not (port := config_data.get("port")):
+    port = config_data.get("port")
+    if not port:
         print("Error: Service configuration is incomplete. Please configure the service port in service_config")
+        sys.exit(1)
 
     ssl_context = ServiceManager.get_ssl_context(config_data)
     
@@ -41,4 +49,8 @@ if __name__ == '__main__':
         port=port,
         ssl_context=ssl_context
     )
+
+
+if __name__ == '__main__':
+    run_background_service()
 

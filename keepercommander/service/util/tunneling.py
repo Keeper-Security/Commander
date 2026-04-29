@@ -39,15 +39,20 @@ def start_ngrok(port, auth_token=None, subdomain=None):
     log_file = os.path.join(log_dir, "ngrok_subprocess.log")
 
     if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
+        # Windows creation flags to run subprocess completely hidden
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
                 ngrok_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                cwd=service_core_dir,
+                env=os.environ.copy()
             )
     else:
         with open(log_file, 'w') as log_f:
@@ -238,9 +243,19 @@ def _download_cloudflared():
     """
     try:
         # First try to find existing cloudflared
-        result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
+        if sys.platform == "win32":
+            # Use 'where' on Windows with CREATE_NO_WINDOW to prevent flashing console
+            CREATE_NO_WINDOW = 0x08000000
+            result = subprocess.run(
+                ['where', 'cloudflared'],
+                capture_output=True,
+                text=True,
+                creationflags=CREATE_NO_WINDOW
+            )
+        else:
+            result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return result.stdout.strip().split('\n')[0]  # Take first result on Windows
     except:
         pass
         
@@ -331,13 +346,18 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
     log_file = os.path.join(log_dir, "cloudflare_tunnel_subprocess.log")
     
     if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
+        # Windows creation flags to run subprocess completely hidden
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
                 cloudflared_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 cwd=service_core_dir,
                 env=os.environ.copy()
             )
