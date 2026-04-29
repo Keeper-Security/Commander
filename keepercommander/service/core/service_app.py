@@ -15,8 +15,8 @@ import sys
 def run_background_service():
     """
     Run the Flask service in background mode.
-    This function is called both when running as a module (-m) and 
-    when the frozen executable receives --service-background flag.
+    This function is called both when running as a module (-m) and
+    when the frozen executable detects the KEEPER_SERVICE_MODE env var.
     """
     from ...service.app import create_app
     from ...service.config.service_config import ServiceConfig

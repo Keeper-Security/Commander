@@ -92,7 +92,6 @@ def create_legacy_command_blueprint(use_queue: bool = False):
                 )
                 return response_data
 
-
             response, status_code = CommandExecutor.execute(processed_command)
 
             # If we get a busy response, add v1-specific message

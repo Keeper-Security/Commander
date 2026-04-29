@@ -59,10 +59,11 @@ def start_ngrok(port, auth_token=None, subdomain=None):
             process = subprocess.Popen(
                 ngrok_cmd,
                 stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 preexec_fn=os.setpgrp,
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
+                cwd=service_core_dir,
+                env=os.environ.copy()
             )
 
     actual_ngrok_pid = process.pid
@@ -367,6 +368,7 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
                 cloudflared_cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 preexec_fn=os.setpgrp,
                 cwd=service_core_dir,
                 env=os.environ.copy()
