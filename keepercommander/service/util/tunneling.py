@@ -206,32 +206,39 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
         log_event_callback=None,
     )
     
-    with open(os.devnull, 'w') as devnull:
+    old_stdout_fd = None
+    old_stderr_fd = None
+    try:
         old_stdout_fd = os.dup(1)
         old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
-        
-        try:
-            if run_mode == "background":
-                # Background mode: use subprocess for both custom and non-custom domains
-                if ngrok_custom_domain:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
-                else:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
-                return public_url, ngrok_pid
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+    except OSError:
+        old_stdout_fd = None
+        old_stderr_fd = None
+
+    try:
+        if run_mode == "background":
+            if ngrok_custom_domain:
+                ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
             else:
-                # Foreground mode: use pyngrok library
-                if ngrok_custom_domain:
-                    tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
-                else:
-                    tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
-                return tunnel.public_url, None
-            
-        finally:
+                ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
+            return public_url, ngrok_pid
+        else:
+            if ngrok_custom_domain:
+                tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+            else:
+                tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
+            return tunnel.public_url, None
+        
+    finally:
+        if old_stdout_fd is not None:
             os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
             os.close(old_stdout_fd)
+        if old_stderr_fd is not None:
+            os.dup2(old_stderr_fd, 2)
             os.close(old_stderr_fd)
 
 
@@ -444,24 +451,31 @@ def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
             "Temporary tunnels are not supported for production use."
         )
     
-    # Cloudflare tunnel configuration
-    
-    with open(os.devnull, 'w') as devnull:
+    old_stdout_fd = None
+    old_stderr_fd = None
+    try:
         old_stdout_fd = os.dup(1)
         old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+    except OSError:
+        old_stdout_fd = None
+        old_stderr_fd = None
+
+    try:
+        tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
+            port=port, 
+            tunnel_token=tunnel_token, 
+            custom_domain=custom_domain
+        )
+        return public_url, tunnel_pid
         
-        try:
-            tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
-                port=port, 
-                tunnel_token=tunnel_token, 
-                custom_domain=custom_domain
-            )
-            return public_url, tunnel_pid
-            
-        finally:
+    finally:
+        if old_stdout_fd is not None:
             os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
             os.close(old_stdout_fd)
+        if old_stderr_fd is not None:
+            os.dup2(old_stderr_fd, 2)
             os.close(old_stderr_fd)
