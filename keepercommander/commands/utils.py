@@ -47,7 +47,7 @@ from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, Cryp
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
 from ..security_audit import needs_security_audit, update_security_audit_data
-from ..utils import password_score
+from ..utils import password_score, master_password_score
 from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
 
@@ -2328,8 +2328,8 @@ class ResetPasswordCommand(Command):
             if euids:
                 params.breach_watch.delete_euids(params, euids)
         else:
-            score = utils.password_score(new_password)
-            logging.info('Password strength: %s', 'WEAK' if score < 40 else 'FAIR' if score < 60 else 'MEDIUM' if score < 80 else 'STRONG')
+            score = utils.master_password_score(new_password)
+            logging.info('Password strength: %s', 'WEAK' if score <= 25 else 'FAIR' if score == 50 else 'MEDIUM' if score == 75 else 'STRONG')
 
         iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
         iterations = max(iterations, constants.PBKDF2_ITERATIONS)

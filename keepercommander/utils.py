@@ -27,6 +27,7 @@ import sys
 
 from . import crypto
 from .constants import EMAIL_PATTERN
+import zxcvbn as _zxcvbn
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
@@ -427,6 +428,40 @@ def is_pw_fair(pw_score):           # type: (int) -> bool
 
 def is_pw_strong(pw_score):         # type: (int) -> bool
     return pw_score >= 80
+
+
+_MASTER_PASSWORD_SCORE_MAP = {0: 25, 1: 25, 2: 50, 3: 75, 4: 100}
+
+
+def master_password_score(password):  # type: (str) -> int
+    """Return a strength value for a Master Password using zxcvbn estimated guess count.
+
+    Level   Strength   Value   Estimated guesses
+    0 & 1   Weak        25     < 10^6
+    2       Fair        50     10^6 – 10^8
+    3       Medium      75     10^8 – 10^10
+    4       Strong     100     > 10^10
+    """
+    if not password or not isinstance(password, str):
+        return 0
+    result = _zxcvbn.zxcvbn(password)
+    return _MASTER_PASSWORD_SCORE_MAP[result['score']]
+
+
+def is_master_pw_weak(pw_score):     # type: (int) -> bool
+    return pw_score <= 25
+
+
+def is_master_pw_fair(pw_score):     # type: (int) -> bool
+    return pw_score == 50
+
+
+def is_master_pw_medium(pw_score):   # type: (int) -> bool
+    return pw_score == 75
+
+
+def is_master_pw_strong(pw_score):   # type: (int) -> bool
+    return pw_score == 100
 
 
 def is_rec_at_risk(bw_result):      # type (int) -> bool
