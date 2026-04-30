@@ -2319,6 +2319,9 @@ class ResetPasswordCommand(Command):
             logging.warning('Password rules:\n%s', '\n'.join((f'  {x}' for x in failed_rules)))
             return
 
+        score = utils.master_password_score(new_password)
+        logging.info('Password strength: %s', 'WEAK' if score <= 25 else 'FAIR' if score == 50 else 'MEDIUM' if score == 75 else 'STRONG')
+
         if params.breach_watch:
             euids = []
             for result in params.breach_watch.scan_passwords(params, [new_password]):
@@ -2327,9 +2330,6 @@ class ResetPasswordCommand(Command):
                 logging.info('Breachwatch password scan result: %s', 'WEAK' if result[1].breachDetected else 'GOOD')
             if euids:
                 params.breach_watch.delete_euids(params, euids)
-        else:
-            score = utils.master_password_score(new_password)
-            logging.info('Password strength: %s', 'WEAK' if score <= 25 else 'FAIR' if score == 50 else 'MEDIUM' if score == 75 else 'STRONG')
 
         iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
         iterations = max(iterations, constants.PBKDF2_ITERATIONS)

@@ -434,14 +434,6 @@ _MASTER_PASSWORD_SCORE_MAP = {0: 25, 1: 25, 2: 50, 3: 75, 4: 100}
 
 
 def master_password_score(password):  # type: (str) -> int
-    """Return a strength value for a Master Password using zxcvbn estimated guess count.
-
-    Level   Strength   Value   Estimated guesses
-    0 & 1   Weak        25     < 10^6
-    2       Fair        50     10^6 – 10^8
-    3       Medium      75     10^8 – 10^10
-    4       Strong     100     > 10^10
-    """
     if not password or not isinstance(password, str):
         return 0
     result = _zxcvbn.zxcvbn(password)
