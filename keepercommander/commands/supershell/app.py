@@ -250,6 +250,12 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
+[bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
 
     def _apply_theme_css(self):
@@ -383,6 +389,12 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
+[bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
 
@@ -411,17 +423,22 @@ class SuperShellApp(App):
 
     def _load_vault_data(self):
         """Load vault data from params"""
-        # Build record to folder mapping using subfolder_record_cache
-        # Records in root folder have folder_uid = '' (empty string)
+        # Build record to folder mapping using subfolder_record_cache.
+        # Records in root folder have folder_uid = '' (empty string).
+        real_folder_uids = set(getattr(self.params, 'folder_cache', {}).keys())
+        real_folder_uids.update(getattr(self.params, 'keeper_drive_folders', {}).keys())
+
         self.record_to_folder = {}  # Maps record_uid -> folder_uid
-        self.records_in_subfolders = set()  # Track records that are in actual subfolders (not root)
+        self.records_in_subfolders = set()  # Records that are in actual subfolders (not root)
         if hasattr(self.params, 'subfolder_record_cache'):
             for folder_uid, record_uids in self.params.subfolder_record_cache.items():
+                is_real_subfolder = bool(folder_uid) and folder_uid in real_folder_uids
                 for record_uid in record_uids:
-                    self.record_to_folder[record_uid] = folder_uid
-                    # Track records in non-root folders
-                    if folder_uid and folder_uid != '':
+                    if is_real_subfolder:
+                        self.record_to_folder[record_uid] = folder_uid
                         self.records_in_subfolders.add(record_uid)
+                    else:
+                        self.record_to_folder.setdefault(record_uid, '')
 
         # Track file attachments and their parent records
         self.file_attachment_to_parent = {}  # Maps attachment_uid -> parent_record_uid
@@ -953,6 +970,75 @@ class SuperShellApp(App):
             data={'type': 'record', 'uid': record_uid, 'has_attachments': bool(attachments or linked_records)}
         )
 
+    def _get_folder_icon(self, folder_node):
+        """Return the appropriate icon for a folder based on its type and sharing status.
+
+        Icon mapping (matches Keeper desktop client):
+          - Legacy Personal Folder  (user_folder)           → 🔒
+          - Legacy Shared Folder    (shared_folder)          → 📦
+          - Subfolder in Shared     (shared_folder_folder)   → 📦
+          - Drive Shared Folder     (keeper_drive_folder, shared) → 👥
+          - Drive NonShared Folder  (keeper_drive_folder, not shared) → 📁
+        """
+        from ...subfolder import BaseFolderNode
+        if folder_node is None:
+            return "📁"
+        ft = folder_node.type
+        if ft == BaseFolderNode.UserFolderType:
+            return "🔒"
+        if ft in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+            return "📦"
+        if ft == BaseFolderNode.KeeperDriveFolderType:
+            try:
+                from ...proto import folder_pb2
+                from ..keeper_drive.helpers import (
+                    _current_user_account_uid,
+                    _is_current_user_access,
+                )
+
+                folder_obj = (getattr(self.params, 'keeper_drive_folders', {}) or {}).get(
+                    folder_node.uid, {}
+                ) or {}
+                owner_username = folder_obj.get('owner_username') or ''
+                owner_account_uid = folder_obj.get('owner_account_uid') or ''
+                current_username = getattr(self.params, 'user', '') or ''
+                current_account_uid = _current_user_account_uid(self.params)
+
+              
+                current_user_is_owner = False
+                owner_known = bool(owner_username) or bool(owner_account_uid)
+                if owner_username and current_username and \
+                        owner_username.lower() == current_username.lower():
+                    current_user_is_owner = True
+                elif owner_account_uid and current_account_uid and \
+                        owner_account_uid == current_account_uid:
+                    current_user_is_owner = True
+
+                if owner_known and not current_user_is_owner:
+                    return "👥"
+
+                sharing_state = (
+                    getattr(self.params, 'keeper_drive_folder_sharing_states', {}) or {}
+                ).get(folder_node.uid)
+                if sharing_state and sharing_state.get('shared'):
+                    return "👥"
+
+                accesses = (getattr(self.params, 'keeper_drive_folder_accesses', {}) or {}).get(
+                    folder_node.uid, []
+                ) or []
+                at_user = int(folder_pb2.AT_USER)
+                at_team = int(folder_pb2.AT_TEAM)
+                for a in accesses:
+                    if int(a.get('access_type', 0) or 0) not in (at_user, at_team):
+                        continue
+                    if _is_current_user_access(a, self.params, current_account_uid):
+                        continue
+                    return "👥"
+            except Exception:
+                pass
+            return "📁"
+        return "📁"
+
     def _setup_folder_tree(self):
         """Setup the folder tree structure with records as children"""
         tree = self.query_one("#folder_tree", Tree)
@@ -1007,12 +1093,8 @@ class SuperShellApp(App):
 
             # Determine label and color based on folder type
             color = t['folder']
-            if folder_node.type == 'shared_folder':
-                # Shared folder: bold green name with share icon after
-                label = f"[bold {color}]{folder_node.name}[/bold {color}] 👥"
-            else:
-                # Regular folder: bold green name
-                label = f"[bold {color}]{folder_node.name}[/bold {color}]"
+            folder_icon = self._get_folder_icon(folder_node)
+            label = f"[bold {color}]{folder_node.name}[/bold {color}] {folder_icon}"
 
             # Add this folder to the tree with color
             tree_node = parent_tree_node.add(
@@ -1428,9 +1510,7 @@ class SuperShellApp(App):
                 # Fallback to basic folder info if get command didn't work
                 folder = self.params.folder_cache.get(folder_uid)
                 if folder:
-                    folder_type = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else folder.type
-                    folder_type_str = str(folder_type) if folder_type else 'Folder'
-                    folder_icon = "👥" if 'shared' in folder_type_str.lower() else "📁"
+                    folder_icon = self._get_folder_icon(folder)
                     return (
                         f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder.name))}[/bold {t['secondary']}]\n\n"
                         f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
@@ -1445,8 +1525,7 @@ class SuperShellApp(App):
             # Determine folder header with icon and name
             folder = self.params.folder_cache.get(folder_uid)
             folder_name = folder.name if folder else "Folder"
-            is_shared = 'Shared Folder UID' in output
-            folder_icon = "👥" if is_shared else "📁"
+            folder_icon = self._get_folder_icon(folder)
             lines.append(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]")
             lines.append("")
 
@@ -2362,14 +2441,7 @@ class SuperShellApp(App):
 
         # Determine folder header with icon and name
         folder_name = folder.name if folder else "Folder"
-        if folder:
-            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
-            if 'shared' in ft.lower():
-                folder_icon = "👥"
-            else:
-                folder_icon = "📁"
-        else:
-            folder_icon = "📁"
+        folder_icon = self._get_folder_icon(folder)
 
         # Type header with icon and folder name
         mount_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]", None)
@@ -2506,14 +2578,7 @@ class SuperShellApp(App):
         # Determine folder header with icon and name
         folder = self.params.folder_cache.get(folder_uid)
         folder_name = folder.name if folder else "Folder"
-        if folder:
-            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
-            if 'shared' in ft.lower():
-                folder_icon = "👥"
-            else:
-                folder_icon = "📁"
-        else:
-            folder_icon = "📁"
+        folder_icon = self._get_folder_icon(folder)
 
         # Build formatted JSON output with clickable values
         mount_json_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}] [{t['text_dim']}](JSON)[/{t['text_dim']}]", None)
