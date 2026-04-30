@@ -23,7 +23,8 @@ from urllib.parse import urlparse, urlunparse
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
+from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser,
+                   json_output_parser, field_to_title,
                    FolderMixin, RecordMixin, toggle_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
@@ -2610,7 +2611,8 @@ class PAMConfigurationRemoveCommand(Command):
 
 
 class PAMRouterGetRotationInfo(Command):
-    parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser')
+    parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser',
+                                         parents=[json_output_parser])
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
                         help='Record UID to rotate')
 
@@ -2620,76 +2622,115 @@ class PAMRouterGetRotationInfo(Command):
     def execute(self, params, **kwargs):
 
         record_uid = kwargs.get('record_uid')
+        format_type = kwargs.get('format', 'table')
         record_uid_bytes = url_safe_str_to_bytes(record_uid)
 
         rri = record_rotation_get(params, record_uid_bytes)
         rri_status_name = router_pb2.RouterRotationStatus.Name(rri.status)
         if rri_status_name == 'RRS_ONLINE':
 
-            print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
             configuration_uid = utils.base64_url_encode(rri.configurationUid)
-            print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
-            print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
-
-            print(
-                f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
-            print(
-                f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-')} {bcolors.ENDC}")
+            gateway_name = rri.controllerName if rri.controllerName else '-'
+            gateway_uid = utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-'
 
             def is_resource_ok(resource_id, params, configuration_uid):
                 if resource_id not in params.record_cache:
                     return False
-
                 configuration = vault.KeeperRecord.load(params, configuration_uid)
                 if not isinstance(configuration, vault.TypedRecord):
                     return False
-
                 field = configuration.get_typed_field('pamResources')
                 if not (field and isinstance(field.value, list) and len(field.value) == 1):
                     return False
-
                 rv = field.value[0]
                 if not isinstance(rv, dict):
                     return False
-
                 resources = rv.get('resourceRef')
                 return isinstance(resources, list) and resource_id in resources
 
+            admin_resource_uid = None
             if rri.resourceUid:
-                resource_id = utils.base64_url_encode(rri.resourceUid)
-                resource_ok = is_resource_ok(resource_id, params, configuration_uid)
-                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{resource_id}"
+                admin_resource_uid = utils.base64_url_encode(rri.resourceUid)
+
+            # Password complexity
+            pwd_complexity_raw = rri.pwdComplexity if rri.pwdComplexity else None
+            pwd_complexity_detail = None
+            if pwd_complexity_raw:
+                try:
+                    record = params.record_cache.get(record_uid)
+                    if record:
+                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(pwd_complexity_raw),
+                                                           record['record_key_unencrypted'])
+                        pwd_complexity_detail = json.loads(complexity.decode())
+                except Exception:
+                    pwd_complexity_detail = None
+
+            # Schedule information
+            schedule_type = None
+            schedule_data = None
+            rq = pam_pb2.PAMGenericUidsRequest()
+            schedules_proto = router_get_rotation_schedules(params, rq)
+            if schedules_proto:
+                for s in schedules_proto.schedules:
+                    if s.recordUid == record_uid_bytes:
+                        if s.noSchedule is True:
+                            schedule_type = 'manual'
+                        else:
+                            schedule_type = 'scheduled'
+                            schedule_data = s.scheduleData if s.scheduleData else None
+                        break
+
+            if format_type == 'json':
+                result = {
+                    'status': rri_status_name,
+                    'ready_to_rotate': True,
+                    'pam_config_uid': configuration_uid,
+                    'node_id': rri.nodeId,
+                    'gateway_name': gateway_name,
+                    'gateway_uid': gateway_uid,
+                    'admin_resource_uid': admin_resource_uid,
+                    'password_complexity': pwd_complexity_raw,
+                    'password_complexity_detail': pwd_complexity_detail,
+                    'schedule_type': schedule_type,
+                    'schedule_data': schedule_data,
+                    'disabled': rri.disabled,
+                    'script_name': rri.scriptName if rri.scriptName else None,
+                }
+                return json.dumps(result, indent=2)
+
+            # --- table output (original behaviour preserved) ---
+            print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
+            print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
+            print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
+            print(
+                f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{gateway_name}{bcolors.ENDC}")
+            print(
+                f"Gateway Uid: {bcolors.OKBLUE}{gateway_uid} {bcolors.ENDC}")
+
+            if admin_resource_uid:
+                resource_ok = is_resource_ok(admin_resource_uid, params, configuration_uid)
+                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{admin_resource_uid}"
                       f"{bcolors.ENDC}")
 
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
-            if rri.pwdComplexity:
-                print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity}{bcolors.ENDC}")
-                try:
-                    record = params.record_cache.get(record_uid)
-                    if record:
-                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity),
-                                                           record['record_key_unencrypted'])
-                        c = json.loads(complexity.decode())
-                        print(f"Password Complexity Data: {bcolors.OKBLUE}"
-                              f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
-                              f"Uppercase: {c.get('caps')}; "
-                              f"Digits: {c.get('digits')}; "
-                              f"Symbols: {c.get('special')}; "
-                              f"Symbols Chars: {c.get('specialChars')} {bcolors.ENDC}")
-                except:
-                    pass
+            if pwd_complexity_raw:
+                print(f"Password Complexity: {bcolors.OKGREEN}{pwd_complexity_raw}{bcolors.ENDC}")
+                if pwd_complexity_detail:
+                    c = pwd_complexity_detail
+                    print(f"Password Complexity Data: {bcolors.OKBLUE}"
+                          f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
+                          f"Uppercase: {c.get('caps')}; "
+                          f"Digits: {c.get('digits')}; "
+                          f"Symbols: {c.get('special')}; "
+                          f"Symbols Chars: {c.get('specialChars')} {bcolors.ENDC}")
             else:
                 print(f"Password Complexity: {bcolors.OKGREEN}[not set]{bcolors.ENDC}")
 
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
 
-            # Get schedule information
-            rq = pam_pb2.PAMGenericUidsRequest()
-            schedules_proto = router_get_rotation_schedules(params, rq)
             if schedules_proto:
-                schedules = list(schedules_proto.schedules)
-                for s in schedules:
+                for s in schedules_proto.schedules:
                     if s.recordUid == record_uid_bytes:
                         if s.noSchedule is True:
                             print(f"Schedule Type: {bcolors.OKBLUE}Manual Rotation{bcolors.ENDC}")
@@ -2707,6 +2748,8 @@ class PAMRouterGetRotationInfo(Command):
 
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
+            if format_type == 'json':
+                return json.dumps({'status': rri_status_name, 'ready_to_rotate': False})
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
 
 

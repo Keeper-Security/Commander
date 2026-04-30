@@ -58,7 +58,7 @@ if sys.version_info >= (3, 8):
 
     from keepercommander import crypto, utils
     from keepercommander.commands.discoveryrotation import (PAMCreateRecordRotationCommand, PAMListRecordRotationCommand,
-                                                            PAMGatewayListCommand)
+                                                            PAMGatewayListCommand, PAMRouterGetRotationInfo)
 
     class TestPAMCreateRecordRotationCommand(unittest.TestCase):
 
@@ -507,3 +507,98 @@ if sys.version_info >= (3, 8):
             self.assertTrue(mock_router_get_connected_gateways.called)
             self.assertTrue(mock_get_all_gateways.called)
             self.assertTrue(mock_get_router_url.called)
+
+    class TestPAMRouterGetRotationInfo(unittest.TestCase):
+
+        def _make_rri(self, status_name='RRS_ONLINE'):
+            """Build a minimal RouterRotationInfo mock."""
+            from keepercommander.proto import router_pb2
+            rri = MagicMock()
+            rri.status = router_pb2.RouterRotationStatus.Value(status_name)
+            rri.configurationUid = utils.base64_url_decode('config_uid_____')
+            rri.nodeId = 42
+            rri.controllerName = 'gw-test'
+            rri.controllerUid = utils.base64_url_decode('gw_uid_________')
+            rri.resourceUid = b''
+            rri.pwdComplexity = ''
+            rri.disabled = False
+            rri.scriptName = ''
+            return rri
+
+        def _make_schedule(self, record_uid_bytes, no_schedule=False, schedule_data='daily.0.12.1'):
+            s = MagicMock()
+            s.recordUid = record_uid_bytes
+            s.noSchedule = no_schedule
+            s.scheduleData = schedule_data
+            return s
+
+        @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+        @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
+        def test_json_online_status(self, mock_rrg, mock_schedules):
+            """Online status + --format json returns valid JSON with expected keys."""
+            from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+            record_uid = 'test_record_uid_'
+            record_uid_bytes = url_safe_str_to_bytes(record_uid)
+
+            mock_rrg.return_value = self._make_rri('RRS_ONLINE')
+
+            sched_mock = MagicMock()
+            sched_mock.schedules = [self._make_schedule(record_uid_bytes, no_schedule=False,
+                                                        schedule_data='daily.0.12.1')]
+            mock_schedules.return_value = sched_mock
+
+            mock_params = create_mock_params()
+            mock_params.record_cache = {}
+
+            cmd = PAMRouterGetRotationInfo()
+            result = cmd.execute(mock_params, record_uid=record_uid, format='json')
+
+            self.assertIsNotNone(result, "Expected JSON string, got None")
+            data = json.loads(result)
+            self.assertIn('status', data)
+            self.assertTrue(data['ready_to_rotate'])
+            self.assertIn('pam_config_uid', data)
+            self.assertIn('gateway_name', data)
+            self.assertEqual(data['gateway_name'], 'gw-test')
+            self.assertIn('schedule_type', data)
+            self.assertEqual(data['schedule_type'], 'scheduled')
+
+        @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+        @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
+        def test_json_non_online_status(self, mock_rrg, mock_schedules):
+            """Non-online status + --format json returns minimal JSON with ready_to_rotate=false."""
+            record_uid = 'test_record_uid_'
+
+            mock_rrg.return_value = self._make_rri('RRS_NO_ROTATION')
+
+            mock_params = create_mock_params()
+
+            cmd = PAMRouterGetRotationInfo()
+            result = cmd.execute(mock_params, record_uid=record_uid, format='json')
+
+            self.assertIsNotNone(result, "Expected JSON string, got None")
+            data = json.loads(result)
+            self.assertIn('status', data)
+            self.assertFalse(data['ready_to_rotate'])
+
+        @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+        @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
+        def test_table_mode_returns_none(self, mock_rrg, mock_schedules):
+            """Table mode (default) prints to stdout and returns None."""
+            from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+            record_uid = 'test_record_uid_'
+            record_uid_bytes = url_safe_str_to_bytes(record_uid)
+
+            mock_rrg.return_value = self._make_rri('RRS_ONLINE')
+
+            sched_mock = MagicMock()
+            sched_mock.schedules = [self._make_schedule(record_uid_bytes)]
+            mock_schedules.return_value = sched_mock
+
+            mock_params = create_mock_params()
+            mock_params.record_cache = {}
+
+            cmd = PAMRouterGetRotationInfo()
+            result = cmd.execute(mock_params, record_uid=record_uid, format='table')
+            self.assertIsNone(result)
+
