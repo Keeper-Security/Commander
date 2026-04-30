@@ -26,6 +26,7 @@ from ... import keeper_drive as _kd, vault
 from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
+    ensure_keeper_drive_record, ensure_keeper_drive_folder,
 )
 from .parsers import (
     keeper_drive_add_record_parser,
@@ -103,6 +104,7 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
         uid = resolve_folder_uid(params, folder_input)
         if uid is None:
             raise CommandError('kd-record-add', f'No such folder: {folder_input}')
+        ensure_keeper_drive_folder(params, uid, 'kd-record-add', identifier=folder_input)
         return uid
 
     def _build_record_data(self, params, record_type, title, notes, record_fields):
@@ -210,6 +212,8 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
                 if not record_uid:
                     raise CommandError('kd-record-update',
                                        f"Record '{identifier}' not found")
+                ensure_keeper_drive_record(params, record_uid, 'kd-record-update',
+                                           identifier=identifier)
                 check_record_edit_permission(params, record_uid, 'kd-record-update')
                 result = _kd.update_record_v3(
                     params=params, record_uid=record_uid,
@@ -241,6 +245,8 @@ class KeeperDriveLnCommand(Command):
         folder_uid = resolve_folder_uid(params, dst)
         if not folder_uid:
             raise CommandError('kd-ln', f"Folder '{dst}' not found")
+        ensure_keeper_drive_record(params, record_uid, 'kd-ln', identifier=src)
+        ensure_keeper_drive_folder(params, folder_uid, 'kd-ln', identifier=dst)
         with command_error_handler('kd-ln'):
             result = _kd.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
             check_result(result, 'kd-ln')
@@ -406,6 +412,8 @@ class KeeperDriveShortcutKeepCommand(Command):
             uid = _kd.resolve_folder_identifier(params, folder_arg)
             if not uid:
                 raise CommandError('kd-shortcut keep', f'Folder "{folder_arg}" not found')
+            ensure_keeper_drive_folder(params, uid, 'kd-shortcut keep',
+                                       identifier=folder_arg)
             return uid
         current = getattr(params, 'current_folder', None)
         if current and current in kd_folders:
@@ -441,6 +449,8 @@ class KeeperDriveRemoveRecordCommand(Command):
             folder_uid = _kd.resolve_folder_identifier(params, folder_arg)
             if not folder_uid:
                 raise CommandError('kd-rm', f"Folder '{folder_arg}' not found")
+            ensure_keeper_drive_folder(params, folder_uid, 'kd-rm',
+                                       identifier=folder_arg)
 
         removals = self._build_removals(params, record_args, folder_uid, operation)
         if len(removals) > 500:
@@ -455,6 +465,8 @@ class KeeperDriveRemoveRecordCommand(Command):
             record_uid = _kd.resolve_kd_record_uid(params, identifier)
             if not record_uid:
                 raise CommandError('kd-rm', f"Record '{identifier}' not found")
+            ensure_keeper_drive_record(params, record_uid, 'kd-rm',
+                                       identifier=identifier)
             check_record_delete_permission(params, record_uid, 'kd-rm')
             ctx_folder = folder_uid
             if not ctx_folder:

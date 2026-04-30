@@ -910,6 +910,17 @@ class FolderMoveCommand(Command):
                 if src_folder.type == BaseFolderNode.KeeperDriveFolderType:
                     raise CommandError('mv', 'Moving drive records is currently not supported.')
 
+                if record_uid in getattr(params, 'keeper_drive_records', {}) \
+                        and dst_folder.type != BaseFolderNode.KeeperDriveFolderType:
+                    raise CommandError(
+                        'KeeperDrive records cannot be linked or moved into legacy folders.'
+                    )
+
+                if dst_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                    raise CommandError(
+                        'Legacy records cannot be linked or moved into a KeeperDrive folder. '
+                    )
+
                 move = {
                     'uid': record_uid,
                     'type': 'record',
