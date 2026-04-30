@@ -277,6 +277,116 @@ if sys.version_info >= (3, 8):
                              "Top-level keys should be sorted (sort_keys=True)")
 
 
+    # ────────────────────────────────────────────────────────────────────
+    # KCM-import compatibility (PR #1942)
+    # ────────────────────────────────────────────────────────────────────
+
+    class TestKCMImportRoundTrip(unittest.TestCase):
+        """KCM-imported records (PR #1942) reference users by *title* in
+        ``pam_settings.connection.launch_credentials`` rather than by UID
+        in ``userRecords[]``. Export must resolve these title references
+        so the exported JSON re-imports with the user link intact.
+        """
+
+        KCM_CFG = "kcm-cfg-1"
+        KCM_RES = "kcm-res-prod-db"
+        KCM_USR = "kcm-usr-prod-db"
+
+        def _make_kcm_records(self):
+            """Build the KCM-shaped vault state (PR #1942 import output)."""
+            cfg = vault.TypedRecord(version=6)
+            cfg.type_name = "pamNetworkConfiguration"
+            cfg.title = "KCM Migration"
+            cfg.record_uid = self.KCM_CFG
+            cfg.fields.append(_make_typed_field("pamResources", [{
+                "controllerUid": "gw-uid",
+                "folderUid": "sf-uid",
+                "resourceRef": [self.KCM_RES],
+            }]))
+
+            res = vault.TypedRecord(version=3)
+            res.type_name = "pamMachine"
+            res.title = "KCM Resource - prod-db"
+            res.record_uid = self.KCM_RES
+            res.fields.append(_make_typed_field("pamSettings", [{
+                "connection": {
+                    "protocol": "ssh",
+                    "port": "22",
+                    "launch_credentials": "KCM User - prod-db",
+                },
+                "options": {"connections": "on", "rotation": "off"},
+            }]))
+
+            usr = vault.TypedRecord(version=3)
+            usr.type_name = "pamUser"
+            usr.title = "KCM User - prod-db"
+            usr.record_uid = self.KCM_USR
+            usr.fields.append(_make_typed_field("login", ["root"]))
+
+            return {self.KCM_CFG: cfg, self.KCM_RES: res, self.KCM_USR: usr}
+
+        def setUp(self):
+            from keepercommander.commands.pam_import.export import PAMProjectExportCommand
+            from unittest.mock import MagicMock
+            self.cmd = PAMProjectExportCommand()
+            self.records = self._make_kcm_records()
+            self.params = MagicMock()
+            self.params.record_cache = {uid: {} for uid in self.records}
+
+        def _execute(self):
+            def _load(_p, uid):
+                return self.records.get(uid)
+            with patch("keepercommander.vault.KeeperRecord.load", side_effect=_load):
+                with patch.object(self.cmd, "_get_allowed_settings",
+                                  return_value=dict(_DEFAULT_ALLOWED)):
+                    return self.cmd.execute(self.params, project_uid=self.KCM_CFG)
+
+        def test_title_based_user_link_resolved(self):
+            """KCM resource → export must include the user via title resolution."""
+            parsed = json.loads(self._execute())
+            resources = parsed["pam_data"]["resources"]
+            self.assertEqual(len(resources), 1, "expected one KCM resource")
+            res = resources[0]
+            self.assertEqual(len(res["users"]), 1,
+                             "KCM resource must export 1 user (resolved by title)")
+            self.assertEqual(res["users"][0]["uid"], self.KCM_USR)
+            self.assertEqual(res["users"][0]["title"], "KCM User - prod-db")
+
+        def test_top_level_users_includes_resolved_user(self):
+            parsed = json.loads(self._execute())
+            top_users = parsed["pam_data"]["users"]
+            self.assertEqual(len(top_users), 1)
+            self.assertEqual(top_users[0]["uid"], self.KCM_USR)
+
+        def test_pam_settings_preserved_for_round_trip(self):
+            """Round-trip safety: KCM-specific pam_settings keys preserved verbatim."""
+            parsed = json.loads(self._execute())
+            res = parsed["pam_data"]["resources"][0]
+            conn = res["pam_settings"]["connection"]
+            self.assertEqual(conn["protocol"], "ssh")
+            self.assertEqual(conn["port"], "22")
+            self.assertEqual(conn["launch_credentials"], "KCM User - prod-db")
+
+        def test_uid_in_launch_credentials_accepted(self):
+            """If launch_credentials already holds a 22-char UID (non-KCM path), keep it as-is."""
+            uid_22 = "AAAAAAAAAAAAAAAAAAAAAA"  # 22 chars, no slash, no space
+            usr = vault.TypedRecord(version=3)
+            usr.type_name = "pamUser"
+            usr.title = "Direct UID User"
+            usr.record_uid = uid_22
+            usr.fields.append(_make_typed_field("login", ["alice"]))
+            self.records[uid_22] = usr
+            self.params.record_cache[uid_22] = {}
+
+            res = self.records[self.KCM_RES]
+            ps = res.get_typed_field("pamSettings").value[0]
+            ps["connection"]["launch_credentials"] = uid_22
+            parsed = json.loads(self._execute())
+            users = parsed["pam_data"]["resources"][0]["users"]
+            self.assertEqual(len(users), 1)
+            self.assertEqual(users[0]["uid"], uid_22)
+
+
 else:
     class TestPAMProjectExportCommand(unittest.TestCase):
         def test_skip(self):
