@@ -1476,6 +1476,27 @@ class PAMProjectImportCommand(Command):
                     if not(isinstance(usr.uid, str) and RecordV3.is_valid_ref_uid(usr.uid)):
                         usr.uid = utils.generate_uid()
 
+        # Detect and reject duplicate UIDs to prevent graph ambiguity
+        _all_assigned_uids: list[str] = []
+        for _obj in chain(resources, users):
+            _all_assigned_uids.append(_obj.uid)
+            if hasattr(_obj, 'users') and isinstance(_obj.users, list):
+                for _usr in _obj.users:
+                    _all_assigned_uids.append(_usr.uid)
+        _seen_uids: set[str] = set()
+        _duplicate_uids: list[str] = []
+        for _uid in _all_assigned_uids:
+            if _uid in _seen_uids:
+                _duplicate_uids.append(_uid)
+            _seen_uids.add(_uid)
+        if _duplicate_uids:
+            print(
+                f"{bcolors.FAIL}pam project import: duplicate uid values detected in import JSON: "
+                f"{', '.join(sorted(set(_duplicate_uids)))}. "
+                f"Each resource and user must have a unique uid. Import aborted.{bcolors.ENDC}"
+            )
+            return
+
         # resolve linked object UIDs (machines and users)
         # pam_settings.connection.administrative_credentials must reference
         # one of its own users[] -> userRecords["admin_user_record_UID"]
