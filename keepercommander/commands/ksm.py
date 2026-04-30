@@ -100,6 +100,19 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Remove Secret from Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
 
+  {bcolors.BOLD}Add Token to Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager token add {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+    Options:
+      --count [NUM] : Number of tokens to generate (Default: 1)
+      --unlock-ip : Does not lock IP address to first requesting device
+      --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
+      --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
+      --name [CLIENT NAME] : Name of the client
+      --config-init [json, b64 or k8s] : Initialize configuration string from a one-time token
+      --return-tokens : Return generated tokens as a comma-separated string
+    Adds one or more one-time access tokens to an existing KSM application.
+    Equivalent to: secrets-manager client add --app [APP NAME OR UID]
+
   -----
   Note: If the UID you are using contains a dash (-) in the beginning, the value should be wrapped 
   in quotes and prepended with an equal sign. For example:
@@ -114,7 +127,7 @@ ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper
                                      add_help=False)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*",
                     help='One of: "app list", "app get", "app create", "app update", "app remove", "app share", ' +
-                             '"app unshare", "client add", "client remove", "share add", "share update" or "share remove"')
+                             '"app unshare", "client add", "client remove", "share add", "share update", "share remove" or "token add"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                         help='Record UID')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
@@ -426,6 +439,32 @@ class KSMCommand(Command):
                     KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids, force)
 
                 return
+
+        elif ksm_obj in ('token', 'tokens') and ksm_action in ('add', 'create'):
+            if len(ksm_command) < 3:
+                print(
+                    f'{bcolors.WARNING}App UID or name is required.{bcolors.ENDC}\n'
+                    f'\tEx: {bcolors.OKGREEN}secrets-manager token add {bcolors.OKBLUE}MyApp{bcolors.ENDC}'
+                )
+                return
+            app_name_or_uid = ksm_command[2]
+            count = kwargs.get('count', 1)
+            unlock_ip = kwargs.get('unlockIp', False)
+            first_access_expire_on = kwargs.get('firstAccessExpiresIn')
+            access_expire_in_min = kwargs.get('accessExpireInMin')
+            client_name = kwargs.get('name')
+            config_init = kwargs.get('config_init')
+            is_return_tokens = kwargs.get('returnTokens', False)
+            tokens_and_device = KSMCommand.add_client(
+                params, app_name_or_uid, count, unlock_ip,
+                first_access_expire_on, access_expire_in_min,
+                client_name=client_name, config_init=config_init,
+                client_type=enterprise_pb2.GENERAL,
+            )
+            if is_return_tokens and tokens_and_device:
+                tokens_only = [x.get('oneTimeToken', '') for x in tokens_and_device if x.get('oneTimeToken')]
+                return ', '.join(tokens_only) if tokens_only else None
+            return
 
         print(f"{bcolors.WARNING}Unknown combination of KSM commands. " +
               f"Type 'secrets-manager' for more details'{bcolors.ENDC}")
