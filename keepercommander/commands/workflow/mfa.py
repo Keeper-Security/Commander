@@ -15,6 +15,7 @@ import logging
 from typing import NamedTuple, Optional
 
 from ..pam.router_helper import _post_request_to_router
+from ...error import KeeperApiError
 from ...display import bcolors
 from ...params import KeeperParams
 from ...proto import workflow_pb2, router_pb2
@@ -86,7 +87,11 @@ class WorkflowAccessValidator:
         # gate without opening a real security gap. Old behavior (block
         # with a banner) was correct for QA but a hard regression on prod
         # legacy launches that have never seen workflow.
-        config = self._read_workflow_config()
+        try:
+            config = self._read_workflow_config()
+        except Exception as _e:
+            # Non-404 error from the workflow API — fail closed (deny).
+            return dict(self._BLOCKED_RESULT)
         if config is _TRANSPORT_ERROR:
             logging.debug(
                 'read_workflow_config unavailable for %s; falling through to '
@@ -103,7 +108,10 @@ class WorkflowAccessValidator:
             return self._blocked('outside_time_window')
 
         no_approvals = config.parameters and config.parameters.approvalsNeeded == 0
-        workflow = self._find_active_workflow()
+        try:
+            workflow = self._find_active_workflow()
+        except Exception as _e:
+            return dict(self._BLOCKED_RESULT)
         if workflow is _TRANSPORT_ERROR:
             logging.debug(
                 'get_user_access_state unavailable for %s; treating as no '
@@ -111,7 +119,10 @@ class WorkflowAccessValidator:
             )
             return dict(self._DEFAULT_RESULT)
         if workflow is None and no_approvals:
-            workflow = self._get_workflow_state_by_record()
+            try:
+                workflow = self._get_workflow_state_by_record()
+            except Exception as _e:
+                return dict(self._BLOCKED_RESULT)
             if workflow is _TRANSPORT_ERROR:
                 logging.debug(
                     'get_workflow_state unavailable for %s; allowing. Gateway '
@@ -159,9 +170,19 @@ class WorkflowAccessValidator:
                 self.params, 'read_workflow_config',
                 rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
             )
+        except KeeperApiError as e:
+            if e.result_code == 404:
+                # HTTP 404 = endpoint not deployed on this router; fail open so
+                # legacy routers without the workflow API don't block launches.
+                logging.debug('read_workflow_config: endpoint not deployed (HTTP 404) for %s; failing open', self.record_uid)
+                return _TRANSPORT_ERROR
+            # Any other API error (5xx, 401, timeout/connection) — fail closed.
+            logging.warning('read_workflow_config: unexpected error for %s (%s); blocking access', self.record_uid, e)
+            raise
         except Exception as e:
-            logging.debug('Failed to read workflow config for %s: %s', self.record_uid, e)
-            return _TRANSPORT_ERROR
+            # Non-API exception (parse error, protobuf decode, etc.) — fail closed.
+            logging.warning('read_workflow_config: unexpected exception for %s: %s; blocking access', self.record_uid, e)
+            raise
 
     def _find_active_workflow(self):
         try:
@@ -169,9 +190,15 @@ class WorkflowAccessValidator:
                 self.params, 'get_user_access_state',
                 rs_type=workflow_pb2.UserAccessState,
             )
+        except KeeperApiError as e:
+            if e.result_code == 404:
+                logging.debug('get_user_access_state: endpoint not deployed (HTTP 404); failing open')
+                return _TRANSPORT_ERROR
+            logging.warning('get_user_access_state: unexpected error (%s); blocking access', e)
+            raise
         except Exception as e:
-            logging.debug('Failed to get user access state: %s', e)
-            return _TRANSPORT_ERROR
+            logging.warning('get_user_access_state: unexpected exception: %s; blocking access', e)
+            raise
 
         if user_state and user_state.workflows:
             for wf in user_state.workflows:
@@ -207,16 +234,32 @@ class WorkflowAccessValidator:
             # TimeOfDayRange.startTime / .endTime are HHMM-encoded integers
             # (server-validated: HH in 0-23, MM in 0-59). e.g. 03:00 -> 300,
             # 17:30 -> 1730. Compare current wall-clock in the same encoding.
+            #
+            # Backward-compat: older workflow configs stored times as
+            # minutes-since-midnight (range 0–1439). Values >= 1440 are
+            # unambiguously legacy HHMM (valid HHMM max is 2359). Values
+            # < 1440 are already valid HHMM (0000-1439 covers 00:00-14:39).
+            # We convert only values >= 1440 to avoid double-converting
+            # current valid HHMM values.
+            def _to_hhmm(t):
+                if t >= 1440:
+                    # Legacy minutes-since-midnight → HHMM
+                    h, m = divmod(t, 60)
+                    return h * 100 + m
+                return t  # Already HHMM
+
             current_hhmm = now.hour * 100 + now.minute
             in_range = False
             for r in at.timeRanges:
-                if r.startTime <= r.endTime:
-                    if r.startTime <= current_hhmm <= r.endTime:
+                start = _to_hhmm(r.startTime)
+                end = _to_hhmm(r.endTime)
+                if start <= end:
+                    if start <= current_hhmm <= end:
                         in_range = True
                         break
                 else:
                     # range crosses midnight (e.g. 22:00-06:00)
-                    if current_hhmm >= r.startTime or current_hhmm <= r.endTime:
+                    if current_hhmm >= start or current_hhmm <= end:
                         in_range = True
                         break
             if not in_range:
@@ -338,13 +381,15 @@ class WorkflowAccessValidator:
                 self.params, 'get_workflow_state',
                 rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
             )
+        except KeeperApiError as e:
+            if e.result_code == 404:
+                logging.debug('get_workflow_state: endpoint not deployed (HTTP 404) for %s; failing open', self.record_uid)
+                return _TRANSPORT_ERROR
+            logging.warning('get_workflow_state: unexpected error for %s (%s); blocking access', self.record_uid, e)
+            raise
         except Exception as e:
-            logging.debug('Failed to get workflow state for %s: %s', self.record_uid, e)
-            return _TRANSPORT_ERROR
-
-    def _print_transport_error(self, action: str):
-        print(f"\n{bcolors.FAIL}Unable to {action} — the server may be unavailable.{bcolors.ENDC}")
-        print("Access is blocked until workflow status can be verified. Please try again later.\n")
+            logging.warning('get_workflow_state: unexpected exception for %s: %s; blocking access', self.record_uid, e)
+            raise
 
     def _print_no_workflow(self):
         print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")

@@ -1353,7 +1353,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         }
 
         # Debug: Log settings to verify control_channel_label is present
-        logging.debug(f"WebRTC settings before create_tube: {json.dumps(webrtc_settings, default=str)}")
+        _safe_webrtc = {k: ('***redacted***' if k in ('turn_password', 'callback_token') else v)
+                        for k, v in webrtc_settings.items()}
+        logging.debug("WebRTC settings before create_tube: %s", json.dumps(_safe_webrtc, default=str))
 
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
@@ -1735,7 +1737,22 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # if 'protocol_specific' in settings and settings['protocol_specific']:
         #     offer_data["protocolSettings"] = settings['protocol_specific']
 
-        logging.debug(f"Sending initial offer with connection parameters: {json.dumps(offer_data, indent=2)}")
+        _SECRET_GUACD_FIELDS = frozenset({
+            'password', 'private-key', 'passphrase', 'client-key',
+        })
+        def _redact_offer(d):
+            if not isinstance(d, dict):
+                return d
+            out = {}
+            for k, v in d.items():
+                if k == 'guacd_params' and isinstance(v, dict):
+                    out[k] = {kk: ('***redacted***' if kk in _SECRET_GUACD_FIELDS else vv)
+                              for kk, vv in v.items()}
+                else:
+                    out[k] = v
+            return out
+        logging.debug("Sending initial offer with connection parameters: %s",
+                      json.dumps(_redact_offer(offer_data), indent=2, default=str))
         data_bytes = string_to_bytes(json.dumps(offer_data))
         encrypted_data = tunnel_encrypt(symmetric_key, data_bytes)
 
