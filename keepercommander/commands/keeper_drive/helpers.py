@@ -152,6 +152,46 @@ def resolve_folder_uid(params, identifier):
     return _kd.resolve_folder_identifier(params, identifier)
 
 
+
+_LEGACY_TO_KD_RECORD_MSG = (
+    "Cannot use legacy record '{ident}' with a KeeperDrive command. "
+)
+_LEGACY_TO_KD_FOLDER_MSG = (
+    "Folder '{ident}' is a legacy folder. KeeperDrive commands operate "
+    "only on KeeperDrive folders."
+)
+
+
+def is_keeper_drive_record(params, record_uid):
+    """Return True when *record_uid* is a KeeperDrive (v3) record."""
+    return bool(record_uid) and record_uid in getattr(
+        params, 'keeper_drive_records', {})
+
+
+def is_keeper_drive_folder(params, folder_uid):
+    """Return True when *folder_uid* is a KeeperDrive folder.
+    """
+    if not folder_uid:
+        return False
+    if folder_uid == ROOT_FOLDER_UID:
+        return True
+    return folder_uid in getattr(params, 'keeper_drive_folders', {})
+
+
+def ensure_keeper_drive_record(params, record_uid, cmd_name, identifier=None):
+    """Raise ``CommandError`` if *record_uid* is not a KeeperDrive record."""
+    if not is_keeper_drive_record(params, record_uid):
+        ident = identifier or record_uid
+        raise CommandError(cmd_name, _LEGACY_TO_KD_RECORD_MSG.format(ident=ident))
+
+
+def ensure_keeper_drive_folder(params, folder_uid, cmd_name, identifier=None):
+    """Raise ``CommandError`` if *folder_uid* is not a KeeperDrive folder."""
+    if not is_keeper_drive_folder(params, folder_uid):
+        ident = identifier or folder_uid
+        raise CommandError(cmd_name, _LEGACY_TO_KD_FOLDER_MSG.format(ident=ident))
+
+
 def classify_share_recipient(params, recipient):
     """Classify a single ``-e/--email`` value as a user or a team.
 

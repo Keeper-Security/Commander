@@ -31,6 +31,7 @@ from .helpers import (
     command_error_handler, check_result,
     check_record_share_permission,
     collect_records_in_folder,
+    ensure_keeper_drive_folder, ensure_keeper_drive_record,
 )
 from .parsers import (
     keeper_drive_share_record_parser,
@@ -118,13 +119,23 @@ class KeeperDriveShareRecordCommand(Command):
 
     @staticmethod
     def _is_already_shared(params, record_uid, email):
-        """Return True if *email* already has a non-owner share on *record_uid*."""
+        """Return True if *email* already has a *direct* non-owner share on *record_uid*.
+
+        Inherited permissions (delivered via a parent shared folder) are
+        intentionally ignored: the v3 share endpoint cannot ``update`` an
+        inherited row — attempting to do so is rejected with ``trying to
+        update or revoke non existing permissions``. Returning False here
+        causes the caller to dispatch ``share_record_v3`` (a fresh direct
+        grant) which correctly overrides the inherited folder permission.
+        """
         try:
             access_result = _kd.get_record_accesses_v3(params, [record_uid])
             for a in access_result.get('record_accesses', []):
                 if a.get('record_uid') != record_uid or a.get('owner', False):
                     continue
                 if a.get('access_type') and a.get('access_type') != 'AT_USER':
+                    continue
+                if a.get('inherited'):
                     continue
                 if a.get('accessor_name', '').casefold() == email.casefold():
                     return True
@@ -191,7 +202,12 @@ class KeeperDriveShareRecordCommand(Command):
             folder_uid = _kd.resolve_folder_identifier(params, record_arg)
         except Exception:
             folder_uid = None
-        if folder_uid and folder_uid in kd_folders:
+        if folder_uid:
+            # Reject legacy folders up-front with a friendly message rather
+            # than letting them slip through as a "no records found" error.
+            if folder_uid not in kd_folders:
+                ensure_keeper_drive_folder(params, folder_uid, 'kd-share-record',
+                                           identifier=record_arg)
             record_uids = collect_records_in_folder(params, folder_uid, recursive)
             if not record_uids:
                 raise CommandError('kd-share-record', 'No records found in the specified folder')
@@ -201,6 +217,8 @@ class KeeperDriveShareRecordCommand(Command):
         if not resolved_uid:
             raise CommandError('kd-share-record',
                                f"Record '{record_arg}' not found")
+        ensure_keeper_drive_record(params, resolved_uid, 'kd-share-record',
+                                   identifier=record_arg)
         return [resolved_uid]
 
     @staticmethod
@@ -274,22 +292,22 @@ class KeeperDriveRecordPermissionCommand(Command):
             raise CommandError('kd-record-permission', f'Failed to fetch record accesses: {e}')
 
         # Step 3: Compute
-        updates, revokes, skipped = self._compute_changes(
+        updates, creates, revokes, skipped = self._compute_changes(
             accesses_result, record_uids, params.user, action, role, role_map_pb)
-        if not updates and not revokes:
+        if not updates and not creates and not revokes:
             if skipped:
                 logging.warning('No permission changes can be made. '
                                 'See skipped entries below (insufficient permissions).')
                 from keepercommander.commands.base import dump_report_data
                 from keepercommander.display import bcolors
-                self._print_plan([], [], skipped, kd_record_data, dump_report_data, bcolors)
+                self._print_plan([], [], [], skipped, kd_record_data, dump_report_data, bcolors)
             else:
                 logging.info('No permission changes are needed.')
             return
 
         # Step 4: Display
         if dry_run or not force:
-            self._print_plan(updates, revokes, skipped, kd_record_data, dump_report_data, bcolors)
+            self._print_plan(updates, creates, revokes, skipped, kd_record_data, dump_report_data, bcolors)
         if dry_run:
             return
 
@@ -299,7 +317,7 @@ class KeeperDriveRecordPermissionCommand(Command):
                 return
 
         # Step 5: Execute
-        self._execute_changes(params, updates, revokes)
+        self._execute_changes(params, updates, creates, revokes)
         params.sync_data = True
 
     @staticmethod
@@ -310,6 +328,11 @@ class KeeperDriveRecordPermissionCommand(Command):
             resolved = _kd.resolve_folder_identifier(params, folder_name)
             if resolved and resolved in kd_folders:
                 return resolved, kd_folders[resolved].get('name', resolved)
+            if resolved:
+                # Resolution succeeded against legacy caches; reject with a
+                # friendly cross-type message instead of "not found".
+                ensure_keeper_drive_folder(params, resolved, 'kd-record-permission',
+                                           identifier=folder_name)
         if folder_name in kd_folders:
             return folder_name, kd_folders[folder_name].get('name', folder_name)
         lower = folder_name.lower()
@@ -347,16 +370,29 @@ class KeeperDriveRecordPermissionCommand(Command):
 
     @staticmethod
     def _compute_changes(accesses_result, record_uids, current_user, action, role, role_map_pb):
-        """Classify every non-owner share into updates, revokes, or skipped.
+        """Classify every non-owner share into updates, creates, revokes, or skipped.
 
-        A share is added to *skipped* when:
-          - The record UID appears in ``forbidden_records`` (current user cannot
-            read or modify its sharing at all), OR
-          - The current user's own access entry lacks ``can_update_access``
-            (the user can see the share list but cannot modify it — equivalent
-            to the classic ``has_record_share_permissions`` check).
+        Buckets:
+          - ``updates``  — direct shares whose role differs from *role*; sent
+            via ``updateSharingPermissions``.
+          - ``creates`` — recipients who currently only have an *inherited*
+            (folder-level) permission. ``vault/records/v3/share`` cannot
+            ``update`` an inherited row (server returns ``trying to update or
+            revoke non existing permissions``); a fresh
+            ``createSharingPermissions`` adds a direct override.
+          - ``revokes`` — direct shares to remove. Inherited shares cannot be
+            revoked at the record level and are routed to *skipped*.
+          - ``skipped`` — added when:
+              * The record UID appears in ``forbidden_records`` (current user
+                cannot read or modify its sharing at all), OR
+              * The current user's own access entry lacks
+                ``can_update_access`` (the user can see the share list but
+                cannot modify it — equivalent to the classic
+                ``has_record_share_permissions`` check), OR
+              * The action is ``revoke`` and the existing share is inherited
+                (must be removed from the parent shared folder instead).
         """
-        updates, revokes, skipped = [], [], []
+        updates, creates, revokes, skipped = [], [], [], []
 
         # Pre-flight: record UIDs the server refused to return access info for.
         forbidden = set(accesses_result.get('forbidden_records', []))
@@ -383,6 +419,7 @@ class KeeperDriveRecordPermissionCommand(Command):
                 continue
 
             cur_role = infer_role(access)
+            is_inherited = bool(access.get('inherited'))
 
             # Pre-flight: does the current user have permission to modify this share?
             can_update = owner_flags.get(rec_uid, False)
@@ -395,19 +432,30 @@ class KeeperDriveRecordPermissionCommand(Command):
 
             if action == 'grant':
                 if cur_role != role:
-                    updates.append({
+                    entry = {
                         'record_uid': rec_uid, 'email': email,
                         'cur_role': cur_role, 'new_role': role,
                         'access_role_type': role_map_pb.get(role),
-                    })
+                    }
+                    if is_inherited:
+                        creates.append(entry)
+                    else:
+                        updates.append(entry)
             else:
                 if not role or cur_role == role:
-                    revokes.append({'record_uid': rec_uid, 'email': email, 'cur_role': cur_role})
+                    if is_inherited:
+                        skipped.append({
+                            'record_uid': rec_uid, 'email': email, 'cur_role': cur_role,
+                            'reason': 'Inherited from a shared folder — '
+                                      'revoke at the parent shared folder',
+                        })
+                    else:
+                        revokes.append({'record_uid': rec_uid, 'email': email, 'cur_role': cur_role})
 
-        return updates, revokes, skipped
+        return updates, creates, revokes, skipped
 
     @staticmethod
-    def _print_plan(updates, revokes, skipped, kd_record_data, dump_report_data, bcolors):
+    def _print_plan(updates, creates, revokes, skipped, kd_record_data, dump_report_data, bcolors):
         def title_for(rec_uid):
             obj = kd_record_data.get(rec_uid, {})
             dj = obj.get('data_json', {}) if isinstance(obj, dict) else {}
@@ -425,16 +473,22 @@ class KeeperDriveRecordPermissionCommand(Command):
             logging.info('')
             logging.info('')
 
-        if updates:
-            table = []
-            for u in updates:
-                row = [u['record_uid'], title_for(u['record_uid']), u['email'],
-                       u['cur_role'],
-                       bcolors.BOLD + '   ' + u['new_role'] + bcolors.ENDC]
-                table.append(row)
+        # Display GRANTs as a single table for the user — direct updates and
+        # inherited-overrides are both presented as "current → new" rows even
+        # though the underlying API call differs (update vs. create).
+        grant_rows = []
+        for u in updates:
+            grant_rows.append([u['record_uid'], title_for(u['record_uid']), u['email'],
+                               u['cur_role'],
+                               bcolors.BOLD + '   ' + u['new_role'] + bcolors.ENDC])
+        for c in creates:
+            grant_rows.append([c['record_uid'], title_for(c['record_uid']), c['email'],
+                               c['cur_role'] + ' (inherited)',
+                               bcolors.BOLD + '   ' + c['new_role'] + bcolors.ENDC])
+        if grant_rows:
             title = (bcolors.OKGREEN + ' GRANT' + bcolors.ENDC
                      + ' Record permission(s)')
-            dump_report_data(table,
+            dump_report_data(grant_rows,
                              ['Record UID', 'Title', 'Email', 'Current Role', 'New Role'],
                              title=title, row_number=True, group_by=0)
             logging.info('')
@@ -455,35 +509,58 @@ class KeeperDriveRecordPermissionCommand(Command):
             logging.info('')
 
     @staticmethod
-    def _execute_changes(params, updates, revokes):
-        """Apply permission changes in batched REST calls (up to 200 per request)."""
+    def _execute_changes(params, updates, creates, revokes):
+        """Apply permission changes in batched REST calls (up to 200 per request).
+
+        ``updates`` use ``updateSharingPermissions`` (modify a direct share);
+        ``creates`` use ``createSharingPermissions`` (add a new direct share
+        that overrides a folder-inherited permission). Both are reported to
+        the user under a single "Failed to GRANT" error table.
+        """
         from keepercommander.commands.base import dump_report_data
         from keepercommander.display import bcolors
 
+        grant_failures = []
+
         if updates:
-            table = []
             outcomes = _kd.batch_update_record_shares_v3(params, updates)
             for item, result in outcomes:
                 record_uid = item['record_uid']
                 email = item['email']
                 if result.get('skipped'):
-                    table.append([record_uid, email, 'skipped',
-                                  result.get('message', 'could not build permission')])
+                    grant_failures.append([record_uid, email, 'skipped',
+                                           result.get('message', 'could not build permission')])
                 elif result.get('success'):
                     logging.info("Updated '%s' for %s: %s -> %s",
                                  record_uid, email,
                                  item['cur_role'], item['new_role'])
                 else:
-                    table.append([record_uid, email, 'error',
-                                  result.get('message', 'Unknown error')])
+                    grant_failures.append([record_uid, email, 'error',
+                                           result.get('message', 'Unknown error')])
 
-            if table:
-                headers = ['Record UID', 'Email', 'Error Code', 'Message']
-                title = (bcolors.WARNING + 'Failed to GRANT' + bcolors.ENDC
-                         + ' Record permission(s)')
-                dump_report_data(table, headers, title=title, row_number=True)
-                logging.info('')
-                logging.info('')
+        if creates:
+            outcomes = _kd.batch_create_record_shares_v3(params, creates)
+            for item, result in outcomes:
+                record_uid = item['record_uid']
+                email = item['email']
+                if result.get('skipped'):
+                    grant_failures.append([record_uid, email, 'skipped',
+                                           result.get('message', 'could not build permission')])
+                elif result.get('success'):
+                    logging.info("Granted '%s' to %s: %s (inherited) -> %s",
+                                 record_uid, email,
+                                 item['cur_role'], item['new_role'])
+                else:
+                    grant_failures.append([record_uid, email, 'error',
+                                           result.get('message', 'Unknown error')])
+
+        if grant_failures:
+            headers = ['Record UID', 'Email', 'Error Code', 'Message']
+            title = (bcolors.WARNING + 'Failed to GRANT' + bcolors.ENDC
+                     + ' Record permission(s)')
+            dump_report_data(grant_failures, headers, title=title, row_number=True)
+            logging.info('')
+            logging.info('')
 
         if revokes:
             table = []
@@ -534,6 +611,8 @@ class KeeperDriveTransferRecordCommand(Command):
                 if not record_uid:
                     raise CommandError('kd-transfer-record',
                                        f"Record '{identifier}' not found")
+                ensure_keeper_drive_record(params, record_uid, 'kd-transfer-record',
+                                           identifier=identifier)
                 result = _kd.transfer_record_ownership_v3(
                     params=params, record_uid=record_uid, new_owner_email=new_owner_email)
                 check_result(result, 'kd-transfer-record')

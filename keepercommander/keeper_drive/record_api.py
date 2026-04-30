@@ -327,6 +327,7 @@ def get_record_accesses_v3(params, record_uids):
             'access_type': folder_pb2.AccessType.Name(d.accessType) if hasattr(d, 'accessType') else 'UNKNOWN',
             'access_type_uid': utils.base64_url_encode(d.accessTypeUid),
             'owner': getattr(d, 'owner', False),
+            'inherited': bool(getattr(d, 'inherited', False)),
             'access_role_type': int(getattr(d, 'accessRoleType', 0) or 0),
         }
         for flag in ('can_view_title', 'can_edit', 'can_view', 'can_list_access',
@@ -490,6 +491,62 @@ def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, ch
         except Exception as exc:
             for u in built:
                 outcomes.append((u, {'success': False, 'message': str(exc)}))
+
+    return outcomes
+
+
+def batch_create_record_shares_v3(params, creates, expiration_timestamp=None, chunk_size=_SHARE_BATCH_SIZE):
+    """Send multiple createSharingPermissions in as few REST calls as possible.
+
+    Used when granting a role to a recipient who currently only has an
+    *inherited* (folder-level) permission on the record. The
+    ``vault/records/v3/share`` endpoint cannot ``update`` an inherited row
+    because no direct sharing entry exists; a ``create`` adds a new direct
+    permission that overrides the inherited one.
+
+    *creates* is a list of dicts with keys:
+        ``record_uid``, ``email``, ``access_role_type``,
+        ``cur_role`` (for logging), ``new_role`` (for logging).
+
+    Returns a list of ``(item_dict, result_dict)`` pairs in input order
+    (skipped items carry ``result['skipped'] = True``).
+    """
+    from .. import sync_down as sd
+    sd.sync_down(params)
+
+    outcomes = []
+    for i in range(0, len(creates), chunk_size):
+        chunk = creates[i:i + chunk_size]
+        rq = record_sharing_pb2.Request()
+        built = []
+        for c in chunk:
+            try:
+                perm = _build_share_permissions(
+                    params, c['record_uid'], c['email'],
+                    c['access_role_type'], expiration_timestamp,
+                    include_role=True,
+                )
+                rq.createSharingPermissions.append(perm)
+                built.append(c)
+            except Exception as exc:
+                outcomes.append((c, {'success': False, 'skipped': True,
+                                      'message': str(exc)}))
+
+        if not built:
+            continue
+
+        try:
+            rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                                      rs_type=record_sharing_pb2.Response)
+            statuses = [parse_sharing_status(s) for s in rs.createdSharingStatus]
+            status_by_uid = {s['record_uid']: s for s in statuses}
+            for c in built:
+                outcomes.append((c, status_by_uid.get(c['record_uid'],
+                                                        {'success': False,
+                                                         'message': 'No status returned'})))
+        except Exception as exc:
+            for c in built:
+                outcomes.append((c, {'success': False, 'message': str(exc)}))
 
     return outcomes
 

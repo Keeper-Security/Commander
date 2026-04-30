@@ -27,6 +27,7 @@ from .helpers import (
     command_error_handler, check_result,
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
+    ensure_keeper_drive_folder,
 )
 from .parsers import (
     keeper_drive_mkdir_parser,
@@ -143,6 +144,8 @@ class KeeperDriveUpdateFolderCommand(Command):
 
         folder_uid = resolve_folder_uid(params, folder_arg)
         if folder_uid:
+            ensure_keeper_drive_folder(params, folder_uid, 'kd-rndir',
+                                       identifier=folder_arg)
             check_folder_edit_permission(params, folder_uid, 'kd-rndir')
 
         with command_error_handler('kd-rndir'):
@@ -298,6 +301,8 @@ class KeeperDriveShareFolderCommand(Command):
             folder_uid = resolve_folder_uid(params, folder_arg)
             if not folder_uid:
                 raise CommandError('kd-share-folder', f'No such folder: {folder_arg!r}')
+            ensure_keeper_drive_folder(params, folder_uid, 'kd-share-folder',
+                                       identifier=folder_arg)
             check_folder_share_permission(params, folder_uid, 'kd-share-folder')
 
             targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
@@ -424,6 +429,8 @@ class KeeperDriveRemoveFolderCommand(Command):
             folder_uid = _kd.resolve_kd_folder_uid(params, identifier)
             if not folder_uid:
                 raise CommandError('kd-rmdir', f"Folder '{identifier}' not found")
+            ensure_keeper_drive_folder(params, folder_uid, 'kd-rmdir',
+                                       identifier=identifier)
             check_folder_delete_permission(params, folder_uid, 'kd-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
