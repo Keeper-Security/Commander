@@ -10,6 +10,7 @@
 #
 
 from .edit import PAMProjectImportCommand
+from .export import PAMProjectExportCommand
 from .extend import PAMProjectExtendCommand
 from ..base import GroupCommand
 
@@ -17,4 +18,5 @@ class PAMProjectCommand(GroupCommand):
     def __init__(self):
         super(PAMProjectCommand, self).__init__()
         self.register_command("import", PAMProjectImportCommand(), "Import PAM Project", "i")
+        self.register_command("export", PAMProjectExportCommand(), "Export PAM project to JSON for re-import", "x")
         self.register_command("extend", PAMProjectExtendCommand(), "Extend PAM Project by importing additional data", "e")
