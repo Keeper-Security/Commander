@@ -276,6 +276,259 @@ class TestKeeperDriveRecordCommands(TestCase):
         pass
 
 
+class TestCrossTypeGuards(TestCase):
+    """Legacy and KeeperDrive folders/records use different permission
+    structures. Commands must refuse cross-type operations."""
+
+    def setUp(self):
+        mock.patch('keepercommander.api.communicate_rest').start()
+        mock.patch('keepercommander.api.communicate').start()
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+    def test_is_keeper_drive_record(self):
+        from keepercommander.commands.keeper_drive.helpers import is_keeper_drive_record
+        kd_uid, _ = _make_record()
+        legacy_uid = utils.generate_uid()
+        params = _make_params(
+            keeper_drive_records={kd_uid: {'revision': 1}},
+            record_cache={legacy_uid: {'revision': 1}, kd_uid: {'revision': 1}},
+        )
+        self.assertTrue(is_keeper_drive_record(params, kd_uid))
+        self.assertFalse(is_keeper_drive_record(params, legacy_uid))
+        self.assertFalse(is_keeper_drive_record(params, None))
+
+    def test_is_keeper_drive_folder(self):
+        from keepercommander.commands.keeper_drive.helpers import (
+            is_keeper_drive_folder, ROOT_FOLDER_UID,
+        )
+        kd_fuid, kd_fobj = _make_folder()
+        legacy_fuid = utils.generate_uid()
+        params = _make_params(
+            keeper_drive_folders={kd_fuid: kd_fobj},
+            folder_cache={legacy_fuid: object()},
+        )
+        self.assertTrue(is_keeper_drive_folder(params, kd_fuid))
+        self.assertTrue(is_keeper_drive_folder(params, ROOT_FOLDER_UID))
+        self.assertFalse(is_keeper_drive_folder(params, legacy_fuid))
+        self.assertFalse(is_keeper_drive_folder(params, None))
+
+    @patch('keepercommander.keeper_drive.folder_record_api.add_record_to_folder_v3')
+    def test_kd_ln_rejects_legacy_record(self, mock_link):
+        """kd-ln must refuse a legacy record even when the dest folder is KD."""
+        from keepercommander.commands.keeper_drive import KeeperDriveLnCommand
+        kd_fuid, kd_fobj = _make_folder()
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(
+            keeper_drive_folders={kd_fuid: kd_fobj},
+            record_cache={legacy_ruid: {'revision': 1}},
+        )
+        cmd = KeeperDriveLnCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, src=legacy_ruid, dst=kd_fuid)
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_link.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.folder_record_api.add_record_to_folder_v3')
+    def test_kd_ln_rejects_legacy_folder(self, mock_link):
+        """kd-ln must refuse a legacy folder even when the source is a KD record."""
+        from keepercommander.commands.keeper_drive import KeeperDriveLnCommand
+        kd_ruid, kd_robj = _make_record()
+        legacy_fuid = utils.generate_uid()
+
+        class _Folder:
+            uid = legacy_fuid
+            name = 'Legacy'
+            type = 'user_folder'
+            subfolders = []
+
+        params = _make_params(
+            keeper_drive_records={kd_ruid: kd_robj},
+            folder_cache={legacy_fuid: _Folder()},
+        )
+        cmd = KeeperDriveLnCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, src=kd_ruid, dst=legacy_fuid)
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_link.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.record_api.create_record_v3')
+    def test_kd_record_add_rejects_legacy_folder(self, mock_create):
+        from keepercommander.commands.keeper_drive import KeeperDriveAddRecordCommand
+        legacy_fuid = utils.generate_uid()
+
+        class _Folder:
+            uid = legacy_fuid
+            name = 'LegacyFolder'
+            type = 'user_folder'
+            subfolders = []
+
+        params = _make_params(folder_cache={legacy_fuid: _Folder()})
+        cmd = KeeperDriveAddRecordCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, title='New', record_type='general',
+                        folder_uid=legacy_fuid, fields=[], force=True)
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_create.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.record_api.update_record_v3')
+    def test_kd_record_update_rejects_legacy_record(self, mock_update):
+        from keepercommander.commands.keeper_drive import KeeperDriveUpdateRecordCommand
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(record_cache={legacy_ruid: {'revision': 1}})
+        cmd = KeeperDriveUpdateRecordCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, record_uids=[legacy_ruid], title='X', fields=[])
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_update.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.removal_api.remove_record_v3')
+    def test_kd_rm_rejects_legacy_record(self, mock_rm):
+        from keepercommander.commands.keeper_drive import KeeperDriveRemoveRecordCommand
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(record_cache={legacy_ruid: {'revision': 1}})
+        cmd = KeeperDriveRemoveRecordCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, records=[legacy_ruid], operation='owner-trash')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_rm.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.folder_api.update_folder_v3')
+    def test_kd_rndir_rejects_legacy_folder(self, mock_update):
+        from keepercommander.commands.keeper_drive import KeeperDriveUpdateFolderCommand
+        legacy_fuid = utils.generate_uid()
+        params = _make_params(folder_cache={legacy_fuid: object()})
+        cmd = KeeperDriveUpdateFolderCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, folder=legacy_fuid, folder_name='New')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_update.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.folder_api.grant_folder_access_v3')
+    def test_kd_share_folder_rejects_legacy_folder(self, mock_grant):
+        from keepercommander.commands.keeper_drive import KeeperDriveShareFolderCommand
+        legacy_fuid = utils.generate_uid()
+        params = _make_params(folder_cache={legacy_fuid: object()})
+        cmd = KeeperDriveShareFolderCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, folder=[legacy_fuid], user=['user@x.com'],
+                        action='grant', role='viewer')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_grant.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.removal_api.remove_folder_v3')
+    def test_kd_rmdir_rejects_legacy_folder(self, mock_rmdir):
+        from keepercommander.commands.keeper_drive import KeeperDriveRemoveFolderCommand
+        legacy_fuid = utils.generate_uid()
+        params = _make_params(folder_cache={legacy_fuid: object()})
+        cmd = KeeperDriveRemoveFolderCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, folders=[legacy_fuid], operation='folder-trash')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_rmdir.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.record_api.share_record_v3')
+    def test_kd_share_record_rejects_legacy_record(self, mock_share):
+        from keepercommander.commands.keeper_drive import KeeperDriveShareRecordCommand
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(record_cache={legacy_ruid: {'revision': 1}})
+        cmd = KeeperDriveShareRecordCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, record=legacy_ruid, email=['x@y.com'],
+                        action='grant', role='viewer')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_share.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.record_api.transfer_record_ownership_v3')
+    def test_kd_transfer_record_rejects_legacy_record(self, mock_transfer):
+        from keepercommander.commands.keeper_drive import KeeperDriveTransferRecordCommand
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(record_cache={legacy_ruid: {'revision': 1}})
+        cmd = KeeperDriveTransferRecordCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, record_uids=[legacy_ruid],
+                        new_owner_email='owner@example.com')
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_transfer.assert_not_called()
+
+    @patch('keepercommander.keeper_drive.record_api.get_record_details_v3')
+    def test_kd_record_details_rejects_legacy_record(self, mock_details):
+        from keepercommander.commands.keeper_drive import KeeperDriveGetRecordDetailsCommand
+        legacy_ruid = utils.generate_uid()
+        params = _make_params(record_cache={legacy_ruid: {'revision': 1}})
+        cmd = KeeperDriveGetRecordDetailsCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, record_uids=[legacy_ruid])
+        self.assertIn('legacy', str(ctx.exception).lower())
+        mock_details.assert_not_called()
+
+
+class TestLegacyToKeeperDriveGuards(TestCase):
+    """Legacy mv/ln must refuse to bridge legacy records into KD folders
+    (and vice-versa) because their permission structures differ."""
+
+    def setUp(self):
+        mock.patch('keepercommander.api.communicate_rest').start()
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+    def _make_legacy_params(self, kd_folder_uid, legacy_record_uid):
+        from keepercommander.subfolder import (
+            UserFolderNode, KeeperDriveFolderNode, RootFolderNode,
+        )
+        params = _make_params()
+        legacy_folder_uid = utils.generate_uid()
+        params.root_folder = RootFolderNode()
+        params.current_folder = ''
+
+        legacy_folder = UserFolderNode()
+        legacy_folder.uid = legacy_folder_uid
+        legacy_folder.name = 'Legacy'
+
+        kd_folder = KeeperDriveFolderNode()
+        kd_folder.uid = kd_folder_uid
+        kd_folder.name = 'Drive'
+
+        params.folder_cache = {
+            legacy_folder_uid: legacy_folder,
+            kd_folder_uid: kd_folder,
+        }
+        params.record_cache = {legacy_record_uid: {'data_unencrypted': b'{"title":"x"}'}}
+        params.subfolder_record_cache = {legacy_folder_uid: {legacy_record_uid}}
+        params.keeper_drive_folders = {kd_folder_uid: {'name': 'Drive'}}
+        params.keeper_drive_records = {}
+        return params, legacy_folder_uid
+
+    @patch('keepercommander.api.communicate')
+    def test_legacy_ln_rejects_record_into_kd_folder(self, mock_communicate):
+        from keepercommander.commands.folder import FolderLinkCommand
+        kd_fuid, _ = _make_folder()
+        legacy_ruid = utils.generate_uid()
+        params, _ = self._make_legacy_params(kd_fuid, legacy_ruid)
+        cmd = FolderLinkCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, src=legacy_ruid, dst=kd_fuid)
+        self.assertIn('keeperdrive', str(ctx.exception).lower())
+        mock_communicate.assert_not_called()
+
+    @patch('keepercommander.api.communicate')
+    def test_legacy_mv_rejects_kd_record_into_legacy_folder(self, mock_communicate):
+        """Symmetric guard: KD record cannot be moved into a legacy folder."""
+        from keepercommander.commands.folder import FolderMoveCommand
+        kd_fuid, _ = _make_folder()
+        kd_ruid = utils.generate_uid()
+        params, legacy_fuid = self._make_legacy_params(kd_fuid, kd_ruid)
+        params.keeper_drive_records[kd_ruid] = {'revision': 1}
+        # Place the KD record only in the KD folder (not in the legacy folder).
+        params.subfolder_record_cache = {kd_fuid: {kd_ruid}}
+        cmd = FolderMoveCommand()
+        with self.assertRaises(CommandError):
+            cmd.execute(params, src=kd_ruid, dst=legacy_fuid)
+        mock_communicate.assert_not_called()
+
+
 class TestKeeperDriveSharingCommands(TestCase):
 
     def setUp(self):
@@ -327,9 +580,11 @@ class TestKeeperDriveDisplayCommands(TestCase):
     def test_get_record_details(self, mock_details):
         from keepercommander.commands.keeper_drive import KeeperDriveGetRecordDetailsCommand
         mock_details.return_value = {'data': [], 'errors': []}
+        ruid, robj = _make_record()
         cmd = KeeperDriveGetRecordDetailsCommand()
         with mock.patch('builtins.print'):
-            cmd.execute(_make_params(), record_uids=[utils.generate_uid()])
+            cmd.execute(_make_params(keeper_drive_records={ruid: robj}),
+                        record_uids=[ruid])
 
     @patch('keepercommander.keeper_drive.record_api.get_record_accesses_v3')
     def test_get_record_access(self, mock_accesses):

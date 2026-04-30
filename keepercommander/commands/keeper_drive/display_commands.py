@@ -26,6 +26,7 @@ from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
     get_access_role_label, format_role_display,
     format_timestamp, load_record_metadata, command_error_handler,
+    ensure_keeper_drive_record,
 )
 from .parsers import (
     keeper_drive_get_record_details_parser,
@@ -54,6 +55,8 @@ class KeeperDriveGetRecordDetailsCommand(Command):
         record_uids = []
         for ident in identifiers:
             uid = _kd.resolve_kd_record_uid(params, ident) or ident
+            ensure_keeper_drive_record(params, uid, 'kd-record-details',
+                                       identifier=ident)
             record_uids.append(uid)
 
         with command_error_handler('kd-record-details'):
