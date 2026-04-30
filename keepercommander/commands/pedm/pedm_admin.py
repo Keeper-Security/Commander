@@ -1440,10 +1440,10 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
                     f'At least one machine, application, and user collection required to save this policy type. '
                     f'Missing: {", ".join(missing)}. Use --user-filter, --machine-filter, --app-filter.')
 
-        for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
-            f = policy_data.get(filter_name)
-            if f is None:
-                policy_data[filter_name] = ['*']
+        for filter_name, default in (('UserCheck', ['*']), ('MachineCheck', ['*']), ('ApplicationCheck', ['*']),
+                                      ('DateCheck', []), ('TimeCheck', []), ('DayCheck', [])):
+            if policy_data.get(filter_name) is None:
+                policy_data[filter_name] = default
 
         arg_status = kwargs.get('status')
         if isinstance(arg_status, str):
