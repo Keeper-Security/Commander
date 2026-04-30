@@ -182,10 +182,25 @@ class PAMProjectExportCommand(Command):
         return defaults
 
     def _build_resources_and_users(self, params, resource_uids):
-        """Walk resource UIDs and collect resources + deduplicated top-level users."""
+        """Walk resource UIDs and collect resources + deduplicated top-level users.
+
+        Two linking strategies are supported:
+
+        1. Standard: ``pam_settings.connection.userRecords[]`` and
+           top-level ``adminRef`` / ``adminCredentialRef`` carry user UIDs.
+        2. Title-based (e.g. KCM imports — see PR #1942): the resource
+           record references users by **title** in
+           ``pam_settings.connection.{launch,administrative}_credentials``
+           (e.g. ``"KCM User - prod-db"``) without a userRecords list. We
+           resolve those by scanning the project's vault for pamUser /
+           login records with matching titles.
+        """
         resources_list = []
         top_level_users = []
         seen_user_uids = set()
+
+        # Pre-build a lookup of (record_type, title.lower()) -> uid for fallback resolution
+        title_to_uid = self._build_user_title_index(params)
 
         for res_uid in resource_uids:
             res_record = vault.KeeperRecord.load(params, res_uid)
@@ -212,7 +227,7 @@ class PAMProjectExportCommand(Command):
 
             # Gather user UIDs referenced by this resource
             resource_user_entries = []
-            user_uids_for_resource = self._extract_user_uids(pam_settings_dict)
+            user_uids_for_resource = self._extract_user_uids(pam_settings_dict, title_to_uid)
 
             for usr_uid in user_uids_for_resource:
                 user_obj = self._load_user_obj(params, usr_uid)
@@ -233,14 +248,51 @@ class PAMProjectExportCommand(Command):
 
         return resources_list, top_level_users
 
-    def _extract_user_uids(self, pam_settings_dict):
-        """Return all user record UIDs referenced inside a pamSettings dict."""
+    def _build_user_title_index(self, params):
+        """Index every pamUser / login record by lowercased title for title-based linking."""
+        index = {}
+        record_cache = getattr(params, "record_cache", {}) or {}
+        for uid in record_cache:
+            try:
+                rec = vault.KeeperRecord.load(params, uid)
+            except Exception:
+                continue
+            if not rec or not isinstance(rec, vault.TypedRecord):
+                continue
+            if rec.record_type not in ("pamUser", "login"):
+                continue
+            if rec.title:
+                index.setdefault(rec.title.strip().lower(), uid)
+        return index
+
+    def _extract_user_uids(self, pam_settings_dict, title_to_uid=None):
+        """Return all user record UIDs referenced inside a pamSettings dict.
+
+        Falls back to title-based resolution against ``title_to_uid`` when
+        the record stores a title (e.g. KCM-imported records, PR #1942)
+        instead of a UID in launch_credentials / administrative_credentials.
+        """
         user_uids = []
+        title_to_uid = title_to_uid or {}
         conn = pam_settings_dict.get("connection") or {}
         if isinstance(conn, dict):
             for uid in (conn.get("userRecords") or []):
                 if uid and uid not in user_uids:
                     user_uids.append(uid)
+            # KCM-style title references (PR #1942 schema)
+            for key in ("launch_credentials", "administrative_credentials"):
+                ref = conn.get(key)
+                if not isinstance(ref, str) or not ref:
+                    continue
+                # If it already looks like a UID, accept as-is
+                if len(ref) == 22 and "/" not in ref and " " not in ref:
+                    if ref not in user_uids:
+                        user_uids.append(ref)
+                    continue
+                # Otherwise treat as a title and resolve against the index
+                resolved = title_to_uid.get(ref.strip().lower())
+                if resolved and resolved not in user_uids:
+                    user_uids.append(resolved)
         # Some record types also reference admin via adminRef / adminCredentialRef at top level
         for key in ("adminRef", "adminCredentialRef"):
             uid = pam_settings_dict.get(key)
