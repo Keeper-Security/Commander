@@ -75,11 +75,6 @@ keeper_drive_list_parser.add_argument(
 keeper_drive_list_parser.add_argument(
     '--records', action='store_true', help='Show only records')
 keeper_drive_list_parser.add_argument(
-    '--verbose', '-v', action='store_true', help='Show detailed information')
-keeper_drive_list_parser.add_argument(
-    '--permissions', '-p', action='store_true',
-    help='Show permissions and access information for records and folders')
-keeper_drive_list_parser.add_argument(
     '--format', dest='format', choices=['table', 'csv', 'json'], default='table',
     help='Output format (default: table)')
 keeper_drive_list_parser.add_argument(
@@ -325,8 +320,9 @@ kd_rm_parser = _make_parser(
 kd_rm_parser.add_argument(
     'records', nargs='+', metavar='RECORD',
     help='Record UID(s) or title(s) to remove (max 500 per invocation)')
+
 kd_rm_parser.add_argument(
-    '--folder', '-f', dest='folder_uid', metavar='FOLDER',
+    '--folder', dest='folder_uid', metavar='FOLDER',
     help='Folder UID or name that provides context for the operation')
 kd_rm_parser.add_argument(
     '--operation', '-o', dest='operation',
@@ -334,7 +330,7 @@ kd_rm_parser.add_argument(
     help='Removal operation (default: owner-trash)')
 _kd_rm_confirm = kd_rm_parser.add_mutually_exclusive_group()
 _kd_rm_confirm.add_argument(
-    '--force', action='store_true',
+    '--force', '-f', action='store_true',
     help='Skip the confirmation prompt and execute immediately after preview.')
 _kd_rm_confirm.add_argument(
     '--dry-run', dest='dry_run', action='store_true',

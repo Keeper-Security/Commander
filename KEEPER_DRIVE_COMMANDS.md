@@ -122,8 +122,6 @@ kd-rndir abc123 --name "Finance" -q
 
 `--records` Show only records
 
-`-v`, `--verbose` Show detailed information including parent UID and folder location
-
 `--format <{table, csv, json}>` Choose the format of the output (default: `table`)
 
 `--output <FILE>` Write output to file (ignored for `table` format)
@@ -132,7 +130,6 @@ kd-rndir abc123 --name "Finance" -q
 
 ```
 kd-list
-kd-list --folders --verbose
 kd-list --records --format json --output records.json
 kd-list --format csv --output export.csv
 ```
@@ -173,8 +170,8 @@ kd-rmdir abc123 def456 --operation delete-permanent --force
 kd-rmdir "Archive" --quiet
 ```
 
-1. Move a folder to trash (recoverable) — prompts for confirmation after preview
-2. Preview the deletion impact without committing any changes
+1. k
+2. Preview the deletion impkdact without committing any changes
 3. Permanently delete two folders with no confirmation prompt
 4. Delete a folder with minimal preview output
 
@@ -675,7 +672,7 @@ kd-record-add -t "Client Portal" -rt login --folder "Client Projects" \
 kd-share-folder "Client Projects" -e colleague@company.com -r content-manager
 
 # 4. Verify the listing
-kd-list --folders --verbose
+kd-list --folders
 ```
 
 ### Share a record with time-limited access
@@ -743,9 +740,6 @@ Both `--expire-at` and `--expire-in` are accepted by `kd-share-folder` and `kd-s
 
 
 ---
-
-
-
 
 ---
 

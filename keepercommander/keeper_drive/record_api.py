@@ -327,6 +327,7 @@ def get_record_accesses_v3(params, record_uids):
             'access_type': folder_pb2.AccessType.Name(d.accessType) if hasattr(d, 'accessType') else 'UNKNOWN',
             'access_type_uid': utils.base64_url_encode(d.accessTypeUid),
             'owner': getattr(d, 'owner', False),
+            'access_role_type': int(getattr(d, 'accessRoleType', 0) or 0),
         }
         for flag in ('can_view_title', 'can_edit', 'can_view', 'can_list_access',
                      'can_update_access', 'can_delete', 'can_change_ownership',

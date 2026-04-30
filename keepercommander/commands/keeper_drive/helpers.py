@@ -214,6 +214,45 @@ def find_folder_location(params, record_uid):
     return ''
 
 
+def collect_records_in_folder(params, folder_uid, recursive=False):
+    """Walk Keeper Drive membership tables to collect record UIDs in *folder_uid*.
+
+    KeeperDrive does not store ``record_uids`` / ``children`` on folder objects;
+    record membership lives in ``params.keeper_drive_folder_records`` and the
+    folder hierarchy in ``params.keeper_drive_folders[*]['parent_uid']``. This
+    helper walks both, optionally recursing into sub-folders.
+
+    Returns an ordered list of unique record UIDs (preserves first-seen order).
+    """
+    kd_folders = getattr(params, 'keeper_drive_folders', {})
+    kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
+
+    seen = set()
+    record_uids = []
+
+    def add_records(fuid):
+        for rec_uid in kd_folder_records.get(fuid, set()) or ():
+            if rec_uid not in seen:
+                seen.add(rec_uid)
+                record_uids.append(rec_uid)
+
+    visited = set()
+
+    def walk(fuid):
+        if fuid in visited:
+            return
+        visited.add(fuid)
+        add_records(fuid)
+        if not recursive:
+            return
+        for child_uid, child_obj in kd_folders.items():
+            if child_obj.get('parent_uid') == fuid and child_uid not in visited:
+                walk(child_uid)
+
+    walk(folder_uid)
+    return record_uids
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Expiration parsing
 # ═══════════════════════════════════════════════════════════════════════════
@@ -302,17 +341,54 @@ def role_label(access_role_type):
     return ''
 
 
+# Map backend AccessRoleType enum names to KeeperDrive display labels.
+# Source of truth: folder_pb2.AccessRoleType (NAVIGATOR=0 ... MANAGER=6).
+_ACCESS_ROLE_DISPLAY_LABELS = {
+    'NAVIGATOR':             'contributor',
+    'REQUESTOR':             'contributor',
+    'VIEWER':                'viewer',
+    'SHARED_MANAGER':        'shared-manager',
+    'CONTENT_MANAGER':       'content-manager',
+    'CONTENT_SHARE_MANAGER': 'content-share-manager',
+    'MANAGER':               'full-manager',
+    'UNRESOLVED':            'unresolved',
+}
+
+
+def format_role_display(role):
+    """Convert an ``AccessRoleType`` to a KeeperDrive display role label.
+
+    Accepts either the proto enum name (``'SHARED_MANAGER'``) or its integer
+    value, and returns the canonical hyphenated lowercase label used across
+    KeeperDrive (``'shared-manager'``, ``'full-manager'``, ``'viewer'`` …).
+    Falls back to a best-effort lowercase form when the role is unknown.
+    """
+    if role is None or role == '':
+        return ''
+    if isinstance(role, int):
+        from ...proto import folder_pb2
+        try:
+            role = folder_pb2.AccessRoleType.Name(role)
+        except Exception:
+            return str(role)
+    if isinstance(role, str):
+        key = role.upper().replace('-', '_')
+        return _ACCESS_ROLE_DISPLAY_LABELS.get(key, role.lower().replace('_', '-'))
+    return str(role)
+
+
 def get_access_role_label(access):
-    """Get the role label for an access entry — stored role type or inferred."""
+    """Get the KeeperDrive role label for an access entry.
+
+    Prefers the stored ``access_role_type`` (proto enum int) when available;
+    otherwise falls back to inferring the role from permission flags. The
+    returned label uses the canonical hyphenated lowercase KeeperDrive form
+    (e.g. ``'full-manager'``, ``'shared-manager'``, ``'viewer'``).
+    """
     role_int = access.get('access_role_type')
     if role_int is not None:
-        raw = role_label(role_int)
-        # Map backend roles 0 (NAVIGATOR) and 1 (REQUESTOR) to display label CONTRIBUTOR
-        if raw in ('NAVIGATOR', 'REQUESTOR', '0', '1'):
-            return 'CONTRIBUTOR'
-        return raw
-    inferred = infer_role(access).upper().replace('-', '_')
-    return inferred
+        return format_role_display(role_int)
+    return infer_role(access)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -366,28 +442,87 @@ def check_record_delete_permission(params, record_uid, cmd_name):
                              'You do not have permission to delete this record.', cmd_name)
 
 
+def _current_user_account_uid(params):
+    """Return the base64url-encoded account UID for the current session, or ''."""
+    from ... import utils
+    raw = getattr(params, 'account_uid_bytes', None)
+    if not raw:
+        return ''
+    try:
+        return utils.base64_url_encode(raw)
+    except Exception:
+        return ''
+
+
+def _is_current_user_access(access, params, current_account_uid):
+    """Return True if *access* belongs to the currently logged-in user.
+
+    Matches by ``username`` first (the populated case after a successful
+    user-cache resolution) then falls back to ``access_type_uid`` /
+    ``access_uid`` against the current account UID for sync windows where
+    the username has not yet been filled in from ``params.user_cache``.
+    """
+    username = access.get('username')
+    if username and username == params.user:
+        return True
+    if not current_account_uid:
+        return False
+    accessor_uid = access.get('access_type_uid') or access.get('access_uid')
+    return bool(accessor_uid) and accessor_uid == current_account_uid
+
+
 def _check_folder_permission(params, folder_uid, permission_key, error_message, cmd_name):
+    """Enforce a folder permission for the current user.
+
+    Behaviour:
+      * If the cache has no access entries for *folder_uid* at all, skip the
+        check (the server is the source of truth and will reject if needed).
+        This avoids false-positives during a partial / first sync.
+      * If access entries exist but **none** matches the current user, deny
+        (treat the user as having no row, not as having implicit access).
+      * If the matching entry is OWNER, allow.
+      * Otherwise, allow only when ``permissions[permission_key]`` is truthy.
+    """
     from ...proto import folder_pb2
     accesses = getattr(params, 'keeper_drive_folder_accesses', {}).get(folder_uid, [])
+    if not accesses:
+        return
+
+    current_account_uid = _current_user_account_uid(params)
     for fa in accesses:
-        if fa.get('username') == params.user:
-            if fa.get('access_type') == int(folder_pb2.AT_OWNER):
-                return
-            perms = fa.get('permissions', {})
-            if perms.get(permission_key):
-                return
-            raise CommandError(cmd_name, error_message)
+        if not _is_current_user_access(fa, params, current_account_uid):
+            continue
+        if fa.get('access_type') == int(folder_pb2.AT_OWNER):
+            return
+        perms = fa.get('permissions', {}) or {}
+        if perms.get(permission_key):
+            return
+        raise CommandError(cmd_name, error_message)
+
+    # Access list is non-empty but the current user is not in it.
+    raise CommandError(cmd_name, error_message)
 
 
 def _check_record_permission(params, record_uid, permission_key, error_message, cmd_name):
+    """Enforce a record permission for the current user.
+
+    Same fail-closed semantics as :func:`_check_folder_permission`.
+    """
     accesses = getattr(params, 'keeper_drive_record_accesses', {}).get(record_uid, [])
+    if not accesses:
+        return
+
+    current_account_uid = _current_user_account_uid(params)
     for ra in accesses:
-        if ra.get('username') == params.user:
-            if ra.get('owner'):
-                return
-            if ra.get(permission_key):
-                return
-            raise CommandError(cmd_name, error_message)
+        if not _is_current_user_access(ra, params, current_account_uid):
+            continue
+        if ra.get('owner'):
+            return
+        if ra.get(permission_key):
+            return
+        raise CommandError(cmd_name, error_message)
+
+    raise CommandError(cmd_name, error_message)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

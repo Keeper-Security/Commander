@@ -423,17 +423,22 @@ class SuperShellApp(App):
 
     def _load_vault_data(self):
         """Load vault data from params"""
-        # Build record to folder mapping using subfolder_record_cache
-        # Records in root folder have folder_uid = '' (empty string)
+        # Build record to folder mapping using subfolder_record_cache.
+        # Records in root folder have folder_uid = '' (empty string).
+        real_folder_uids = set(getattr(self.params, 'folder_cache', {}).keys())
+        real_folder_uids.update(getattr(self.params, 'keeper_drive_folders', {}).keys())
+
         self.record_to_folder = {}  # Maps record_uid -> folder_uid
-        self.records_in_subfolders = set()  # Track records that are in actual subfolders (not root)
+        self.records_in_subfolders = set()  # Records that are in actual subfolders (not root)
         if hasattr(self.params, 'subfolder_record_cache'):
             for folder_uid, record_uids in self.params.subfolder_record_cache.items():
+                is_real_subfolder = bool(folder_uid) and folder_uid in real_folder_uids
                 for record_uid in record_uids:
-                    self.record_to_folder[record_uid] = folder_uid
-                    # Track records in non-root folders
-                    if folder_uid and folder_uid != '':
+                    if is_real_subfolder:
+                        self.record_to_folder[record_uid] = folder_uid
                         self.records_in_subfolders.add(record_uid)
+                    else:
+                        self.record_to_folder.setdefault(record_uid, '')
 
         # Track file attachments and their parent records
         self.file_attachment_to_parent = {}  # Maps attachment_uid -> parent_record_uid
@@ -984,29 +989,53 @@ class SuperShellApp(App):
         if ft in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
             return "📦"
         if ft == BaseFolderNode.KeeperDriveFolderType:
-            accesses = getattr(self.params, 'keeper_drive_folder_accesses', {}).get(folder_node.uid)
-            if accesses:
-                try:
-                    from ...proto import folder_pb2
-                    at_user = int(folder_pb2.AT_USER)
-                    at_team = int(folder_pb2.AT_TEAM)
-                    # A Drive folder is "Shared" when at least one directly-granted
-                    # access entry exists for a user or team (AT_USER / AT_TEAM).
-                    # AT_OWNER entries are excluded so a folder only the owner can
-                    # see stays NonShared. Inherited entries are excluded so nested
-                    # sub-folders that aren't independently shared stay NonShared.
-                    # This mirrors the logic used by `keeper-drive list` and is
-                    # independent of the user_cache (so team-only shares and shares
-                    # with users not yet resolved in user_cache are handled too).
-                    direct_share = any(
-                        int(a.get('access_type', 0)) in (at_user, at_team)
-                        and not a.get('inherited', False)
-                        for a in accesses
-                    )
-                    if direct_share:
-                        return "👥"
-                except Exception:
-                    pass
+            try:
+                from ...proto import folder_pb2
+                from ..keeper_drive.helpers import (
+                    _current_user_account_uid,
+                    _is_current_user_access,
+                )
+
+                folder_obj = (getattr(self.params, 'keeper_drive_folders', {}) or {}).get(
+                    folder_node.uid, {}
+                ) or {}
+                owner_username = folder_obj.get('owner_username') or ''
+                owner_account_uid = folder_obj.get('owner_account_uid') or ''
+                current_username = getattr(self.params, 'user', '') or ''
+                current_account_uid = _current_user_account_uid(self.params)
+
+              
+                current_user_is_owner = False
+                owner_known = bool(owner_username) or bool(owner_account_uid)
+                if owner_username and current_username and \
+                        owner_username.lower() == current_username.lower():
+                    current_user_is_owner = True
+                elif owner_account_uid and current_account_uid and \
+                        owner_account_uid == current_account_uid:
+                    current_user_is_owner = True
+
+                if owner_known and not current_user_is_owner:
+                    return "👥"
+
+                sharing_state = (
+                    getattr(self.params, 'keeper_drive_folder_sharing_states', {}) or {}
+                ).get(folder_node.uid)
+                if sharing_state and sharing_state.get('shared'):
+                    return "👥"
+
+                accesses = (getattr(self.params, 'keeper_drive_folder_accesses', {}) or {}).get(
+                    folder_node.uid, []
+                ) or []
+                at_user = int(folder_pb2.AT_USER)
+                at_team = int(folder_pb2.AT_TEAM)
+                for a in accesses:
+                    if int(a.get('access_type', 0) or 0) not in (at_user, at_team):
+                        continue
+                    if _is_current_user_access(a, self.params, current_account_uid):
+                        continue
+                    return "👥"
+            except Exception:
+                pass
             return "📁"
         return "📁"
 

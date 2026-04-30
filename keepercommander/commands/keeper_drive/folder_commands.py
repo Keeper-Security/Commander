@@ -179,7 +179,6 @@ class KeeperDriveListCommand(Command):
 
         show_folders = kwargs.get('folders', False)
         show_records = kwargs.get('records', False)
-        verbose = kwargs.get('verbose', False)
         fmt = kwargs.get('format', 'table')
 
         if not show_folders and not show_records:
@@ -196,16 +195,16 @@ class KeeperDriveListCommand(Command):
             return
 
         combined.sort(key=lambda x: (x[0], (x[2] or '').lower()))
-        if verbose or fmt in ('json', 'csv'):
-            headers = ['Item Type', 'UID', 'Title', 'Type', 'Description', 'Shared', 'Parent/Folder']
+        if fmt in ('json', 'csv'):
+            headers = ['Item Type', 'UID', 'Title', 'Type', 'Description', 'Parent/Folder']
         else:
-            combined = [row[:6] for row in combined]
-            headers = ['Item Type', 'UID', 'Title', 'Type', 'Description', 'Shared']
+            combined = [row[:5] for row in combined]
+            headers = ['Item Type', 'UID', 'Title', 'Type', 'Description']
         if fmt != 'json':
             headers = [base.field_to_title(x) for x in headers]
         return base.dump_report_data(
             combined, headers, fmt=fmt, filename=kwargs.get('output'),
-            row_number=True, column_width=None if verbose else 40,
+            row_number=True, column_width=40,
         )
 
     @staticmethod
@@ -215,17 +214,7 @@ class KeeperDriveListCommand(Command):
         for folder_uid, fobj in kd_folders.items():
             title = fobj.get('name', 'Unnamed')
             parent_uid = normalize_parent_uid(fobj.get('parent_uid', ''))
-            shared = 'No'
-            accesses = getattr(params, 'keeper_drive_folder_accesses', {}).get(folder_uid)
-            if accesses:
-                from keepercommander.proto import folder_pb2
-                at_user = int(folder_pb2.AT_USER)
-                at_team = int(folder_pb2.AT_TEAM)
-                non_owner = [a for a in accesses
-                             if int(a.get('access_type', 0)) in (at_user, at_team)]
-                if non_owner:
-                    shared = f"Yes ({len(non_owner)})"
-            rows.append(['Folder', folder_uid, title, '', '', shared, parent_uid])
+            rows.append(['Folder', folder_uid, title, '', '', parent_uid])
         return rows
 
     @staticmethod
@@ -234,8 +223,6 @@ class KeeperDriveListCommand(Command):
         kd_record_data = getattr(params, 'keeper_drive_record_data', {})
         kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
         kd_folders = getattr(params, 'keeper_drive_folders', {})
-        sharing_states = getattr(params, 'keeper_drive_record_sharing_states', {})
-        record_accesses_map = getattr(params, 'keeper_drive_record_accesses', {})
 
         rows = []
         for record_uid in kd_records:
@@ -251,13 +238,6 @@ class KeeperDriveListCommand(Command):
                             description = str(fv[0])
                             break
 
-            shared = 'No'
-            ss = sharing_states.get(record_uid)
-            if ss and ss.get('is_directly_shared'):
-                non_owner = [a for a in record_accesses_map.get(record_uid, [])
-                             if not a.get('owner')]
-                shared = f"Yes ({len(non_owner)})" if non_owner else "Yes"
-
             folder_location = ''
             for fuid, rec_set in kd_folder_records.items():
                 if record_uid in rec_set:
@@ -265,7 +245,7 @@ class KeeperDriveListCommand(Command):
                                        else kd_folders.get(fuid, {}).get('name', fuid))
                     break
             rows.append(['Record', record_uid, title, rec_type, description,
-                         shared, folder_location or 'root'])
+                         folder_location or 'root'])
         return rows
 
     @staticmethod

@@ -29,6 +29,8 @@ def _ensure_keeper_drive_attrs(params):
         params.keeper_drive_record_accesses = {}
     if not hasattr(params, 'keeper_drive_folder_records'):
         params.keeper_drive_folder_records = {}
+    if not hasattr(params, 'keeper_drive_folder_sharing_states'):
+        params.keeper_drive_folder_sharing_states = {}
     if not hasattr(params, 'keeper_drive_record_sharing_states'):
         params.keeper_drive_record_sharing_states = {}
     if not hasattr(params, 'keeper_drive_record_links'):
@@ -53,6 +55,7 @@ def create_accumulator():
         'removed_folders': [],
         'removed_folder_records': [],
         'users': [],
+        'folder_sharing_states': [],
         'record_sharing_states': [],
         'record_links': [],
         'removed_record_links': [],
@@ -71,6 +74,7 @@ def clear_caches(params):
     params.keeper_drive_record_keys.clear()
     params.keeper_drive_record_accesses.clear()
     params.keeper_drive_folder_records.clear()
+    params.keeper_drive_folder_sharing_states.clear()
     params.keeper_drive_record_sharing_states.clear()
     params.keeper_drive_record_links.clear()
     params.keeper_drive_raw_dag_data.clear()
@@ -120,6 +124,9 @@ def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_
     users_attr = getattr(kd_data, 'users', None)
     if users_attr:
         acc['users'].extend(users_attr)
+    fss_attr = getattr(kd_data, 'folderSharingState', None)
+    if fss_attr:
+        acc['folder_sharing_states'].extend(fss_attr)
     rss_attr = getattr(kd_data, 'recordSharingStates', None)
     if rss_attr:
         acc['record_sharing_states'].extend(rss_attr)
@@ -156,50 +163,72 @@ def process(params, acc):
     if not has_data(acc):
         return
     _ensure_keeper_drive_attrs(params)
-    
-    _process_keeper_drive_sync(
-        params,
-        acc['folders'],
-        acc['folder_keys'],
-        acc['folder_accesses'],
-        acc['revoked_folder_accesses'],
-        acc['denied_folder_accesses'],
-        acc['records'],
-        acc['record_data'],
-        acc['record_keys'],
-        acc['record_accesses'],
-        acc['revoked_record_accesses'],
-        acc['folder_records'],
-        acc['removed_folders'],
-        acc['removed_folder_records'],
-        acc['users'],
-        acc['record_sharing_states'],
-        acc['record_links'],
-        acc['removed_record_links'],
-        acc['raw_dag_data'],
-    )
+
+    _process_keeper_drive_sync(params, acc)
 
 
-def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, revoked_folder_accesses,
-                                denied_folder_accesses,
-                                records, record_data_list, record_keys, record_accesses, revoked_record_accesses,
-                                folder_records, removed_folders, removed_folder_records, users,
-                                record_sharing_states, record_links, removed_record_links, raw_dag_data):
-    """Process Keeper Drive atomic sync objects and store in caches."""
+def _process_keeper_drive_sync(params, acc):
+    """Process Keeper Drive atomic sync objects and store in caches.
+    """
+    folders = acc.get('folders') or []
+    folder_keys = acc.get('folder_keys') or []
+    folder_accesses = acc.get('folder_accesses') or []
+    revoked_folder_accesses = acc.get('revoked_folder_accesses') or []
+    denied_folder_accesses = acc.get('denied_folder_accesses') or []
+    records = acc.get('records') or []
+    record_data_list = acc.get('record_data') or []
+    record_keys = acc.get('record_keys') or []
+    record_accesses = acc.get('record_accesses') or []
+    revoked_record_accesses = acc.get('revoked_record_accesses') or []
+    folder_records = acc.get('folder_records') or []
+    removed_folders = acc.get('removed_folders') or []
+    removed_folder_records = acc.get('removed_folder_records') or []
+    users = acc.get('users') or []
+    folder_sharing_states = acc.get('folder_sharing_states') or []
+    record_sharing_states = acc.get('record_sharing_states') or []
+    record_links = acc.get('record_links') or []
+    removed_record_links = acc.get('removed_record_links') or []
+    raw_dag_data = acc.get('raw_dag_data') or []
 
-    record_sharing_states = record_sharing_states or []
-    record_links = record_links or []
-    removed_record_links = removed_record_links or []
-    raw_dag_data = raw_dag_data or []
-    denied_folder_accesses = denied_folder_accesses or []
-    removed_folders = removed_folders or []
+    _process_users(params, users)
+    _process_folders(params, folders)
+    _process_folder_keys(params, folder_keys)
+    _process_folder_accesses(params, folder_accesses)
+    _process_revoked_folder_accesses(params, revoked_folder_accesses)
+    _process_denied_folder_accesses(params, denied_folder_accesses)
+    _process_folder_sharing_states(params, folder_sharing_states)
 
-    # Store users in user_cache
+    _process_records(params, records)
+    _process_record_data(params, record_data_list)
+    _process_record_keys(params, record_keys)
+    _process_record_accesses(params, record_accesses)
+    _process_revoked_record_accesses(params, revoked_record_accesses)
+    _process_record_sharing_states(params, record_sharing_states)
+
+    _process_record_links(params, record_links)
+    _process_removed_record_links(params, removed_record_links)
+
+    _process_folder_records(params, folder_records)
+    _process_removed_folder_records(params, removed_folder_records)
+
+    _process_removed_folders(params, removed_folders)
+    _purge_orphaned_records(params)
+    _process_raw_dag_data(params, raw_dag_data)
+
+    _decrypt_keeper_drive_keys(params)
+    _reconstruct_keeper_drive_entities(params)
+
+
+
+def _process_users(params, users):
+    """Populate ``params.user_cache`` from KeeperDrive ``Users`` records."""
     for user in users:
         account_uid = utils.base64_url_encode(user.accountUid)
         params.user_cache[account_uid] = user.username
 
-    # Process folders
+
+def _process_folders(params, folders):
+    """Store base folder objects (encrypted; keys/data decrypted later)."""
     for folder_data in folders:
         folder_uid = utils.base64_url_encode(folder_data.folderUid)
         folder_obj = {
@@ -220,20 +249,23 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             folder_obj['owner_username'] = folder_data.ownerInfo.username
         params.keeper_drive_folders[folder_uid] = folder_obj
 
-    # Process folder keys (group by folder_uid)
+
+def _process_folder_keys(params, folder_keys):
+    """Store encrypted folder keys grouped by folder UID."""
     for fk in folder_keys:
         folder_uid = utils.base64_url_encode(fk.folderUid)
         if folder_uid not in params.keeper_drive_folder_keys:
             params.keeper_drive_folder_keys[folder_uid] = []
-        fk_obj = {
+        params.keeper_drive_folder_keys[folder_uid].append({
             'folder_uid': folder_uid,
             'parent_uid': utils.base64_url_encode(fk.parentUid) if fk.parentUid else None,
             'encrypted_key': fk.folderKey,
             'key_type': fk.encryptedBy,
-        }
-        params.keeper_drive_folder_keys[folder_uid].append(fk_obj)
+        })
 
-    # Process folder accesses (group by folder_uid)
+
+def _process_folder_accesses(params, folder_accesses):
+    """Store folder access entries grouped by folder UID."""
     for fa in folder_accesses:
         folder_uid = utils.base64_url_encode(fa.folderUid)
         if folder_uid not in params.keeper_drive_folder_accesses:
@@ -280,7 +312,29 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             }
         params.keeper_drive_folder_accesses[folder_uid].append(fa_obj)
 
-    # Process revoked folder accesses
+
+def _process_folder_sharing_states(params, folder_sharing_states):
+    """Store the per-folder sharing state from sync-down.
+
+    Each ``FolderSharingState`` carries ``shared`` (bool) and ``count``
+    (number of accessors aside from the current user). This is the only
+    reliable signal in the sync response that tells us whether a folder
+    the current user owns has been shared with someone else, because the
+    ``folderAccesses`` list only contains the current user's own entry.
+    """
+    for fss in folder_sharing_states:
+        try:
+            folder_uid = utils.base64_url_encode(fss.folderUid)
+        except Exception:
+            continue
+        params.keeper_drive_folder_sharing_states[folder_uid] = {
+            'shared': bool(fss.shared),
+            'count': int(fss.count) if fss.count else 0,
+        }
+
+
+def _process_revoked_folder_accesses(params, revoked_folder_accesses):
+    """Drop folder access entries that the server explicitly revoked."""
     for rfa in revoked_folder_accesses:
         folder_uid = utils.base64_url_encode(rfa.folderUid)
         actor_uid = utils.base64_url_encode(rfa.actorUid)
@@ -290,8 +344,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
                 if fa['access_type_uid'] != actor_uid
             ]
 
-    # Process denied folder accesses — remove both the access entry and the cached folder key
-    # so the folder is treated as inaccessible for this actor.
+
+def _process_denied_folder_accesses(params, denied_folder_accesses):
+    """Treat denied folder accesses as inaccessible: clear access + cached key."""
     for dfa in denied_folder_accesses:
         try:
             folder_uid = utils.base64_url_encode(dfa.folderUid)
@@ -309,7 +364,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         except Exception as e:
             logging.debug('Failed to process denied folder access: %s', e)
 
-    # Process records (DriveRecord metadata)
+
+def _process_records(params, records):
+    """Store DriveRecord metadata (no encrypted content)."""
     for record in records:
         record_uid = utils.base64_url_encode(record.recordUid)
         record_obj = {
@@ -325,7 +382,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             record_obj['thumbnail_size'] = record.thumbnailSize
         params.keeper_drive_records[record_uid] = record_obj
 
-    # Process record data (encrypted content)
+
+def _process_record_data(params, record_data_list):
+    """Store record data blobs (decrypted later in ``_decrypt_*``)."""
     for rd in record_data_list:
         record_uid = utils.base64_url_encode(rd.recordUid)
         rd_obj = {
@@ -337,20 +396,23 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             rd_obj['user_username'] = rd.user.username
         params.keeper_drive_record_data[record_uid] = rd_obj
 
-    # Process record keys (group by record_uid)
+
+def _process_record_keys(params, record_keys):
+    """Store standalone encrypted record keys grouped by record UID."""
     for rk in record_keys:
         record_uid = utils.base64_url_encode(rk.record_uid)
         if record_uid not in params.keeper_drive_record_keys:
             params.keeper_drive_record_keys[record_uid] = []
-        rk_obj = {
+        params.keeper_drive_record_keys[record_uid].append({
             'record_uid': record_uid,
             'user_uid': utils.base64_url_encode(rk.user_uid),
             'record_key': rk.record_key,
             'encrypted_key_type': rk.encrypted_key_type,
-        }
-        params.keeper_drive_record_keys[record_uid].append(rk_obj)
+        })
 
-    # Process record accesses (group by record_uid)
+
+def _process_record_accesses(params, record_accesses):
+    """Store record access entries grouped by record UID."""
     for ra in record_accesses:
         record_uid = utils.base64_url_encode(ra.recordUid)
         if record_uid not in params.keeper_drive_record_accesses:
@@ -386,7 +448,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             )
         params.keeper_drive_record_accesses[record_uid].append(ra_obj)
 
-    # Process revoked record accesses
+
+def _process_revoked_record_accesses(params, revoked_record_accesses):
+    """Drop record access entries that the server explicitly revoked."""
     for rra in revoked_record_accesses:
         record_uid = utils.base64_url_encode(rra.recordUid)
         actor_uid = utils.base64_url_encode(rra.actorUid)
@@ -396,7 +460,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
                 if ra['access_uid'] != actor_uid
             ]
 
-    # Process record sharing states
+
+def _process_record_sharing_states(params, record_sharing_states):
+    """Update each record's effective ``shared`` flag from sharing state."""
     for rss in record_sharing_states:
         record_uid = utils.base64_url_encode(rss.recordUid)
         state_obj = {
@@ -410,7 +476,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             record_obj = params.keeper_drive_records[record_uid]
             record_obj['shared'] = record_obj.get('shared', False) or state_obj['is_shared']
 
-    # Process record links (Vault.RecordLink: parentRecordUid, childRecordUid, recordKey, revision)
+
+def _process_record_links(params, record_links):
+    """Store parent/child record link relationships and surface their keys."""
     for rl in record_links:
         child_uid = utils.base64_url_encode(rl.childRecordUid) if rl.childRecordUid else None
         parent_uid = utils.base64_url_encode(rl.parentRecordUid) if rl.parentRecordUid else None
@@ -427,19 +495,22 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         if rl.recordKey not in existing_keys:
             params.keeper_drive_record_links[child_uid].append(link_obj)
 
-        # Record links carry encrypted record keys - add to record_keys for decryption
+        # Record links carry encrypted record keys — feed them into record_keys
+        # so the decrypt pass can pick them up.
         if rl.recordKey:
             if child_uid not in params.keeper_drive_record_keys:
                 params.keeper_drive_record_keys[child_uid] = []
-            rk_obj = {
+            params.keeper_drive_record_keys[child_uid].append({
                 'record_uid': child_uid,
                 'parent_uid': parent_uid,
                 'record_key': rl.recordKey,
                 'encrypted_key_type': folder_pb2.encrypted_by_data_key_gcm,
                 'source': 'record_link',
-            }
-            params.keeper_drive_record_keys[child_uid].append(rk_obj)
+            })
 
+
+def _process_removed_record_links(params, removed_record_links):
+    """Remove link entries that the server marked deleted."""
     for rrl in removed_record_links:
         child_uid = utils.base64_url_encode(rrl.childRecordUid) if rrl.childRecordUid else None
         if not child_uid:
@@ -453,7 +524,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             else:
                 del params.keeper_drive_record_links[child_uid]
 
-    # Process folder records (associations)
+
+def _process_folder_records(params, folder_records):
+    """Store folder ↔ record associations and per-folder record keys."""
     for fr in folder_records:
         folder_uid = utils.base64_url_encode(fr.folderUid)
         record_uid = utils.base64_url_encode(fr.recordMetadata.recordUid)
@@ -461,35 +534,43 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             params.keeper_drive_folder_records[folder_uid] = set()
         params.keeper_drive_folder_records[folder_uid].add(record_uid)
 
-        has_key = hasattr(fr.recordMetadata, 'encryptedRecordKey') and fr.recordMetadata.encryptedRecordKey
+        has_key = (hasattr(fr.recordMetadata, 'encryptedRecordKey')
+                   and fr.recordMetadata.encryptedRecordKey)
+        if not has_key:
+            continue
 
-        if has_key:
-            if record_uid not in params.keeper_drive_record_keys:
-                params.keeper_drive_record_keys[record_uid] = []
-            rk_obj = {
-                'record_uid': record_uid,
-                'folder_uid': folder_uid,
-                'record_key': fr.recordMetadata.encryptedRecordKey,
-                'encrypted_key_type': fr.recordMetadata.encryptedRecordKeyType,
-                # ENCRYPTED_BY_USER_KEY (0) → record key encrypted with user data_key
-                # ENCRYPTED_BY_PARENT_KEY (1) → record key encrypted with the folder key
-                'folder_key_encryption_type': int(fr.folderKeyEncryptionType),
-            }
-            if fr.recordMetadata.HasField('tlaProperties'):
-                rk_obj['tla_properties'] = google.protobuf.json_format.MessageToDict(
-                    fr.recordMetadata.tlaProperties, preserving_proto_field_name=True
-                )
-            params.keeper_drive_record_keys[record_uid].append(rk_obj)
+        if record_uid not in params.keeper_drive_record_keys:
+            params.keeper_drive_record_keys[record_uid] = []
+        rk_obj = {
+            'record_uid': record_uid,
+            'folder_uid': folder_uid,
+            'record_key': fr.recordMetadata.encryptedRecordKey,
+            'encrypted_key_type': fr.recordMetadata.encryptedRecordKeyType,
+            # ENCRYPTED_BY_USER_KEY (0) → record key encrypted with user data_key
+            # ENCRYPTED_BY_PARENT_KEY (1) → record key encrypted with the folder key
+            'folder_key_encryption_type': int(fr.folderKeyEncryptionType),
+        }
+        if fr.recordMetadata.HasField('tlaProperties'):
+            rk_obj['tla_properties'] = google.protobuf.json_format.MessageToDict(
+                fr.recordMetadata.tlaProperties, preserving_proto_field_name=True
+            )
+        params.keeper_drive_record_keys[record_uid].append(rk_obj)
 
-    # Process removed folder records
+
+def _process_removed_folder_records(params, removed_folder_records):
+    """Remove folder ↔ record associations marked as deleted."""
     for rfr in removed_folder_records:
         folder_uid = utils.base64_url_encode(rfr.folder_uid)
         record_uid = utils.base64_url_encode(rfr.record_uid)
         if folder_uid in params.keeper_drive_folder_records:
             params.keeper_drive_folder_records[folder_uid].discard(record_uid)
 
-    # Process removed folders — applied after all adds so that removals in the
-    # same sync batch take precedence over (stale) folder data.
+
+def _process_removed_folders(params, removed_folders):
+    """Drop folders flagged as removed in this sync batch.
+
+    Applied after all folder/record additions so removals always win.
+    """
     for rf in removed_folders:
         folder_uid = utils.base64_url_encode(rf.folder_uid)
         logging.debug('Removing KeeperDrive folder from cache: %s', folder_uid)
@@ -497,12 +578,18 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         params.keeper_drive_folders.pop(folder_uid, None)
         params.keeper_drive_folder_keys.pop(folder_uid, None)
         params.keeper_drive_folder_accesses.pop(folder_uid, None)
+        params.keeper_drive_folder_sharing_states.pop(folder_uid, None)
         params.keeper_drive_folder_records.pop(folder_uid, None)
         params.subfolder_cache.pop(folder_uid, None)
         params.subfolder_record_cache.pop(folder_uid, None)
 
-    # Purge orphaned records — records no longer present in any folder should
-    # not appear in kd-list after a successful removal + sync_down.
+
+def _purge_orphaned_records(params):
+    """Drop records that no longer belong to any folder.
+
+    Without this pass, records removed via folder deletion would still appear
+    in ``kd-list`` after a successful removal + sync_down.
+    """
     all_folder_record_uids = {
         uid
         for rec_set in params.keeper_drive_folder_records.values()
@@ -522,19 +609,20 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         params.record_owner_cache.pop(uid, None)
         logging.debug('Purged orphaned KeeperDrive record from cache: %s', uid)
 
-    if raw_dag_data:
-        for dag_entry in raw_dag_data:
-            try:
-                dag_dict = google.protobuf.json_format.MessageToDict(
-                    dag_entry, preserving_proto_field_name=True
-                )
-            except Exception as e:
-                logging.debug(f"Failed to parse Keeper Drive DAG data: {e}")
-                dag_dict = {'error': str(e)}
-            params.keeper_drive_raw_dag_data.append(dag_dict)
 
-    _decrypt_keeper_drive_keys(params)
-    _reconstruct_keeper_drive_entities(params)
+def _process_raw_dag_data(params, raw_dag_data):
+    """Convert raw DAG protobuf entries to dicts and append to the cache."""
+    if not raw_dag_data:
+        return
+    for dag_entry in raw_dag_data:
+        try:
+            dag_dict = google.protobuf.json_format.MessageToDict(
+                dag_entry, preserving_proto_field_name=True
+            )
+        except Exception as e:
+            logging.debug(f"Failed to parse Keeper Drive DAG data: {e}")
+            dag_dict = {'error': str(e)}
+        params.keeper_drive_raw_dag_data.append(dag_dict)
 
 
 def _try_decrypt_symmetric(enc_key, sym_key):

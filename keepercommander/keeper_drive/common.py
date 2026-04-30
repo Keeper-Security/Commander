@@ -326,8 +326,9 @@ def get_user_public_key(params, recipient_email, require_uid=True):
                         if su.username.lower() == recipient_email.lower():
                             recipient_uid_bytes = (su.userAccountUid if isinstance(su.userAccountUid, bytes)
                                                    else utils.base64_url_decode(su.userAccountUid))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug('Failed to resolve user UID for %s: %s',
+                         recipient_email, e)
 
     return recipient_public_key, use_ecc, recipient_uid_bytes, needs_invite
 
@@ -361,8 +362,9 @@ def _fetch_public_key_from_api(params, recipient_email, _load_pk,
                             APIRequest_pb2, GetShareObjectsRequest,
                             GetShareObjectsResponse, PublicKeys)
                 break
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug('Failed to get the user for %s: %s',
+                     recipient_email, e)
 
     return recipient_public_key, use_ecc, recipient_uid_bytes, needs_invite
 

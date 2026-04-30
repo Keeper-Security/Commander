@@ -350,6 +350,13 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
+                if f.type == BaseFolderNode.KeeperDriveFolderType:
+                    try:
+                        from .keeper_drive.display_commands import KeeperDriveGetCommand
+                        KeeperDriveGetCommand._print_folder_permissions(
+                            params, f.uid, kwargs.get('verbose', False))
+                    except Exception as e:
+                        logging.debug('KeeperDrive permission display skipped: %s', e)
             direct_match = True
             return
 
@@ -453,6 +460,32 @@ class RecordGetUidCommand(Command):
                             ro['user_permissions'] = rec['shares']['user_permissions'].copy()
                         if 'shared_folder_permissions' in rec['shares']:
                             ro['shared_folder_permissions'] = rec['shares']['shared_folder_permissions'].copy()
+
+                    # For KeeperDrive records, replace the user_permissions
+                    # block with role-aware entries fetched from the KD
+                    # access graph (matches ``kd-get --format json``).
+                    if (hasattr(params, 'keeper_drive_records')
+                            and uid in getattr(params, 'keeper_drive_records', {})):
+                        try:
+                            from .. import keeper_drive as _kd
+                            from .keeper_drive.helpers import get_access_role_label
+                            kd_accesses = (_kd.get_record_accesses_v3(params, [uid])
+                                           .get('record_accesses', []))
+                            if kd_accesses:
+                                kd_perms = []
+                                for a in kd_accesses:
+                                    accessor = a.get('accessor_name') or a.get('access_type_uid', '')
+                                    kd_perms.append({
+                                        'username':  accessor,
+                                        'owner':     a.get('owner', False),
+                                        'shareable': a.get('can_approve_access', False) or a.get('can_update_access', False),
+                                        'editable':  a.get('can_edit', False),
+                                        'role':      get_access_role_label(a),
+                                    })
+                                ro['user_permissions'] = kd_perms
+                        except Exception as e:
+                            logging.debug('Could not enrich KD user_permissions for %s: %s', uid, e)
+
                     if admins:
                         ro['share_admins'] = admins
 
@@ -533,8 +566,52 @@ class RecordGetUidCommand(Command):
                 else:
                     unmask = kwargs.get('unmask') is True
                     r.display(unmask=unmask)
+
+                    # KeeperDrive records carry their permissions on the KD
+                    # access graph, not in ``rec['shares']['user_permissions']``.
+                    # Render the KD-style "User Permissions" block (with Role)
+                    # so ``get`` matches ``kd-get`` for KD records.
+                    is_kd_record = (
+                        hasattr(params, 'keeper_drive_records')
+                        and uid in getattr(params, 'keeper_drive_records', {})
+                    )
+                    kd_user_perms_rendered = False
+                    if is_kd_record:
+                        try:
+                            from .. import keeper_drive as _kd
+                            accesses = (_kd.get_record_accesses_v3(params, [uid])
+                                        .get('record_accesses', []))
+                            if accesses:
+                                from .keeper_drive.helpers import (
+                                    get_access_role_label,
+                                    RECORD_PERM_LABELS,
+                                )
+                                print('')
+                                print('User Permissions:')
+                                for a in accesses:
+                                    accessor = a.get('accessor_name') or a.get('access_type_uid', '')
+                                    is_owner = a.get('owner', False)
+                                    can_edit = a.get('can_edit', False)
+                                    can_share = a.get('can_approve_access', False) or a.get('can_update_access', False)
+                                    role = get_access_role_label(a)
+
+                                    print('')
+                                    print('  User: ' + accessor)
+                                    if is_owner:
+                                        print('  Owner: Yes')
+                                    else:
+                                        # Skip role for owners - their access is implicit.
+                                        print('  Role: ' + role)
+                                    print('  Shareable: ' + ('Yes' if can_share else 'No'))
+                                    print('  Read-Only: ' + ('Yes' if not can_edit else 'No'))
+                                kd_user_perms_rendered = True
+                        except Exception as e:
+                            logging.debug('Could not render KD permissions for %s: %s', uid, e)
+
                     if rec.get('shares'):
-                        if 'user_permissions' in rec['shares'] and rec['shares']['user_permissions']:
+                        if (not kd_user_perms_rendered
+                                and 'user_permissions' in rec['shares']
+                                and rec['shares']['user_permissions']):
                             print('')
                             print('User Permissions:')
                             for user in rec['shares']['user_permissions']:
@@ -1336,7 +1413,7 @@ class RecordListCommand(Command):
             search_fields=search_fields,
             use_regex=True)]
         if any(records):
-            headers = ['record_uid', 'type', 'title', 'description', 'shared', 'record_type']
+            headers = ['record_uid', 'type', 'title', 'description', 'shared', 'record_category']
             if fmt == 'table':
                 headers = [base.field_to_title(x) for x in headers]
             table = []

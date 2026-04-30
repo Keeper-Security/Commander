@@ -24,8 +24,8 @@ from ...error import CommandError
 from ... import keeper_drive as _kd
 from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
-    normalize_parent_uid, get_access_role_label, format_timestamp,
-    load_record_metadata, command_error_handler,
+    get_access_role_label, format_role_display,
+    format_timestamp, load_record_metadata, command_error_handler,
 )
 from .parsers import (
     keeper_drive_get_record_details_parser,
@@ -103,6 +103,15 @@ class KeeperDriveGetCommand(Command):
 
         resolved = self._resolve_as_record(params, uid)
         if resolved:
+            # Audit hint (UID only — never log unmasked field values). The
+            # rendered values are emitted via ``print`` directly to stdout so
+            # they don't flow through Python's logging handlers / log files.
+            if unmask:
+                logger.warning(
+                    "kd-get: --unmask was requested for record %s; "
+                    "sensitive field values will be displayed on stdout only.",
+                    resolved,
+                )
             (self._record_json if fmt == 'json' else self._record_detail)(
                 params, resolved, verbose, unmask)
             return
@@ -153,6 +162,11 @@ class KeeperDriveGetCommand(Command):
     # ── Record display ────────────────────────────────────────────────
 
     def _record_detail(self, params, record_uid, verbose, unmask):
+        # SECURITY: this method MUST only emit field values through ``print``
+        # (stdout). Never pass unmasked record content to ``logging.*`` —
+        # operators frequently configure file/syslog handlers that would
+        # persist secrets to disk. ``--unmask`` is user-controlled and should
+        # affect what the terminal sees, not what gets archived.
         meta = load_record_metadata(params, record_uid)
 
         print('')
@@ -233,7 +247,6 @@ class KeeperDriveGetCommand(Command):
                 params, [record_uid]).get('record_accesses', [])
             if accesses:
                 user_perms = []
-                share_admins = []
                 for a in accesses:
                     accessor = a.get('accessor_name') or a.get('access_type_uid', '')
                     role = get_access_role_label(a)
@@ -248,14 +261,18 @@ class KeeperDriveGetCommand(Command):
                         for flag, _ in RECORD_PERM_LABELS:
                             entry[flag] = a.get(flag, False)
                     user_perms.append(entry)
-                    if role == 'MANAGER' and a.get('can_change_ownership', False):
-                        share_admins.append(accessor)
                 if user_perms:
                     ro['user_permissions'] = user_perms
-                if share_admins:
-                    ro['share_admins'] = share_admins
         except Exception as e:
             logger.debug('Could not retrieve record access: %s', e)
+
+        try:
+            from ... import api
+            share_admins = api.get_share_admins_for_record(params, record_uid) or []
+            if share_admins:
+                ro['share_admins'] = share_admins
+        except Exception as e:
+            logger.debug('Could not retrieve share admins: %s', e)
 
         print(json.dumps(ro, indent=2))
 
@@ -270,7 +287,6 @@ class KeeperDriveGetCommand(Command):
 
             print('')
             print('User Permissions:')
-            share_admins = []
             for a in accesses:
                 accessor = a.get('accessor_name') or a.get('access_type_uid', '')
                 is_owner = a.get('owner', False)
@@ -282,18 +298,31 @@ class KeeperDriveGetCommand(Command):
                 print('  User: ' + accessor)
                 if is_owner:
                     print('  Owner: Yes')
+                else:
+                    # Owners always have full control over the record, so
+                    # surfacing a role for them is redundant noise. Show
+                    # the role only for non-owner accessors.
+                    print('  Role: ' + role)
                 print('  Shareable: ' + ('Yes' if can_share else 'No'))
                 print('  Read-Only: ' + ('Yes' if not can_edit else 'No'))
 
                 if verbose:
-                    print(f'  Role: {role}')
                     print(f'  {"Permission":<20}  Value')
                     print(f'  {"-"*20}  -----')
                     for flag, lbl in RECORD_PERM_LABELS:
                         print(f'  {lbl:<20}  {"Y" if a.get(flag) else "N"}')
 
-                if role == 'MANAGER' and a.get('can_change_ownership', False):
-                    share_admins.append(accessor)
+            # Share admins are sourced from the enterprise sharing-admins API
+            # so the list matches the legacy ``get`` command (every user
+            # designated as a Share Admin for this record at the enterprise
+            # level), not just the users currently holding full-manager
+            # access.
+            share_admins = []
+            try:
+                from ... import api
+                share_admins = api.get_share_admins_for_record(params, record_uid) or []
+            except Exception as e:
+                logger.debug('Could not retrieve share admins: %s', e)
 
             if share_admins:
                 print('')
@@ -314,40 +343,41 @@ class KeeperDriveGetCommand(Command):
     # ── Folder display ────────────────────────────────────────────────
 
     @staticmethod
-    def _folder_permission_summary(perms):
-        """Derive a human-readable permission string from folder permission flags."""
+    def _folder_permission_summary(accessor):
+        """Return the KeeperDrive role label for a folder accessor.
+
+        Uses the server-supplied ``role`` (an ``AccessRoleType`` enum name) and
+        renders it as a canonical KeeperDrive role label (e.g. ``full-manager``,
+        ``shared-manager``, ``viewer``). Falls back to permission-flag based
+        inference for legacy access rows that omit ``role``.
+        """
+        if not isinstance(accessor, dict):
+            return ''
+        role_name = accessor.get('role')
+        if role_name:
+            return format_role_display(role_name)
+        perms = accessor.get('permissions') or {}
         if not perms:
-            return 'No Folder Permissions'
-        can_manage_records = (perms.get('can_edit_records', False)
-                              and perms.get('can_add', False)
-                              and perms.get('can_remove', False))
-        can_manage_users = perms.get('can_update_access', False)
-        if can_manage_users and can_manage_records:
-            return 'Can Manage Users & Records'
-        if can_manage_users:
-            return 'Can Manage Users'
-        if can_manage_records:
-            return 'Can Manage Records'
-        if perms.get('can_view_records', False):
-            return 'Can View'
-        return 'No Folder Permissions'
+            return ''
+        return get_access_role_label({
+            'can_change_ownership': perms.get('can_change_ownership', False),
+            'can_delete':           perms.get('can_delete', False),
+            'can_update_access':    perms.get('can_update_access', False),
+            'can_approve_access':   perms.get('can_approve_access', False),
+            'can_edit':             perms.get('can_edit_records', False),
+            'can_view':             perms.get('can_view_records', False),
+            'can_list_access':      perms.get('can_list_access', False),
+            'can_view_title':       perms.get('can_view_records', False),
+        })
 
     @staticmethod
     def _folder_detail(params, folder_uid, verbose):
         fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {})
         name = fobj.get('name', folder_uid)
-        parent_uid = normalize_parent_uid(fobj.get('parent_uid', ''))
-
-        parent_name = parent_uid
-        if parent_uid and parent_uid != 'root':
-            parent_name = getattr(params, 'keeper_drive_folders', {}).get(
-                parent_uid, {}).get('name', parent_uid)
 
         print('')
-        print('{0:>25s}: {1:<20s}'.format('Folder UID', folder_uid))
+        print('{0:>25s}: {1:<20s}'.format('KeeperDrive Folder UID', folder_uid))
         print('{0:>25s}: {1}'.format('Name', name))
-        if parent_uid:
-            print('{0:>25s}: {1}'.format('Parent', parent_name))
 
         KeeperDriveGetCommand._print_folder_permissions(params, folder_uid, verbose)
 
@@ -355,11 +385,12 @@ class KeeperDriveGetCommand(Command):
     def _folder_json(params, folder_uid, verbose):
         fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {})
         name = fobj.get('name', folder_uid)
-        parent_uid = normalize_parent_uid(fobj.get('parent_uid', ''))
+        owner_username = fobj.get('owner_username')
+        owner_account_uid = fobj.get('owner_account_uid')
 
-        fo = {'folder_uid': folder_uid, 'name': name}
-        if parent_uid:
-            fo['parent_uid'] = parent_uid
+        fo = {'keeper_drive_folder_uid': folder_uid, 'name': name}
+        if owner_username:
+            fo['owner'] = owner_username
 
         try:
             result = _kd.get_folder_access_v3(params, folder_uids=[folder_uid])
@@ -376,12 +407,13 @@ class KeeperDriveGetCommand(Command):
                     accessor = a.get('username') or a.get('accessor_uid', '')
                     at = a.get('access_type', '')
                     perms = a.get('permissions', {})
-                    perm_str = KeeperDriveGetCommand._folder_permission_summary(perms)
+                    is_owner = KeeperDriveGetCommand._is_folder_owner(a, owner_username, owner_account_uid)
+                    role_label_display = ('owner' if is_owner
+                                          else KeeperDriveGetCommand._folder_permission_summary(a))
                     entry = {
                         'accessor':    accessor,
                         'access_type': at,
-                        'role':        a.get('role', ''),
-                        'permissions': perm_str,
+                        'role':        role_label_display,
                         'inherited':   a.get('inherited', False),
                     }
                     if verbose and perms:
@@ -404,9 +436,28 @@ class KeeperDriveGetCommand(Command):
         print(json.dumps(fo, indent=2))
 
     @staticmethod
+    def _is_folder_owner(accessor, owner_username, owner_account_uid):
+        """Return True if *accessor* matches the folder ownerInfo from sync-down."""
+        if not accessor:
+            return False
+        if owner_username:
+            au = (accessor.get('username') or '').lower()
+            if au and au == owner_username.lower():
+                return True
+        if owner_account_uid:
+            uid = accessor.get('accessor_uid') or ''
+            if uid and uid == owner_account_uid:
+                return True
+        return False
+
+    @staticmethod
     def _print_folder_permissions(params, folder_uid, verbose):
         """Display folder permissions in a format similar to the legacy get command."""
         try:
+            fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {}) or {}
+            owner_username = fobj.get('owner_username')
+            owner_account_uid = fobj.get('owner_account_uid')
+
             result = _kd.get_folder_access_v3(params, folder_uids=[folder_uid])
             for fr in result.get('results', []):
                 if not fr.get('success'):
@@ -429,7 +480,7 @@ class KeeperDriveGetCommand(Command):
                         users.append(a)
                     if a.get('role', '') == 'MANAGER':
                         name = a.get('username') or a.get('accessor_uid', '')
-                        share_admins.append(name)
+                        share_admins.append((name, a))
 
                 if users:
                     print('')
@@ -437,8 +488,11 @@ class KeeperDriveGetCommand(Command):
                     for a in users:
                         label = a.get('username') or a.get('accessor_uid', '')
                         perms = a.get('permissions', {})
-                        perm_str = KeeperDriveGetCommand._folder_permission_summary(perms)
-                        print('{0:>25s}: {1}'.format(label, perm_str))
+                        if KeeperDriveGetCommand._is_folder_owner(a, owner_username, owner_account_uid):
+                            role_str = 'owner'
+                        else:
+                            role_str = KeeperDriveGetCommand._folder_permission_summary(a)
+                        print('{0:>25s}: {1}'.format(label, role_str))
                         if verbose:
                             if a.get('date_created'):
                                 print('{0:>25s}  Created: {1}'.format('', format_timestamp(a['date_created'])))
@@ -457,8 +511,8 @@ class KeeperDriveGetCommand(Command):
                     for a in teams:
                         label = a.get('username') or a.get('accessor_uid', '')
                         perms = a.get('permissions', {})
-                        perm_str = KeeperDriveGetCommand._folder_permission_summary(perms)
-                        print('{0:>25s}: {1}'.format(label, perm_str))
+                        role_str = KeeperDriveGetCommand._folder_permission_summary(a)
+                        print('{0:>25s}: {1}'.format(label, role_str))
                         if verbose and perms:
                             print('{0:>25s}  {1:<26}  {2}'.format('', 'Permission', 'Value'))
                             print('{0:>25s}  {1:<26}  {2}'.format('', '-' * 26, '-----'))
@@ -469,8 +523,12 @@ class KeeperDriveGetCommand(Command):
                 if share_admins:
                     print('')
                     print('{0:>25s}:'.format('Share Administrators'))
-                    for admin in share_admins:
-                        print('{0:>25s}: {1}'.format(admin, 'Can Manage Users & Records'))
+                    for admin_name, admin_accessor in share_admins:
+                        if KeeperDriveGetCommand._is_folder_owner(admin_accessor, owner_username, owner_account_uid):
+                            admin_role = 'owner'
+                        else:
+                            admin_role = 'full-manager'
+                        print('{0:>25s}: {1}'.format(admin_name, admin_role))
 
                 print('')
         except Exception as e:

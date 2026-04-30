@@ -30,6 +30,7 @@ from .helpers import (
     parse_expiration, infer_role,
     command_error_handler, check_result,
     check_record_share_permission,
+    collect_records_in_folder,
 )
 from .parsers import (
     keeper_drive_share_record_parser,
@@ -191,19 +192,7 @@ class KeeperDriveShareRecordCommand(Command):
         except Exception:
             folder_uid = None
         if folder_uid and folder_uid in kd_folders:
-            record_uids = []
-            def collect(fuid, visited=None):
-                if visited is None:
-                    visited = set()
-                if fuid in visited:
-                    return
-                visited.add(fuid)
-                folder = kd_folders.get(fuid, {})
-                record_uids.extend(folder.get('record_uids', []))
-                if recursive:
-                    for child in folder.get('children', []):
-                        collect(child, visited)
-            collect(folder_uid)
+            record_uids = collect_records_in_folder(params, folder_uid, recursive)
             if not record_uids:
                 raise CommandError('kd-share-record', 'No records found in the specified folder')
             return record_uids
