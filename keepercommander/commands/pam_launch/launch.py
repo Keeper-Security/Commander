@@ -328,7 +328,9 @@ class PAMLaunchCommand(Command):
 
     parser = argparse.ArgumentParser(prog='pam launch', description='Launch a connection to a PAM resource')
     parser.add_argument('record', type=str, action='store',
-                        help='Record path or UID of the PAM resource to launch')
+                        help='PAM resource to launch — record UID, path, exact title, '
+                             'or any substring of the title or a host/pamHostname field. '
+                             'Multiple matches prompt for selection on a TTY.')
     parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                         help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                              'for real-time candidate exchange.')
@@ -431,6 +433,13 @@ class PAMLaunchCommand(Command):
         if record_uid:
             return record_uid
 
+        # Step 4: Substring fallback — title + host/pamHostname fields across
+        # PAM records. Catches cases like `pam launch prod-server` (multiple
+        # title matches) and `pam launch db.example.com` (hostname lookup).
+        record_uid = self._find_by_substring(params, record_token)
+        if record_uid:
+            return record_uid
+
         return None
 
     def _find_by_path(self, params: KeeperParams, path: str) -> Optional[str]:
@@ -473,13 +482,13 @@ class PAMLaunchCommand(Command):
                 logging.debug(f"Found record by path: {path} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
                 return pam_matched[0]
             if len(pam_matched) == 0:
-                logging.error(
-                    'pam launch: path "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or a path that resolves to a single PAM record.',
+                logging.debug(
+                    'path %r matches %d record(s) but none are PAM types',
                     path, len(all_matched),
                 )
                 return None
-            logging.error(
-                'pam launch: path "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+            logging.debug(
+                'path %r matches %d PAM records — falling through to substring search',
                 path, len(pam_matched),
             )
             return None
@@ -513,18 +522,114 @@ class PAMLaunchCommand(Command):
                 logging.debug(f"Found record by title: {title} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
                 return pam_matched[0]
             if len(pam_matched) == 0:
-                logging.error(
-                    'pam launch: title "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or full path.',
+                logging.debug(
+                    'title %r matches %d record(s) but none are PAM types',
                     title, len(all_matched),
                 )
                 return None
-            logging.error(
-                'pam launch: title "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+            logging.debug(
+                'title %r matches %d PAM records — falling through to substring search',
                 title, len(pam_matched),
             )
             return None
 
         return None
+
+    def _find_by_substring(self, params: KeeperParams, token: str) -> Optional[str]:
+        """Substring fallback for ``find_record`` — case-insensitive contains
+        match across PAM record titles and any ``host`` / ``pamHostname`` field.
+
+        Limited to ``VALID_PAM_RECORD_TYPES`` (pamMachine, pamDirectory,
+        pamDatabase). Connections-enabled / config gating is intentionally not
+        checked here — that's expensive (DAG fetch per record) and the
+        downstream gates in ``execute()`` reject inappropriate records anyway.
+
+        Returns None if no candidates match. Returns the unique UID if exactly
+        one matches. With multiple matches, prompts on a TTY or prints the
+        list and returns None on a non-TTY.
+        """
+        token_lower = token.lower()
+        # candidate tuple: (uid, title, [(hostName, port), ...])
+        candidates: list = []
+        for record_uid in params.record_cache:
+            try:
+                record = vault.KeeperRecord.load(params, record_uid)
+            except Exception:
+                continue
+            if not isinstance(record, vault.TypedRecord) or record.version != 3:
+                continue
+            if record.record_type not in self.VALID_PAM_RECORD_TYPES:
+                continue
+            title = record.title or ''
+            hosts: list = []
+            for field in _iter_record_fields(record):
+                if getattr(field, 'type', None) not in ('pamHostname', 'host'):
+                    continue
+                value = field.get_default_value(dict) if hasattr(field, 'get_default_value') else {}
+                if not isinstance(value, dict):
+                    continue
+                host_name = (value.get('hostName') or '').strip()
+                if not host_name:
+                    continue
+                hosts.append((host_name, value.get('port')))
+
+            if token_lower in title.lower() or any(token_lower in h.lower() for (h, _) in hosts):
+                candidates.append((record_uid, title, hosts))
+
+        if not candidates:
+            return None
+
+        if len(candidates) == 1:
+            uid, title, _ = candidates[0]
+            logging.debug('substring %r -> %s (%s)', token, uid, title)
+            return uid
+
+        return self._pick_candidate(candidates, token)
+
+    @staticmethod
+    def _pick_candidate(candidates: list, token: str) -> Optional[str]:
+        """Render a numbered list of candidates and prompt for selection.
+
+        On non-TTY stdin, prints the list once and returns None — caller
+        surfaces ``Record not found`` so the user knows to be more specific.
+        """
+        title_w = max(len(c[1]) for c in candidates)
+        print(f'\n{len(candidates)} matching resources:', flush=True)
+        for idx, (uid, title, hosts) in enumerate(candidates, 1):
+            host_str = ''
+            if hosts:
+                host_str = ', '.join(f'{h}:{p}' if p else h for (h, p) in hosts)
+                host_str = f'  ({host_str})'
+            print(f' {idx:>2}. {uid}  {title:<{title_w}}{host_str}', flush=True)
+
+        if not sys.stdin.isatty():
+            logging.error(
+                'pam launch: %d matches for %r — re-run with a UID, full path, '
+                'or a more specific token.', len(candidates), token,
+            )
+            return None
+
+        while True:
+            try:
+                answer = input('Specify the resource: ').strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
+            if not answer:
+                return None
+            try:
+                n = int(answer)
+            except ValueError:
+                print(
+                    f'Invalid selection {answer!r}. Enter a number 1..{len(candidates)} '
+                    'or press Enter to cancel.',
+                    flush=True,
+                )
+                continue
+            if not (1 <= n <= len(candidates)):
+                print(f'Selection out of range. Enter 1..{len(candidates)}.', flush=True)
+                continue
+            return candidates[n - 1][0]
 
     def find_gateway(
         self,
