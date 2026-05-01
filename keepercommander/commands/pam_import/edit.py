@@ -19,6 +19,7 @@ from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
+from .workflow_apply import apply_workflow, validate_workflow_principals
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
     PROJECT_IMPORT_JSON_TEMPLATE,
@@ -1642,6 +1643,9 @@ class PAMProjectImportCommand(Command):
             resolve_domain_admin(pce, users)
         # only resolve here - create after machine and user creation
 
+        # pre-flight: validate workflow team UIDs before any vault writes (runs in dry-run too)
+        validate_workflow_principals(params, resources)
+
         # dry run
         if project["options"].get("dry_run", False) is True:
             print("Will import file data here...")
@@ -1696,6 +1700,9 @@ class PAMProjectImportCommand(Command):
                     args["connections"] = True
                 args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
+                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
+                if rbi_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
             else: # machine/db/directory
                 args = parse_command_options(mach, True)
                 if admin_uid: args["admin"] = admin_uid
@@ -1738,6 +1745,10 @@ class PAMProjectImportCommand(Command):
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
                 if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
+                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
+                if ps_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
             # Machine - create its users (if any)
             users = getattr(mach, "users", [])
