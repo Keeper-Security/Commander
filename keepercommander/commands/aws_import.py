@@ -12,7 +12,7 @@
 import argparse
 import json
 import logging
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from .base import Command
 from .. import vault, record_management
@@ -49,6 +49,32 @@ aws_secrets_import_parser.add_argument(
 aws_secrets_import_parser.add_argument(
     '--record-type', dest='record_type', action='store', default='login',
     help='Keeper record type for imported records (default: login)'
+)
+
+filter_group = aws_secrets_import_parser.add_argument_group(
+    'filters',
+    'Restrict which secrets are imported. All provided filters must match (AND logic).'
+)
+filter_group.add_argument(
+    '--name', dest='filter_name', action='store', metavar='NAME',
+    help='Import only the secret with this exact name'
+)
+filter_group.add_argument(
+    '--name-starts-with', dest='filter_name_starts_with', action='store', metavar='PREFIX',
+    help='Import only secrets whose name starts with PREFIX'
+)
+filter_group.add_argument(
+    '--name-ends-with', dest='filter_name_ends_with', action='store', metavar='SUFFIX',
+    help='Import only secrets whose name ends with SUFFIX'
+)
+filter_group.add_argument(
+    '--name-contains', dest='filter_name_contains', action='store', metavar='SUBSTRING',
+    help='Import only secrets whose name contains SUBSTRING'
+)
+filter_group.add_argument(
+    '--tags', dest='filter_tags', action='store', metavar='KEY=VALUE[,KEY=VALUE,...]',
+    help='Import only secrets tagged with ALL specified key=value pairs '
+         '(e.g. --tags Env=prod,Team=ops)'
 )
 
 
@@ -217,6 +243,56 @@ class AwsSecretsImportCommand(Command):
         return record
 
     # ------------------------------------------------------------------
+    # Filtering helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_tags(tags_str):
+        # type: (str) -> List[Tuple[str, str]]
+        """Parse 'Key1=Val1,Key2=Val2' into [(Key1, Val1), (Key2, Val2)]."""
+        pairs = []
+        for token in tags_str.split(','):
+            token = token.strip()
+            if not token:
+                continue
+            if '=' not in token:
+                raise CommandError(
+                    'aws-secrets-import',
+                    f'Invalid --tags format: "{token}". Expected KEY=VALUE pairs separated by commas.'
+                )
+            key, _, value = token.partition('=')
+            pairs.append((key.strip(), value.strip()))
+        return pairs
+
+    @staticmethod
+    def _matches_filters(secret_meta, filter_name, filter_starts, filter_ends,
+                         filter_contains, required_tags):
+        # type: (dict, Optional[str], Optional[str], Optional[str], Optional[str], List[Tuple[str, str]]) -> bool
+        """Return True only if the secret satisfies every provided filter."""
+        name = secret_meta.get('Name') or ''
+
+        if filter_name is not None and name != filter_name:
+            return False
+        if filter_starts is not None and not name.startswith(filter_starts):
+            return False
+        if filter_ends is not None and not name.endswith(filter_ends):
+            return False
+        if filter_contains is not None and filter_contains not in name:
+            return False
+
+        if required_tags:
+            # AWS returns Tags as [{"Key": "...", "Value": "..."}, ...]
+            secret_tags = {
+                t.get('Key'): t.get('Value')
+                for t in (secret_meta.get('Tags') or [])
+            }
+            for tag_key, tag_value in required_tags:
+                if secret_tags.get(tag_key) != tag_value:
+                    return False
+
+        return True
+
+    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
@@ -227,6 +303,15 @@ class AwsSecretsImportCommand(Command):
         region = kwargs.get('region')
         dry_run = kwargs.get('dry_run', False)
         record_type = kwargs.get('record_type') or 'login'
+
+        filter_name = kwargs.get('filter_name') or None
+        filter_starts = kwargs.get('filter_name_starts_with') or None
+        filter_ends = kwargs.get('filter_name_ends_with') or None
+        filter_contains = kwargs.get('filter_name_contains') or None
+        tags_str = kwargs.get('filter_tags') or ''
+        required_tags = []   # type: List[Tuple[str, str]]
+        if tags_str:
+            required_tags = self._parse_tags(tags_str)
 
         if not folder_uid:
             raise CommandError('aws-secrets-import', 'A shared folder UID is required.')
@@ -268,6 +353,13 @@ class AwsSecretsImportCommand(Command):
         for secret_meta in secrets:
             secret_name = secret_meta.get('Name') or ''
             if not secret_name:
+                continue
+
+            if not self._matches_filters(
+                secret_meta, filter_name, filter_starts, filter_ends,
+                filter_contains, required_tags
+            ):
+                logging.debug('aws-secrets-import: skipping "%s" (filter mismatch)', secret_name)
                 continue
 
             if dry_run:
