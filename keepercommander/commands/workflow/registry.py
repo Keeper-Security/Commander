@@ -9,9 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import logging
-from urllib.parse import urlparse
-
 from ..base import GroupCommand, dump_report_data
 from ...display import bcolors
 from .helpers import _ENFORCEMENT_KEY
@@ -42,14 +39,7 @@ from .requester_commands import (
 
 class PAMWorkflowCommand(GroupCommand):
 
-    NOTICE_MSG = 'Notice: PAM Workflow commands are not in production yet. They will be available soon.'
-    _ALLOWED_PREFIXES = ('dev.', 'qa.')
     _ADMIN_VERBS = frozenset({'create', 'update', 'delete', 'add-approver', 'remove-approver'})
-
-    @staticmethod
-    def _is_allowed_server(params):
-        hostname = urlparse(params.rest_context.server_base).hostname or ''
-        return any(hostname.startswith(p) for p in PAMWorkflowCommand._ALLOWED_PREFIXES)
 
     @staticmethod
     def _can_manage_workflows(params):
@@ -62,10 +52,6 @@ class PAMWorkflowCommand(GroupCommand):
         )
 
     def execute_args(self, params, args, **kwargs):
-        if not self._is_allowed_server(params):
-            logging.warning(f"{bcolors.WARNING}{self.NOTICE_MSG}{bcolors.ENDC}")
-            return
-
         self._current_params = params
 
         pos = args.find(' ') if args else -1
