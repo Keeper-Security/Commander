@@ -1053,15 +1053,33 @@ class GuacamoleHandler:
 
     @staticmethod
     def _close_reason_name(reason: int) -> str:
-        """Convert close reason code to name."""
+        """Convert close reason code to snake_case name.
+
+        Mirrors ``PyCloseConnectionReason`` in
+        ``keeper-pam-webrtc-rs/src/python/enums.rs``. Code 3 is
+        intentionally absent in the rust enum.
+        """
         reasons = {
-            0: "unknown",
-            1: "normal",
+            0: "normal",
+            1: "error",
             2: "timeout",
-            3: "error",
-            4: "refused",
-            5: "unreachable",
-            6: "reset",
+            4: "server_refuse",
+            5: "client",
+            6: "unknown",
+            7: "invalid_instruction",
+            8: "guacd_refuse",
+            9: "connection_lost",
+            10: "connection_failed",
+            11: "tunnel_closed",
+            12: "admin_closed",
+            13: "error_recording",
+            14: "guacd_error",
+            15: "ai_closed",
+            16: "address_resolution_failed",
+            17: "decryption_failed",
+            18: "configuration_error",
+            19: "protocol_error",
+            20: "upstream_closed",
         }
         return reasons.get(reason, f"code_{reason}")
 

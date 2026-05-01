@@ -17,7 +17,10 @@ import logging
 import re
 import shutil
 import signal
+import sys
 import time
+
+from colorama import Fore, Style
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -271,6 +274,52 @@ def _record_has_host_port(record: Any) -> bool:
     return bool(host) and port is not None
 
 
+# Exit codes for involuntary ``pam launch`` terminations. Distinct from the
+# generic CommandError path (1) and normal exit (0) so scripts can branch.
+# Avoid 0/1, sysexits.h (64-78), shell-reserved (126-127), signal range (128+).
+EXIT_CODE_AI_TERMINATED = 40
+EXIT_CODE_ADMIN_TERMINATED = 41
+
+
+def _print_close_reason_notice(
+    reason: Optional[str],
+    *,
+    pending_exit_code: Optional[int],
+) -> Optional[int]:
+    """Show a user-facing notice for an involuntary remote close.
+
+    Stays silent for ``normal`` / ``client`` (user-initiated). Called from the
+    inner ``finally`` of ``_start_cli_session`` after the input handler has
+    stopped and the local terminal is back in cooked mode — the message is the
+    last thing the user sees before returning to Commander, so no acknowledge
+    prompt is needed.
+    """
+    if not reason or reason in ('normal', 'client'):
+        return pending_exit_code
+
+    is_stdout_tty = sys.stdout.isatty()
+
+    def _color(text: str, color: str) -> str:
+        if not is_stdout_tty:
+            return text
+        return f'{color}{Style.BRIGHT}{text}{Style.RESET_ALL}'
+
+    if reason == 'ai_closed':
+        print()
+        print(_color('Session terminated by KeeperAI.', Fore.RED), flush=True)
+        print('Critical activity was detected during this session.', flush=True)
+        print('Contact your administrator to unlock this record.', flush=True)
+        return EXIT_CODE_AI_TERMINATED
+
+    if reason == 'admin_closed':
+        print()
+        print(_color('Session terminated by administrator.', Fore.YELLOW), flush=True)
+        return EXIT_CODE_ADMIN_TERMINATED
+
+    print(f'\nSession ended ({reason}).', flush=True)
+    return pending_exit_code
+
+
 class PAMLaunchCommand(Command):
     """PAM Launch command to launch a connection to a PAM resource"""
 
@@ -279,7 +328,9 @@ class PAMLaunchCommand(Command):
 
     parser = argparse.ArgumentParser(prog='pam launch', description='Launch a connection to a PAM resource')
     parser.add_argument('record', type=str, action='store',
-                        help='Record path or UID of the PAM resource to launch')
+                        help='PAM resource to launch — record UID, path, exact title, '
+                             'or any substring of the title or a host/pamHostname field. '
+                             'Multiple matches prompt for selection on a TTY.')
     parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                         help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                              'for real-time candidate exchange.')
@@ -382,6 +433,13 @@ class PAMLaunchCommand(Command):
         if record_uid:
             return record_uid
 
+        # Step 4: Substring fallback — title + host/pamHostname fields across
+        # PAM records. Catches cases like `pam launch prod-server` (multiple
+        # title matches) and `pam launch db.example.com` (hostname lookup).
+        record_uid = self._find_by_substring(params, record_token)
+        if record_uid:
+            return record_uid
+
         return None
 
     def _find_by_path(self, params: KeeperParams, path: str) -> Optional[str]:
@@ -424,13 +482,13 @@ class PAMLaunchCommand(Command):
                 logging.debug(f"Found record by path: {path} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
                 return pam_matched[0]
             if len(pam_matched) == 0:
-                logging.error(
-                    'pam launch: path "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or a path that resolves to a single PAM record.',
+                logging.debug(
+                    'path %r matches %d record(s) but none are PAM types',
                     path, len(all_matched),
                 )
                 return None
-            logging.error(
-                'pam launch: path "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+            logging.debug(
+                'path %r matches %d PAM records — falling through to substring search',
                 path, len(pam_matched),
             )
             return None
@@ -464,18 +522,114 @@ class PAMLaunchCommand(Command):
                 logging.debug(f"Found record by title: {title} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
                 return pam_matched[0]
             if len(pam_matched) == 0:
-                logging.error(
-                    'pam launch: title "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or full path.',
+                logging.debug(
+                    'title %r matches %d record(s) but none are PAM types',
                     title, len(all_matched),
                 )
                 return None
-            logging.error(
-                'pam launch: title "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+            logging.debug(
+                'title %r matches %d PAM records — falling through to substring search',
                 title, len(pam_matched),
             )
             return None
 
         return None
+
+    def _find_by_substring(self, params: KeeperParams, token: str) -> Optional[str]:
+        """Substring fallback for ``find_record`` — case-insensitive contains
+        match across PAM record titles and any ``host`` / ``pamHostname`` field.
+
+        Limited to ``VALID_PAM_RECORD_TYPES`` (pamMachine, pamDirectory,
+        pamDatabase). Connections-enabled / config gating is intentionally not
+        checked here — that's expensive (DAG fetch per record) and the
+        downstream gates in ``execute()`` reject inappropriate records anyway.
+
+        Returns None if no candidates match. Returns the unique UID if exactly
+        one matches. With multiple matches, prompts on a TTY or prints the
+        list and returns None on a non-TTY.
+        """
+        token_lower = token.lower()
+        # candidate tuple: (uid, title, [(hostName, port), ...])
+        candidates: list = []
+        for record_uid in params.record_cache:
+            try:
+                record = vault.KeeperRecord.load(params, record_uid)
+            except Exception:
+                continue
+            if not isinstance(record, vault.TypedRecord) or record.version != 3:
+                continue
+            if record.record_type not in self.VALID_PAM_RECORD_TYPES:
+                continue
+            title = record.title or ''
+            hosts: list = []
+            for field in _iter_record_fields(record):
+                if getattr(field, 'type', None) not in ('pamHostname', 'host'):
+                    continue
+                value = field.get_default_value(dict) if hasattr(field, 'get_default_value') else {}
+                if not isinstance(value, dict):
+                    continue
+                host_name = (value.get('hostName') or '').strip()
+                if not host_name:
+                    continue
+                hosts.append((host_name, value.get('port')))
+
+            if token_lower in title.lower() or any(token_lower in h.lower() for (h, _) in hosts):
+                candidates.append((record_uid, title, hosts))
+
+        if not candidates:
+            return None
+
+        if len(candidates) == 1:
+            uid, title, _ = candidates[0]
+            logging.debug('substring %r -> %s (%s)', token, uid, title)
+            return uid
+
+        return self._pick_candidate(candidates, token)
+
+    @staticmethod
+    def _pick_candidate(candidates: list, token: str) -> Optional[str]:
+        """Render a numbered list of candidates and prompt for selection.
+
+        On non-TTY stdin, prints the list once and returns None — caller
+        surfaces ``Record not found`` so the user knows to be more specific.
+        """
+        title_w = max(len(c[1]) for c in candidates)
+        print(f'\n{len(candidates)} matching resources:', flush=True)
+        for idx, (uid, title, hosts) in enumerate(candidates, 1):
+            host_str = ''
+            if hosts:
+                host_str = ', '.join(f'{h}:{p}' if p else h for (h, p) in hosts)
+                host_str = f'  ({host_str})'
+            print(f' {idx:>2}. {uid}  {title:<{title_w}}{host_str}', flush=True)
+
+        if not sys.stdin.isatty():
+            logging.error(
+                'pam launch: %d matches for %r — re-run with a UID, full path, '
+                'or a more specific token.', len(candidates), token,
+            )
+            return None
+
+        while True:
+            try:
+                answer = input('Specify the resource: ').strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
+            if not answer:
+                return None
+            try:
+                n = int(answer)
+            except ValueError:
+                print(
+                    f'Invalid selection {answer!r}. Enter a number 1..{len(candidates)} '
+                    'or press Enter to cancel.',
+                    flush=True,
+                )
+                continue
+            if not (1 <= n <= len(candidates)):
+                print(f'Selection out of range. Enter 1..{len(candidates)}.', flush=True)
+                continue
+            return candidates[n - 1][0]
 
     def find_gateway(
         self,
@@ -1278,6 +1432,14 @@ class PAMLaunchCommand(Command):
             )
         shutdown_requested = False
         lease_expired = False
+        # Latest close reason from the rust webrtc layer (snake_case name from
+        # PyCloseConnectionReason). Set asynchronously by _on_session_disconnect
+        # below; consumed in the inner finally to print a user-facing notice.
+        closure_reason: Optional[str] = None
+        # Distinct exit code for involuntary terminations (KeeperAI, admin).
+        # Raised as SystemExit at the end of the method so the inner/outer
+        # finally cleanup blocks run first.
+        pending_exit_code: Optional[int] = None
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1321,6 +1483,17 @@ class PAMLaunchCommand(Command):
             python_handler = tunnel_result['tunnel'].get('python_handler')
             if not python_handler:
                 raise CommandError('pam launch', 'No python_handler in tunnel result - ensure Rust module supports PythonHandler mode')
+
+            # Capture remote close reason from the rust webrtc layer so the
+            # finally block below can show a reason-specific notice (KeeperAI,
+            # admin, etc.). Runs on the rust callback thread — do not print
+            # here; terminal is still in raw mode.
+            def _on_session_disconnect(reason: str) -> None:
+                nonlocal closure_reason, shutdown_requested
+                closure_reason = reason
+                shutdown_requested = True
+
+            python_handler.on_disconnect = _on_session_disconnect
 
             conversation_id = tunnel_result['tunnel'].get('conversation_id')
 
@@ -1810,6 +1983,14 @@ class PAMLaunchCommand(Command):
                 if lease_expired:
                     print('\nAccess expired — session terminated by workflow lease.', flush=True)
 
+                # Reason-specific notice for involuntary closures from the
+                # gateway / rust webrtc layer (KeeperAI, admin, transport errors).
+                # Stays silent for normal/client-initiated closes.
+                pending_exit_code = _print_close_reason_notice(
+                    closure_reason,
+                    pending_exit_code=pending_exit_code,
+                )
+
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
                 try:
@@ -1868,3 +2049,12 @@ class PAMLaunchCommand(Command):
                     logging.debug("Auto check-in failed: %s", e)
             exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
+
+        # Surface a distinct OS exit code (KeeperAI=40, admin=41) only when
+        # Commander is running in batch / scripted mode (e.g. `keeper pam
+        # launch UID` from a shell). In the interactive shell (`keeper shell`
+        # -> `pam launch UID`) the user expects to land back at the Keeper>
+        # prompt — a SystemExit would tear the whole shell down. Raised after
+        # both finally blocks so cleanup is already complete.
+        if pending_exit_code is not None and getattr(params, 'batch_mode', False):
+            raise SystemExit(pending_exit_code)
