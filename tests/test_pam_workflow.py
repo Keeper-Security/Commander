@@ -16,9 +16,7 @@ from keepercommander.commands.pam_import.workflow_apply import (
 from keepercommander.commands.workflow.helpers import WorkflowFormatter
 from keepercommander.proto import workflow_pb2
 
-# time-of-day is HHMM-encoded on the wire (e.g. 09:00 -> 900) — see
-# WorkflowFormatter._parse_time_to_hhmm. Keep the test name from before but
-# point it at the canonical helper so we drift with it instead of with our copy.
+# Server expects HHMM integer (workflow.proto:140 "HHMM format" + server validator).
 _parse_time_to_hhmm = WorkflowFormatter._parse_time_to_hhmm
 
 
@@ -81,7 +79,8 @@ class TestDayMapping(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestParseTimeToHHMM(unittest.TestCase):
-    """Server expects HHMM integer encoding (e.g. 09:00 -> 900, 17:30 -> 1730)."""
+    """Server expects HHMM integer encoding per workflow.proto and the server-side
+    validator (returns "Expected HHMM integer with HH in 0-23 and MM in 0-59")."""
 
     def test_midnight(self):
         self.assertEqual(_parse_time_to_hhmm('00:00'), 0)

@@ -74,8 +74,10 @@ _DAY_PROTO_MAP = {
 def _build_temporal_filter(opts: PamWorkflowOptions):
     """Build TemporalAccessFilter from opts. Returns None when no temporal slice is set.
 
-    Time-of-day is encoded as the HHMM integer the server expects
-    (e.g. '09:00' -> 900, '17:30' -> 1730), matching WorkflowFormatter._parse_time_to_hhmm.
+    startTime / endTime on TimeOfDayRange are HHMM integers (hours*100 + minutes);
+    see WorkflowFormatter._parse_time_to_hhmm. Canonical sources:
+      - keeperapp-protobuf/workflow.proto:140  (`int32 startTime = 1;  // HHMM format`)
+      - ka-libs/workflow/.../handlers/WfConfigCRUD.kt::validateHHMM (server validator)
     """
     if not opts.allowed_days and not opts.time_ranges and not opts.timezone:
         return None

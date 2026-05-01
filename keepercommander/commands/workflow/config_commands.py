@@ -329,8 +329,11 @@ class WorkflowReadCommand(Command):
                 print(f"  Days: {', '.join(day_names)}")
             if at.timeRanges:
                 for tr in at.timeRanges:
-                    start_h, start_m = divmod(tr.startTime, 60)
-                    end_h, end_m = divmod(tr.endTime, 60)
+                    # startTime / endTime are HHMM (hours*100 + minutes); see
+                    # WorkflowFormatter._parse_time_to_hhmm and the canonical
+                    # ka-libs/workflow/.../WfConfigCRUD.kt::validateHHMM.
+                    start_h, start_m = divmod(tr.startTime, 100)
+                    end_h, end_m = divmod(tr.endTime, 100)
                     print(f"  Time: {start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}")
             if at.timeZone:
                 print(f"  Timezone: {at.timeZone}")
