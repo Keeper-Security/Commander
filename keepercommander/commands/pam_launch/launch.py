@@ -17,7 +17,10 @@ import logging
 import re
 import shutil
 import signal
+import sys
 import time
+
+from colorama import Fore, Style
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -269,6 +272,52 @@ def _record_has_host_port(record: Any) -> bool:
     """Return True if the record has exactly one non-empty host/pamHostname field with valid host and port."""
     host, port = _get_host_port_from_record(record)
     return bool(host) and port is not None
+
+
+# Exit codes for involuntary ``pam launch`` terminations. Distinct from the
+# generic CommandError path (1) and normal exit (0) so scripts can branch.
+# Avoid 0/1, sysexits.h (64-78), shell-reserved (126-127), signal range (128+).
+EXIT_CODE_AI_TERMINATED = 40
+EXIT_CODE_ADMIN_TERMINATED = 41
+
+
+def _print_close_reason_notice(
+    reason: Optional[str],
+    *,
+    pending_exit_code: Optional[int],
+) -> Optional[int]:
+    """Show a user-facing notice for an involuntary remote close.
+
+    Stays silent for ``normal`` / ``client`` (user-initiated). Called from the
+    inner ``finally`` of ``_start_cli_session`` after the input handler has
+    stopped and the local terminal is back in cooked mode — the message is the
+    last thing the user sees before returning to Commander, so no acknowledge
+    prompt is needed.
+    """
+    if not reason or reason in ('normal', 'client'):
+        return pending_exit_code
+
+    is_stdout_tty = sys.stdout.isatty()
+
+    def _color(text: str, color: str) -> str:
+        if not is_stdout_tty:
+            return text
+        return f'{color}{Style.BRIGHT}{text}{Style.RESET_ALL}'
+
+    if reason == 'ai_closed':
+        print()
+        print(_color('Session terminated by KeeperAI.', Fore.RED), flush=True)
+        print('Critical activity was detected during this session.', flush=True)
+        print('Contact your administrator to unlock this record.', flush=True)
+        return EXIT_CODE_AI_TERMINATED
+
+    if reason == 'admin_closed':
+        print()
+        print(_color('Session terminated by administrator.', Fore.YELLOW), flush=True)
+        return EXIT_CODE_ADMIN_TERMINATED
+
+    print(f'\nSession ended ({reason}).', flush=True)
+    return pending_exit_code
 
 
 class PAMLaunchCommand(Command):
@@ -1278,6 +1327,14 @@ class PAMLaunchCommand(Command):
             )
         shutdown_requested = False
         lease_expired = False
+        # Latest close reason from the rust webrtc layer (snake_case name from
+        # PyCloseConnectionReason). Set asynchronously by _on_session_disconnect
+        # below; consumed in the inner finally to print a user-facing notice.
+        closure_reason: Optional[str] = None
+        # Distinct exit code for involuntary terminations (KeeperAI, admin).
+        # Raised as SystemExit at the end of the method so the inner/outer
+        # finally cleanup blocks run first.
+        pending_exit_code: Optional[int] = None
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1321,6 +1378,17 @@ class PAMLaunchCommand(Command):
             python_handler = tunnel_result['tunnel'].get('python_handler')
             if not python_handler:
                 raise CommandError('pam launch', 'No python_handler in tunnel result - ensure Rust module supports PythonHandler mode')
+
+            # Capture remote close reason from the rust webrtc layer so the
+            # finally block below can show a reason-specific notice (KeeperAI,
+            # admin, etc.). Runs on the rust callback thread — do not print
+            # here; terminal is still in raw mode.
+            def _on_session_disconnect(reason: str) -> None:
+                nonlocal closure_reason, shutdown_requested
+                closure_reason = reason
+                shutdown_requested = True
+
+            python_handler.on_disconnect = _on_session_disconnect
 
             conversation_id = tunnel_result['tunnel'].get('conversation_id')
 
@@ -1810,6 +1878,14 @@ class PAMLaunchCommand(Command):
                 if lease_expired:
                     print('\nAccess expired — session terminated by workflow lease.', flush=True)
 
+                # Reason-specific notice for involuntary closures from the
+                # gateway / rust webrtc layer (KeeperAI, admin, transport errors).
+                # Stays silent for normal/client-initiated closes.
+                pending_exit_code = _print_close_reason_notice(
+                    closure_reason,
+                    pending_exit_code=pending_exit_code,
+                )
+
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
                 try:
@@ -1868,3 +1944,12 @@ class PAMLaunchCommand(Command):
                     logging.debug("Auto check-in failed: %s", e)
             exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
+
+        # Surface a distinct OS exit code (KeeperAI=40, admin=41) only when
+        # Commander is running in batch / scripted mode (e.g. `keeper pam
+        # launch UID` from a shell). In the interactive shell (`keeper shell`
+        # -> `pam launch UID`) the user expects to land back at the Keeper>
+        # prompt — a SystemExit would tear the whole shell down. Raised after
+        # both finally blocks so cleanup is already complete.
+        if pending_exit_code is not None and getattr(params, 'batch_mode', False):
+            raise SystemExit(pending_exit_code)
