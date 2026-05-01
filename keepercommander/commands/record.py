@@ -63,6 +63,8 @@ def handle_empty_result(fmt, message, filename=None):
     return None
 
 def register_commands(commands):
+    from . import aws_import
+    commands['aws-secrets-import'] = aws_import.AwsSecretsImportCommand()
     commands['search'] = SearchCommand()
     commands['get'] = RecordGetUidCommand()
     commands['rm'] = RecordRemoveCommand()
@@ -99,6 +101,10 @@ def register_command_info(aliases, command_info):
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
+
+    from . import aws_import
+    aliases['asi'] = 'aws-secrets-import'
+    command_info[aws_import.aws_secrets_import_parser.prog] = aws_import.aws_secrets_import_parser.description
 
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
