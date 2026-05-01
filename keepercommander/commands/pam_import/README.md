@@ -303,7 +303,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrativ
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
   > **Note 4:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
 
-JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records.
+JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records. **Workflow** (approvals / checkout / temporal restrictions) is supported on all four resource types: pamMachine, pamDatabase, pamDirectory, **and** pamRemoteBrowser.
 
 <details>
 <summary>Just-In-Time Access (JIT)</summary>
@@ -406,6 +406,79 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 ```
 </details>
 <details>
+<summary>Workflow (Approvals, Checkout, Temporal Access)</summary>
+
+Workflow controls how privileged access to a resource is gated: how many approvals are needed, whether sessions require check-out, MFA, reason/ticket, what time windows access is allowed in, and who can approve (with optional escalation). Workflow is applied via the Keeper Router **after** the resource record and DAG/JIT/AI steps are complete and is not stored on the record itself.
+
+**How to Configure:** Add `pam_settings.options.workflow` to any pamMachine, pamDatabase, pamDirectory, or pamRemoteBrowser. The workflow object maps directly to the Web Vault's "Workflow" tab on a resource record.
+
+```json
+{
+    "pam_settings": {
+        "options": {
+            "workflow": {
+                "approvals_needed": 2,
+                "checkout_needed": true,
+                "start_access_on_approval": false,
+                "require_reason": true,
+                "require_ticket": false,
+                "require_mfa": true,
+                "access_duration": "8h",
+                "allowed_times": {
+                    "allowed_days": ["mon", "tue", "wed", "thu", "fri"],
+                    "time_ranges": [
+                        { "start": "09:00", "end": "17:30" }
+                    ],
+                    "timezone": "America/New_York"
+                },
+                "approvers": [
+                    {
+                        "principal": { "type": "user", "email": "primary.approver@example.com" },
+                        "escalation": false
+                    },
+                    {
+                        "principal": { "type": "user", "email": "second.approver@example.com" },
+                        "escalation": false
+                    },
+                    {
+                        "principal": {
+                            "type": "team",
+                            "team_uid_base64url": "REPLACE_TEAM_UID_BASE64URL"
+                        },
+                        "escalation": true,
+                        "escalation_after": "45m"
+                    }
+                ]
+            }
+        }
+    }
+}
+```
+
+**Field reference:**
+- `approvals_needed` *(int, default `0`)* — number of approvals required to grant access.
+- `checkout_needed` *(bool, default `false`)* — require explicit check-out before launching a session.
+- `start_access_on_approval` *(bool, default `false`)* — start the access window the moment approval is granted (rather than at session launch).
+- `require_reason` / `require_ticket` *(bool, default `false`)* — prompt the user for a reason / ticket reference at request time.
+- `require_mfa` *(bool, default `false`)* — require MFA at session launch.
+- `access_duration` *(string, default `"1d"`)* — how long approved access remains valid. Accepts `Xm` / `Xh` / `Xd` (e.g. `"30m"`, `"8h"`, `"2d"`); a bare integer is interpreted as minutes. Must be positive.
+- `allowed_times.allowed_days` *(list of strings)* — restrict access to these weekdays. Accepts 3-letter (`mon`..`sun`) or full names (`monday`..`sunday`), case-insensitive.
+- `allowed_times.time_ranges` *(list of `{start, end}` objects)* — one or more allowed daily time windows in `HH:MM` (24-hour) format. **Multiple ranges per day are supported.**
+- `allowed_times.timezone` *(string)* — IANA timezone name (e.g. `"UTC"`, `"America/New_York"`). **Required when `time_ranges` is non-empty.**
+- `approvers[]` — list of approver entries.
+  - `principal.type` — `"user"` or `"team"`.
+  - For users: `principal.email` (must exist in the enterprise).
+  - For teams: `principal.team_uid_base64url` (the team's vault UID, base64url-encoded; validated against the local team cache during import — unknown UIDs fail in dry-run).
+  - `escalation` *(bool)* — whether this approver is in the escalation chain.
+  - `escalation_after` *(duration string, optional)* — wait this long before escalating to this approver. **Requires `escalation: true`.**
+
+**Behavior notes:**
+- **Trivial workflow is a no-op.** If none of `approvals_needed > 0`, `checkout_needed`, `require_mfa`, `start_access_on_approval`, `allowed_times.allowed_days`, or `allowed_times.time_ranges` is set, the workflow block is treated as absent and no Router call is made.
+- **Pre-flight validation runs in `--dry-run`.** Bad durations, malformed `HH:MM`, missing timezone, escalation rule violations, and unknown team UIDs are reported during dry-run before any vault writes.
+- **Dry-run skips the Router calls.** Workflow is applied (Router create/update + approver reconcile) only on a real run.
+- **`extend` only applies workflow to newly created resources** (existing resources are not touched).
+</details>
+<details>
 <summary>pam_data.resources.pamMachine (RDP)</summary>
 
 ```json
@@ -435,7 +508,8 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
             "ai_threat_detection": "off",
             "ai_terminate_session_on_detection": "off",
             "jit_settings": {},
-            "ai_settings": {}
+            "ai_settings": {},
+            "workflow": {}
         },
         "allow_supply_host": false,
         "port_forward": {
