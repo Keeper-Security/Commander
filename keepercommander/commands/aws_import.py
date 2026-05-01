@@ -351,39 +351,38 @@ class AwsSecretsImportCommand(Command):
         skipped = 0
 
         for secret_meta in secrets:
-            secret_name = secret_meta.get('Name') or ''
-            if not secret_name:
+            skrt_name = secret_meta.get('Name') or ''
+            if not skrt_name:
                 continue
 
             if not self._matches_filters(
                 secret_meta, filter_name, filter_starts, filter_ends,
                 filter_contains, required_tags
             ):
-                logging.debug('aws-secrets-import: skipping "%s" (filter mismatch)', secret_name)
                 continue
 
             if dry_run:
-                print(f'  [dry-run] would import: {secret_name}')
+                print(f'  [dry-run] would import: {skrt_name}')
                 continue
 
             # Fetch the actual secret value
             try:
-                secret_string = self._get_secret_value(secret_name, region)
+                secret_string = self._get_secret_value(skrt_name, region)
             except Exception as exc:
-                logging.warning('aws-secrets-import: skipping "%s" – could not retrieve value: %s', secret_name, exc)
+                logging.warning('aws-secrets-import: skipping "%s" – could not retrieve value: %s', skrt_name, exc)
                 skipped += 1
                 continue
 
             fields = self._parse_secret_string(secret_string)
 
-            record = self._build_record(secret_name, fields, record_type)
+            record = self._build_record(skrt_name, fields, record_type)
 
             try:
                 record_management.add_record_to_folder(params, record, folder_uid)
-                logging.info('aws-secrets-import: created record "%s"', secret_name)
+                logging.info('aws-secrets-import: created record "%s"', skrt_name)
                 created += 1
             except Exception as exc:
-                logging.warning('aws-secrets-import: failed to create record for "%s": %s', secret_name, exc)
+                logging.warning('aws-secrets-import: failed to create record for "%s": %s', skrt_name, exc)
                 skipped += 1
 
         if not dry_run:
