@@ -523,9 +523,17 @@ class WorkflowFormatter:
 
     @staticmethod
     def _parse_time_to_hhmm(time_str):
-        """Parse 'HH:MM' into the HHMM integer encoding the server expects on
-        TimeOfDayRange.startTime / .endTime — e.g. '03:00' -> 300, '17:30' -> 1730.
-        Server validates: HHMM integer with HH in 0-23 and MM in 0-59.
+        """Parse 'HH:MM' to the HHMM integer the server stores on
+        TimeOfDayRange.startTime / .endTime: hours*100 + minutes.
+        Examples: '00:00' -> 0, '03:00' -> 300, '09:00' -> 900, '17:30' -> 1730.
+        Valid range: 0..2359 with hours in 0-23 and minutes in 0-59.
+
+        Canonical sources (all agree on HHMM):
+          - keeperapp-protobuf/workflow.proto:140
+              `int32 startTime = 1;  // HHMM format`
+          - ka-libs/workflow/src/main/kotlin/com/keepersecurity/workflow/handlers/WfConfigCRUD.kt::validateHHMM
+              `val hours = value / 100; val minutes = value % 100`
+              throws "Invalid <field>: <n>. Expected HHMM integer with HH in 0-23 and MM in 0-59" on bad input.
         """
         try:
             parts = time_str.split(':')
@@ -547,6 +555,7 @@ class WorkflowFormatter:
         if at.timeRanges:
             ranges = []
             for tr in at.timeRanges:
+                # startTime / endTime are HHMM integers (see _parse_time_to_hhmm).
                 sh, sm = divmod(tr.startTime, 100)
                 eh, em = divmod(tr.endTime, 100)
                 ranges.append(f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}")
