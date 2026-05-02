@@ -25,6 +25,17 @@ from ... import utils
 from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
 
 
+def _strict_bool_arg(val):
+    """Strict argparse type: accepts only 'true' or 'false' (case-insensitive)."""
+    if val.lower() == 'true':
+        return True
+    if val.lower() == 'false':
+        return False
+    raise argparse.ArgumentTypeError(
+        f"Invalid boolean value {val!r}: expected 'true' or 'false'"
+    )
+
+
 def _add_approvers_to_workflow(params, record_uid, record_name,
                                users=None, teams=None,
                                is_escalation=False, escalation_after_ms=0):
@@ -371,15 +382,15 @@ class WorkflowUpdateCommand(Command):
     )
     parser.add_argument('record', help='Record UID or name with workflow to update')
     parser.add_argument('-n', '--approvals-needed', type=int, help='Number of approvals required')
-    parser.add_argument('-co', '--checkout', type=lambda x: x.lower() == 'true',
+    parser.add_argument('-co', '--checkout', type=_strict_bool_arg,
                         help='Enable/disable check-in/check-out (true/false)')
-    parser.add_argument('-sa', '--start-on-approval', type=lambda x: x.lower() == 'true',
+    parser.add_argument('-sa', '--start-on-approval', type=_strict_bool_arg,
                         help='Start timer on approval vs check-out (true/false)')
-    parser.add_argument('-rr', '--require-reason', type=lambda x: x.lower() == 'true',
+    parser.add_argument('-rr', '--require-reason', type=_strict_bool_arg,
                         help='Require reason (true/false)')
-    parser.add_argument('-rt', '--require-ticket', type=lambda x: x.lower() == 'true',
+    parser.add_argument('-rt', '--require-ticket', type=_strict_bool_arg,
                         help='Require ticket (true/false)')
-    parser.add_argument('-rm', '--require-mfa', type=lambda x: x.lower() == 'true',
+    parser.add_argument('-rm', '--require-mfa', type=_strict_bool_arg,
                         help='Require MFA (true/false)')
     parser.add_argument('-d', '--duration', type=str, help='Access duration (e.g., "2h", "30m", "1d")')
     parser.add_argument('--allowed-days', type=str,
@@ -487,8 +498,12 @@ class WorkflowDeleteCommand(Command):
                 rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
             )
         except Exception as e:
-            logging.debug('Pre-check read_workflow_config failed: %s', e)
-            existing = None
+            raise CommandError(
+                '',
+                f'Could not verify workflow config for "{record.title}" ({record_uid}): '
+                f'{sanitize_router_error(e)}. Cannot determine if a workflow exists — '
+                f'check connectivity and try again.'
+            )
         if not existing:
             raise CommandError(
                 '',

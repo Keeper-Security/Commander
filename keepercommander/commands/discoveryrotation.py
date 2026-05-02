@@ -3085,9 +3085,15 @@ def _is_rotation_allowed_by_enforcement(params):
         enforcements = getattr(params, 'enforcements', None)
         if not enforcements or not isinstance(enforcements, dict):
             return True
-        booleans = enforcements.get('booleans') or []
-        if not isinstance(booleans, list) or not booleans:
+        booleans = enforcements.get('booleans')
+        if booleans is None:
+            # Key fully absent — not yet configured; allow defensively.
             return True
+        if not isinstance(booleans, list):
+            # Malformed payload — allow defensively.
+            return True
+        # Empty list: enterprise context, no boolean enforcements set.
+        # Fall through to key lookup; missing key → deny (matches WV).
         for b in booleans:
             if isinstance(b, dict) and b.get('key') == 'allow_rotate_credentials':
                 return bool(b.get('value'))

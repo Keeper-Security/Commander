@@ -121,11 +121,16 @@ def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: 
         enforcements = getattr(params, 'enforcements', None)
         if not enforcements or not isinstance(enforcements, dict):
             return True
-        booleans = enforcements.get('booleans') or []
-        if not isinstance(booleans, list) or not booleans:
-            # Enforcement context but no booleans at all — treat as
+        booleans = enforcements.get('booleans')
+        if booleans is None:
+            # Key fully absent from the enforcement dict — treat as
             # "not yet configured" and allow; gateway will gate.
             return True
+        if not isinstance(booleans, list):
+            # Malformed payload shape — allow defensively.
+            return True
+        # Empty list: enterprise context but no boolean enforcements set.
+        # Fall through to key lookup; if key is absent, deny (matches WV).
         for b in booleans:
             if isinstance(b, dict) and b.get('key') == enforcement_key:
                 return bool(b.get('value'))

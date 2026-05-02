@@ -562,8 +562,9 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--auto-checkout', '-aco', required=False, dest='workflow_auto_checkout',
                                 action='store_true',
                                 help='Auto-confirm workflow check-out when the record is approved but not yet '
-                                     'checked out (skips the interactive Y/n prompt). The lease is released '
-                                     'automatically when the tunnel ends.')
+                                     'checked out (skips the interactive Y/n prompt). '
+                                     'Note: the lease is NOT released when the tunnel stops '
+                                     '— use `pam workflow end` to release it manually.')
     pam_cmd_parser.add_argument('--wait', '-w', required=False, dest='workflow_wait',
                                 action='store_true',
                                 help='When the workflow is waiting on approval, poll until approved '
@@ -680,13 +681,16 @@ class PAMTunnelStartCommand(Command):
         workflow_expires_on_ms = 0
         try:
             from .workflow import check_workflow_for_launch
+            _wt_tunnel = int(kwargs.get('workflow_wait_timeout') or 600)
+            if _wt_tunnel <= 0:
+                raise CommandError('', '--wait-timeout must be a positive integer (seconds)')
             gate = check_workflow_for_launch(
                 params, record_uid,
                 reason=kwargs.get('workflow_reason'),
                 ticket=kwargs.get('workflow_ticket'),
                 auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
                 wait=bool(kwargs.get('workflow_wait')),
-                wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
+                wait_timeout=_wt_tunnel,
             )
             if not gate.allowed:
                 return
