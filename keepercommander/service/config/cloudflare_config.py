@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import time
 import os
 import psutil
@@ -90,7 +90,7 @@ class CloudflareConfigurator:
         return os.path.join(service_core_dir, "logs", "cloudflare_tunnel_subprocess.log")
 
     @staticmethod
-    def _analyze_tunnel_log(log_file: str) -> tuple[Optional[bool], str]:
+    def _analyze_tunnel_log(log_file: str) -> Tuple[Optional[bool], str]:
         """
         Analyze tunnel log content for success/failure indicators.
         Returns (success: Optional[bool], error_message: str)
@@ -115,7 +115,7 @@ class CloudflareConfigurator:
             return f.read()
 
     @staticmethod
-    def _check_tunnel_patterns(content: str) -> tuple[Optional[bool], str]:
+    def _check_tunnel_patterns(content: str) -> Tuple[Optional[bool], str]:
         """Check log content for success/failure patterns."""
         if any(pattern in content for pattern in CloudflareConfigurator._SUCCESS_PATTERNS):
             return True, ""

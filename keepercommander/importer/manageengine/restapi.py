@@ -37,11 +37,7 @@ API_DOC_NUMBERS = {
 }
 
 
-if sys.version_info < (3, 7):
-    Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'])
-    Url.__new__.__defaults__ = ('', '', '')
-else:
-    Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'], defaults=('', '', ''))
+Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'], defaults=('', '', ''))
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 

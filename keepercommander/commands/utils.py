@@ -1583,24 +1583,22 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
         if logging.getLogger().isEnabledFor(logging.DEBUG) or show_packages:
-            ver = sys.version_info
-            if ver.major >= 3 and ver.minor >= 8:
-                import importlib.metadata
-                dist = importlib.metadata.packages_distributions()
-                packages = {}
-                for pack in dist.values():
-                    if isinstance(pack, list) and len(pack) > 0:
-                        name = pack[0]
-                        if name in packages:
-                            continue
-                        try:
-                            version = importlib.metadata.version(name)
-                            packages[name] = version
-                        except Exception as e:
-                            logging.debug('Get package %s version error: %s', name, e)
-                installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
-                installed_packages_list.sort(key=lambda x: x.lower())
-                print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
+            import importlib.metadata
+            dist = importlib.metadata.packages_distributions()
+            packages = {}
+            for pack in dist.values():
+                if isinstance(pack, list) and len(pack) > 0:
+                    name = pack[0]
+                    if name in packages:
+                        continue
+                    try:
+                        version = importlib.metadata.version(name)
+                        packages[name] = version
+                    except Exception as e:
+                        logging.debug('Get package %s version error: %s', name, e)
+            installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
+            installed_packages_list.sort(key=lambda x: x.lower())
+            print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
 
         if version_details.get('is_up_to_date') is None:
             logging.debug("It appears that Commander is up to date")

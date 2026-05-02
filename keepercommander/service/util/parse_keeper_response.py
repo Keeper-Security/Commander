@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import re, json
 
 class KeeperResponseParser:
@@ -36,7 +36,7 @@ class KeeperResponseParser:
         return text
     
     @staticmethod
-    def _preprocess_response(response: Any, log_output: str = None) -> tuple[str, bool]:
+    def _preprocess_response(response: Any, log_output: str = None) -> Tuple[str, bool]:
         """Preprocess response by cleaning ANSI codes and determining source.
         
         Returns:
