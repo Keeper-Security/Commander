@@ -6,7 +6,6 @@
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,9 +22,6 @@ from keepercommander.commands.tunnel_registry import (
     unregister_tunnel,
 )
 from keepercommander.error import CommandError
-
-if sys.version_info < (3, 8):
-    raise unittest.SkipTest('pam tunnel tests require Python 3.8+')
 
 
 def _patch_registry_dir(testcase, tmp: Path):

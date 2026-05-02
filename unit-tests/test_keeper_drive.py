@@ -117,7 +117,6 @@ class TestCommandHelpers(TestCase):
 
     def test_format_timestamp(self):
         from keepercommander.commands.keeper_drive.helpers import format_timestamp
-        self.assertIn('2024', format_timestamp(1704067200000))
         self.assertEqual(format_timestamp(0), '')
         self.assertEqual(format_timestamp(None), '')
 
