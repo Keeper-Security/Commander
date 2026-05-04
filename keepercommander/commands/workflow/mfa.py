@@ -312,8 +312,7 @@ class WorkflowAccessValidator:
                 cond_str = WorkflowFormatter.format_conditions(conditions)
                 print(f"Pending conditions: {cond_str}")
         elif flow_uid_bytes:
-            flow_uid_str = utils.base64_url_encode(flow_uid_bytes)
-            print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {flow_uid_str}{bcolors.ENDC} "
+            print(f"Run: {bcolors.OKBLUE}pam workflow state {self.record_name}{bcolors.ENDC} "
                   f"to see details.")
         print()
 

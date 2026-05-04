@@ -35,11 +35,9 @@ def _fmt_ts_or_empty(ts_ms: int) -> str:
 class WorkflowGetStateCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow state',
-        description='Get workflow state for a record or flow',
+        description='Get workflow state for a record',
     )
-    _state_group = parser.add_mutually_exclusive_group(required=True)
-    _state_group.add_argument('-r', '--record', help='Record UID or name')
-    _state_group.add_argument('-f', '--flow-uid', help='Flow UID of active workflow')
+    parser.add_argument('record', help='Record UID or name')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -47,22 +45,14 @@ class WorkflowGetStateCommand(Command):
         return WorkflowGetStateCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
-        record_uid = kwargs.get('record')
-        flow_uid = kwargs.get('flow_uid')
+        record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        if is_workflow_exempt(params, record_uid):
+            print_exempt_message(kwargs.get('format', 'table'))
+            return
 
         state = workflow_pb2.WorkflowState()
-        if flow_uid:
-            try:
-                state.flowUid = utils.base64_url_decode(flow_uid)
-            except Exception:
-                raise CommandError('', f'Invalid flow UID: "{flow_uid}"')
-        else:
-            record_uid, record = RecordResolver.resolve(params, record_uid)
-            if is_workflow_exempt(params, record_uid):
-                print_exempt_message(kwargs.get('format', 'table'))
-                return
-            record_uid_bytes = utils.base64_url_decode(record_uid)
-            state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
+        record_uid_bytes = utils.base64_url_decode(record_uid)
+        state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
 
         try:
             response = _post_request_to_router(
