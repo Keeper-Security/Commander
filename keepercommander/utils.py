@@ -436,24 +436,12 @@ _MASTER_PASSWORD_SCORE_MAP = {0: 25, 1: 25, 2: 50, 3: 75, 4: 100}
 def master_password_score(password):  # type: (str) -> int
     if not password or not isinstance(password, str):
         return 0
-    result = _zxcvbn.zxcvbn(password)
-    return _MASTER_PASSWORD_SCORE_MAP[result['score']]
-
-
-def is_master_pw_weak(pw_score):     # type: (int) -> bool
-    return pw_score <= 25
-
-
-def is_master_pw_fair(pw_score):     # type: (int) -> bool
-    return pw_score == 50
-
-
-def is_master_pw_medium(pw_score):   # type: (int) -> bool
-    return pw_score == 75
-
-
-def is_master_pw_strong(pw_score):   # type: (int) -> bool
-    return pw_score == 100
+    try:
+        result = _zxcvbn.zxcvbn(password)
+        return _MASTER_PASSWORD_SCORE_MAP.get(result.get('score'), 25)
+    except Exception as e:
+        logging.debug('zxcvbn scoring failed: %s', e)
+        return 25
 
 
 def is_rec_at_risk(bw_result):      # type (int) -> bool
