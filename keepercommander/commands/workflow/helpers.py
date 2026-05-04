@@ -32,9 +32,6 @@ def sanitize_router_error(error: Exception) -> str:
     return msg or 'Unknown error'
 
 
-_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
-
-
 def print_exempt_message(fmt='table'):
     """Print the standard exemption message in the appropriate format."""
     import json as _json
@@ -42,39 +39,64 @@ def print_exempt_message(fmt='table'):
     if fmt == 'json':
         print(_json.dumps({'status': 'exempt', 'message': 'Workflow not required'}, indent=2))
     else:
-        print(f"\n{_bc.WARNING}You have edit access and workflow management permissions for this record.{_bc.ENDC}\n")
-        print("Workflow is not required — you can access this resource directly.\n")
+        print(f"\n{_bc.WARNING}You are exempt from workflow restrictions on this record.{_bc.ENDC}")
+        print("As a record owner or approver, you can access this resource directly.\n")
 
 
-def is_workflow_exempt(params, record_uid):
-    """Users with edit access AND 'Can manage workflow settings' are exempt from workflow."""
-    enforcements = getattr(params, 'enforcements', None)
-    if not enforcements or 'booleans' not in enforcements:
-        return False
-    can_manage = any(
-        b.get('value') for b in enforcements['booleans']
-        if b.get('key') == _ENFORCEMENT_KEY
-    )
-    if not can_manage:
-        return False
-
+def is_record_owner(params, record_uid):
+    """Check if the current user is the owner of the given record."""
     if record_uid in getattr(params, 'record_owner_cache', {}):
         owner_info = params.record_owner_cache[record_uid]
         if getattr(owner_info, 'owner', False):
             return True
+    return False
 
-    meta = getattr(params, 'meta_data_cache', {}).get(record_uid)
-    if meta and meta.get('can_edit'):
+
+def is_on_approver_list(params, config):
+    """Check if the current user appears on the workflow config's approver list,
+    either directly by email or via team membership."""
+    if not config or not config.approvers:
+        return False
+
+    current_user = getattr(params, 'user', '')
+    team_cache = getattr(params, 'team_cache', {})
+
+    for approver in config.approvers:
+        if approver.user and approver.user.lower() == current_user.lower():
+            return True
+        if approver.teamUid:
+            team_uid_b64 = utils.base64_url_encode(approver.teamUid)
+            if team_uid_b64 in team_cache:
+                return True
+    return False
+
+
+def is_workflow_exempt(params, record_uid, config=None):
+    """Exempt users: record owner OR on the approver list.
+
+    If *config* is already available (e.g. from a prior read_workflow_config
+    call) pass it to avoid an extra API round-trip.  When *config* is None the
+    function reads it from the router; a transport failure is treated as
+    non-exempt (fail closed).
+    """
+    if is_record_owner(params, record_uid):
         return True
 
-    for sf_uid in getattr(params, 'shared_folder_cache', {}):
-        sf = params.shared_folder_cache[sf_uid]
-        for sfr in sf.get('records', []):
-            if sfr.get('record_uid') == record_uid:
-                if sfr.get('owner') or sfr.get('can_edit'):
-                    return True
+    if config is None:
+        from ..pam.router_helper import _post_request_to_router
+        try:
+            ref = ProtobufRefBuilder.record_ref(
+                utils.base64_url_decode(record_uid),
+                '',
+            )
+            config = _post_request_to_router(
+                params, 'read_workflow_config',
+                rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
+            )
+        except Exception:
+            return False
 
-    return False
+    return is_on_approver_list(params, config)
 
 
 def is_pam_action_allowed_by_enforcement(params: KeeperParams, enforcement_key: str) -> bool:
@@ -490,8 +512,8 @@ class WorkflowFormatter:
         return f"{seconds} second{'s' if seconds != 1 else ''}"
 
     @staticmethod
-    def build_temporal_filter(allowed_days_str, time_range_str, timezone_str):
-        if not allowed_days_str and not time_range_str and not timezone_str:
+    def build_temporal_filter(allowed_days_str, time_range_str):
+        if not allowed_days_str and not time_range_str:
             return None
 
         temporal = workflow_pb2.TemporalAccessFilter()
@@ -516,10 +538,37 @@ class WorkflowFormatter:
             time_range.endTime = end_hhmm
             temporal.timeRanges.append(time_range)
 
-        if timezone_str:
-            temporal.timeZone = timezone_str
+        temporal.timeZone = WorkflowFormatter._get_local_iana_timezone()
 
         return temporal
+
+    @staticmethod
+    def _get_local_iana_timezone():
+        import os
+
+        tz = os.environ.get('TZ')
+        if tz and '/' in tz:
+            return tz
+
+        try:
+            link = os.readlink('/etc/localtime')
+            marker = '/zoneinfo/'
+            idx = link.find(marker)
+            if idx != -1:
+                return link[idx + len(marker):]
+        except (OSError, ValueError):
+            pass
+
+        try:
+            with open('/etc/timezone', 'r') as f:
+                tz = f.read().strip()
+                if tz and '/' in tz:
+                    return tz
+        except (OSError, IOError):
+            pass
+
+        raise CommandError('', 'Could not detect local IANA timezone. '
+                           'Set the TZ environment variable (e.g., TZ=Asia/Kolkata)')
 
     @staticmethod
     def _parse_time_to_hhmm(time_str):

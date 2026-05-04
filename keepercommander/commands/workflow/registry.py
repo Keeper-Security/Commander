@@ -11,7 +11,8 @@
 
 from ..base import GroupCommand, dump_report_data
 from ...display import bcolors
-from .helpers import _ENFORCEMENT_KEY
+
+_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
 
 from .config_commands import (
     WorkflowCreateCommand,

@@ -24,7 +24,8 @@ from .helpers import (
     ProtobufRefBuilder,
     WorkflowFormatter,
     is_gateway_online_for_record,
-    is_workflow_exempt,
+    is_on_approver_list,
+    is_record_owner,
     prompt_for_reason_ticket,
     sanitize_router_error,
     start_workflow_for_record,
@@ -68,24 +69,9 @@ class WorkflowAccessValidator:
         self.record_name = record.title if record else record_uid
 
     def validate(self, silent_actionable: bool = False) -> dict:
-        if is_workflow_exempt(self.params, self.record_uid):
+        if is_record_owner(self.params, self.record_uid):
             return dict(self._DEFAULT_RESULT)
 
-        # Workflow REST endpoints (`read_workflow_config`,
-        # `get_user_access_state`, `get_workflow_state`) are not yet deployed
-        # on every router. On a router that doesn't expose them, the call
-        # raises (404 / unsupported / RRC error) and `_post_request_to_router`
-        # bubbles it up; the wrappers below convert that into _TRANSPORT_ERROR.
-        # We can't tell from the wire whether the failure is "endpoint not
-        # deployed" (prod today) or "endpoint deployed but momentarily
-        # unreachable" (transient QA hiccup). Erring on the side of legacy
-        # compatibility: treat _TRANSPORT_ERROR as "no workflow protection
-        # on this record, defer to the gateway." The gateway is the
-        # authoritative gate on prod; on QA the workflow service still
-        # enforces server-side, so a flaky read just relaxes the *client*
-        # gate without opening a real security gap. Old behavior (block
-        # with a banner) was correct for QA but a hard regression on prod
-        # legacy launches that have never seen workflow.
         config = self._read_workflow_config()
         if config is _TRANSPORT_ERROR:
             logging.debug(
@@ -95,6 +81,9 @@ class WorkflowAccessValidator:
             )
             return dict(self._DEFAULT_RESULT)
         if config is None:
+            return dict(self._DEFAULT_RESULT)
+
+        if is_on_approver_list(self.params, config):
             return dict(self._DEFAULT_RESULT)
 
         mfa_required = bool(config.parameters and config.parameters.requireMFA)
