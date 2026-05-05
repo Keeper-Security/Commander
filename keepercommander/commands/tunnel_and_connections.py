@@ -553,6 +553,11 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
+    pam_cmd_parser.add_argument('--proxy', '-px', required=False, dest='proxy', action='store_true',
+                                help='Activate KeeperDB Proxy: the gateway substitutes credentials '
+                                     'from your Keeper vault when the local client connects to the tunnel.')
+    # TODO(rdp-proxy): once RDP Proxy support lands on pamMachine, generalize --proxy
+    # to or auto-detect from the record type). For now, --proxy is KeeperDB-only.
     pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
                                 help='Justification text for workflow access request. Used when the record\'s '
                                      'workflow requires a reason; non-interactive equivalent of the inline prompt.')
@@ -598,6 +603,48 @@ class PAMTunnelStartCommand(Command):
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
+
+    @staticmethod
+    def _resolve_database_type(record, pam_settings_value):
+        # Mirrors the gateway/pam-launch lookup: prefer pamSettings.connection.databaseType,
+        # fall back to the top-level 'databaseType' typed field. Returns canonical
+        # 'mysql' | 'postgresql' | 'mssql' or None.
+        raw = ''
+        if isinstance(pam_settings_value, dict):
+            raw = (pam_settings_value.get('connection') or {}).get('databaseType') or ''
+        if not raw:
+            db_field = record.get_typed_field('databaseType')
+            if db_field:
+                v = db_field.get_default_value()
+                if isinstance(v, str):
+                    raw = v
+                elif isinstance(v, list) and v:
+                    raw = str(v[0])
+        raw = (raw or '').strip().lower()
+        if 'mysql' in raw or 'mariadb' in raw:
+            return 'mysql'
+        if 'postgres' in raw:
+            return 'postgresql'
+        if 'sql server' in raw or 'sqlserver' in raw or 'mssql' in raw:
+            return 'mssql'
+        return None
+
+    @staticmethod
+    def _print_keeperdb_proxy_banner(host, port, db_type):
+        suffix = f' ({db_type})' if db_type else ''
+        print(f"\n{bcolors.OKGREEN}KeeperDB Proxy ready{suffix}{bcolors.ENDC}")
+        print(f"  Listening:  {host}:{port}")
+        if db_type == 'mysql':
+            print(f"  Connect:    mysql -h {host} -P {port} -u <any> -p")
+        elif db_type == 'postgresql':
+            print(f"  Connect:    psql -h {host} -p {port} -U <any>")
+        elif db_type == 'mssql':
+            print(f"  Connect:    sqlcmd -S {host},{port} -U <any> -P <any>")
+        else:
+            print(f"  Connect:    use your database client to connect to {host}:{port}")
+        print(f"{bcolors.OKBLUE}  Note:       when your DB client prompts for credentials you may "
+              f"supply any value — the proxy will substitute the credentials configured in your "
+              f"Keeper vault.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
         # Python version validation (same as before)
@@ -708,6 +755,49 @@ class PAMTunnelStartCommand(Command):
         # Check if allow_supply_host is enabled
         pam_settings_value = pam_settings.get_default_value() if pam_settings else {}
         allow_supply_host = pam_settings_value.get('allowSupplyHost', False) if isinstance(pam_settings_value, dict) else False
+
+        # --proxy: KeeperDB Proxy mode (gateway substitutes credentials from vault).
+        # This is a Commander-side validator/declaration; the gateway currently
+        # auto-routes pamDatabase + allowKeeperDBProxy to the proxy regardless of
+        # any client-side flag (see is_keeperdb_proxy_tunnel in dr-controller's
+        # tunnel_helpers.py and _build_protocol_settings in WebRTCSessionAction.py).
+        # Requiring no-`--proxy` to mean "raw TCP tunnel to remote host" depends on
+        # a future gateway change to honor a client-side opt-in flag; until that
+        # lands, omitting --proxy will still proxy if the record allows it.
+        is_keeperdb_proxy = bool(kwargs.get('proxy'))
+        db_type_for_banner = None
+        if is_keeperdb_proxy:
+            record_type = record.record_type
+            # TODO(rdp-proxy): once RDP Proxy support lands, also accept
+            # 'pamMachine' here and dispatch by record type.
+            if record_type != 'pamDatabase':
+                print(f"{bcolors.FAIL}--proxy is only supported on pamDatabase records. "
+                      f"Record {record_uid} is of type \"{record_type}\".{bcolors.ENDC}")
+                return
+            allow_kdb = isinstance(pam_settings_value, dict) and bool(
+                (pam_settings_value.get('portForward') or {}).get('allowKeeperDBProxy')
+                or (pam_settings_value.get('connection') or {}).get('allowKeeperDBProxy')
+            )
+            if not allow_kdb:
+                print(f"{bcolors.FAIL}KeeperDB Proxy is not enabled for record {record_uid}.{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Enable it with "
+                      f"{bcolors.OKBLUE}'pam tunnel edit {record_uid} --keeper-db-proxy on'"
+                      f"{bcolors.ENDC}")
+                return
+            # Mirror the launch-credential pre-flight from PAMTunnelEditCommand
+            # (--keeper-db-proxy on path) so the failure message and timing are
+            # identical between edit and start.
+            _est, _ett, _tk = get_keeper_tokens(params)
+            _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
+            _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
+            if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
+                print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                      f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Use: "
+                      f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                      f"{bcolors.ENDC}")
+                return
+            db_type_for_banner = self._resolve_database_type(record, pam_settings_value)
 
         # Get target host and port
         if allow_supply_host:
@@ -912,6 +1002,15 @@ class PAMTunnelStartCommand(Command):
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
 
         if result and result.get("success"):
+            # When --proxy was used, print the KeeperDB Proxy info banner once.
+            # Local listener is already bound (start_rust_tunnel returns the
+            # actual_local_listen_addr from Rust), so the connect string is
+            # valid even though the WebRTC handshake may still be in progress.
+            # Single call covers interactive, foreground, run, and background-
+            # child modes — the background parent returns earlier and never
+            # reaches this branch.
+            if is_keeperdb_proxy:
+                self._print_keeperdb_proxy_banner(host, port, db_type_for_banner)
             # Workflow lease expiry handling.
             #
             # Behavior note: at expiresOn we want to terminate the tunnel and
