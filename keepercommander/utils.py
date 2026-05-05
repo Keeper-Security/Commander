@@ -27,6 +27,7 @@ import sys
 
 from . import crypto
 from .constants import EMAIL_PATTERN
+import zxcvbn as _zxcvbn
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
@@ -427,6 +428,20 @@ def is_pw_fair(pw_score):           # type: (int) -> bool
 
 def is_pw_strong(pw_score):         # type: (int) -> bool
     return pw_score >= 80
+
+
+_MASTER_PASSWORD_SCORE_MAP = {0: 25, 1: 25, 2: 50, 3: 75, 4: 100}
+
+
+def master_password_score(password):  # type: (str) -> int
+    if not password or not isinstance(password, str):
+        return 0
+    try:
+        result = _zxcvbn.zxcvbn(password)
+        return _MASTER_PASSWORD_SCORE_MAP.get(result.get('score'), 25)
+    except Exception as e:
+        logging.debug('zxcvbn scoring failed: %s', e)
+        return 25
 
 
 def is_rec_at_risk(bw_result):      # type (int) -> bool
