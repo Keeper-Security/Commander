@@ -194,7 +194,6 @@ class WorkflowGetUserAccessStateCommand(Command):
             record_name = RecordResolver.resolve_name(params, wf.resource)
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
-            conditions = WorkflowFormatter.format_conditions(wf.status.conditions) if wf.status.conditions else ''
             checked_out_by = wf.status.checkedOutBy or ''
             started = _fmt_ts_or_empty(wf.status.startedOn)
             expires = _fmt_ts_or_empty(wf.status.expiresOn)
@@ -205,9 +204,9 @@ class WorkflowGetUserAccessStateCommand(Command):
                     for a in wf.status.approvedBy
                 ]
                 approved_by = ', '.join(approved_names)
-            rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires, conditions])
+            rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires])
 
-        headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires', 'Conditions']
+        headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires']
         print()
         dump_report_data(rows, headers=headers)
         print()

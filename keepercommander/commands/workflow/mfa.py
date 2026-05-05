@@ -355,6 +355,13 @@ class WorkflowMfaPrompt:
         from ... import api
 
         tfa_list = self._fetch_2fa_list(self.params, api, APIRequest_pb2)
+        if tfa_list is self._NO_2FA_CONFIGURED:
+            print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
+            print(
+                "Your account does not have any 2FA methods configured. "
+                f"For available methods, run: {bcolors.OKBLUE}2fa add -h{bcolors.ENDC}\n"
+            )
+            return None
         if tfa_list is None:
             try:
                 code = getpass.getpass('2FA required. Enter TOTP code: ').strip()
@@ -382,6 +389,8 @@ class WorkflowMfaPrompt:
 
         return self._dispatch(selected.channelType, APIRequest_pb2)
 
+    _NO_2FA_CONFIGURED = object()
+
     @staticmethod
     def _fetch_2fa_list(params, api, APIRequest_pb2):
         try:
@@ -393,12 +402,7 @@ class WorkflowMfaPrompt:
             return None
 
         if not tfa_list.channels:
-            print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
-            print(
-                "Your account does not have any 2FA methods configured. "
-                f"For available methods, run: {bcolors.OKBLUE}2fa add -h{bcolors.ENDC}"
-            )
-            return None
+            return WorkflowMfaPrompt._NO_2FA_CONFIGURED
 
         return tfa_list
 
