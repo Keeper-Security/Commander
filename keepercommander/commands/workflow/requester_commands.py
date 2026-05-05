@@ -27,6 +27,7 @@ from .helpers import (
     is_workflow_exempt,
     print_exempt_message,
     submit_access_request,
+    fix_dash_uid_args,
 )
 
 
@@ -186,6 +187,10 @@ class WorkflowStartCommand(Command):
     def get_parser(self):
         return WorkflowStartCommand.parser
 
+    def execute_args(self, params, args, **kwargs):
+        args = fix_dash_uid_args(self.get_parser(), args)
+        return super().execute_args(params, args, **kwargs)
+
     def execute(self, params: KeeperParams, **kwargs):
         uid = kwargs.get('uid')
         record_uid, record = RecordResolver.resolve(params, uid, allow_missing=True)
@@ -238,6 +243,10 @@ class WorkflowEndCommand(Command):
 
     def get_parser(self):
         return WorkflowEndCommand.parser
+
+    def execute_args(self, params, args, **kwargs):
+        args = fix_dash_uid_args(self.get_parser(), args)
+        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         if kwargs.get('force'):

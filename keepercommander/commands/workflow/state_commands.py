@@ -203,7 +203,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                     a.user if a.user else RecordResolver.resolve_user(params, a.userId)
                     for a in wf.status.approvedBy
                 ]
-                approved_by = ', '.join(approved_names)
+                approved_by = '\n'.join(approved_names)
             rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires])
 
         headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires']

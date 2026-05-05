@@ -10,6 +10,7 @@
 #
 
 import re
+import shlex
 from typing import List, Optional, Tuple
 
 from ...error import CommandError
@@ -22,6 +23,41 @@ _PROTO_DUMP_RE = re.compile(
     r'\s*(?:type|value|name|stage|conditions|flowUid|resource)\s*:\s*(?:"[^"]*"|\S+)\s*',
 )
 _RESPONSE_CODE_RE = re.compile(r'\s*[Rr]esponse\s+code:\s*\S+\s*$')
+
+
+def fix_dash_uid_args(parser, args):
+    """Insert '--' before a base64url UID that starts with '-' so argparse
+    treats it as a positional value instead of an unknown flag."""
+    if not args or '--' in args:
+        return args
+    tokens = shlex.split(args)
+    known_opts = set()
+    consumes_value = set()
+    for action in parser._actions:
+        for opt in action.option_strings:
+            known_opts.add(opt)
+            if action.nargs != 0:
+                consumes_value.add(opt)
+
+    result = []
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            result.append(token)
+            skip_next = False
+            continue
+        if token in known_opts:
+            result.append(token)
+            if token in consumes_value:
+                skip_next = True
+            continue
+        if token.startswith('-'):
+            result.append('--')
+        result.append(token)
+
+    if len(result) != len(tokens):
+        return ' '.join(shlex.quote(t) for t in result)
+    return args
 
 
 def sanitize_router_error(error: Exception) -> str:

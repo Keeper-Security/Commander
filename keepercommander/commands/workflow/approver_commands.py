@@ -22,7 +22,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import api, crypto, utils
 
-from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error
+from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error, fix_dash_uid_args
 
 
 class WorkflowGetApprovalRequestsCommand(Command):
@@ -183,6 +183,10 @@ class WorkflowApproveCommand(Command):
     def get_parser(self):
         return WorkflowApproveCommand.parser
 
+    def execute_args(self, params, args, **kwargs):
+        args = fix_dash_uid_args(self.get_parser(), args)
+        return super().execute_args(params, args, **kwargs)
+
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
         try:
@@ -221,6 +225,10 @@ class WorkflowDenyCommand(Command):
 
     def get_parser(self):
         return WorkflowDenyCommand.parser
+
+    def execute_args(self, params, args, **kwargs):
+        args = fix_dash_uid_args(self.get_parser(), args)
+        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
