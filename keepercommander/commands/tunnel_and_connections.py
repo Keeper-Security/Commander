@@ -1325,9 +1325,6 @@ class PAMTunnelDiagnoseCommand(Command):
         print(f'  {self._dsep()}')
         print()
 
-        return 0 if passed_total == total_checks else 1
-
-
 class PAMConnectionEditCommand(Command):
     choices = ['on', 'off', 'default']
     protocols = ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']
