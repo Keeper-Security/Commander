@@ -363,6 +363,8 @@ def prompt_for_reason_ticket(needs_reason: bool, needs_ticket: bool) -> Tuple[Op
 
 class RecordResolver:
 
+    WORKFLOW_RECORD_TYPES = {'pamMachine', 'pamDirectory', 'pamDatabase', 'pamRemoteBrowser'}
+
     @staticmethod
     def resolve(params, record_input, allow_missing=False):
         if record_input in params.record_cache:
@@ -374,6 +376,19 @@ class RecordResolver:
         if allow_missing:
             return None, None
         raise CommandError('', f'Record "{record_input}" not found')
+
+    @staticmethod
+    def validate_workflow_record_type(record):
+        """Raise CommandError if the record type doesn't support workflows."""
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('', 'Workflows are only supported on PAM records')
+        if record.record_type not in RecordResolver.WORKFLOW_RECORD_TYPES:
+            supported = ', '.join(sorted(RecordResolver.WORKFLOW_RECORD_TYPES))
+            raise CommandError(
+                '',
+                f'Record "{record.title}" is of type "{record.record_type}" which does not support workflows.\n'
+                f'Supported record types: {supported}'
+            )
 
     @staticmethod
     def get_uid_bytes(params: KeeperParams, record_uid: str) -> bytes:
@@ -498,10 +513,19 @@ class WorkflowFormatter:
         workflow_pb2.SUNDAY: 'Sunday',
     }
 
+    BLOCKING_CONDITIONS = {workflow_pb2.AC_TIME, workflow_pb2.AC_APPROVAL}
+
     @staticmethod
     def format_stage(stage: int, status=None) -> str:
         if stage == workflow_pb2.WS_READY_TO_START and status is not None:
-            if not status.startedOn and not status.conditions:
+            if status.conditions:
+                has_blocking = any(c in WorkflowFormatter.BLOCKING_CONDITIONS for c in status.conditions)
+                if has_blocking:
+                    return 'Waiting'
+                return 'Ready to Start'
+            if status.approvedBy and not status.startedOn:
+                return 'Ready to Start'
+            if not status.startedOn and not status.approvedBy:
                 return 'Needs Action'
         return WorkflowFormatter.STAGE_MAP.get(stage, f'Unknown ({stage})')
 

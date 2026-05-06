@@ -67,6 +67,7 @@ class WorkflowRequestAccessCommand(Command):
     @staticmethod
     def _request(params, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        RecordResolver.validate_workflow_record_type(record)
         if is_workflow_exempt(params, record_uid):
             print_exempt_message(kwargs.get('format', 'table'))
             return

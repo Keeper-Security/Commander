@@ -95,6 +95,7 @@ class WorkflowCreateCommand(Command):
 
     def execute(self, params: KeeperParams, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        RecordResolver.validate_workflow_record_type(record)
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
         # Pre-check: surface the "already exists" condition with a clear,
