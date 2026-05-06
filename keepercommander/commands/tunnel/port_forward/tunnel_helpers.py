@@ -189,7 +189,7 @@ def escalate_close(
 
     def _do_force_close():
         try:
-            logging.info(
+            logging.debug(
                 f"{log_prefix}escalating to force_close_tube({tube_id}) after "
                 f"{hard_after_seconds}s"
             )
