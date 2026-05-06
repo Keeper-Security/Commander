@@ -24,7 +24,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
@@ -54,14 +54,12 @@ from ..constants import get_relay_host, get_router_host, get_keeper_server_hostn
 # so a re-run of `pam tunnel start` in the same shell session doesn't leave
 # the original timer alive and produce duplicate "Tunnel access expired"
 # messages from the prior tunnel.
-_LEASE_EXPIRY_TIMERS_BY_RECORD = {}    # type: dict[str, threading.Timer]
+_LEASE_EXPIRY_TIMERS_BY_RECORD: Dict[str, threading.Timer] = {}
 # Maps record_uid -> threading.Event used by --foreground / --run modes to break
 # their blocking wait when the workflow lease expires. Set by the mode block,
 # read by the lease-expiry callback. Default interactive mode does NOT register
 # (it has no blocking wait to interrupt; user SSH session continues naturally).
-_LEASE_SHUTDOWN_EVENTS_BY_RECORD = {}   # type: dict[str, threading.Event]
-import threading as _lease_threading_module  # noqa: E402  (used only by the tunnel-start timer)
-
+_LEASE_SHUTDOWN_EVENTS_BY_RECORD: Dict[str, threading.Event] = {}
 
 
 # Group Commands
@@ -1021,8 +1019,7 @@ class PAMTunnelStartCommand(Command):
             # advertise FORCE_CLOSE_MIN_VERSION; older peers get the soft close
             # only and the in-flight session lingers until natural disconnect.
             if workflow_expires_on_ms and workflow_expires_on_ms > 0:
-                import time as _time
-                seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
+                seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - time.time()
                 tube_id = result.get('tube_id')
                 if tube_id and seconds_until_expiry > 0:
                     # Dedup: cancel any pending lease-expiry timer for this
@@ -1066,7 +1063,7 @@ class PAMTunnelStartCommand(Command):
                         finally:
                             _LEASE_EXPIRY_TIMERS_BY_RECORD.pop(_record_uid, None)
 
-                    timer = _lease_threading_module.Timer(
+                    timer = threading.Timer(
                         seconds_until_expiry, _close_on_lease_expiry,
                     )
                     timer.daemon = True
@@ -1688,7 +1685,6 @@ class PAMTunnelDiagnoseCommand(Command):
                     password=turn_password,
                 )
                 if output_format == 'json':
-                    import json
                     print(json.dumps(rust_results, indent=2))
                     return 0
 

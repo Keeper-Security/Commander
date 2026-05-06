@@ -1417,13 +1417,11 @@ class PAMLaunchCommand(Command):
                 (banner printed there); do not create a second spinner or duplicate the launching line.
             preserve_crlf: When True (default), STDOUT keeps raw CRLF; False when ``pam launch -n`` / ``--normalize-crlf``.
         """
-        import sys as _sys
-
         # Non-interactive stdin guard: key-event mode requires a real TTY.
         # --stdin (pipe mode) is fine with redirected stdin, but key mode is not —
         # tty.setraw() will raise and character-at-a-time mapping makes no sense
         # for piped/scripted input.
-        if not use_stdin and not _sys.stdin.isatty():
+        if not use_stdin and not sys.stdin.isatty():
             if pre_connect_spinner is not None:
                 pre_connect_spinner.stop()
             raise CommandError(
@@ -1462,38 +1460,40 @@ class PAMLaunchCommand(Command):
         lease_timer = None
         force_close_timer_holder = {}  # mutable holder so cleanup can cancel
         if workflow_expires_on_ms and workflow_expires_on_ms > 0:
-            import time as _time
-            seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
-            if seconds_until_expiry <= 0:
+            seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - time.time()
+            _lease_tube_id = tunnel_result['tunnel'].get('tube_id')
+            _lease_tube_registry = tunnel_result['tunnel'].get('tube_registry')
+
+            def _on_lease_expired():
+                nonlocal shutdown_requested, lease_expired
                 lease_expired = True
                 shutdown_requested = True
+                if _lease_tube_id and _lease_tube_registry is not None:
+                    # Fetch remote version lazily: the SDP answer arrives
+                    # asynchronously; capturing eagerly at schedule time
+                    # would race for short leases scheduled before SDP.
+                    remote_ver = tunnel_result['tunnel'].get('remote_webrtc_version')
+                    if not remote_ver:
+                        sess = get_tunnel_session(_lease_tube_id)
+                        remote_ver = (
+                            getattr(sess, 'remote_webrtc_version', None)
+                            if sess else None
+                        )
+                    force_close_timer_holder['t'] = escalate_close(
+                        _lease_tube_registry,
+                        _lease_tube_id,
+                        remote_webrtc_version=remote_ver,
+                        reason=CloseConnectionReasons.AdminClosed,
+                        log_prefix=f"[lease-expiry launch tube={_lease_tube_id[:8]}] ",
+                    )
+
+            if seconds_until_expiry <= 0:
+                # Already expired at session start: run the close-and-escalate
+                # path immediately so cleanup goes through the same flow as a
+                # mid-session expiry.
+                _on_lease_expired()
             else:
                 import threading as _threading
-                _lease_tube_id = tunnel_result['tunnel'].get('tube_id')
-                _lease_tube_registry = tunnel_result['tunnel'].get('tube_registry')
-
-                def _on_lease_expired():
-                    nonlocal shutdown_requested, lease_expired
-                    lease_expired = True
-                    shutdown_requested = True
-                    if _lease_tube_id and _lease_tube_registry is not None:
-                        # Fetch remote version lazily: the SDP answer arrives
-                        # asynchronously; capturing eagerly at schedule time
-                        # would race for short leases scheduled before SDP.
-                        remote_ver = tunnel_result['tunnel'].get('remote_webrtc_version')
-                        if not remote_ver:
-                            sess = get_tunnel_session(_lease_tube_id)
-                            remote_ver = (
-                                getattr(sess, 'remote_webrtc_version', None)
-                                if sess else None
-                            )
-                        force_close_timer_holder['t'] = escalate_close(
-                            _lease_tube_registry,
-                            _lease_tube_id,
-                            remote_webrtc_version=remote_ver,
-                            reason=CloseConnectionReasons.AdminClosed,
-                            log_prefix=f"[lease-expiry launch tube={_lease_tube_id[:8]}] ",
-                        )
                 lease_timer = _threading.Timer(seconds_until_expiry, _on_lease_expired)
                 lease_timer.daemon = True
                 lease_timer.start()
