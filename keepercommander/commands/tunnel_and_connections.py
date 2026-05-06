@@ -32,7 +32,7 @@ from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
-    wait_for_tunnel_connection, create_rust_webrtc_settings
+    wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -1013,30 +1013,13 @@ class PAMTunnelStartCommand(Command):
                 self._print_keeperdb_proxy_banner(host, port, db_type_for_banner)
             # Workflow lease expiry handling.
             #
-            # Behavior note: at expiresOn we want to terminate the tunnel and
-            # any in-flight forwarded connections (web-vault-equivalent hard
-            # disconnect). However:
-            #   * tube_registry.close_tube(tube_id) is a SOFT close —
-            #     it marks the tube closed and stops new channel creation but
-            #     does NOT terminate already-open forwarded channels. An SSH
-            #     session active through the tube keeps relaying bytes until
-            #     the SSH client itself closes (you'll see TURN
-            #     "fail to refresh permissions" warnings while the existing
-            #     5-tuple keeps flowing).
-            #   * The local TCP listener is owned by Rust
-            #     (keeper_pam_webrtc_rs); Python has no handle to force-close
-            #     it from here.
-            # So a true hard-kill is not currently possible from the Python
-            # layer. The server-side workflow lease still becomes invalid at
-            # expiresOn (the gateway will refuse new auth requests); only the
-            # already-running SSH session survives until natural disconnect.
-            #
-            # The previous implementation called
-            # `tube_registry.close_tube(_tube_id, reason=CloseConnectionReasons.Normal)`
-            # but it was a no-op against active channels and produced
-            # confusing "fail to refresh permissions" noise from the TURN
-            # relay. Kept commented out below for reference if a future
-            # keeper_pam_webrtc_rs release adds a hard-kill primitive.
+            # At expiresOn we soft-close the tube (stops new channels, sends
+            # CloseConnection control frames) and, after a short delay, escalate
+            # to force_close_tube which drops the local TCP listener and severs
+            # any active forwarded streams (SSH, MySQL, etc.). The escalation
+            # only fires when both the local Rust crate and the remote peer
+            # advertise FORCE_CLOSE_MIN_VERSION; older peers get the soft close
+            # only and the in-flight session lingers until natural disconnect.
             if workflow_expires_on_ms and workflow_expires_on_ms > 0:
                 import time as _time
                 seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - _time.time()
@@ -1058,21 +1041,23 @@ class PAMTunnelStartCommand(Command):
                         try:
                             print(
                                 f"\n{bcolors.WARNING}Tunnel access lease expired for "
-                                f"{_record_uid}. Server will refuse new auth requests; "
-                                f"any in-flight SSH session will continue until you "
-                                f"disconnect it.{bcolors.ENDC}",
+                                f"{_record_uid}. Closing the tunnel; any in-flight "
+                                f"forwarded connections will be terminated."
+                                f"{bcolors.ENDC}",
                                 flush=True,
                             )
-                            # Soft-close — kept commented out: doesn't actually
-                            # terminate active forwarded channels, only emits
-                            # TURN permission-refresh errors. Re-enable once
-                            # keeper_pam_webrtc_rs provides a hard-kill that
-                            # also drops the local listener.
-                            # tube_registry.close_tube(_tube_id, reason=CloseConnectionReasons.Normal)
+                            sess = get_tunnel_session(_tube_id)
+                            remote_ver = getattr(sess, 'remote_webrtc_version', None) if sess else None
+                            escalate_close(
+                                tube_registry,
+                                _tube_id,
+                                remote_webrtc_version=remote_ver,
+                                reason=CloseConnectionReasons.AdminClosed,
+                                log_prefix=f"[lease-expiry tunnel record={_record_uid}] ",
+                            )
                             # Wake any --foreground / --run blocking wait so the
-                            # process self-terminates instead of hanging past lease
-                            # expiry. Default interactive mode does not register
-                            # an event here — it has no blocking wait to break.
+                            # process self-terminates. Default interactive mode
+                            # does not register an event here.
                             shutdown_event = _LEASE_SHUTDOWN_EVENTS_BY_RECORD.get(_record_uid)
                             if shutdown_event is not None:
                                 shutdown_event.set()

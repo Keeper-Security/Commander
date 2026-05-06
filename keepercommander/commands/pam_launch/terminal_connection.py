@@ -57,6 +57,7 @@ from ..tunnel.port_forward.tunnel_helpers import (
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
     set_remote_description_and_parse_version,
+    _version_at_least,
 )
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
@@ -134,37 +135,6 @@ MAX_MESSAGE_SIZE_LINE = "a=max-message-size:1073741823"
 # Minimum keeper-pam-webrtc-rs version that supports ConnectAs payload in OpenConnection.
 # Older Gateways (Rust module < this) do not parse connect_as_payload; omit it when not supported.
 CONNECT_AS_MIN_VERSION = "2.1.6"
-
-
-def _version_at_least(version: Optional[str], min_version: str) -> bool:
-    """
-    Compare semantic versions. Returns True if version >= min_version.
-
-    Args:
-        version: Parsed version (e.g. "2.1.4") or None (treated as unknown/old).
-        min_version: Minimum required version (e.g. "2.1.0").
-
-    Returns:
-        True if version is known and >= min_version; False if unknown or older.
-    """
-    if not version:
-        return False
-
-    def parse(v: str) -> tuple:
-        parts = []
-        for p in v.split(".")[:3]:  # major.minor.patch
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
-        while len(parts) < 3:
-            parts.append(0)
-        return tuple(parts[:3])
-
-    try:
-        return parse(version) >= parse(min_version)
-    except Exception:
-        return False
 
 
 def _ensure_max_message_size_attribute(sdp_offer: Optional[str]) -> Optional[str]:
