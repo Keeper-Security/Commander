@@ -296,6 +296,10 @@ login_parser = argparse.ArgumentParser(prog='login', description='Start a login 
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
 login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
+login_parser.add_argument('--config-file', dest='config_file', action='store_true',
+                          help='Store config in config.json instead of the OS-native keychain '
+                               '(use for headless servers, Docker, or CI/CD environments). '
+                               'Equivalent to setting KEEPER_CONFIG_STORAGE=file.')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -1715,6 +1719,42 @@ class LoginCommand(Command):
         params.password = password
         new_login = kwargs.get('new_login') is True
         skip_sync = kwargs.get('skip_sync') is True
+
+        # Apply storage backend choice before login so that store_config_properties
+        # (called inside api.login) honours the user's explicit preference.
+        # Mirrors KSM CLI's use_config_file / use_keyring logic in Profile.init().
+        import platform as _platform
+        from ..config_storage.loader import CONFIG_STORAGE_URL, OS_KEYCHAIN_URL, is_os_keychain_available
+
+        use_config_file = (
+            kwargs.get('config_file') is True
+            or os.environ.get('KEEPER_CONFIG_STORAGE', '').lower() == 'file'
+        )
+
+        if not isinstance(params.config, dict):
+            params.config = {}
+
+        if use_config_file:
+            # User explicitly chose file storage (--config-file flag or env var).
+            # Set the sentinel so store_config_properties skips keychain auto-detection
+            # and preserves this choice in config.json for future runs.
+            params.config[CONFIG_STORAGE_URL] = 'file'
+        else:
+            # User wants default behaviour (keychain when available).
+            # Clear any lingering 'file' sentinel written by a previous
+            # `keeper login --config-file` so keychain auto-detection can run.
+            if params.config.get(CONFIG_STORAGE_URL) == 'file':
+                del params.config[CONFIG_STORAGE_URL]
+
+            # Warn if keychain is unavailable (headless/CI environments),
+            # mirroring KSM CLI's fallback warning in Profile.init().
+            if CONFIG_STORAGE_URL not in params.config and not is_os_keychain_available():
+                logging.warning(
+                    '%sWarning: OS keychain not available. Config will be stored in config.json '
+                    '(use --config-file to suppress this message).%s',
+                    Fore.YELLOW, Fore.RESET
+                )
+
         try:
             api.login(params, new_login=new_login)
         except Exception as exc:
@@ -1740,6 +1780,22 @@ class LoginCommand(Command):
                 loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
             except Exception as e:
                 logging.debug(f'Device registration: {e}')
+
+            # Print config storage confirmation, mirroring KSM CLI's post-init messages.
+            stored_backend = (params.config or {}).get(CONFIG_STORAGE_URL, '')
+            if stored_backend and stored_backend != 'file':
+                _os = _platform.system()
+                if _os == 'Darwin':
+                    _storage_label = 'macOS Keychain'
+                elif _os == 'Windows':
+                    _storage_label = 'Windows Credential Manager'
+                else:
+                    _storage_label = 'system keyring (Secret Service)'
+                logging.info('%sConfig stored in %s.%s', Fore.GREEN, _storage_label, Fore.RESET)
+            else:
+                logging.info('%sConfig stored in %s.%s', Fore.GREEN,
+                             os.path.abspath(params.config_filename) if params.config_filename else 'config.json',
+                             Fore.RESET)
 
             # Show post-login message (only for explicit login command, not auto-login)
             show_help = kwargs.get('show_help', True)
