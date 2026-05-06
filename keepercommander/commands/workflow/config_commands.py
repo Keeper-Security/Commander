@@ -453,6 +453,8 @@ class WorkflowUpdateCommand(Command):
                 print(f"Record: {record.title} ({record_uid})")
                 print()
 
+        except CommandError:
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to update workflow: {sanitize_router_error(e)}')
 
@@ -579,6 +581,8 @@ class WorkflowAddApproversCommand(Command):
                     print(f"Type: Escalation approver{esc_info}")
                 print()
 
+        except CommandError:
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to add approvers: {sanitize_router_error(e)}')
 
@@ -639,5 +643,7 @@ class WorkflowDeleteApproversCommand(Command):
                 print(f"Removed {total} approver(s)")
                 print()
 
+        except CommandError:
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to remove approvers: {sanitize_router_error(e)}')

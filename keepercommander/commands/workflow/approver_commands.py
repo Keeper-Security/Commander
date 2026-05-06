@@ -244,7 +244,14 @@ class WorkflowDenyCommand(Command):
         if reason:
             reason_bytes = reason.encode('utf-8')
             encrypted = self._encrypt_denial_reason(params, flow_uid_bytes, reason_bytes)
-            denial.denialReason = encrypted if encrypted else reason_bytes
+            if encrypted:
+                denial.denialReason = encrypted
+            else:
+                logging.warning(
+                    'Could not encrypt denial reason for the requester — reason will not be attached. '
+                    'The denial itself will still be sent.'
+                )
+                reason = ''
 
         try:
             _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=denial)

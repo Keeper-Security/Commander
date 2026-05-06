@@ -30,7 +30,10 @@ def fix_dash_uid_args(parser, args):
     treats it as a positional value instead of an unknown flag."""
     if not args or '--' in args:
         return args
-    tokens = shlex.split(args)
+    try:
+        tokens = shlex.split(args)
+    except ValueError:
+        return args
     known_opts = set()
     consumes_value = set()
     for action in parser._actions:
