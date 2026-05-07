@@ -1,0 +1,223 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2026 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
+import argparse
+import json
+from datetime import datetime
+
+from ..base import Command, dump_report_data
+from ..pam.router_helper import _post_request_to_router
+from ...display import bcolors
+from ...error import CommandError
+from ...params import KeeperParams
+from ...proto import workflow_pb2
+from ... import utils
+
+from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error, is_workflow_exempt, print_exempt_message
+
+
+def _ms_to_datetime_str(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _fmt_ts_or_empty(ts_ms: int) -> str:
+    return _ms_to_datetime_str(ts_ms) if ts_ms else ''
+
+
+class WorkflowGetStateCommand(Command):
+    parser = argparse.ArgumentParser(
+        prog='pam workflow state',
+        description='Get workflow state for a record or flow',
+    )
+    _state_group = parser.add_mutually_exclusive_group(required=True)
+    _state_group.add_argument('-r', '--record', help='Record UID or name')
+    _state_group.add_argument('-f', '--flow-uid', help='Flow UID of active workflow')
+    parser.add_argument('--format', dest='format', action='store',
+                        choices=['table', 'json'], default='table', help='Output format')
+
+    def get_parser(self):
+        return WorkflowGetStateCommand.parser
+
+    def execute(self, params: KeeperParams, **kwargs):
+        record_uid = kwargs.get('record')
+        flow_uid = kwargs.get('flow_uid')
+
+        state = workflow_pb2.WorkflowState()
+        if flow_uid:
+            try:
+                state.flowUid = utils.base64_url_decode(flow_uid)
+            except Exception:
+                raise CommandError('', f'Invalid flow UID: "{flow_uid}"')
+        else:
+            record_uid, record = RecordResolver.resolve(params, record_uid)
+            if is_workflow_exempt(params, record_uid):
+                print_exempt_message(kwargs.get('format', 'table'))
+                return
+            record_uid_bytes = utils.base64_url_decode(record_uid)
+            state.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record.title))
+
+        try:
+            response = _post_request_to_router(
+                params, 'get_workflow_state',
+                rq_proto=state, rs_type=workflow_pb2.WorkflowState,
+            )
+
+            if response is None:
+                if kwargs.get('format') == 'json':
+                    print(json.dumps({'status': 'no_workflow', 'message': 'No workflow found'}, indent=2))
+                else:
+                    print(f"\n{bcolors.WARNING}No workflow found for this record{bcolors.ENDC}\n")
+                return
+
+            if kwargs.get('format') == 'json':
+                self._print_json(params, response)
+            else:
+                self._print_table(params, response)
+
+        except Exception as e:
+            raise CommandError('', f'Failed to get workflow state: {sanitize_router_error(e)}')
+
+    @staticmethod
+    def _print_json(params, response):
+        result = {
+            'flow_uid': utils.base64_url_encode(response.flowUid) if response.flowUid else None,
+            'record_uid': utils.base64_url_encode(response.resource.value),
+            'record_name': RecordResolver.resolve_name(params, response.resource),
+            'stage': WorkflowFormatter.format_stage(response.status.stage, response.status),
+            'conditions': [WorkflowFormatter.format_conditions([c]) for c in response.status.conditions],
+            'escalated': response.status.escalated,
+            'checked_out_by': response.status.checkedOutBy or None,
+            'can_force_checkin': response.status.canForceCheckIn,
+            'started_on': response.status.startedOn or None,
+            'expires_on': response.status.expiresOn or None,
+            'approved_by': [
+                {
+                    'user': a.user if a.user else RecordResolver.resolve_user(params, a.userId),
+                    'approved_on': a.approvedOn or None,
+                }
+                for a in response.status.approvedBy
+            ],
+        }
+        print(json.dumps(result, indent=2))
+
+    @staticmethod
+    def _print_table(params, response):
+        print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
+        print(f"Record: {RecordResolver.format_label(params, response.resource)}")
+        st = response.status
+        detail_lines = [
+            f"Flow UID: {utils.base64_url_encode(response.flowUid)}" if response.flowUid else None,
+            f"Stage: {WorkflowFormatter.format_stage(st.stage, st)}",
+            f"Conditions: {WorkflowFormatter.format_conditions(st.conditions)}" if st.conditions else None,
+            f"Checked out by: {st.checkedOutBy}" if st.checkedOutBy else None,
+            "Force check-in: Available" if st.canForceCheckIn else None,
+            "Escalated: Yes" if st.escalated else None,
+            f"Started: {_ms_to_datetime_str(st.startedOn)}" if st.startedOn else None,
+            f"Expires: {_ms_to_datetime_str(st.expiresOn)}" if st.expiresOn else None,
+        ]
+        for line in detail_lines:
+            if line:
+                print(line)
+        if st.approvedBy:
+            print("Approved by:")
+            for a in st.approvedBy:
+                name = a.user if a.user else RecordResolver.resolve_user(params, a.userId)
+                suffix = f" at {_ms_to_datetime_str(a.approvedOn)}" if a.approvedOn else ''
+                print(f"  - {name}{suffix}")
+        print()
+
+
+class WorkflowGetUserAccessStateCommand(Command):
+    parser = argparse.ArgumentParser(
+        prog='pam workflow my-access',
+        description='Get all workflow states for current user',
+    )
+    parser.add_argument('--format', dest='format', action='store',
+                        choices=['table', 'json'], default='table', help='Output format')
+
+    def get_parser(self):
+        return WorkflowGetUserAccessStateCommand.parser
+
+    def execute(self, params: KeeperParams, **kwargs):
+        try:
+            response = _post_request_to_router(
+                params, 'get_user_access_state',
+                rs_type=workflow_pb2.UserAccessState,
+            )
+
+            if not response or not response.workflows:
+                if kwargs.get('format') == 'json':
+                    print(json.dumps({'workflows': []}, indent=2))
+                else:
+                    print(f"\n{bcolors.WARNING}No active workflows{bcolors.ENDC}\n")
+                return
+
+            if kwargs.get('format') == 'json':
+                self._print_json(params, response)
+            else:
+                self._print_table(params, response)
+
+        except Exception as e:
+            raise CommandError('', f'Failed to get user access state: {sanitize_router_error(e)}')
+
+    @staticmethod
+    def _print_json(params, response):
+        result = {
+            'workflows': [
+                {
+                    'flow_uid': utils.base64_url_encode(wf.flowUid),
+                    'record_uid': utils.base64_url_encode(wf.resource.value),
+                    'record_name': RecordResolver.resolve_name(params, wf.resource),
+                    'stage': WorkflowFormatter.format_stage(wf.status.stage, wf.status),
+                    'conditions': [WorkflowFormatter.format_conditions([c]) for c in wf.status.conditions],
+                    'escalated': wf.status.escalated,
+                    'checked_out_by': wf.status.checkedOutBy or None,
+                    'can_force_checkin': wf.status.canForceCheckIn,
+                    'started_on': wf.status.startedOn or None,
+                    'expires_on': wf.status.expiresOn or None,
+                    'approved_by': [
+                        {
+                            'user': a.user if a.user else RecordResolver.resolve_user(params, a.userId),
+                            'approved_on': a.approvedOn or None,
+                        }
+                        for a in wf.status.approvedBy
+                    ],
+                }
+                for wf in response.workflows
+            ],
+        }
+        print(json.dumps(result, indent=2))
+
+    @staticmethod
+    def _print_table(params, response):
+        rows = []
+        for wf in response.workflows:
+            stage = WorkflowFormatter.format_stage(wf.status.stage, wf.status)
+            record_name = RecordResolver.resolve_name(params, wf.resource)
+            record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
+            flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
+            conditions = WorkflowFormatter.format_conditions(wf.status.conditions) if wf.status.conditions else ''
+            checked_out_by = wf.status.checkedOutBy or ''
+            started = _fmt_ts_or_empty(wf.status.startedOn)
+            expires = _fmt_ts_or_empty(wf.status.expiresOn)
+            approved_by = ''
+            if wf.status.approvedBy:
+                approved_names = [
+                    a.user if a.user else RecordResolver.resolve_user(params, a.userId)
+                    for a in wf.status.approvedBy
+                ]
+                approved_by = ', '.join(approved_names)
+            rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires, conditions])
+
+        headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires', 'Conditions']
+        print()
+        dump_report_data(rows, headers=headers)
+        print()

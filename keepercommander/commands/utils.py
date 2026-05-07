@@ -1583,24 +1583,22 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
         if logging.getLogger().isEnabledFor(logging.DEBUG) or show_packages:
-            ver = sys.version_info
-            if ver.major >= 3 and ver.minor >= 8:
-                import importlib.metadata
-                dist = importlib.metadata.packages_distributions()
-                packages = {}
-                for pack in dist.values():
-                    if isinstance(pack, list) and len(pack) > 0:
-                        name = pack[0]
-                        if name in packages:
-                            continue
-                        try:
-                            version = importlib.metadata.version(name)
-                            packages[name] = version
-                        except Exception as e:
-                            logging.debug('Get package %s version error: %s', name, e)
-                installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
-                installed_packages_list.sort(key=lambda x: x.lower())
-                print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
+            import importlib.metadata
+            dist = importlib.metadata.packages_distributions()
+            packages = {}
+            for pack in dist.values():
+                if isinstance(pack, list) and len(pack) > 0:
+                    name = pack[0]
+                    if name in packages:
+                        continue
+                    try:
+                        version = importlib.metadata.version(name)
+                        packages[name] = version
+                    except Exception as e:
+                        logging.debug('Get package %s version error: %s', name, e)
+            installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
+            installed_packages_list.sort(key=lambda x: x.lower())
+            print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
 
         if version_details.get('is_up_to_date') is None:
             logging.debug("It appears that Commander is up to date")
@@ -1697,7 +1695,8 @@ class LoginCommand(Command):
                     # Check extended server list
                     region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
                 print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}', file=sys.stderr)
-                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
+                hint_cmd = 'keeper login --server <region>' if params.batch_mode else 'login --server <region>'
+                print(f'{Fore.CYAN}Use {Fore.GREEN}{hint_cmd}{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
                 print('', file=sys.stderr)
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:
@@ -2006,7 +2005,11 @@ class HelpCommand(Command):
         show_legacy = kwargs.get('legacy', False)
         if not help_commands:
             from ..cli import display_command_help
-            display_command_help(params.enterprise_ec_key, show_legacy=show_legacy)
+            display_command_help(
+                params.enterprise_ec_key,
+                show_legacy=show_legacy,
+                show_keeper_drive=not params.is_feature_disallowed('keeper_drive')
+            )
             return
 
         if isinstance(help_commands, list) and len(help_commands) > 0:

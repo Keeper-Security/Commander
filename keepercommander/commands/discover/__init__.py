@@ -223,11 +223,11 @@ class GatewayContext:
                     "gateway": found_gateway
                 })
 
-            if len(found_items) > 1:
-                logging.debug(f"found {len(found_items)} configurations using this gateway")
-                raise MultiConfigurationException(
-                    items=found_items
-                )
+        if len(found_items) > 1:
+            logging.debug(f"found {len(found_items)} configurations using this gateway")
+            raise MultiConfigurationException(
+                items=found_items
+            )
 
         if len(found_items) == 1:
             found_gateway = found_items[0]["gateway"]

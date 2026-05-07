@@ -1,9 +1,13 @@
 import json
 import logging
+import os
 from typing import Optional
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipUnless
 
 import pytest
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_ENTERPRISE_CONFIG = os.path.join(_TESTS_DIR, 'enterprise.json')
 
 import keepercommander.commands.security_audit
 from data_config import read_config_file
@@ -13,6 +17,10 @@ from keepercommander.commands import aram, enterprise
 
 
 @pytest.mark.integration
+@skipUnless(
+    os.path.isfile(_ENTERPRISE_CONFIG),
+    'tests/enterprise.json not found (integration credentials; optional fixture)',
+)
 class TestEnterpriseCommands(TestCase):
     params = None   # type: Optional[KeeperParams]
 

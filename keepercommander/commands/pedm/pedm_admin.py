@@ -228,8 +228,8 @@ class PedmScimCommand(base.ArgparseCommand):
                                   help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
 
         ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
-        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<host>)')
-        ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
+        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<dc-fqdn>)')
+        ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (userPrincipalName or DOMAIN\\username)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
         ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
@@ -316,19 +316,19 @@ class PedmScimCommand(base.ArgparseCommand):
                         ad_user = custom_field.get_default_value(str)
                     if not ad_user:
                         ad_user = login
-                    if not ad_user:
-                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD User" or "Login" value')
-                    kwargs['ad_user'] = ad_user
-
-                    ad_password: Optional[str] = None
-                    custom_field = config_record.get_typed_field(field_type=None, label='AD Password')
-                    if custom_field:
-                        ad_password = custom_field.get_default_value(str)
-                    if not ad_password:
-                        ad_password = password
-                    if not ad_password:
-                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD Password" or "Password" value')
-                    kwargs['ad_password'] = ad_password
+                    if ad_user:
+                        kwargs['ad_user'] = ad_user
+                        ad_password: Optional[str] = None
+                        custom_field = config_record.get_typed_field(field_type=None, label='AD Password')
+                        if custom_field:
+                            ad_password = custom_field.get_default_value(str)
+                        if not ad_password:
+                            ad_password = password
+                        if not ad_password:
+                            raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD Password" or "Password" value')
+                        kwargs['ad_password'] = ad_password
+                    else:
+                        logging.debug("AD Connect: username is not provided. Trying Kerberos login.")
 
                     custom_field = config_record.get_typed_field(field_type=None, label='SCIM Group')
                     if custom_field:
@@ -360,10 +360,12 @@ class PedmScimCommand(base.ArgparseCommand):
                 scim_groups = None
 
             use_netbios_domain = ad_domain != 'dns'
-            if not ad_url or not ad_user:
-                raise base.CommandError('AD source requires AD URL and AD User')
+            if not ad_url:
+                raise base.CommandError('AD source requires AD URL')
+            if os.name != 'nt' and not ad_user:
+                raise base.CommandError('AD source requires AD User')
             try:
-                if not ad_password:
+                if ad_user and not ad_password:
                     ad_password = getpass.getpass(prompt=f'{ad_user} Password: ', stream=None)
                     if not ad_password:
                         raise base.CommandError('Cancelled')
@@ -499,9 +501,12 @@ class PedmScimCommand(base.ArgparseCommand):
             scim_records = list(data_source.populate())
         except Exception as e:
             raise base.CommandError(f'Error connecting to {account_type}: {e}')
-        
+
+        users_loaded = 0
+        group_loaded = 0
         for element in scim_records:
             if isinstance(element, ScimUser):
+                users_loaded += 1
                 result = build_user(element)
                 if isinstance(result, tuple):
                     cd, is_update = result
@@ -510,6 +515,7 @@ class PedmScimCommand(base.ArgparseCommand):
                     else:
                         add_map[cd.collection_uid] = cd
             elif isinstance(element, ScimGroup):
+                group_loaded += 1
                 result = build_group(element)
                 if isinstance(result, tuple):
                     cd, is_update = result
@@ -518,12 +524,17 @@ class PedmScimCommand(base.ArgparseCommand):
                     else:
                         add_map[cd.collection_uid] = cd
 
+        logging.debug(f'Loaded {users_loaded} user(s) from AD')
+        logging.debug(f'Loaded {group_loaded} group(s) from AD')
+
         add_collections = list(add_map.values())
         update_collections = list(update_map.values())
 
         if len(add_collections) == 0 and len(update_collections) == 0:
             logging.info('No EPM collections to add or update.')
             return
+
+        logging.debug(f'User collections: to add {len(add_collections)}, to_update {len(update_collections)}')
 
         status = plugin.modify_collections(add_collections=add_collections, update_collections=update_collections)
         logging.info('EPM SCIM sync completed. Added: %d, Updated: %d', len(status.add), len(status.update))
@@ -1051,9 +1062,8 @@ class PedmPolicyMixin:
 
         collection_lookup: Dict[str, Union[str, List[str]]] = {}
         for c in plugin.collections.get_all_entities():
-            if c.collection_type not in col_types: continue
             collection_lookup[c.collection_uid] = c.collection_uid
-            if c.collection_type >= 100:
+            if c.collection_type in col_types and c.collection_type >= 100:
                 collection_name: Optional[str] = c.collection_data.get('Name')
                 if not collection_name:
                     continue
@@ -1073,12 +1083,12 @@ class PedmPolicyMixin:
             if col_value == '*':
                 result.append(col_value)
             elif col_value:
-                cv = collection_lookup[col_value]
+                cv = collection_lookup.get(col_value)
                 if not cv:
-                    cv = collection_lookup[col_value.lower()]
+                    cv = collection_lookup.get(col_value.lower())
                 if not cv:
-                    raise base.CommandError(f'collection value "{col_value}" cannot be resolved')
-                if isinstance(cv, str):
+                    result.append(col_value)
+                elif isinstance(cv, str):
                     result.append(cv)
                 else:
                     raise base.CommandError(f'collection value "{col_value}" is not unique. Use collection UID')
@@ -1274,7 +1284,7 @@ class PedmPolicyMixin:
                 if f == 'USER':
                     policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
                 elif f == 'MACHINE':
-                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101, 201], p_filter)
                 elif f == 'APP':
                     policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
                 elif f == 'DATE':
@@ -1335,7 +1345,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-type', dest='policy_type', action='store', default='elevation',
                             choices=['elevation', 'file_access', 'command', 'least_privilege'],
                             help='Policy type')
-        parser.add_argument('--policy-name', dest='policy_name', action='store',
+        parser.add_argument('--policy-name', dest='policy_name', action='store', required=True,
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
                             choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
@@ -1432,10 +1442,10 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         if policy_filter:
             policy_data.update(policy_filter)
 
-        for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
-            f = policy_data.get(filter_name)
-            if f is None:
-                policy_data[filter_name] = ['*']
+        for filter_name, default in (('UserCheck', ['*']), ('MachineCheck', ['*']), ('ApplicationCheck', ['*']),
+                                      ('DateCheck', []), ('TimeCheck', []), ('DayCheck', [])):
+            if policy_data.get(filter_name) is None:
+                policy_data[filter_name] = default
 
         arg_status = kwargs.get('status')
         if isinstance(arg_status, str):

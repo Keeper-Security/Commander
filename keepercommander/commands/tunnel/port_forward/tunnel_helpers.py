@@ -31,6 +31,7 @@ from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
 from .... import crypto, utils, rest_api, api
+from ....constants import get_relay_host
 
 # Import the websockets library for async WebSocket communication
 # Support both websockets 15.0.1+ (asyncio) and legacy 11.0.3 (sync) versions
@@ -100,6 +101,144 @@ def set_remote_description_and_parse_version(tube_registry, tube_id, sdp, is_ans
             session.remote_webrtc_version = remote_ver
             logging.debug("Remote keeper-pam-webrtc version from SDP: %s", remote_ver)
     return remote_ver
+
+
+def _version_at_least(version, min_version):
+    """
+    Compare semantic versions. Returns True if `version` >= `min_version`.
+
+    `version` of None or unparseable is treated as unknown/old (False).
+    """
+    if not version:
+        return False
+
+    def parse(v):
+        parts = []
+        for p in v.split(".")[:3]:
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+
+    try:
+        return parse(version) >= parse(min_version)
+    except Exception:
+        return False
+
+
+# Minimum keeper-pam-webrtc-rs version that exposes force_close_tube. Both the
+# local Rust crate AND the remote peer must satisfy this gate before Commander
+# escalates a soft close to a force close. Local check uses hasattr (the binding
+# attribute is missing on older crates), remote check uses the SDP-advertised
+# version string.
+FORCE_CLOSE_MIN_VERSION = "2.1.18"
+
+# Default delay between the soft close and the force-close escalation. Matches
+# the consumer-side budget agreed with the gateway (gateway-side
+# KEEPER_GATEWAY_FORCE_CLOSE_TIMEOUT is 6s; we run faster on the consumer because
+# at lease expiry there is no reason to wait long).
+FORCE_CLOSE_DELAY_SECONDS = 3.0
+
+
+def print_above_keeper_prompt(msg):
+    """Print ``msg`` so the keeper-shell prompt redraws itself underneath it.
+
+    Strategy:
+      1. If a prompt-toolkit app is running, call ``app.renderer.erase()`` —
+         this writes the ANSI sequences to fully erase the prompt area
+         (which may span multiple lines), leaving a clean cursor.
+      2. Print the message + newline so the cursor advances below.
+      3. Call ``app.invalidate()`` (thread-safe) to schedule a fresh prompt
+         render at the new cursor position.
+
+    Falls back to plain ``print`` if no app is running. Avoids
+    ``run_in_terminal`` (returns a coroutine that needs to be awaited on
+    the app's event loop; scheduling that from a Timer thread is
+    version-fragile and leaks un-awaited coroutines).
+    """
+    app = None
+    try:
+        from prompt_toolkit.application.current import get_app_or_none
+        app = get_app_or_none()
+        if app is not None and app.is_running:
+            try:
+                app.renderer.erase()
+            except Exception:
+                pass
+    except Exception:
+        app = None
+
+    sys.stdout.write(msg + '\n')
+    sys.stdout.flush()
+
+    if app is not None:
+        try:
+            app.invalidate()
+        except Exception:
+            pass
+
+
+def escalate_close(
+    tube_registry,
+    tube_id,
+    *,
+    remote_webrtc_version=None,
+    reason=None,
+    hard_after_seconds=FORCE_CLOSE_DELAY_SECONDS,
+    log_prefix="",
+):
+    """
+    Soft-close a tube now, then escalate to force_close_tube after
+    `hard_after_seconds` if both endpoints support it.
+
+    The soft close stops new channel creation and emits CloseConnection control
+    frames; the force close (when available) drops the local TCP listener,
+    severs in-flight forwarded TCP streams (SSH, MySQL, etc.) and tears down
+    the peer connection on a short bounded budget.
+
+    Returns the scheduled `threading.Timer` (or None if escalation is not
+    available) so callers can cancel it on a clean exit.
+    """
+    if reason is None:
+        reason = CloseConnectionReasons.AdminClosed
+
+    try:
+        tube_registry.close_tube(tube_id, reason=reason)
+    except Exception as e:
+        logging.debug(f"{log_prefix}soft close_tube failed: {e}")
+
+    has_local = hasattr(tube_registry, "force_close_tube")
+    has_remote = _version_at_least(remote_webrtc_version, FORCE_CLOSE_MIN_VERSION)
+    if not has_local:
+        logging.debug(
+            f"{log_prefix}force_close_tube unavailable in local keeper_pam_webrtc_rs - "
+            f"soft close only"
+        )
+        return None
+    if not has_remote:
+        logging.debug(
+            f"{log_prefix}remote keeper-pam-webrtc {remote_webrtc_version!r} < "
+            f"{FORCE_CLOSE_MIN_VERSION} - soft close only"
+        )
+        return None
+
+    def _do_force_close():
+        try:
+            logging.debug(
+                f"{log_prefix}escalating to force_close_tube({tube_id}) after "
+                f"{hard_after_seconds}s"
+            )
+            tube_registry.force_close_tube(tube_id, reason=reason)
+        except Exception as e:
+            logging.debug(f"{log_prefix}force_close_tube failed: {e}")
+
+    timer = threading.Timer(hard_after_seconds, _do_force_close)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 # Constants
@@ -751,10 +890,7 @@ def get_gateway_uid_from_record(params, vault, record_uid):
 def create_rust_webrtc_settings(params, host, port, target_host, target_port, socks, nonce, ):
     """Create WebRTC settings for the Rust implementation"""
     # Get relay server configuration
-    relay_url = 'krelay.' + params.server
-    krelay_url = os.getenv('KRELAY_URL')
-    if krelay_url:
-        relay_url = krelay_url
+    relay_url = get_relay_host(params.server)
 
     response = router_get_relay_access_creds(params=params, expire_sec=60000000)
     if response is None:
@@ -1218,8 +1354,9 @@ def route_message_to_rust(response_item, tube_registry):
                                 session = get_tunnel_session(tube_id)
                                 if session and session.buffered_ice_candidates:
                                     if hasattr(session, 'signal_handler') and session.signal_handler:
-                                        for candidate in session.buffered_ice_candidates:
-                                            session.signal_handler._send_ice_candidate_immediately(candidate, tube_id)
+                                        session.signal_handler._send_ice_candidates_batch(
+                                            session.buffered_ice_candidates, tube_id
+                                        )
                                         session.buffered_ice_candidates.clear()
                                     else:
                                         logging.warning(f"No signal handler found for tube {tube_id} to send buffered candidates")
@@ -1575,8 +1712,9 @@ class TunnelSignalHandler:
                     # Flush any buffered ICE candidates now that we're connected
                     if session and session.buffered_ice_candidates:
                         logging.debug(f"Flushing {len(session.buffered_ice_candidates)} buffered ICE candidates")
-                        for candidate in session.buffered_ice_candidates:
-                            self._send_ice_candidate_immediately(candidate, tube_id)
+                        self._send_ice_candidates_batch(
+                            session.buffered_ice_candidates, tube_id
+                        )
                         session.buffered_ice_candidates.clear()
 
             elif new_state == "connecting":
@@ -1911,6 +2049,96 @@ class TunnelSignalHandler:
                 # Other errors - log at error level
                 logging.error(f"Failed to send ICE candidate via HTTP: {e}")
 
+    def _send_ice_candidates_batch(self, candidates_list, tube_id=None):
+        """Send multiple ICE candidates in a single HTTP POST.
+
+        The gateway already iterates ``for candidate in ice_candidates`` inside
+        ``WebRTCSessionAction.add_ice_candidates_to_conversation_tunnel`` and the
+        per-candidate ``add_ice_candidate`` PyO3 binding is spawn-and-return —
+        so one request with N candidates costs the same server-side as one
+        request with one candidate. Client-side we were paying
+        N * ~500 ms sequential round-trips per flush (measured 7 × ~500 ms =
+        ~3.5 s on a typical launch). Sending them batched collapses the flush
+        window to one round-trip.
+
+        Used by all offer-complete flush sites (streaming offer, non-streaming
+        SDP-answer processing, and the tunnel-start flush paths). The
+        single-candidate live path (``_send_ice_candidate_immediately``) stays
+        on the existing per-candidate call since it is already one request.
+        """
+        if not candidates_list:
+            return
+
+        # CRITICAL: Double-check connection state before sending (connection might have been established)
+        if self.connection_connected:
+            logging.debug(f"Skipping ICE candidate batch send - connection already established")
+            return
+
+        # Set flag to serialize sending (prevent parallel sends)
+        self.ice_sending_in_progress = True
+
+        try:
+            # Wire format matches the documented gateway contract:
+            # WebRTCSessionAction: "The 'data' field must contain: {'candidates': [...]}"
+            candidates_payload = {"candidates": list(candidates_list)}
+            string_data = json.dumps(candidates_payload)
+            bytes_data = string_to_bytes(string_data)
+            encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
+
+            logging.debug(f"Sending {len(candidates_list)} ICE candidates to gateway in one batch")
+
+            # Use same router tokens and session as WebSocket when streaming (ALB stickiness)
+            ice_kwargs = {}
+            if self.trickle_ice and self._router_transmission_key is not None:
+                ice_kwargs = {
+                    "transmission_key": self._router_transmission_key,
+                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
+                    "encrypted_session_token": self._router_encrypted_session_token,
+                }
+            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
+                ice_kwargs["http_session"] = self._http_session
+            router_response = router_send_action_to_gateway(
+                params=self.params,
+                destination_gateway_uid_str=self.gateway_uid,
+                gateway_action=GatewayActionWebRTCSession(
+                    conversation_id=self.conversation_id,
+                    message_id=GatewayAction.conversation_id_to_message_id(self.conversation_id),
+                    inputs={
+                        "recordUid": self.record_uid,
+                        'kind': 'icecandidate',
+                        'base64Nonce': self.base64_nonce,
+                        'conversationType': self.conversation_type,
+                        "data": encrypted_data,
+                        "trickleICE": self.trickle_ice,
+                    }
+                ),
+                message_type=pam_pb2.CMT_CONNECT,
+                is_streaming=self.trickle_ice,  # Streaming only for trickle ICE
+                gateway_timeout=GATEWAY_TIMEOUT,
+                **ice_kwargs
+            )
+
+            if self.trickle_ice:
+                logging.debug(
+                    f"{len(candidates_list)} ICE candidates sent via HTTP POST "
+                    "- response expected via WebSocket"
+                )
+            else:
+                logging.debug(f"{len(candidates_list)} ICE candidates sent via HTTP POST")
+
+        except Exception as e:
+            # Same error classification as the single-candidate path
+            error_str = str(e)
+            is_gateway_offline = 'RRC_CONTROLLER_DOWN' in error_str
+            is_bad_state = 'RRC_BAD_STATE' in error_str
+
+            if is_gateway_offline:
+                logging.debug(f"Gateway offline when sending ICE candidate batch: {e}")
+            elif is_bad_state:
+                logging.debug(f"Bad state when sending ICE candidate batch: {e}")
+            else:
+                logging.error(f"Failed to send ICE candidate batch via HTTP: {e}")
+
     def _send_restart_offer(self, restart_sdp, tube_id):
         """Send ICE restart offer via HTTP POST to /send_controller_message with encryption
 
@@ -2006,7 +2234,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
 
@@ -2191,7 +2419,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             trickle_ice=trickle_ice,  # Use trickle ICE for real-time candidate exchange
             callback_token=webrtc_settings["callback_token"],
             ksm_config="",
-            krelay_server="krelay." + params.server,
+            krelay_server=get_relay_host(params.server),
             client_version="Commander-Python",
             offer=None,  # Let Rust create the offer
             signal_callback=signal_handler.signal_from_rust
@@ -2324,23 +2552,29 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     }
                 if trickle_ice and http_session is not None:
                     offer_kwargs["http_session"] = http_session
+                
+                # Build tunnel inputs
+                inputs = {
+                    "recordUid": record_uid,
+                    "tubeId": commander_tube_id,
+                    'kind': 'start',
+                    'base64Nonce': base64_nonce,
+                    'conversationType': 'tunnel',
+                    "data": encrypted_data,
+                    "trickleICE": trickle_ice,
+                }
+                if two_factor_value:
+                    inputs['twoFactorValue'] = two_factor_value
+
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
                     gateway_action=GatewayActionWebRTCSession(
                         conversation_id = conversation_id_original,
-                        inputs={
-                            "recordUid": record_uid,
-                            "tubeId": commander_tube_id,
-                            'kind': 'start',
-                            'base64Nonce': base64_nonce,
-                            'conversationType': 'tunnel',
-                            "data": encrypted_data,
-                            "trickleICE": trickle_ice,
-                        }
+                        inputs=inputs
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
-                    is_streaming=trickle_ice,  # Streaming only for trickle ICE
+                    is_streaming=trickle_ice,
                     gateway_timeout=GATEWAY_TIMEOUT,
                     **offer_kwargs
                 )
@@ -2444,8 +2678,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     logging.warning(f"WebSocket not ready after 5s, flushing candidates anyway")
 
             logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after offer sent")
-            for candidate in tunnel_session.buffered_ice_candidates:
-                signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+            signal_handler._send_ice_candidates_batch(
+                tunnel_session.buffered_ice_candidates, commander_tube_id
+            )
             tunnel_session.buffered_ice_candidates.clear()
 
         # Create an entrance object that can be used to monitor connection status

@@ -23,7 +23,8 @@ from urllib.parse import urlparse, urlunparse
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
+from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser,
+                   json_output_parser, field_to_title,
                    FolderMixin, RecordMixin, toggle_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
@@ -49,7 +50,7 @@ from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
 from .enterprise_common import EnterpriseCommand
 from ..email_service import EmailSender, build_onboarding_email
-from .tunnel.port_forward.TunnelGraph import TunnelDAG
+from .tunnel.port_forward.TunnelGraph import TunnelDAG, get_vertex_content
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
@@ -76,9 +77,9 @@ from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
-from keepercommander.commands.pam_cloud.pam_privileged_workflow import PAMPrivilegedWorkflowCommand
 from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
+from .workflow import PAMWorkflowCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
@@ -192,8 +193,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
-        self.register_command('workflow', PAMPrivilegedWorkflowCommand(),
-                              'Manage workflow access operations', 'wf')
+        self.register_command('workflow', PAMWorkflowCommand(), 'Manage PAM Workflows', 'w')
         self.register_command('access', PAMPrivilegedAccessCommand(),
                               'Manage privileged cloud access operations', 'ac')
 
@@ -1760,6 +1760,53 @@ class PAMConfigurationListCommand(Command):
                 tmp_dag.print_tunneling_config(pam_configuration_uid, None)
 
     @staticmethod
+    def _allowed_settings_dag_to_json(allowed):
+        # type: (dict) -> dict
+        """Maps PAM graph allowedSettings to JSON keys matching pam config edit/new flags."""
+        if not allowed:
+            allowed = {}
+        return {
+            'connections': allowed.get('connections'),
+            'tunneling': allowed.get('portForwards'),
+            'rotation': allowed.get('rotation'),
+            'remote_browser_isolation': allowed.get('remoteBrowserIsolation'),
+            'connections_recording': allowed.get('sessionRecording'),
+            'typescript_recording': allowed.get('typescriptRecording'),
+            'ai_threat_detection': allowed.get('aiEnabled'),
+            'ai_terminate_session_on_detection': allowed.get('aiSessionTerminate'),
+        }
+
+    @staticmethod
+    def _domain_administrative_credential_uid(configuration):
+        # type: (vault.KeeperRecord) -> Optional[str]
+        if not isinstance(configuration, vault.TypedRecord) or \
+                configuration.record_type != 'pamDomainConfiguration':
+            return None
+        prf = configuration.get_typed_field('pamResources')
+        if not prf or not prf.value or not isinstance(prf.value[0], dict):
+            return None
+        return prf.value[0].get('adminCredentialRef') or None
+
+    @staticmethod
+    def _pam_config_allowed_settings_json(params, config_uid):
+        try:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tmp_dag = TunnelDAG(
+                params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                is_config=True, transmission_key=transmission_key,
+            )
+            tmp_dag.linking_dag.load()
+            vertex = tmp_dag.linking_dag.get_vertex(config_uid)
+            content = get_vertex_content(vertex) if vertex else None
+            a = (content or {}).get('allowedSettings')
+            if a is None:
+                a = {}
+            return PAMConfigurationListCommand._allowed_settings_dag_to_json(a)
+        except Exception as e:
+            logging.getLogger(__name__).debug('PAM config allowedSettings: %s', e)
+            return PAMConfigurationListCommand._allowed_settings_dag_to_json({})
+
+    @staticmethod
     def print_pam_configuration_details(params, config_uid, is_verbose=False, format_type='table'):
         configuration = vault.KeeperRecord.load(params, config_uid)
         if not configuration:
@@ -1796,6 +1843,7 @@ class PAMConfigurationListCommand(Command):
                     "uid": sf.shared_folder_uid if sf else None
                 } if sf else None,
                 "gateway_uid": facade.controller_uid,
+                "gateway_name": facade.title,
                 "resource_record_uids": facade.resource_ref,
                 "fields": {}
             }
@@ -1806,11 +1854,19 @@ class PAMConfigurationListCommand(Command):
                 values = list(field.get_external_value())
                 if not values:
                     continue
-                field_name = field.get_field_name()
+                field_name = field.label if field.label else field.type
                 if field.type == 'schedule':
                     field_name = 'Default Schedule'
 
                 config_data["fields"][field_name] = values
+
+            if configuration.record_type == 'pamDomainConfiguration':
+                config_data['domain_administrative_credential'] = (
+                    PAMConfigurationListCommand._domain_administrative_credential_uid(configuration))
+
+            if is_verbose:
+                config_data['allowed_settings'] = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+                    params, configuration.record_uid)
 
             return json.dumps(config_data, indent=2)
         else:
@@ -2391,6 +2447,11 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                         help='Set recording connections permissions for the resource')
     parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
                         help='Set TypeScript recording permissions for the resource')
+    parser.add_argument('--ai-threat-detection', dest='ai_threat_detection', choices=choices,
+                        help='Set AI threat detection permissions')
+    parser.add_argument('--ai-terminate-session-on-detection', dest='ai_terminate_session_on_detection',
+                        choices=choices,
+                        help='Set AI session termination on threat detection permissions')
 
     def __init__(self):
         super(PAMConfigurationEditCommand, self).__init__()
@@ -2492,13 +2553,17 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         _rbi = kwargs.get('remotebrowserisolation', None)
         _recording = kwargs.get('recording', None)
         _typescript_recording = kwargs.get('typescriptrecording', None)
+        _ai_threat = kwargs.get('ai_threat_detection', None)
+        _ai_terminate = kwargs.get('ai_terminate_session_on_detection', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-                _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
+                _recording is not None or _typescript_recording is not None or _ai_threat is not None or
+                _ai_terminate is not None or orig_admin_cred_ref != admin_cred_ref):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True, transmission_key=transmission_key)
-            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi)
+            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi,
+                                          _ai_threat, _ai_terminate)
             if orig_admin_cred_ref != admin_cred_ref:
                 if orig_admin_cred_ref:  # just drop is_admin from old Domain
                     tmp_dag.link_user_to_config_with_options(orig_admin_cred_ref, is_admin='default')
@@ -2546,7 +2611,8 @@ class PAMConfigurationRemoveCommand(Command):
 
 
 class PAMRouterGetRotationInfo(Command):
-    parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser')
+    parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser',
+                                         parents=[json_output_parser])
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
                         help='Record UID to rotate')
 
@@ -2556,76 +2622,115 @@ class PAMRouterGetRotationInfo(Command):
     def execute(self, params, **kwargs):
 
         record_uid = kwargs.get('record_uid')
+        format_type = kwargs.get('format', 'table')
         record_uid_bytes = url_safe_str_to_bytes(record_uid)
 
         rri = record_rotation_get(params, record_uid_bytes)
         rri_status_name = router_pb2.RouterRotationStatus.Name(rri.status)
         if rri_status_name == 'RRS_ONLINE':
 
-            print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
             configuration_uid = utils.base64_url_encode(rri.configurationUid)
-            print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
-            print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
-
-            print(
-                f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
-            print(
-                f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-')} {bcolors.ENDC}")
+            gateway_name = rri.controllerName if rri.controllerName else '-'
+            gateway_uid = utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-'
 
             def is_resource_ok(resource_id, params, configuration_uid):
                 if resource_id not in params.record_cache:
                     return False
-
                 configuration = vault.KeeperRecord.load(params, configuration_uid)
                 if not isinstance(configuration, vault.TypedRecord):
                     return False
-
                 field = configuration.get_typed_field('pamResources')
                 if not (field and isinstance(field.value, list) and len(field.value) == 1):
                     return False
-
                 rv = field.value[0]
                 if not isinstance(rv, dict):
                     return False
-
                 resources = rv.get('resourceRef')
                 return isinstance(resources, list) and resource_id in resources
 
+            admin_resource_uid = None
             if rri.resourceUid:
-                resource_id = utils.base64_url_encode(rri.resourceUid)
-                resource_ok = is_resource_ok(resource_id, params, configuration_uid)
-                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{resource_id}"
+                admin_resource_uid = utils.base64_url_encode(rri.resourceUid)
+
+            # Password complexity
+            pwd_complexity_raw = rri.pwdComplexity if rri.pwdComplexity else None
+            pwd_complexity_detail = None
+            if pwd_complexity_raw:
+                try:
+                    record = params.record_cache.get(record_uid)
+                    if record:
+                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(pwd_complexity_raw),
+                                                           record['record_key_unencrypted'])
+                        pwd_complexity_detail = json.loads(complexity.decode())
+                except Exception:
+                    pwd_complexity_detail = None
+
+            # Schedule information
+            schedule_type = None
+            schedule_data = None
+            rq = pam_pb2.PAMGenericUidsRequest()
+            schedules_proto = router_get_rotation_schedules(params, rq)
+            if schedules_proto:
+                for s in schedules_proto.schedules:
+                    if s.recordUid == record_uid_bytes:
+                        if s.noSchedule is True:
+                            schedule_type = 'manual'
+                        else:
+                            schedule_type = 'scheduled'
+                            schedule_data = s.scheduleData if s.scheduleData else None
+                        break
+
+            if format_type == 'json':
+                result = {
+                    'status': rri_status_name,
+                    'ready_to_rotate': True,
+                    'pam_config_uid': configuration_uid,
+                    'node_id': rri.nodeId,
+                    'gateway_name': gateway_name,
+                    'gateway_uid': gateway_uid,
+                    'admin_resource_uid': admin_resource_uid,
+                    'password_complexity': pwd_complexity_raw,
+                    'password_complexity_detail': pwd_complexity_detail,
+                    'schedule_type': schedule_type,
+                    'schedule_data': schedule_data,
+                    'disabled': rri.disabled,
+                    'script_name': rri.scriptName if rri.scriptName else None,
+                }
+                return json.dumps(result, indent=2)
+
+            # --- table output (original behaviour preserved) ---
+            print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
+            print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
+            print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
+            print(
+                f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{gateway_name}{bcolors.ENDC}")
+            print(
+                f"Gateway Uid: {bcolors.OKBLUE}{gateway_uid} {bcolors.ENDC}")
+
+            if admin_resource_uid:
+                resource_ok = is_resource_ok(admin_resource_uid, params, configuration_uid)
+                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{admin_resource_uid}"
                       f"{bcolors.ENDC}")
 
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
-            if rri.pwdComplexity:
-                print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity}{bcolors.ENDC}")
-                try:
-                    record = params.record_cache.get(record_uid)
-                    if record:
-                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity),
-                                                           record['record_key_unencrypted'])
-                        c = json.loads(complexity.decode())
-                        print(f"Password Complexity Data: {bcolors.OKBLUE}"
-                              f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
-                              f"Uppercase: {c.get('caps')}; "
-                              f"Digits: {c.get('digits')}; "
-                              f"Symbols: {c.get('special')}; "
-                              f"Symbols Chars: {c.get('specialChars')} {bcolors.ENDC}")
-                except:
-                    pass
+            if pwd_complexity_raw:
+                print(f"Password Complexity: {bcolors.OKGREEN}{pwd_complexity_raw}{bcolors.ENDC}")
+                if pwd_complexity_detail:
+                    c = pwd_complexity_detail
+                    print(f"Password Complexity Data: {bcolors.OKBLUE}"
+                          f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
+                          f"Uppercase: {c.get('caps')}; "
+                          f"Digits: {c.get('digits')}; "
+                          f"Symbols: {c.get('special')}; "
+                          f"Symbols Chars: {c.get('specialChars')} {bcolors.ENDC}")
             else:
                 print(f"Password Complexity: {bcolors.OKGREEN}[not set]{bcolors.ENDC}")
 
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
 
-            # Get schedule information
-            rq = pam_pb2.PAMGenericUidsRequest()
-            schedules_proto = router_get_rotation_schedules(params, rq)
             if schedules_proto:
-                schedules = list(schedules_proto.schedules)
-                for s in schedules:
+                for s in schedules_proto.schedules:
                     if s.recordUid == record_uid_bytes:
                         if s.noSchedule is True:
                             print(f"Schedule Type: {bcolors.OKBLUE}Manual Rotation{bcolors.ENDC}")
@@ -2643,6 +2748,8 @@ class PAMRouterGetRotationInfo(Command):
 
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
+            if format_type == 'json':
+                return json.dumps({'status': rri_status_name, 'ready_to_rotate': False})
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
 
 
@@ -2949,6 +3056,47 @@ class PAMGatewayActionJobCommand(Command):
                               gateway_uid=gateway_uid)
 
 
+def _is_rotation_allowed_by_enforcement(params):
+    # type: (KeeperParams) -> bool
+    """Inspired by web vault getAllowRotation (pam-enforcement-selectors.ts:30).
+
+    Decision matrix:
+      - No enforcement context (None / empty dict / no `booleans`):
+            personal / non-enterprise account — allow (True).
+      - Enterprise context (non-empty `booleans` list):
+            mirror web vault's `!!enforcements.allow_rotate_credentials`
+            semantics — single key, must evaluate truthy. Missing key
+            (Commander parser converts `:false` to None and drops the entry)
+            is treated as deny. The legacy `allow_pam_rotation` umbrella
+            is intentionally NOT consulted here so an admin who explicitly
+            disables rotation via `allow_rotate_credentials:false` is
+            honored even if the umbrella key is still on by default.
+
+    The Commander enforcement parser converts `:false` -> None (which removes
+    the key from the booleans list entirely), so an absent key in an
+    enterprise account is functionally equivalent to `False` and must deny
+    to match web vault. The gateway remains the authoritative gate, this is
+    the client-side parity with web vault's RotateButton.
+
+    Defensively swallows any unexpected enforcement payload shape and allows
+    rotation to proceed in that case (fail-open on parse error only).
+    """
+    try:
+        enforcements = getattr(params, 'enforcements', None)
+        if not enforcements or not isinstance(enforcements, dict):
+            return True
+        booleans = enforcements.get('booleans') or []
+        if not isinstance(booleans, list) or not booleans:
+            return True
+        for b in booleans:
+            if isinstance(b, dict) and b.get('key') == 'allow_rotate_credentials':
+                return bool(b.get('value'))
+        return False
+    except Exception as _e:
+        logging.debug('Rotation enforcement check failed; allowing: %s', _e)
+        return True
+
+
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
@@ -2975,6 +3123,13 @@ class PAMGatewayActionRotateCommand(Command):
         return PAMGatewayActionRotateCommand.parser
 
     def execute(self, params, **kwargs):
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): block at
+        # the enforcement layer before any rotation work is done.
+        if not _is_rotation_allowed_by_enforcement(params):
+            print(f'{bcolors.FAIL}Rotation is not allowed for this account by enterprise '
+                  f'enforcement (allow_rotate_credentials).{bcolors.ENDC}')
+            return
+
         record_uid = kwargs.get('record_uid', '')
         folder = kwargs.get('folder', '')
         recursive = kwargs.get('recursive', False)
@@ -3168,6 +3323,23 @@ class PAMGatewayActionRotateCommand(Command):
             facade.record = pam_config
 
             config_uid = facade.controller_uid
+
+        # Match web vault RotateButton (PasswordRotation.tsx:144-149): respect
+        # the per-config rotation switch in allowedSettings on the PAM config DAG.
+        # If the config explicitly disables rotation we skip with the same
+        # "disallowed by config" semantics web vault shows.
+        try:
+            allowed = PAMConfigurationListCommand._pam_config_allowed_settings_json(
+                params, config_uid,
+            )
+            if allowed.get('rotation') is False:
+                print(
+                    f'{bcolors.FAIL}Rotation is disabled by the PAM Configuration '
+                    f'[{config_uid}] for record [{record_uid}].{bcolors.ENDC}'
+                )
+                return
+        except Exception as _e:
+            logging.debug('Skipping per-config rotation gate (lookup failed): %s', _e)
 
         if not resource_uid:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid,

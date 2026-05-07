@@ -162,19 +162,26 @@ class ZipAttachment(Attachment):
 class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
     def do_import(self, filename, **kwargs):
         users_only = kwargs.get('users_only') or False
-        if not os.path.isfile(filename):
-            zip_name = pathlib.Path(filename).with_suffix('.zip').name
-            if os.path.isfile(zip_name):
-                if zipfile.is_zipfile(zip_name):
-                    filename = zip_name
-        file_path = pathlib.Path(filename)
-        zip_archive = file_path.suffix == '.zip'
-        if zip_archive:
-            with zipfile.ZipFile(filename, 'r') as zf:
-                export = json.loads(zf.read('export.json'))
-        else:
-            with open(filename, "r", encoding='utf-8') as jf:
-                export = json.load(jf)
+        try:
+            export = json.loads(filename)
+            zip_archive = False
+            logging.info("Extracted JSON from object")
+        except ValueError as e:
+            if not os.path.isfile(filename):
+                zip_name = pathlib.Path(filename).with_suffix('.zip').name
+                if os.path.isfile(zip_name):
+                    if zipfile.is_zipfile(zip_name):
+                        filename = zip_name
+            file_path = pathlib.Path(filename)
+            zip_archive = file_path.suffix == '.zip'
+            if zip_archive:
+                with zipfile.ZipFile(filename, 'r') as zf:
+                    export = json.loads(zf.read('export.json'))
+                    logging.info("Extracted JSON from archive")
+            else:
+                with open(filename, "r", encoding='utf-8') as jf:
+                    export = json.load(jf)
+                    logging.info("Extracted JSON from file")
 
         records = None
         folders = None

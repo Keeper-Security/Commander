@@ -19,6 +19,7 @@ from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
+from .workflow_apply import apply_workflow, validate_workflow_principals
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
     PROJECT_IMPORT_JSON_TEMPLATE,
@@ -55,6 +56,7 @@ from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
 from ... import api, crypto, utils, vault, record_management
+from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...importer import imp_exp
@@ -155,8 +157,35 @@ class PAMProjectImportCommand(Command):
         if project["options"].get("dry_run", False) is True:
             print("[DRY RUN] No changes will be made. This is a simulation only.")
 
-        # 1. Create Shared Folder for the Project (incl. parent folders)
+        # Initialize the caches
         api.sync_down(params)
+
+        # Populate params.enterprise (users/teams caches)
+        # Only if JSON has per-user / per-team permissions on the shared folders
+        def _has_perms(section_key):
+            section = project["data"].get(section_key) if isinstance(project["data"], dict) else None
+            perms = section.get("permissions") if isinstance(section, dict) else None
+            return isinstance(perms, list) and len(perms) > 0
+
+        needs_enterprise_data = (
+            not project["options"]["dry_run"]
+            and not project["options"]["sample_data"]
+            and (_has_perms("shared_folder_users") or _has_perms("shared_folder_resources"))
+        )
+        if not params.enterprise and needs_enterprise_data:
+            try:
+                _enterprise_module.query_enterprise(params)
+            except Exception as e:
+                logging.debug("query_enterprise failed: %s", e)
+            if not params.enterprise:
+                logging.warning(
+                    f"{bcolors.FAIL}pam project import requires an enterprise admin "
+                    f"account with permission to access users and teams {bcolors.ENDC} "
+                    "Your account is either not part of an enterprise or lacks the required role enforcement."
+                )
+                return
+
+        # 1. Create Shared Folder for the Project (incl. parent folders)
         project["folders"] = self.process_folders(params, project)
 
         # 2. Create KSM Application
@@ -364,15 +393,17 @@ class PAMProjectImportCommand(Command):
             config_init=token_format)
 
         if token_format is None:
-            res["gateway_token"] = gw[0].get("oneTimeToken", "") if gw and gw_names else ""  # OTT
+            res["gateway_token"] = gw[0].get("oneTimeToken", "") if gw else ""  # OTT
         else:
-            res["gateway_token"] = gw[0].get("config", "") if gw and gw_names else ""  # Config
+            res["gateway_token"] = gw[0].get("config", "") if gw else ""  # Config
             if output_fmt == "json":
                 res["gateway_token"] = json.loads(utils.base64_url_decode(res["gateway_token"]))
             # k8s: config is already Kubernetes Secret YAML string; base64: keep as-is
-        res["gateway_device_token"] = gw[0].get("deviceToken", "") if gw and gw_names else ""
+        res["gateway_device_token"] = gw[0].get("deviceToken", "") if gw else ""
 
         # controller_uid is not returned by vault/app_client_add
+        # Look it up via get_all_gateways but invalidate_gateway_cache first
+        gateway_helper.invalidate_gateway_cache()
         gws = gateway_helper.get_all_gateways(params)
         gw_names = [x.controllerUid for x in gws if x.deviceToken == res["gateway_device_token"]]
         res["gateway_uid"] = utils.base64_url_encode(gw_names[0]) if gw_names else ""
@@ -415,7 +446,9 @@ class PAMProjectImportCommand(Command):
             "shared_folder_uid": project["folders"].get("users_folder_uid", "")
         }
         pam_cfg = project["data"].get("pam_configuration", {})
-        pce = PamConfigEnvironment("", pam_cfg, args["gateway_uid"], args["shared_folder_uid"])
+        # For --sample-data the JSON body is empty, so pass "local" as default_env
+        default_env = "local" if project["options"].get("sample_data", False) else ""
+        pce = PamConfigEnvironment(default_env, pam_cfg, args["gateway_uid"], args["shared_folder_uid"])
         pce.title = res["pam_config_name"]  # adjusted title
         if project["options"].get("sample_data", False):
             # -s | --sample-data option overrides json data
@@ -654,7 +687,7 @@ class PAMProjectImportCommand(Command):
 
         # Database Machine -> Config -> Enable connections/portForwards/set trafficEncryptionSeed
         tdag.link_resource_to_config(database_machine_uid)
-        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=database_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
         # bugfix: Apparently PAMCreateRecordRotationCommand do not create the links
@@ -665,7 +698,7 @@ class PAMProjectImportCommand(Command):
         PAMCreateRecordRotationCommand().execute(params, record_name=rotation_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=database_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_ssh_with_password_records
         json_data = """{
@@ -695,7 +728,7 @@ class PAMProjectImportCommand(Command):
 
         # Machine -> Config -> Enable connections/portForwards/set trafficEncryptionSeed
         tdag.link_resource_to_config(ssh_machine_uid)
-        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         # if tdag.check_if_resource_allowed(ssh_machine_uid, "connections") != True:
         tdag.set_resource_allowed(resource_uid=ssh_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
@@ -704,7 +737,7 @@ class PAMProjectImportCommand(Command):
         PAMCreateRecordRotationCommand().execute(params, record_name=admin_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=ssh_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_ssh_with_private_key_records
         json_data = """{
@@ -735,7 +768,7 @@ class PAMProjectImportCommand(Command):
 
         # Machine -> Config -> Enable connections/portForwards/set trafficEncryptionSeed
         tdag.link_resource_to_config(ssh_machine_uid)
-        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=ssh_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
         # Admin User -> Machine; Admin User -> Rotation
@@ -743,7 +776,7 @@ class PAMProjectImportCommand(Command):
         PAMCreateRecordRotationCommand().execute(params, record_name=admin_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=ssh_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_vnc_records
         json_data = """{
@@ -773,7 +806,7 @@ class PAMProjectImportCommand(Command):
 
         # Machine -> Config -> Enable connections/portForwards/set trafficEncryptionSeed
         tdag.link_resource_to_config(machine_uid)
-        pte.execute(params, record=machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
         # Admin User -> Machine; Admin User
@@ -819,7 +852,7 @@ class PAMProjectImportCommand(Command):
 
         # Machine -> Config -> Enable connections/portForwards/set trafficEncryptionSeed
         tdag.link_resource_to_config(machine_uid)
-        pte.execute(params, record=machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
         # Admin User -> Machine; User -> Machine
@@ -845,7 +878,7 @@ class PAMProjectImportCommand(Command):
         tdag.link_resource_to_config(rbi_uid)
         pte.execute(params, record=rbi_uid, config=pam_config_uid,
                     enable_rotation=False, enable_connections=True, enable_tunneling=False,
-                    enable_typescripts_recording=False, enable_connections_recording=True)
+                    enable_typescripts_recording=False, enable_connections_recording=True, silent=True)
         # bugfix: Edit command not always populates correctly everything
         tdag.set_resource_allowed(resource_uid=rbi_uid, rotation=False, connections=True, tunneling=False, session_recording=True, typescript_recording=False, remote_browser_isolation=True)
 
@@ -878,13 +911,13 @@ class PAMProjectImportCommand(Command):
             ]}""".replace("#project_name#", project_name).replace("#admin_user_uid#", admin_user_uid)
         database_machine_uid = command.execute(params, folder=resources_folder_uid, data=json_data)
         tdag.link_resource_to_config(database_machine_uid)
-        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=database_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
         tdag.link_user_to_resource(admin_user_uid, database_machine_uid, True, True)
         PAMCreateRecordRotationCommand().execute(params, record_name=admin_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=database_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_mariadb_records
         json_data = """{
@@ -923,14 +956,14 @@ class PAMProjectImportCommand(Command):
             ]}""".replace("#project_name#", project_name).replace("#admin_user_uid#", admin_user_uid)
         database_machine_uid = command.execute(params, folder=resources_folder_uid, data=json_data)
         tdag.link_resource_to_config(database_machine_uid)
-        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=database_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
         tdag.link_user_to_resource(admin_user_uid, database_machine_uid, True, True)
         tdag.link_user_to_resource(rotation_user_uid, database_machine_uid, False, True)
         PAMCreateRecordRotationCommand().execute(params, record_name=rotation_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=database_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_mssql_records
         json_data = """{
@@ -960,13 +993,13 @@ class PAMProjectImportCommand(Command):
             ]}""".replace("#project_name#", project_name).replace("#admin_user_uid#", admin_user_uid)
         database_machine_uid = command.execute(params, folder=resources_folder_uid, data=json_data)
         tdag.link_resource_to_config(database_machine_uid)
-        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=database_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
         tdag.link_user_to_resource(admin_user_uid, database_machine_uid, True, True)
         PAMCreateRecordRotationCommand().execute(params, record_name=admin_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=database_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_mongodb_records - protocol not supported yet, so only RBI currently available
         # MongoDB Wire Protocol is a simple socket-based, request-response style protocol over TCP/IP socket
@@ -1006,14 +1039,14 @@ class PAMProjectImportCommand(Command):
             ]}""".replace("#project_name#", project_name).replace("#admin_user_uid#", admin_user_uid)
         database_machine_uid = command.execute(params, folder=resources_folder_uid, data=json_data)
         tdag.link_resource_to_config(database_machine_uid)
-        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=database_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=database_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
         tdag.link_user_to_resource(admin_user_uid, database_machine_uid, True, True)
         tdag.link_user_to_resource(rotation_user_uid, database_machine_uid, False, True)
         PAMCreateRecordRotationCommand().execute(params, record_name=rotation_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=database_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         # create_telnet_records
         json_data = """{
@@ -1041,13 +1074,13 @@ class PAMProjectImportCommand(Command):
             ]}""".replace("#project_name#", project_name).replace("#admin_user_uid#", admin_user_uid)
         ssh_machine_uid = command.execute(params, folder=resources_folder_uid, data=json_data)
         tdag.link_resource_to_config(ssh_machine_uid)
-        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True)
+        pte.execute(params, record=ssh_machine_uid, config=pam_config_uid, admin=admin_user_uid, enable_connections=True, enable_tunneling=True, silent=True)
         tdag.set_resource_allowed(resource_uid=ssh_machine_uid, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
         tdag.link_user_to_resource(admin_user_uid, ssh_machine_uid, True, True)
         PAMCreateRecordRotationCommand().execute(params, record_name=admin_user_uid,
                                                  admin=admin_user_uid,
                                                  config=pam_config_uid, resource=ssh_machine_uid,
-                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True)
+                                                 on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
 
         api.sync_down(params)
 
@@ -1444,6 +1477,27 @@ class PAMProjectImportCommand(Command):
                     if not(isinstance(usr.uid, str) and RecordV3.is_valid_ref_uid(usr.uid)):
                         usr.uid = utils.generate_uid()
 
+        # Detect and reject duplicate UIDs to prevent graph ambiguity
+        _all_assigned_uids: list[str] = []
+        for _obj in chain(resources, users):
+            _all_assigned_uids.append(_obj.uid)
+            if hasattr(_obj, 'users') and isinstance(_obj.users, list):
+                for _usr in _obj.users:
+                    _all_assigned_uids.append(_usr.uid)
+        _seen_uids: set[str] = set()
+        _duplicate_uids: list[str] = []
+        for _uid in _all_assigned_uids:
+            if _uid in _seen_uids:
+                _duplicate_uids.append(_uid)
+            _seen_uids.add(_uid)
+        if _duplicate_uids:
+            print(
+                f"{bcolors.FAIL}pam project import: duplicate uid values detected in import JSON: "
+                f"{', '.join(sorted(set(_duplicate_uids)))}. "
+                f"Each resource and user must have a unique uid. Import aborted.{bcolors.ENDC}"
+            )
+            return
+
         # resolve linked object UIDs (machines and users)
         # pam_settings.connection.administrative_credentials must reference
         # one of its own users[] -> userRecords["admin_user_record_UID"]
@@ -1589,6 +1643,9 @@ class PAMProjectImportCommand(Command):
             resolve_domain_admin(pce, users)
         # only resolve here - create after machine and user creation
 
+        # pre-flight: validate workflow team UIDs before any vault writes (runs in dry-run too)
+        validate_workflow_principals(params, resources)
+
         # dry run
         if project["options"].get("dry_run", False) is True:
             print("Will import file data here...")
@@ -1643,6 +1700,9 @@ class PAMProjectImportCommand(Command):
                     args["connections"] = True
                 args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
+                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
+                if rbi_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
             else: # machine/db/directory
                 args = parse_command_options(mach, True)
                 if admin_uid: args["admin"] = admin_uid
@@ -1685,6 +1745,10 @@ class PAMProjectImportCommand(Command):
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
                 if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
+                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
+                if ps_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
             # Machine - create its users (if any)
             users = getattr(mach, "users", [])

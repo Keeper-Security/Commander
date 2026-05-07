@@ -6,6 +6,80 @@ and only while the pam launch CLI terminal session is active.
 """
 
 import logging
+import threading
+
+
+# Patterns for known leak messages from turn-0.11.0's relay-conn task.
+# The webrtc-rs ICE agent does not synchronously cancel its TURN refresh task
+# on PeerConnection.close(); the task survives indefinitely and re-fires every
+# few minutes (TURN permission lifetime ~5 min, refresh at ~3/4 of that). Each
+# iteration logs:
+#   "fail to refresh permissions: CreatePermission error response (error 400: Bad Request)"
+#   "refresh permissions failed"
+# from turn-0.11.0/src/client/relay_conn.rs:528 / :618.
+#
+# Until the upstream leak is fixed, suppress these messages permanently — they
+# are post-close stragglers from a deallocated TURN allocation and have no
+# diagnostic value to the user.
+_TURN_REFRESH_LEAK_PATTERNS = (
+    'fail to refresh permissions',
+    'refresh permissions failed',
+)
+
+
+class _PermanentTurnLeakFilter(logging.Filter):
+    """Always drop the known turn-rs refresh-permission leak messages.
+
+    Installed once at module import time on the root logger, never removed.
+    Independent of the session-scoped _RustWebrtcToDebugFilter — that one
+    flips with --debug; this one is an upstream-bug workaround that should
+    fire regardless of debug state.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        for needle in _TURN_REFRESH_LEAK_PATTERNS:
+            if needle in msg:
+                return False
+        return True
+
+
+# Loggers known to emit the leak. Both dot- and colon-separated names cover
+# the Rust→Python bridge formats. ``turn`` and ``turn.client`` cover any
+# parent that records may originate from depending on rust-log target style.
+_TURN_LEAK_LOGGER_NAMES = (
+    'turn',
+    'turn.client',
+    'turn.client.relay_conn',
+    'turn::client::relay_conn',
+)
+
+_PERMANENT_TURN_FILTER = _PermanentTurnLeakFilter()
+
+
+def _install_permanent_turn_filter():
+    """Attach the content filter to the known leaky loggers AND root.
+
+    Python's logger filters fire only at the originating logger (filters do
+    NOT re-check during propagation up the hierarchy via callHandlers), so we
+    must attach to the actual emitting logger names rather than relying on
+    root.addFilter alone. Idempotent — safe to call again.
+    """
+    for name in _TURN_LEAK_LOGGER_NAMES:
+        log = logging.getLogger(name)
+        if _PERMANENT_TURN_FILTER not in log.filters:
+            log.addFilter(_PERMANENT_TURN_FILTER)
+    # Also attach to root in case the Rust→Python bridge ever logs directly to
+    # root (cheap belt-and-braces).
+    root = logging.getLogger()
+    if _PERMANENT_TURN_FILTER not in root.filters:
+        root.addFilter(_PERMANENT_TURN_FILTER)
+
+
+_install_permanent_turn_filter()
 
 
 def _rust_webrtc_logger_name(name: str) -> bool:
@@ -70,6 +144,10 @@ def enter_pam_launch_terminal_rust_logging():
     Downgrades Rust/webrtc/turn messages to DEBUG so they only show with --debug.
     Returns a token to pass to exit_pam_launch_terminal_rust_logging() on exit.
     """
+    global _ACTIVE_SESSION_COUNT
+    with _ACTIVE_SESSION_LOCK:
+        _ACTIVE_SESSION_COUNT += 1
+
     root = logging.getLogger()
     flt = _RustWebrtcToDebugFilter()
     root.addFilter(flt)
@@ -106,15 +184,73 @@ def enter_pam_launch_terminal_rust_logging():
     return (flt, saved, _original_logger_class)
 
 
-def exit_pam_launch_terminal_rust_logging(token):
-    """Restore Rust/webrtc logger state after pam launch terminal session. Pass token from enter_pam_launch_terminal_rust_logging()."""
+# Grace period (seconds) between pam-launch session exit and actually removing
+# the Rust/webrtc log filter. The Rust tube shutdown runs on its own runtime
+# threads and can emit a final log record AFTER Python's session-exit path has
+# returned control to the REPL — e.g. ``webrtc-sctp stream N not found`` when
+# the channel is torn down, or TURN ``fail to refresh permissions`` warnings
+# from the relay-conn task as it observes the deallocated allocation.
+#
+# The window must outlive both:
+#   1. The soft→hard close escalation in ``escalate_close``
+#      (``FORCE_CLOSE_DELAY_SECONDS`` = 3 s)
+#   2. A brief TURN refresh-task latency after the PeerConnection drop cascade
+#
+# Imported lazily below to avoid a top-level cycle (this module is imported
+# during pam_launch init, before the tunnel helpers are loaded for some
+# callers).
+def _force_close_delay_seconds():
+    try:
+        from ..tunnel.port_forward.tunnel_helpers import FORCE_CLOSE_DELAY_SECONDS
+        return FORCE_CLOSE_DELAY_SECONDS
+    except Exception:
+        return 3.0
+
+
+_DEFAULT_RUST_LOG_FILTER_GRACE_SEC = _force_close_delay_seconds() + 1.5
+
+# Refcount of active pam-launch sessions that have rust-log filtering installed.
+# Incremented in enter_*, decremented at the END of the grace timer in
+# _do_exit_rust_logging. The restore work (removing class-level filters,
+# restoring pre-session logger state) is only performed when this drops to 0,
+# so a second `pam launch` started during the grace window of a prior one is
+# not silently de-filtered when the prior session's timer fires.
+_ACTIVE_SESSION_COUNT = 0
+_ACTIVE_SESSION_LOCK = threading.Lock()
+
+
+def _do_exit_rust_logging(token):
+    """Actual restoration — runs on the grace-period timer thread."""
     if not token:
         return
     flt, saved = token[0], token[1]
     original_logger_class = token[2] if len(token) > 2 else logging.Logger
-    logging.setLoggerClass(original_logger_class)
+
+    # Always remove THIS session's filter instance from root so per-token
+    # filters don't pile up. The bulk class-based cleanup below only runs when
+    # we are the last active session.
     root = logging.getLogger()
-    root.removeFilter(flt)
+    try:
+        root.removeFilter(flt)
+    except Exception:
+        pass
+
+    global _ACTIVE_SESSION_COUNT
+    with _ACTIVE_SESSION_LOCK:
+        _ACTIVE_SESSION_COUNT = max(0, _ACTIVE_SESSION_COUNT - 1)
+        last_session = _ACTIVE_SESSION_COUNT == 0
+    if not last_session:
+        # Another pam launch session is still active (or in its own grace
+        # window); leave the class-level filter and saved state alone so its
+        # filtering keeps working. We already removed our specific instance
+        # from root above.
+        logging.debug(
+            "rust_log_filter: skipping restore, %d session(s) still active",
+            _ACTIVE_SESSION_COUNT,
+        )
+        return
+
+    logging.setLoggerClass(original_logger_class)
     # Remove downgrade filter from all Rust/webrtc loggers (we may have added the shared
     # filter to existing loggers, and _RustAwareLogger instances have their own filter)
     for name in list(logging.Logger.manager.loggerDict.keys()):
@@ -141,3 +277,24 @@ def exit_pam_launch_terminal_rust_logging(token):
         log.propagate = propagate
         for h in handlers:
             log.addHandler(h)
+
+
+def exit_pam_launch_terminal_rust_logging(token, grace_sec=_DEFAULT_RUST_LOG_FILTER_GRACE_SEC):
+    """Restore Rust/webrtc logger state after pam launch terminal session.
+
+    The filter is removed after ``grace_sec`` seconds (default 2.5s) so that
+    late records from the Rust runtime (e.g. ``webrtc-sctp`` stream teardown
+    messages that arrive just after session exit) are still caught by the
+    filter and do not leak to the console in front of the subsequent
+    ``My Vault>`` prompt. Pass ``grace_sec=0`` to restore immediately.
+    """
+    if not token:
+        return
+    if grace_sec <= 0:
+        _do_exit_rust_logging(token)
+        return
+    # Daemon thread so Commander can exit cleanly even during grace.
+    timer = threading.Timer(grace_sec, _do_exit_rust_logging, args=(token,))
+    timer.daemon = True
+    timer.name = 'pam-launch-rust-log-filter-release'
+    timer.start()

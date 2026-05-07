@@ -1,3 +1,5 @@
+import threading
+import time
 from typing import Sequence, Optional, List
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -7,6 +9,12 @@ from ...commands.utils import KSMCommand
 from ...loginv3 import CommonHelperMethods
 from ...params import KeeperParams
 from ...proto import pam_pb2, enterprise_pb2
+
+
+_gateway_cache_lock = threading.Lock()
+_gateway_cache_result = None   # type: Optional[Sequence[pam_pb2.PAMController]]
+_gateway_cache_time = 0.0
+_GATEWAY_CACHE_TTL = 60  # seconds
 
 
 def find_one_gateway_by_uid_or_name(params, gateway_name_or_uid):
@@ -26,8 +34,26 @@ def find_one_gateway_by_uid_or_name(params, gateway_name_or_uid):
 
 
 def get_all_gateways(params):  # type: (KeeperParams) -> Sequence[pam_pb2.PAMController]
-    rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=pam_pb2.PAMControllersResponse)
-    return rs.controllers
+    global _gateway_cache_result, _gateway_cache_time
+    now = time.time()
+    if _gateway_cache_result is not None and (now - _gateway_cache_time) < _GATEWAY_CACHE_TTL:
+        return _gateway_cache_result
+    with _gateway_cache_lock:
+        # Re-check after acquiring lock (another thread may have refreshed)
+        now = time.time()
+        if _gateway_cache_result is not None and (now - _gateway_cache_time) < _GATEWAY_CACHE_TTL:
+            return _gateway_cache_result
+        rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=pam_pb2.PAMControllersResponse)
+        _gateway_cache_result = rs.controllers
+        _gateway_cache_time = time.time()
+        return _gateway_cache_result
+
+
+def invalidate_gateway_cache():
+    global _gateway_cache_result, _gateway_cache_time
+    with _gateway_cache_lock:
+        _gateway_cache_result = None
+        _gateway_cache_time = 0.0
 
 
 def find_connected_gateways(all_controllers, identifier):  # type: (List[bytes], str) -> Optional[bytes]
@@ -74,6 +100,7 @@ def remove_gateway(params, gateway_uid):   # type: (KeeperParams, bytes) -> None
     rq = pam_pb2.PAMGenericUidRequest()
     rq.uid = gateway_uid
     rs = api.communicate_rest(params, rq, 'pam/remove_controller', rs_type=pam_pb2.PAMRemoveControllerResponse)
+    invalidate_gateway_cache()
     controller = next((x for x in rs.controllers if x.controllerUid == gateway_uid), None)
     if controller:
         raise Exception(controller.message)

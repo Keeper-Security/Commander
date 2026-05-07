@@ -349,7 +349,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     if acl.is_task:
                         acl_parts.append(self._bl("Task"))
                     if acl.is_iis_pool:
-                        acl_parts.append(self._bl("Task"))
+                        acl_parts.append(self._bl("IIS Pool"))
                     if len(acl_parts) > 0:
                         acl_text = ", ".join(acl_parts)
                     acl_text = f" -> {acl_text}"

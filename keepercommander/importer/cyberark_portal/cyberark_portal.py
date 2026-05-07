@@ -1,5 +1,7 @@
 import base64
 import hashlib
+import json
+import os
 import re
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -15,7 +17,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Record, RecordField
+from ..importer import BaseImporter, Record, RecordField, Folder
 import secrets
 import string
 
@@ -39,36 +41,178 @@ class CyberArkPortalImporter(BaseImporter):
     TIMEOUT = 10  # Wait up to 10 seconds for CyberArk API requests
 
     @staticmethod
-    def get_url(id_tenant, endpoint):
-        return f'https://{id_tenant}.id.cyberark.cloud/{endpoint.rstrip("/")}'
+    def get_url(identity_base_url, endpoint):
+        return f'{identity_base_url.rstrip("/")}/{endpoint.lstrip("/").rstrip("/")}'
+
+    @staticmethod
+    def discover_identity_url(tenant_name):
+        """Discover the actual CyberArk Identity URL for a tenant.
+
+        Probes candidate URLs in order and returns the first reachable identity
+        endpoint.  For tenants that use legacy Idaptive (*.my.idaptive.app) the
+        portal at *.cyberark.cloud redirects to the identity login page, so we
+        extract the identity host from that redirect.
+
+        See https://docs.cyberark.com/identity/latest/en/content/getstarted/tenant-url-domains.htm
+        """
+        default_url = f'https://{tenant_name}.id.cyberark.cloud'
+
+        try:
+            requests.head(default_url, timeout=5)
+            return default_url
+        except requests.exceptions.ConnectionError:
+            logging.debug(f"{default_url} is not reachable, attempting auto-discovery")
+        except requests.exceptions.RequestException:
+            logging.debug(f"{default_url} request failed, attempting auto-discovery")
+
+        portal_url = f'https://{tenant_name}.cyberark.cloud'
+        try:
+            resp = requests.get(portal_url, timeout=10, allow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redirect_url = resp.headers.get('Location', '')
+                parsed = urlparse(redirect_url)
+                identity_host = parsed.hostname
+                if identity_host:
+                    discovered = f'https://{identity_host}'
+                    logging.info(f"Auto-discovered identity URL: {discovered} (via redirect from {portal_url})")
+                    return discovered
+        except requests.exceptions.ConnectionError:
+            logging.debug(f"{portal_url} is also not reachable")
+        except requests.exceptions.RequestException as e:
+            logging.debug(f"{portal_url} request failed: {e}")
+
+        logging.warning(
+            f"Could not auto-discover identity URL for tenant '{tenant_name}'. "
+            f"Falling back to {default_url}. "
+            f"You can also pass the full identity URL directly, e.g.: "
+            f"import --format=cyberark_portal https://YOUR_TENANT.my.idaptive.app"
+        )
+        return default_url
+
+    @staticmethod
+    def _create_empty_keeper_folder(params, folder_name, is_shared):
+        """Create an empty folder directly in the user's Keeper vault.
+
+        The Keeper importer pipeline creates user folders only implicitly when a record is placed
+        inside them, so a CyberArk folder with zero items would otherwise never appear in Keeper.
+        We bypass that limitation by calling the folder_add Keeper API directly.  If `params` is
+        not available (e.g. the importer is being exercised in dry-run mode or a context that does
+        not forward params), we silently skip the creation instead of failing.
+        """
+        if not params or not folder_name:
+            return
+        try:
+            from ... import api, crypto, utils
+        except Exception as e:
+            logging.debug(f"Unable to import Keeper api helpers for folder creation: {e}")
+            return
+
+        try:
+            # Skip if a top-level folder with the same name already exists to avoid duplicates
+            # on repeated imports.
+            existing_names = set()
+            root_subfolders = getattr(params.root_folder, "subfolders", None) or []
+            for sub_uid in root_subfolders:
+                sub = params.folder_cache.get(sub_uid)
+                if sub and sub.name:
+                    existing_names.add(sub.name.lower())
+            if folder_name.lower() in existing_names:
+                logging.debug(f"Folder '{folder_name}' already exists in vault; skipping creation.")
+                return
+
+            folder_uid = api.generate_record_uid()
+            folder_key = os.urandom(32)
+            request = {
+                "command": "folder_add",
+                "folder_uid": folder_uid,
+                "folder_type": "shared_folder" if is_shared else "user_folder",
+                "key": utils.base64_url_encode(crypto.encrypt_aes_v1(folder_key, params.data_key)),
+            }
+
+            data = json.dumps({"name": folder_name})
+            request["data"] = utils.base64_url_encode(
+                crypto.encrypt_aes_v1(data.encode("utf-8"), folder_key)
+            )
+            if is_shared:
+                request["name"] = utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(folder_name.encode("utf-8"), folder_key)
+                )
+
+            api.communicate(params, request)
+            params.sync_data = True
+            logging.info(f"Created empty Keeper folder '{folder_name}' (is_shared={is_shared}).")
+        except Exception as e:
+            logging.warning(f"Failed to create empty folder '{folder_name}': {e}")
 
     def do_import(self, filename, **kwargs):
-        id_tenant = re.search(r"^([A-Za-z0-9-]+)(\.id\.cyberark\.cloud)?$", filename.removeprefix("https://"))[0]
+        params = kwargs.get("params")
+        name = filename.removeprefix("https://").removeprefix("http://")
+        host_part = name.split("/")[0]
+
+        if "." in host_part:
+            identity_base_url = f'https://{host_part}'
+            tenant_name = host_part.split(".")[0]
+        else:
+            # Bare tenant name (e.g. "eqrworld") — run discovery
+            tenant_name = host_part
+            identity_base_url = self.discover_identity_url(tenant_name)
+
+        logging.info(f"Using CyberArk Identity URL: {identity_base_url}")
+
         username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk User Portal username: ")
+
+        start_auth_payload = {
+            "TenantId": tenant_name,
+            "Version": "1.0",
+            "User": username,
+        }
+
         response = requests.post(
-            self.get_url(id_tenant, "/Security/StartAuthentication"),
-            json={
-                "TenantId": id_tenant,
-                "Version": "1.0",
-                "User": username,
-            },
+            self.get_url(identity_base_url, "/Security/StartAuthentication"),
+            json=start_auth_payload,
             timeout=self.TIMEOUT,
+            allow_redirects=False,
         )
 
+       
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirect_url = response.headers.get('Location', '')
+            if redirect_url:
+                identity_host = urlparse(redirect_url).hostname
+                if identity_host:
+                    identity_base_url = f'https://{identity_host}'
+                    logging.info(f"StartAuthentication redirected; retrying on discovered identity URL: {identity_base_url}")
+                    response = requests.post(
+                        self.get_url(identity_base_url, "/Security/StartAuthentication"),
+                        json=start_auth_payload,
+                        timeout=self.TIMEOUT,
+                        allow_redirects=False,
+                    )
+
         if response.status_code != HTTPStatus.OK:
-            logging.error(f"Error starting authentication: {response.text}")
+            logging.error(f"Error starting authentication (HTTP {response.status_code}): {response.text[:500]}")
             return
         start_auth_result = response.json().get("Result")
         logging.debug(f"Authentication Result: {start_auth_result}")
-        redirect = start_auth_result.get("PodFqdn")
 
+        # https://docs.cyberark.com/identity/latest/en/content/developer/authentication/adaptive-mfa-overview.htm#Ha
+        redirect = start_auth_result.get("PodFqdn")
         if redirect:
+            identity_base_url = f'https://{redirect}'
             print_formatted_text(
-                HTML(
-                    f"Use <ansigreen><i>{redirect.removesuffix('.id.cyberark.cloud')}</i></ansigreen> instead of <ansired>{id_tenant}</ansired> for user <i>{username}</i>."
-                )
+                HTML(f"Redirecting to preferred tenant URL: <ansigreen>{redirect}</ansigreen>")
             )
-            return
+            response = requests.post(
+                self.get_url(identity_base_url, "/Security/StartAuthentication"),
+                json=start_auth_payload,
+                timeout=self.TIMEOUT,
+                allow_redirects=False,
+            )
+            if response.status_code != HTTPStatus.OK:
+                logging.error(f"Error starting authentication on {redirect}: {response.text[:500]}")
+                return
+            start_auth_result = response.json().get("Result")
+            logging.debug(f"Authentication Result (redirected): {start_auth_result}")
 
         if start_auth_result.get("IdpRedirectUrl"):
 
@@ -173,7 +317,7 @@ class CyberArkPortalImporter(BaseImporter):
             callback = OAuth2Callback()
             callback.start()
             response = requests.post(
-                self.get_url(id_tenant, "/OAuth2/Authorize/KeeperCommander"),
+                self.get_url(identity_base_url, "/OAuth2/Authorize/KeeperCommander"),
                 data={
                     "response_type": "code",
                     "redirect_uri": OAuth2Callback.REDIRECT_URI,
@@ -193,7 +337,7 @@ class CyberArkPortalImporter(BaseImporter):
 
             # The user did not quit so the code has been received or entered by the user
             response = requests.post(
-                self.get_url(id_tenant, "/OAuth2/Token/KeeperCommander"),
+                self.get_url(identity_base_url, "/OAuth2/Token/KeeperCommander"),
                 data={
                     "grant_type": "authorization_code",
                     "redirect_uri": OAuth2Callback.REDIRECT_URI,
@@ -232,7 +376,7 @@ class CyberArkPortalImporter(BaseImporter):
             }
             session_id = start_auth_result.get("SessionId")
             advance_auth_request = {
-                "TenantId": id_tenant,
+                "TenantId": tenant_name,
                 "SessionId": session_id,
             }
 
@@ -252,7 +396,7 @@ class CyberArkPortalImporter(BaseImporter):
 
             logging.debug(f"Advance Authentication Request: {advance_auth_request}")
             response = requests.post(
-                self.get_url(id_tenant, "/Security/AdvanceAuthentication"),
+                self.get_url(identity_base_url, "/Security/AdvanceAuthentication"),
                 json=advance_auth_request,
                 timeout=self.TIMEOUT,
             )
@@ -274,9 +418,9 @@ class CyberArkPortalImporter(BaseImporter):
             # Iterate through the challenge mechanisms until we get a successful login or run out of mechanisms
             while challenge_mechs and advance_auth_result.get("Summary") == "OobPending":
                 response = requests.post(
-                    self.get_url(id_tenant, "/Security/AdvanceAuthentication"),
+                    self.get_url(identity_base_url, "/Security/AdvanceAuthentication"),
                     json={
-                        "TenantId": id_tenant,
+                        "TenantId": tenant_name,
                         "SessionId": session_id,
                         "MechanismId": challenge_mechs[0]["MechanismId"],
                         "Action": "Answer",
@@ -306,10 +450,103 @@ class CyberArkPortalImporter(BaseImporter):
 
         print_formatted_text(HTML("Authentication <ansigreen>successful</ansigreen>"))
 
+        auth_headers = {"Authorization": f"Bearer {authentication_token}"}
+
+        
+        app_folder_map = {}       # type: dict
+        item_folder_map = {}      # type: dict
+
+        folders_response = requests.post(
+            self.get_url(identity_base_url, "/Folder/GetFolders"),
+            headers=auth_headers,
+            json={},
+            timeout=self.TIMEOUT,
+        )
+
+        if folders_response.status_code == HTTPStatus.OK:
+            folders_result = folders_response.json().get("Result") or []
+            logging.debug(f"Folders: {folders_result}")
+            for folder in folders_result:
+                folder_uuid = folder.get("FolderUuid")
+                folder_name = (folder.get("Name") or "").strip()
+                if not folder_name:
+                    continue
+                share_option = folder.get("ShareOption", "NotShared")
+                is_shared = share_option != "NotShared"
+                folder_meta = {
+                    "uuid": folder_uuid,
+                    "name": folder_name,
+                    "is_shared": is_shared,
+                }
+
+                app_keys = set(folder.get("Apps") or [])
+                item_keys = set(folder.get("SecuredItems") or [])
+
+                if folder_uuid:
+                    items_response = requests.post(
+                        self.get_url(
+                            identity_base_url,
+                            f"/Folder/GetFolderItems?folderUuid={folder_uuid}",
+                        ),
+                        headers=auth_headers,
+                        json={},
+                        timeout=self.TIMEOUT,
+                    )
+                    if items_response.status_code == HTTPStatus.OK:
+                        items_result = items_response.json().get("Result") or {}
+                        app_keys.update(items_result.get("Apps") or [])
+                        item_keys.update(items_result.get("SecuredItems") or [])
+                        for it in items_result.get("Items") or []:
+                            key = it.get("ItemKey") or it.get("_RowKey")
+                            if not key:
+                                continue
+                            it_type = it.get("Type") or ""
+                            if it_type == "App" or "AppType" in it:
+                                app_keys.add(key)
+                            else:
+                                item_keys.add(key)
+                    else:
+                        logging.warning(
+                            f"HTTP {items_response.status_code} getting items for folder "
+                            f"{folder_name} ({folder_uuid}): {items_response.text[:200]}"
+                        )
+
+                for k in app_keys:
+                    app_folder_map[k] = folder_meta
+                for k in item_keys:
+                    item_folder_map[k] = folder_meta
+
+               
+                if not app_keys and not item_keys:
+                    self._create_empty_keeper_folder(
+                        params, folder_meta["name"], folder_meta["is_shared"]
+                    )
+        else:
+            logging.warning(
+                f"HTTP {folders_response.status_code} getting folders: {folders_response.text[:200]}; "
+                f"records will be imported at the vault root."
+            )
+
+        def _attach_folder(record, folder_meta):
+            """Attach a single Folder reference to the record if the item lives inside a CyberArk folder.
+
+            - Shared folder -> Folder.domain = folder name (Keeper creates a Shared Folder)
+            - Personal folder -> Folder.path = folder name (Keeper creates a user folder)
+            - No mapping -> no folder is attached, record goes to the vault root
+            """
+            if not folder_meta or not folder_meta.get("name"):
+                return
+            f = Folder()
+            if folder_meta["is_shared"]:
+                f.domain = folder_meta["name"]
+            else:
+                f.path = folder_meta["name"]
+            record.folders = [f]
+
         # Get all the application data (except the password, of course) in one API call
         response = requests.post(
-            self.get_url(id_tenant, "/UPRest/GetUPData"),
-            headers={"Authorization": f"Bearer {authentication_token}"},
+            self.get_url(identity_base_url, "/UPRest/GetUPData"),
+            headers=auth_headers,
             json={},
             timeout=self.TIMEOUT,
         )
@@ -339,6 +576,7 @@ class CyberArkPortalImporter(BaseImporter):
                 record.login = app.get("Username", "")
                 record.login_url = app.get("Url", "")
                 record.notes = app.get("Notes", "")
+                _attach_folder(record, app_folder_map.get(app_key))
 
                 if app.get("IsTotpSet"):
                     record.notes += "The CyberArk Application had a TOTP that Keeper could not access to import."
@@ -349,8 +587,8 @@ class CyberArkPortalImporter(BaseImporter):
                     )
 
                 response = requests.post(
-                    self.get_url(id_tenant, f"/UPRest/GetMCFA?appkey={app_key}"),
-                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    self.get_url(identity_base_url, f"/UPRest/GetMCFA?appkey={app_key}"),
+                    headers=auth_headers,
                     json={},
                     timeout=self.TIMEOUT,
                 )
@@ -364,12 +602,19 @@ class CyberArkPortalImporter(BaseImporter):
                     logging.warning(f"No password found for app {app_key}; response: {response.text}")
                 else:
                     record.password = response.json()["Result"].get("p", "")
+                    record.username = response.json()["Result"].get("u", "")
+                    record.notes = response.json()["Result"].get("n", "")
+                    record.fields.append(RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in response.json()["Result"].get("t", []))))
+                    record.fields.append(RecordField(type="text", label="Category", value=response.json()["Result"].get("c", "")))
+                    record.fields.append(RecordField(type="text", label="Description", value=response.json()["Result"].get("d", "")))
+                    record.fields.append(RecordField(type="text", label="Registration Message", value=response.json()["Result"].get("rm", "")))
+                    record.fields.append(RecordField(type="text", label="Registration Link Message", value=response.json()["Result"].get("rrm", "")))
 
                 yield record
 
         response = requests.post(
-            self.get_url(id_tenant, "/UPRest/GetSecuredItemsData"),
-            headers={"Authorization": f"Bearer {authentication_token}"},
+            self.get_url(identity_base_url, "/UPRest/GetSecuredItemsData"),
+            headers=auth_headers,
             json={},
             timeout=self.TIMEOUT,
         )
@@ -393,15 +638,17 @@ class CyberArkPortalImporter(BaseImporter):
                 item_key = item["ItemKey"]
                 record = Record()
                 record.title = item["Name"]
+                _attach_folder(record, item_folder_map.get(item_key))
 
                 if item.get("Tags"):
                     record.fields.append(
                         RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in item["Tags"]))
                     )
+                    
 
                 response = requests.post(
-                    self.get_url(id_tenant, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
-                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    self.get_url(identity_base_url, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
+                    headers=auth_headers,
                     json={},
                     timeout=self.TIMEOUT,
                 )

@@ -522,7 +522,8 @@ class TunnelDAG:
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
                              ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
-                             v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None):
+                             v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None,
+                             rotate_on_termination=None):
         v_type = RefType(v_type)
         allowed_ref_types = [RefType.PAM_MACHINE, RefType.PAM_DATABASE, RefType.PAM_DIRECTORY, RefType.PAM_BROWSER]
         if v_type not in allowed_ref_types:
@@ -625,13 +626,23 @@ class TunnelDAG:
                 else:
                     settings["aiSessionTerminate"] = ai_session_terminate
 
+        if rotate_on_termination is not None:
+            if content is None:
+                content = {allowed_settings_name: {}}
+                dirty = True
+            current_rot = bool(content.get("rotateOnTermination", False))
+            if rotate_on_termination != current_rot:
+                dirty = True
+                content = ensure_resource_meta_v1(dict(content))
+                content["rotateOnTermination"] = bool(rotate_on_termination)
+
         if dirty:
             # Legacy: missing or meta_version=0 -> write content as-is (no version in meta)
             if meta_version is not None and meta_version != 0:
                 meta_payload = build_resource_meta(
                     meta_version,
                     content.get(allowed_settings_name, {}),
-                    rotate_on_termination=False,
+                    rotate_on_termination=bool(content.get("rotateOnTermination", False)),
                 )
                 resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
             else:
@@ -672,6 +683,12 @@ class TunnelDAG:
             rotation = f"{bcolors.WARNING}Disabled" if (allowed_settings.get('rotation') and not allowed_settings['rotation']) else f"{bcolors.OKBLUE}Enabled"
             print(f"{bcolors.OKGREEN}\tRotation: {rotation}{bcolors.ENDC}")
             print(f"{bcolors.OKGREEN}\tTunneling: {port_forwarding}{bcolors.ENDC}")
+            ai_enabled = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('aiEnabled') else \
+                f"{bcolors.WARNING}Disabled"
+            ai_terminate = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('aiSessionTerminate') else \
+                f"{bcolors.WARNING}Disabled"
+            print(f"{bcolors.OKGREEN}\tAI threat detection: {ai_enabled}{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}\tAI terminate session on detection: {ai_terminate}{bcolors.ENDC}")
 
             print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
             if config_id is not None:
@@ -687,3 +704,9 @@ class TunnelDAG:
                         f"{bcolors.OKBLUE}Enabled"
                     print(f"{bcolors.OKGREEN}\tRotation: {config_rotation}{bcolors.ENDC}")
                     print(f"{bcolors.OKGREEN}\tTunneling: {config_port_forwarding}{bcolors.ENDC}")
+                    config_ai_enabled = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('aiEnabled') else \
+                        f"{bcolors.WARNING}Disabled"
+                    config_ai_terminate = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('aiSessionTerminate') else \
+                        f"{bcolors.WARNING}Disabled"
+                    print(f"{bcolors.OKGREEN}\tAI threat detection: {config_ai_enabled}{bcolors.ENDC}")
+                    print(f"{bcolors.OKGREEN}\tAI terminate session on detection: {config_ai_terminate}{bcolors.ENDC}")

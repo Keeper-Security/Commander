@@ -53,6 +53,7 @@ from .keeper_ai_settings import (
     refresh_meta_to_latest,
     refresh_link_to_config_to_latest,
 )
+from .workflow_apply import apply_workflow, validate_workflow_principals
 from ...keeper_dag import EdgeType
 from ...keeper_dag.types import RefType
 from ..base import Command
@@ -63,6 +64,7 @@ from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
 from ... import api, crypto, utils, vault, vault_extensions, record_management
+from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -279,7 +281,7 @@ def _collect_all_folder_uids_under_ksm(ksm_shared_folders: list) -> set:
         tree = shf.get("folder_tree") or {}
 
         def walk(t):
-            for name, node in (t or {}).items():
+            for _, node in (t or {}).items():
                 uid = (node or {}).get("uid")
                 if uid:
                     out.add(uid)
@@ -339,7 +341,7 @@ def _folder_uids_under_shf(shf: dict) -> set:
     tree = shf.get("folder_tree") or {}
 
     def walk(t):
-        for name, node in (t or {}).items():
+        for _, node in (t or {}).items():
             uid = (node or {}).get("uid")
             if uid:
                 out.add(uid)
@@ -410,6 +412,8 @@ class PAMProjectExtendCommand(Command):
         config_name = str(kwargs.get("config") or "")
 
         api.sync_down(params)
+        # no need to populate params.enterprise (users/teams caches).
+        # since extend only adds new records to existing folders
 
         configuration = None
         if config_name in params.record_cache:
@@ -424,15 +428,19 @@ class PAMProjectExtendCommand(Command):
         if not (configuration and isinstance(configuration, vault.TypedRecord) and configuration.version == 6):
             raise CommandError("pam project extend", f"""PAM configuration not found: "{config_name}" """)
 
-        if not (file_name != "" and os.path.isfile(file_name)):
-            raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
-
         data = {}
-        try:
-            with open(file_name, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+        if not (file_name != "" and os.path.isfile(file_name)):
+            try:
+                data = json.loads(file_name)
+            except ValueError:
+                raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
+        
+        if not data:
+            try:
+                with open(file_name, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                raise CommandError("pam project extend", f"""Unable to read file "{file_name}": {e}""")
 
         pam_data = data.get("pam_data") if isinstance(data, dict) else {}
         pam_data = pam_data if isinstance(pam_data, dict) else {}
@@ -541,6 +549,10 @@ class PAMProjectExtendCommand(Command):
                         continue
                     fp = (getattr(u, "folder_path", None) or "").strip()
                     u.resolved_folder_uid = path_to_folder_uid.get(fp) or usr_folder_uid
+
+        # pre-flight: validate workflow team UIDs for new resources (runs in dry-run too)
+        new_rscs = [r for r in project.get('mapped_resources', []) if getattr(r, '_extend_tag', None) == 'new']
+        validate_workflow_principals(params, new_rscs)
 
         if dry_run:
             print("[DRY RUN COMPLETE] No changes were made. All actions were validated but not executed.")
@@ -1395,6 +1407,9 @@ class PAMProjectExtendCommand(Command):
                     args["connections"] = True
                 args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
+                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
+                if rbi_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
             else:
                 args = parse_command_options(mach, True)
                 if admin_uid:
@@ -1436,6 +1451,10 @@ class PAMProjectExtendCommand(Command):
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
                 if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
+                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
+                if ps_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
             mach_users = getattr(mach, "users", []) or []
             for user in mach_users:

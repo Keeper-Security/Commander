@@ -306,7 +306,7 @@ class TestDirectShare(TestCase):
         mock_share_cmd.prep_request.side_effect = Exception('Public key not found')
 
         params = MagicMock()
-        config = {'delivery': {'method': 'direct_share', 'share_to': 'bad@test.com'}}
+        config = {'delivery': {'share_to': 'bad@test.com'}}
 
         result = self.cmd._share_directly('pam-uid-123', config, params)
         self.assertFalse(result)
