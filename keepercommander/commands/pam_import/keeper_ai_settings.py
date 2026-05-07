@@ -510,7 +510,8 @@ def set_resource_jit_settings(
     params: KeeperParams,
     resource_uid: str,
     settings: Dict[str, Any],
-    config_uid: Optional[str] = None
+    config_uid: Optional[str] = None,
+    allow_empty: bool = False
 ) -> bool:
     """
     Save JIT settings to the DAG DATA edge with path 'jit_settings' for a resource.
@@ -533,9 +534,11 @@ def set_resource_jit_settings(
         True if settings were saved successfully, False otherwise.
     """
     try:
-        # Return False if settings dict is empty
-        if not settings or not isinstance(settings, dict):
-            logging.debug(f"JIT settings empty or invalid for {resource_uid}, skipping")
+        if not isinstance(settings, dict):
+            logging.debug(f"JIT settings invalid for {resource_uid}, skipping")
+            return False
+        if not settings and not allow_empty:
+            logging.debug(f"JIT settings empty for {resource_uid}, skipping")
             return False
 
         # Get the record to access the record key
@@ -931,3 +934,172 @@ def inspect_resource_in_graph(
         logging.error(f"Error inspecting graph for {resource_uid}: {e}", exc_info=True)
         result["error"] = str(e)
         return result
+
+
+def get_resource_domain_dir_uid(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: Optional[str] = None
+) -> Optional[str]:
+    """
+    Return the pamDirectory UID linked to the resource via a LINK edge with path 'domain'.
+    Returns None if no such link exists.
+    """
+    try:
+        record = vault.KeeperRecord.load(params, resource_uid)
+        if not record:
+            return None
+
+        record_key = None
+        if resource_uid in params.record_cache:
+            record_key = params.record_cache[resource_uid].get('record_key_unencrypted')
+        if not record_key:
+            return None
+
+        if not config_uid:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
+            if not config_uid:
+                config_uid = resource_uid
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        dag_record = PasswordRecord()
+        dag_record.record_uid = config_uid
+        dag_record.record_key = record_key
+
+        conn = Connection(
+            params=params,
+            encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token,
+            transmission_key=transmission_key,
+            use_write_protobuf=True
+        )
+        linking_dag = DAG(
+            conn=conn,
+            record=dag_record,
+            graph_id=0,
+            write_endpoint=PamEndpoints.PAM
+        )
+        linking_dag.load()
+
+        resource_vertex = linking_dag.get_vertex(resource_uid)
+        if not resource_vertex:
+            return None
+
+        for edge in resource_vertex.edges:
+            if (edge and edge.edge_type == EdgeType.LINK and
+                    edge.path == 'domain' and edge.active):
+                return edge.head_uid
+
+        return None
+
+    except Exception as e:
+        logging.error(f"Error getting domain dir UID for {resource_uid}: {e}", exc_info=True)
+        return None
+
+
+def set_resource_domain_dir(
+    params: KeeperParams,
+    resource_uid: str,
+    dir_uid: str,
+    config_uid: Optional[str] = None
+) -> bool:
+    """
+    Add or replace the LINK edge from resource to pamDirectory with path 'domain'.
+    If a domain LINK to a different pamDirectory already exists, it is disconnected first.
+    """
+    try:
+        record = vault.KeeperRecord.load(params, resource_uid)
+        if not record:
+            logging.warning(f"Record {resource_uid} not found")
+            return False
+
+        record_key = None
+        if resource_uid in params.record_cache:
+            record_key = params.record_cache[resource_uid].get('record_key_unencrypted')
+        if not record_key:
+            logging.warning(f"Record key not available for {resource_uid}")
+            return False
+
+        if not config_uid:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
+            if not config_uid:
+                config_uid = resource_uid
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        dag_record = PasswordRecord()
+        dag_record.record_uid = config_uid
+        dag_record.record_key = record_key
+
+        conn = Connection(
+            params=params,
+            encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token,
+            transmission_key=transmission_key,
+            use_write_protobuf=True
+        )
+        linking_dag = DAG(
+            conn=conn,
+            record=dag_record,
+            graph_id=0,
+            write_endpoint=PamEndpoints.PAM,
+            decrypt=True
+        )
+        linking_dag.load()
+
+        resource_vertex = linking_dag.get_vertex(resource_uid)
+        if not resource_vertex:
+            logging.warning(f"Resource vertex {resource_uid} not found in DAG")
+            return False
+
+        # If a domain LINK to a different pamDirectory exists, disconnect it first
+        old_dir_uid = None
+        for edge in resource_vertex.edges:
+            if (edge and edge.edge_type == EdgeType.LINK and
+                    edge.path == 'domain' and edge.active):
+                old_dir_uid = edge.head_uid
+                break
+
+        if old_dir_uid and old_dir_uid != dir_uid:
+            old_dir_vertex = linking_dag.get_vertex(old_dir_uid)
+            if old_dir_vertex:
+                resource_vertex.disconnect_from(old_dir_vertex)
+                logging.debug(f"Disconnected old domain LINK edge to {old_dir_uid}")
+
+        dir_vertex = linking_dag.get_vertex(dir_uid)
+        if not dir_vertex:
+            logging.warning(f"Directory vertex {dir_uid} not found in DAG")
+            return False
+
+        resource_vertex.belongs_to(dir_vertex, EdgeType.LINK, path="domain", content={})
+        linking_dag.save()
+
+        logging.debug(f"Successfully set domain dir link for resource {resource_uid} -> {dir_uid}")
+        return True
+
+    except Exception as e:
+        logging.error(f"Error setting domain dir for {resource_uid}: {e}", exc_info=True)
+        return False
+
+
+def remove_resource_jit_settings(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: Optional[str] = None
+) -> bool:
+    """
+    Remove JIT settings by overwriting the 'jit_settings' DATA edge with an empty dict.
+
+    Implementation note: DATA edges in the DAG library use `active` as a versioning
+    marker (auto-managed by add_data when superseding), not a visibility toggle —
+    get_resource_settings reads the highest-version edge regardless of `active`,
+    and EdgeType.DELETION self-loops are not path-scoped in the library's lookup
+    logic. Writing an empty {} via the same set_resource_jit_settings path that
+    creation uses gives a clean, reliable removal: the new edge becomes the
+    highest version, and _do_show treats {} as 'No JIT settings configured'.
+    """
+    if not set_resource_jit_settings(params, resource_uid, {}, config_uid, allow_empty=True):
+        return False
+    logging.debug(f"Cleared jit_settings for resource {resource_uid}")
+    return True
