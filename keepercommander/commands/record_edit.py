@@ -670,7 +670,7 @@ class RecordEditMixin:
                             value = vault.TypedField.import_schedule_field(parsed_field.value)
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
-                if value:
+                if value is not None:
                     if isinstance(value, list):
                         record_field.value.clear()
                         record_field.value.extend(value)
