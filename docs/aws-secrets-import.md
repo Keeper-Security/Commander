@@ -5,6 +5,8 @@ The `aws-secrets-import` command reads every secret from AWS Secrets Manager and
 - **Alias:** `asi`
 - **Requires:** `boto3` — install with `pip install keeper-commander[aws]`
 
+> **See also:** [`azure-secrets-import`](azure-secrets-import.md) for Azure Key Vault and [`gcp-secrets-import`](gcp-secrets-import.md) for Google Cloud Secret Manager. All three commands share the same secret value parsing rules, field-mapping logic, and filter flags.
+
 ---
 
 ## Table of Contents
@@ -125,7 +127,7 @@ asi xAbCdEfGhIjK --tags Env=prod
 asi xAbCdEfGhIjK --tags Env=prod,Team=payments
 ```
 
-Tag keys and values are case-sensitive and must match the values stored in AWS exactly.
+Tag keys and values are case-sensitive and must match the values stored in AWS exactly. Azure Key Vault also uses the term *tags*; GCP Secret Manager uses the term *labels* — the `--tags` flag works the same way for all three providers.
 
 ### Combining filters
 
@@ -143,6 +145,8 @@ A secret is imported only if it satisfies **every** filter listed.
 ---
 
 ## Secret Value Formats
+
+The same parsing rules are used by all three cloud import commands (`aws-secrets-import`, `azure-secrets-import`, `gcp-secrets-import`).
 
 When a secret is retrieved from AWS Secrets Manager, its `SecretString` is parsed into a set of named field values using the following rules, applied in priority order:
 
