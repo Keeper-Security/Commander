@@ -2077,8 +2077,14 @@ class PAMConnectionEditCommand(Command):
             if _typescript_recording is not None and tdag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
                 dirty = True
 
+            launch_credential_record_types = ("pamDatabase", "pamDirectory", "pamMachine")
             rot_kw = kwargs.get('rotate_on_termination')
             rot_bool = True if rot_kw == 'on' else False if rot_kw == 'off' else None
+            if rot_bool is not None and record_type not in launch_credential_record_types:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--rotate-on-termination is only supported for pamMachine, pamDatabase, and '
+                    f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not support '
+                    f'launch credentials.{bcolors.ENDC}')
 
             if dirty or rot_bool is not None:
                 tdag.set_resource_allowed(resource_uid=record_uid,
@@ -2092,7 +2098,7 @@ class PAMConnectionEditCommand(Command):
             admin_name = kwargs.get('admin')
             adm_rec = RecordMixin.resolve_single_record(params, admin_name)
             admin_uid = adm_rec.record_uid if adm_rec else None
-            if admin_uid and record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+            if admin_uid and record_type in launch_credential_record_types:
                 tdag.link_user_to_resource(admin_uid, record_uid, is_admin=True, belongs_to=True)
                 # tdag.link_user_to_config(admin_uid)  # is_iam_user=True
 
@@ -2104,9 +2110,13 @@ class PAMConnectionEditCommand(Command):
                 raise CommandError('pam connection edit',
                     f'{bcolors.FAIL}Use either --clear-launch-user or --launch-user, not both.{bcolors.ENDC}')
             if clear_launch_user:
-                if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
-                    tdag.clear_launch_credential_for_resource(record_uid)
-                    tdag.upgrade_resource_meta_to_v1(record_uid)
+                if record_type not in launch_credential_record_types:
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}--clear-launch-user is only supported for pamMachine, pamDatabase, and '
+                        f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not '
+                        f'support launch credentials.{bcolors.ENDC}')
+                tdag.clear_launch_credential_for_resource(record_uid)
+                tdag.upgrade_resource_meta_to_v1(record_uid)
             elif launch_user_name:
                 launch_rec = RecordMixin.resolve_single_record(params, launch_user_name)
                 if not launch_rec:
@@ -2116,7 +2126,7 @@ class PAMConnectionEditCommand(Command):
                     raise CommandError('',
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
                 launch_uid = launch_rec.record_uid
-                if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                if record_type in launch_credential_record_types:
                     tdag.clear_launch_credential_for_resource(record_uid, exclude_user_uid=launch_uid)
                     tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
                     tdag.upgrade_resource_meta_to_v1(record_uid)
