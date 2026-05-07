@@ -26,6 +26,7 @@ from .base import suppress_exit, raise_parse_exception, dump_report_data, Comman
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
 from ..display import bcolors
+from ..enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..proto import record_pb2 as records
@@ -223,6 +224,8 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 #     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 raise CommandError('add', f'Record type definition not found for type: {rt} - to get list of all available record types use: record-type-info -lr')
 
+            RecordTypeEnforcer.enforce(params, rt, 'add')
+
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
         data_opts = recordv3.RecordV3.convert_options_to_json(params, '', rt_def, kwargs) if rt_def else None
@@ -404,6 +407,13 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
+        for f in pw_failures:
+            logging.warning(f)
+        if pw_failures and not kwargs.get('force'):
+            logging.warning('Use --force to bypass password policy warnings.')
+            return
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -602,6 +612,9 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
                     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
+            if rt and rt != rt_name:
+                RecordTypeEnforcer.enforce(params, rt, 'edit')
+
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
         data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
@@ -641,6 +654,13 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
+        for f in pw_failures:
+            logging.warning(f)
+        if pw_failures and not kwargs.get('force'):
+            logging.warning('Use --force to bypass password policy warnings.')
+            return
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict
