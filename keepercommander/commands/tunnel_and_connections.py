@@ -34,6 +34,7 @@ from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, 
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
     wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close, \
     print_above_keeper_prompt
+from .pam.router_helper import get_dag_leafs
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -83,6 +84,7 @@ class PAMConnectionCommand(GroupCommand):
         # self.register_command('start', PAMConnectionStartCommand(), 'Start Connection', 's')
         # self.register_command('stop', PAMConnectionStopCommand(), 'Stop Connection', 'x')
         self.register_command('edit', PAMConnectionEditCommand(), 'Edit Connection settings', 'e')
+        self.register_command('jit', PAMConnectionJitCommand(), 'View/update JIT settings', 'j')
         self.default_verb = 'edit'
 
 
@@ -2877,6 +2879,251 @@ class PAMConnectionEditCommand(Command):
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+
+
+class PAMConnectionJitCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam connection jit')
+    parser.add_argument('record', type=str, action='store',
+                        help='Record UID, path, or title (pamMachine, pamDatabase, or pamDirectory)')
+    parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
+                        help='PAM Configuration UID or title (required when record is linked to 2+ configs)')
+    parser.add_argument('--create-ephemeral', type=str, dest='create_ephemeral', action='store', default=None,
+                        metavar='BOOL', help='Create ephemeral account (true/false)')
+    parser.add_argument('--elevate', type=str, dest='elevate', action='store', default=None,
+                        metavar='BOOL', help='Elevate account (true/false)')
+    parser.add_argument('--elevation-method', dest='elevation_method', choices=['group', 'role'], default=None,
+                        help='Elevation method (group or role)')
+    parser.add_argument('--elevation-string', dest='elevation_string', type=str, action='store', default=None,
+                        help='Elevation string')
+    parser.add_argument('--base-distinguished-name', dest='base_distinguished_name', type=str, action='store',
+                        default=None, help='Base distinguished name')
+    parser.add_argument('--ephemeral-account-type', dest='ephemeral_account_type',
+                        choices=['linux', 'mac', 'windows', 'domain'], default=None,
+                        help='Ephemeral account type')
+    parser.add_argument('--pam-directory-record', dest='pam_directory_record', type=str, action='store',
+                        default=None,
+                        help='pamDirectory record UID/path/title (required when ephemeral-account-type=domain)')
+    parser.add_argument('--remove', dest='remove', action='store_true', default=False,
+                        help='Remove all JIT settings (jit_settings path only)')
+    parser.add_argument('--show', dest='show', action='store_true', default=False,
+                        help='Show current JIT settings')
+
+    def get_parser(self):
+        return PAMConnectionJitCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        configuration = kwargs.get('configuration')
+        remove_flag = kwargs.get('remove', False)
+        show_flag = kwargs.get('show', False)
+
+        jit_option_keys = ['create_ephemeral', 'elevate', 'elevation_method', 'elevation_string',
+                           'base_distinguished_name', 'ephemeral_account_type', 'pam_directory_record']
+        jit_options_provided = any(kwargs.get(k) is not None for k in jit_option_keys)
+
+        # Mutual exclusion checks
+        if remove_flag and show_flag:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with --show.{bcolors.ENDC}')
+        if remove_flag and jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with any other option.{bcolors.ENDC}')
+        if show_flag and jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--show cannot be used with --remove or any JIT option.{bcolors.ENDC}')
+        if not remove_flag and not show_flag and not jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}Provide at least one JIT option, --remove, or --show.{bcolors.ENDC}')
+
+        # 1. Resolve record: try UID/path first, then title search across PAM resource types
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if record is None:
+            pam_resource_types = {'pamMachine', 'pamDatabase', 'pamDirectory'}
+            matches = []
+            for uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, uid)
+                if rec and rec.record_type in pam_resource_types and rec.title.casefold() == record_name.casefold():
+                    matches.append(rec)
+            if len(matches) == 0:
+                raise CommandError('', f'{bcolors.FAIL}Record "{record_name}" not found.{bcolors.ENDC}')
+            if len(matches) > 1:
+                raise CommandError('',
+                    f'{bcolors.FAIL}Multiple records match title "{record_name}"; use UID or path.{bcolors.ENDC}')
+            record = matches[0]
+
+        # 2. Record type check
+        if not isinstance(record, vault.TypedRecord) or \
+                record.record_type not in ('pamMachine', 'pamDatabase', 'pamDirectory'):
+            raise CommandError('',
+                f'{bcolors.FAIL}JIT settings are only supported on pamMachine, pamDatabase, '
+                f'and pamDirectory records.{bcolors.ENDC}')
+
+        record_uid = record.record_uid
+
+        # 3. Resolve PAM config(s) via DAG
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        config_leafs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        config_uids = [leaf.get('value') for leaf in (config_leafs or []) if leaf.get('value')]
+
+        if not config_uids:
+            raise CommandError('',
+                f'{bcolors.FAIL}Record is not set up for connections. '
+                f'Use: pam connection edit {record_uid} --config <ConfigUID> --enable-connections. '
+                f'List configs: pam config list.{bcolors.ENDC}')
+
+        if len(config_uids) == 1:
+            config_uid = config_uids[0]
+        else:
+            if not configuration:
+                raise CommandError('',
+                    f'{bcolors.FAIL}Record is linked to multiple PAM Configurations; '
+                    f'specify --configuration|-c.{bcolors.ENDC}')
+            # Resolve --configuration: try UID/path, then title among version-6 records
+            config_rec = RecordMixin.resolve_single_record(params, configuration)
+            if config_rec is None:
+                for uid in params.record_cache:
+                    if params.record_cache[uid].get('version', 0) == 6:
+                        r = vault.KeeperRecord.load(params, uid)
+                        if r and r.title.casefold() == configuration.casefold():
+                            config_rec = r
+                            break
+            if config_rec is None:
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Configuration "{configuration}" not found.{bcolors.ENDC}')
+            config_uid = config_rec.record_uid
+            if config_uid not in config_uids:
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Configuration "{configuration}" is not linked to this record.{bcolors.ENDC}')
+
+        # 4. Branch
+        if show_flag:
+            self._do_show(params, record, record_uid, config_uid)
+        elif remove_flag:
+            self._do_remove(params, record_uid, config_uid)
+        else:
+            self._do_set(params, kwargs, record_uid, config_uid)
+
+    def _do_show(self, params, record, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import get_resource_jit_settings, get_resource_domain_dir_uid
+
+        settings = get_resource_jit_settings(params, record_uid, config_uid)
+
+        print(f'\nJIT Settings for {bcolors.OKBLUE}{record.title}{bcolors.ENDC} ({record_uid}):')
+        if not settings:
+            print(f'  {bcolors.WARNING}No JIT settings configured.{bcolors.ENDC}\n')
+            return
+
+        field_labels = [
+            ('createEphemeral', 'Create Ephemeral'),
+            ('elevate', 'Elevate'),
+            ('elevationMethod', 'Elevation Method'),
+            ('elevationString', 'Elevation String'),
+            ('baseDistinguishedName', 'Base Distinguished Name'),
+            ('ephemeralAccountType', 'Ephemeral Account Type'),
+        ]
+        for key, label in field_labels:
+            if key in settings:
+                print(f'  {label}: {settings[key]}')
+
+        if settings.get('ephemeralAccountType') == 'domain':
+            domain_dir_uid = get_resource_domain_dir_uid(params, record_uid, config_uid)
+            if domain_dir_uid:
+                dir_rec = vault.KeeperRecord.load(params, domain_dir_uid)
+                dir_title = dir_rec.title if dir_rec else domain_dir_uid
+                print(f'  PAM Directory: {dir_title} ({domain_dir_uid})')
+
+        print()
+
+    def _do_remove(self, params, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import remove_resource_jit_settings
+
+        ok = remove_resource_jit_settings(params, record_uid, config_uid)
+        if ok:
+            print(f'{bcolors.OKGREEN}JIT settings removed successfully.{bcolors.ENDC}')
+        else:
+            print(f'{bcolors.WARNING}No JIT settings found or removal failed.{bcolors.ENDC}')
+
+    def _do_set(self, params, kwargs, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import (get_resource_jit_settings, set_resource_jit_settings,
+                                                     set_resource_domain_dir)
+
+        # Merge provided CLI args into existing settings
+        existing = get_resource_jit_settings(params, record_uid, config_uid) or {}
+        jit_dict = dict(existing)
+
+        create_ephemeral = kwargs.get('create_ephemeral')
+        if create_ephemeral is not None:
+            jit_dict['createEphemeral'] = value_to_boolean(create_ephemeral)
+
+        elevate = kwargs.get('elevate')
+        if elevate is not None:
+            jit_dict['elevate'] = value_to_boolean(elevate)
+
+        elevation_method = kwargs.get('elevation_method')
+        if elevation_method is not None:
+            jit_dict['elevationMethod'] = elevation_method
+
+        elevation_string = kwargs.get('elevation_string')
+        if elevation_string is not None:
+            jit_dict['elevationString'] = elevation_string
+
+        base_dn = kwargs.get('base_distinguished_name')
+        if base_dn is not None:
+            jit_dict['baseDistinguishedName'] = base_dn
+
+        ephemeral_type = kwargs.get('ephemeral_account_type')
+        if ephemeral_type is not None:
+            jit_dict['ephemeralAccountType'] = ephemeral_type
+
+        # Validate domain requires --pam-directory-record
+        pam_dir_record = kwargs.get('pam_directory_record')
+        if jit_dict.get('ephemeralAccountType') == 'domain' and not pam_dir_record:
+            raise CommandError('',
+                f'{bcolors.FAIL}ephemeral-account-type=domain requires --pam-directory-record '
+                f'(pamDirectory UID/path/title with directory_type active_directory or openldap).{bcolors.ENDC}')
+        if pam_dir_record and jit_dict.get('ephemeralAccountType') != 'domain':
+            raise CommandError('',
+                f'{bcolors.FAIL}--pam-directory-record requires --ephemeral-account-type=domain.{bcolors.ENDC}')
+
+        # Resolve pamDirectory if provided
+        pam_dir_uid = None
+        if pam_dir_record:
+            dir_rec = RecordMixin.resolve_single_record(params, pam_dir_record)
+            if dir_rec is None:
+                matches = []
+                for uid in params.record_cache:
+                    rec = vault.KeeperRecord.load(params, uid)
+                    if (rec and rec.record_type == 'pamDirectory' and
+                            rec.title.casefold() == pam_dir_record.casefold()):
+                        matches.append(rec)
+                if not matches:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}PAM Directory record "{pam_dir_record}" not found.{bcolors.ENDC}')
+                if len(matches) > 1:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}Multiple records match title "{pam_dir_record}"; use UID or path.{bcolors.ENDC}')
+                dir_rec = matches[0]
+
+            if not isinstance(dir_rec, vault.TypedRecord) or dir_rec.record_type != 'pamDirectory':
+                raise CommandError('',
+                    f'{bcolors.FAIL}--pam-directory-record must reference a pamDirectory record.{bcolors.ENDC}')
+
+            dir_type_field = dir_rec.get_typed_field('directoryType')
+            dir_type = dir_type_field.get_default_value(str) if dir_type_field else None
+            if dir_type not in ('active_directory', 'openldap'):
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Directory must have directory_type "active_directory" or "openldap" '
+                    f'(found: "{dir_type}").{bcolors.ENDC}')
+
+            pam_dir_uid = dir_rec.record_uid
+
+        # Save JIT settings
+        ok = set_resource_jit_settings(params, record_uid, jit_dict, config_uid)
+        if not ok:
+            raise CommandError('', f'{bcolors.FAIL}Failed to save JIT settings.{bcolors.ENDC}')
+
+        # Add/replace domain LINK edge if pamDirectory provided
+        if pam_dir_uid:
+            set_resource_domain_dir(params, record_uid, pam_dir_uid, config_uid)
+
+        print(f'{bcolors.OKGREEN}JIT settings saved successfully.{bcolors.ENDC}')
+
 
 class PAMRbiEditCommand(Command):
     choices = ['on', 'off', 'default']
