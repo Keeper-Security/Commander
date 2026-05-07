@@ -19,6 +19,7 @@ from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
+from .workflow_apply import apply_workflow, validate_workflow_principals
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
     PROJECT_IMPORT_JSON_TEMPLATE,
@@ -1476,6 +1477,27 @@ class PAMProjectImportCommand(Command):
                     if not(isinstance(usr.uid, str) and RecordV3.is_valid_ref_uid(usr.uid)):
                         usr.uid = utils.generate_uid()
 
+        # Detect and reject duplicate UIDs to prevent graph ambiguity
+        _all_assigned_uids: list[str] = []
+        for _obj in chain(resources, users):
+            _all_assigned_uids.append(_obj.uid)
+            if hasattr(_obj, 'users') and isinstance(_obj.users, list):
+                for _usr in _obj.users:
+                    _all_assigned_uids.append(_usr.uid)
+        _seen_uids: set[str] = set()
+        _duplicate_uids: list[str] = []
+        for _uid in _all_assigned_uids:
+            if _uid in _seen_uids:
+                _duplicate_uids.append(_uid)
+            _seen_uids.add(_uid)
+        if _duplicate_uids:
+            print(
+                f"{bcolors.FAIL}pam project import: duplicate uid values detected in import JSON: "
+                f"{', '.join(sorted(set(_duplicate_uids)))}. "
+                f"Each resource and user must have a unique uid. Import aborted.{bcolors.ENDC}"
+            )
+            return
+
         # resolve linked object UIDs (machines and users)
         # pam_settings.connection.administrative_credentials must reference
         # one of its own users[] -> userRecords["admin_user_record_UID"]
@@ -1621,6 +1643,9 @@ class PAMProjectImportCommand(Command):
             resolve_domain_admin(pce, users)
         # only resolve here - create after machine and user creation
 
+        # pre-flight: validate workflow team UIDs before any vault writes (runs in dry-run too)
+        validate_workflow_principals(params, resources)
+
         # dry run
         if project["options"].get("dry_run", False) is True:
             print("Will import file data here...")
@@ -1675,6 +1700,9 @@ class PAMProjectImportCommand(Command):
                     args["connections"] = True
                 args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
+                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
+                if rbi_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
             else: # machine/db/directory
                 args = parse_command_options(mach, True)
                 if admin_uid: args["admin"] = admin_uid
@@ -1717,6 +1745,10 @@ class PAMProjectImportCommand(Command):
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
                 if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
+                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
+                if ps_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
             # Machine - create its users (if any)
             users = getattr(mach, "users", [])

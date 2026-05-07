@@ -10,7 +10,6 @@
 #
 
 import io, html
-from pathlib import Path
 import sys
 import json
 import logging
@@ -21,8 +20,6 @@ from .parse_keeper_response import parse_keeper_response
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
-from ...__main__ import get_params_from_config
-from ...service.config.service_config import ServiceConfig
 from ...crypto import encrypt_aes_v2
 
 class CommandExecutor:

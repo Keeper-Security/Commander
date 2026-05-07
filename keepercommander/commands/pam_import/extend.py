@@ -53,6 +53,7 @@ from .keeper_ai_settings import (
     refresh_meta_to_latest,
     refresh_link_to_config_to_latest,
 )
+from .workflow_apply import apply_workflow, validate_workflow_principals
 from ...keeper_dag import EdgeType
 from ...keeper_dag.types import RefType
 from ..base import Command
@@ -548,6 +549,10 @@ class PAMProjectExtendCommand(Command):
                         continue
                     fp = (getattr(u, "folder_path", None) or "").strip()
                     u.resolved_folder_uid = path_to_folder_uid.get(fp) or usr_folder_uid
+
+        # pre-flight: validate workflow team UIDs for new resources (runs in dry-run too)
+        new_rscs = [r for r in project.get('mapped_resources', []) if getattr(r, '_extend_tag', None) == 'new']
+        validate_workflow_principals(params, new_rscs)
 
         if dry_run:
             print("[DRY RUN COMPLETE] No changes were made. All actions were validated but not executed.")
@@ -1402,6 +1407,9 @@ class PAMProjectExtendCommand(Command):
                     args["connections"] = True
                 args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
+                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
+                if rbi_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
             else:
                 args = parse_command_options(mach, True)
                 if admin_uid:
@@ -1443,6 +1451,10 @@ class PAMProjectExtendCommand(Command):
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
                 if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
+                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
+                if ps_wf:
+                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
             mach_users = getattr(mach, "users", []) or []
             for user in mach_users:

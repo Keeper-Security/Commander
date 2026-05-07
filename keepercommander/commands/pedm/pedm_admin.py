@@ -1442,18 +1442,10 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         if policy_filter:
             policy_data.update(policy_filter)
 
-        if policy_type in ('PrivilegeElevation', 'FileAccess', 'CommandLine'):
-            missing = [name for name, key in (('user', 'UserCheck'), ('machine', 'MachineCheck'), ('application', 'ApplicationCheck'))
-                       if not policy_filter.get(key)]
-            if missing:
-                raise base.CommandError(
-                    f'At least one machine, application, and user collection required to save this policy type. '
-                    f'Missing: {", ".join(missing)}. Use --user-filter, --machine-filter, --app-filter.')
-
-        for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
-            f = policy_data.get(filter_name)
-            if f is None:
-                policy_data[filter_name] = ['*']
+        for filter_name, default in (('UserCheck', ['*']), ('MachineCheck', ['*']), ('ApplicationCheck', ['*']),
+                                      ('DateCheck', []), ('TimeCheck', []), ('DayCheck', [])):
+            if policy_data.get(filter_name) is None:
+                policy_data[filter_name] = default
 
         arg_status = kwargs.get('status')
         if isinstance(arg_status, str):
