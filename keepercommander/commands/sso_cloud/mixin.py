@@ -43,8 +43,8 @@ class SsoCloudMixin(object):
             for svc in sso_services:
                 if svc.get('sso_service_provider_id') == target_id:
                     return svc
-        except ValueError:
-            pass
+        except (ValueError, TypeError):
+            logging.debug('Target "%s" is not numeric, searching by name.', target)
 
         target_lower = target.lower()
         matches = [s for s in sso_services if s.get('name', '').lower() == target_lower]
@@ -257,9 +257,12 @@ class SsoCloudMixin(object):
                 'settings': settings_list
             }, indent=2)
             if filename:
-                with open(filename, 'w') as f:
-                    f.write(output)
-                logging.info('Output written to %s', filename)
+                try:
+                    with open(filename, 'w') as f:
+                        f.write(output)
+                    logging.info('Output written to %s', filename)
+                except IOError as e:
+                    raise CommandError('sso-cloud', f'Failed to write output file "{filename}": {e}')
             else:
                 print(output)
             return
@@ -313,7 +316,7 @@ class SsoCloudMixin(object):
             sp_id = svc.get('sso_service_provider_id')
             name = svc.get('name', '')
             node_id = svc.get('node_id', 0)
-            node_name = SsoCloudMixin.get_node_name(params, node_id)
+            node_name = SsoCloudMixin.get_node_name(params, node_id) if node_id else 'N/A'
             active = svc.get('active', False)
             is_cloud = svc.get('is_cloud', False)
             table.append([sp_id, name, node_id, node_name, active, is_cloud])

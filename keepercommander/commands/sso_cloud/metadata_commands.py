@@ -14,6 +14,8 @@
 import logging
 import os
 
+from typing import Any
+
 import requests as http_requests
 
 from ... import api
@@ -31,7 +33,7 @@ class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_upload_parser
 
     def execute(self, params, **kwargs):
-        # type: (KeeperParams, **any) -> any
+        # type: (KeeperParams, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
@@ -94,7 +96,7 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_download_parser
 
     def execute(self, params, **kwargs):
-        # type: (KeeperParams, **any) -> any
+        # type: (KeeperParams, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
@@ -114,8 +116,11 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         output_path = kwargs.get('output')
         if output_path:
             output_path = os.path.expanduser(output_path)
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(xml_content)
-            logging.info('SP metadata saved to: %s', output_path)
+            try:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(xml_content)
+                logging.info('SP metadata saved to: %s', output_path)
+            except IOError as e:
+                raise CommandError('sso-cloud', f'Failed to write metadata file "{output_path}": {e}')
         else:
             print(xml_content)

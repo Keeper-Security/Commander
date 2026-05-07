@@ -13,6 +13,8 @@
 
 import logging
 
+from typing import Any
+
 from ... import api, crypto, utils
 from ...error import CommandError
 from ...params import KeeperParams
@@ -68,7 +70,7 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_create_parser
 
     def execute(self, params, **kwargs):
-        # type: (KeeperParams, **any) -> any
+        # type: (KeeperParams, **Any) -> Any
         name = kwargs.get('name')
         if not name:
             logging.warning('"--name" option is required for "create" command')
@@ -90,8 +92,12 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
                                    f'Node already has an SSO service provider: '
                                    f'"{svc.get("name")}" (ID: {svc.get("sso_service_provider_id")})')
 
+        tree_key = params.enterprise.get('unencrypted_tree_key')
+        if not tree_key:
+            raise CommandError('sso-cloud', 'Enterprise tree key not available. Ensure enterprise data is loaded.')
+
         sp_data_key = crypto.get_random_bytes(32)
-        encrypted_sp_data_key = crypto.encrypt_aes_v1(sp_data_key, params.enterprise['unencrypted_tree_key'])
+        encrypted_sp_data_key = crypto.encrypt_aes_v1(sp_data_key, tree_key)
 
         rq = {
             'command': 'sso_service_provider_add',
@@ -170,8 +176,8 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
                 for sv in config_rs.ssoCloudSettingValue:
                     settings[sv.settingName] = sv.value or ''
                 result['settings'] = settings
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug('Failed to fetch settings for JSON output: %s', e)
             print(json_mod.dumps(result, indent=2))
         else:
             logging.info('')
@@ -185,7 +191,7 @@ class SsoCloudDeleteCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_delete_parser
 
     def execute(self, params, **kwargs):
-        # type: (KeeperParams, **any) -> any
+        # type: (KeeperParams, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']

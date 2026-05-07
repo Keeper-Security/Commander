@@ -13,6 +13,8 @@
 
 import logging
 
+from typing import Any
+
 from ... import api
 from ...error import CommandError
 from ...proto import ssocloud_pb2 as ssocloud
@@ -58,7 +60,7 @@ class SsoCloudSetCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_set_parser
 
     def execute(self, params, **kwargs):
-        # type: (any, **any) -> any
+        # type: (Any, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
@@ -127,7 +129,7 @@ class SsoCloudValidateCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_validate_parser
 
     def execute(self, params, **kwargs):
-        # type: (any, **any) -> any
+        # type: (Any, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']

@@ -15,6 +15,7 @@ IDP_TYPE_CHOICES = [
     'generic', 'f5', 'google', 'okta', 'adfs', 'azure', 'onelogin', 'aws',
     'centrify', 'duo', 'ibm', 'jumpcloud', 'ping', 'pingone', 'rsa',
     'secureauth', 'thales', 'auth0', 'beyond', 'hypr', 'cas',
+    'pureid', 'sdo', 'trait', 'transmit', 'trusona', 'veridium',
 ]
 
 IDP_TYPE_NAMES = {
@@ -70,6 +71,12 @@ IDP_TYPE_NAME_TO_ENUM = {
     'beyond': ssocloud.BEYOND,
     'hypr': ssocloud.HYPR,
     'cas': ssocloud.CAS,
+    'pureid': ssocloud.PUREID,
+    'sdo': ssocloud.SDO,
+    'trait': ssocloud.TRAIT,
+    'transmit': ssocloud.TRANSMIT,
+    'trusona': ssocloud.TRUSONA,
+    'veridium': ssocloud.VERIDIUM,
 }
 
 IDP_ENUM_TO_KEY = {v: k for k, v in IDP_TYPE_NAME_TO_ENUM.items()}
@@ -167,7 +174,7 @@ IDP_SETUP_GUIDANCE = {
             ('value', '{idp_login_endpoint}'),
             ('idp',   'Save the Basic SAML Configuration'),
             ('idp',   'Click on "No, I\'ll test later" when asked for the test SSO login'),
-            ('idp',   'In Attributes & Claims card> Edit: delete the 4 extra Additional Claims'),
+            ('idp',   'In Attributes and Claims card > Edit: delete the 4 extra Additional Claims'),
             ('note',  'Verify: NameID/Email = user.userprincipalname (or user.mail)'),
             ('idp',   'Reload page, under SAML Signing Certificate > Download "Federation Metadata XML"'),
             ('cmd',   'sso-cloud upload "{name}" --file <federation-metadata.xml> --force-authn'),

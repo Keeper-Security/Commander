@@ -15,7 +15,10 @@ import json
 import logging
 import os
 
+from typing import Any
+
 from ... import api
+from ...error import CommandError
 from ...proto import ssocloud_pb2 as ssocloud
 from ..base import dump_report_data
 from ..enterprise_common import EnterpriseCommand
@@ -29,7 +32,7 @@ class SsoCloudLogCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_log_parser
 
     def execute(self, params, **kwargs):
-        # type: (any, **any) -> any
+        # type: (Any, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
@@ -68,9 +71,12 @@ class SsoCloudLogCommand(EnterpriseCommand, SsoCloudMixin):
             output = json.dumps(entries, indent=2)
             output_path = kwargs.get('output')
             if output_path:
-                with open(os.path.expanduser(output_path), 'w') as f:
-                    f.write(output)
-                logging.info('Log output written to %s', output_path)
+                try:
+                    with open(os.path.expanduser(output_path), 'w') as f:
+                        f.write(output)
+                    logging.info('Log output written to %s', output_path)
+                except IOError as e:
+                    raise CommandError('sso-cloud', f'Failed to write log output file "{output_path}": {e}')
             else:
                 print(output)
             return
@@ -110,7 +116,7 @@ class SsoCloudLogClearCommand(EnterpriseCommand, SsoCloudMixin):
         return sso_cloud_log_clear_parser
 
     def execute(self, params, **kwargs):
-        # type: (any, **any) -> any
+        # type: (Any, **Any) -> Any
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
