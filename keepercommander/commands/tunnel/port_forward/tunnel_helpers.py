@@ -143,6 +143,44 @@ FORCE_CLOSE_MIN_VERSION = "2.1.18"
 FORCE_CLOSE_DELAY_SECONDS = 3.0
 
 
+def print_above_keeper_prompt(msg):
+    """Print ``msg`` so the keeper-shell prompt redraws itself underneath it.
+
+    Strategy:
+      1. If a prompt-toolkit app is running, call ``app.renderer.erase()`` —
+         this writes the ANSI sequences to fully erase the prompt area
+         (which may span multiple lines), leaving a clean cursor.
+      2. Print the message + newline so the cursor advances below.
+      3. Call ``app.invalidate()`` (thread-safe) to schedule a fresh prompt
+         render at the new cursor position.
+
+    Falls back to plain ``print`` if no app is running. Avoids
+    ``run_in_terminal`` (returns a coroutine that needs to be awaited on
+    the app's event loop; scheduling that from a Timer thread is
+    version-fragile and leaks un-awaited coroutines).
+    """
+    app = None
+    try:
+        from prompt_toolkit.application.current import get_app_or_none
+        app = get_app_or_none()
+        if app is not None and app.is_running:
+            try:
+                app.renderer.erase()
+            except Exception:
+                pass
+    except Exception:
+        app = None
+
+    sys.stdout.write(msg + '\n')
+    sys.stdout.flush()
+
+    if app is not None:
+        try:
+            app.invalidate()
+        except Exception:
+            pass
+
+
 def escalate_close(
     tube_registry,
     tube_id,

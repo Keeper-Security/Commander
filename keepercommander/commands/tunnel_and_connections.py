@@ -32,7 +32,8 @@ from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
-    wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close
+    wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close, \
+    print_above_keeper_prompt
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -1036,12 +1037,11 @@ class PAMTunnelStartCommand(Command):
 
                     def _close_on_lease_expiry(_tube_id=tube_id, _record_uid=record_uid):
                         try:
-                            print(
+                            print_above_keeper_prompt(
                                 f"\n{bcolors.WARNING}Tunnel access lease expired for "
                                 f"{_record_uid}. Closing the tunnel; any in-flight "
                                 f"forwarded connections will be terminated."
-                                f"{bcolors.ENDC}",
-                                flush=True,
+                                f"{bcolors.ENDC}"
                             )
                             sess = get_tunnel_session(_tube_id)
                             remote_ver = getattr(sess, 'remote_webrtc_version', None) if sess else None
