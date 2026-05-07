@@ -322,11 +322,96 @@ def _print_close_reason_notice(
     return pending_exit_code
 
 
+VALID_PAM_RECORD_TYPES = {'pamDatabase', 'pamDirectory', 'pamMachine'}
+
+
+def is_launchable(params, record_uid):
+    """Return ``(eligible, protocol)`` for a `pam launch` candidate.
+
+    Eligibility: TypedRecord v3, ``record_type`` in :data:`VALID_PAM_RECORD_TYPES`,
+    and detected protocol in :data:`ALL_TERMINAL`. Reads only cached vault data —
+    safe to call from a TUI render path.
+    """
+    try:
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not isinstance(record, vault.TypedRecord):
+            return False, None
+        if record.version != 3:
+            return False, None
+        if record.record_type not in VALID_PAM_RECORD_TYPES:
+            return False, None
+    except Exception as e:
+        logging.debug("is_launchable: cannot load %s: %s", record_uid, e)
+        return False, None
+    try:
+        protocol = detect_protocol(params, record_uid)
+    except Exception as e:
+        logging.debug("is_launchable: detect_protocol failed for %s: %s", record_uid, e)
+        return False, None
+    if protocol not in ALL_TERMINAL:
+        return False, None
+    return True, protocol
+
+
+def get_launch_info(params, record_uid):
+    """Return a summary dict describing how this record will launch, or ``None``.
+
+    Reads only cached vault data — safe to call from a TUI render path.
+
+    Keys:
+        protocol           — terminal protocol (e.g. 'ssh', 'mysql')
+        host               — hostname from pamHostname/host field, or None
+        port               — port (int) from pamHostname/host field, or None
+        allow_supply_host  — bool: user may supply host at launch time
+        allow_supply_user  — bool: user may supply credential at launch time
+        credential_uid     — first userRecords[] entry, or None
+        credential_title   — title of the credential record (if cached), else None
+    """
+    ok, protocol = is_launchable(params, record_uid)
+    if not ok:
+        return None
+    try:
+        record = vault.KeeperRecord.load(params, record_uid)
+    except Exception:
+        return None
+    host, port = _get_host_port_from_record(record)
+    allow_supply_host = False
+    allow_supply_user = False
+    credential_uid = None
+    pam_settings_field = record.get_typed_field('pamSettings')
+    if pam_settings_field:
+        pam_settings_value = pam_settings_field.get_default_value(dict) or {}
+        allow_supply_host = bool(pam_settings_value.get('allowSupplyHost'))
+        connection = pam_settings_value.get('connection') or {}
+        if isinstance(connection, dict):
+            allow_supply_user = bool(connection.get('allowSupplyUser'))
+            user_records = connection.get('userRecords') or []
+            if user_records:
+                credential_uid = user_records[0]
+    credential_title = None
+    if credential_uid:
+        try:
+            cred = vault.KeeperRecord.load(params, credential_uid)
+            if cred is not None:
+                credential_title = getattr(cred, 'title', None)
+        except Exception:
+            credential_title = None
+    return {
+        'protocol': protocol,
+        'host': host,
+        'port': port,
+        'allow_supply_host': allow_supply_host,
+        'allow_supply_user': allow_supply_user,
+        'credential_uid': credential_uid,
+        'credential_title': credential_title,
+    }
+
+
 class PAMLaunchCommand(Command):
     """PAM Launch command to launch a connection to a PAM resource"""
 
-    # Valid PAM record types for launch
-    VALID_PAM_RECORD_TYPES = {'pamDatabase', 'pamDirectory', 'pamMachine'}
+    # Valid PAM record types for launch (kept as class alias for backwards reference)
+    VALID_PAM_RECORD_TYPES = VALID_PAM_RECORD_TYPES
 
     parser = argparse.ArgumentParser(prog='pam launch', description='Launch a connection to a PAM resource')
     parser.add_argument('record', type=str, action='store',
@@ -1182,7 +1267,44 @@ class PAMLaunchCommand(Command):
                 if not has_cli_host:
                     # No CLI host -> must come from the PAM launch record
                     if not hostname_on_record:
-                        if allow_supply_host:
+                        if allow_supply_host and sys.stdin.isatty() and sys.stdout.isatty():
+                            # Interactive prompt instead of erroring out — covers the common
+                            # `pam launch <uid>` case for records with allowSupplyHost and no
+                            # static hostname (e.g. SuperShell launching from the TUI).
+                            prompt_text = (
+                                f'{Fore.CYAN}Enter host for launch '
+                                f'{Fore.WHITE}(format: host:port, e.g. 192.168.1.1:22 or '
+                                f'server.example.com:3306, [::1]:22 for IPv6){Fore.RESET}\n'
+                                f'{Fore.CYAN}Host:port: {Fore.RESET}'
+                            )
+                            custom_host = None
+                            custom_port = None
+                            for _ in range(3):
+                                try:
+                                    user_input = input(prompt_text).strip()
+                                except (EOFError, KeyboardInterrupt):
+                                    logging.info('Canceled')
+                                    return
+                                if not user_input:
+                                    logging.info('Canceled')
+                                    return
+                                try:
+                                    custom_host, custom_port = _parse_host_port(user_input)
+                                    break
+                                except CommandError as e:
+                                    print(f'{Fore.RED}{e}{Fore.RESET}', file=sys.stderr)
+                                    custom_host = None
+                                    custom_port = None
+                            if custom_host is None:
+                                logging.error('Too many invalid host entries; aborting launch.')
+                                return
+                            kwargs['custom_host'] = custom_host
+                            kwargs['custom_port'] = custom_port
+                            has_cli_host = True
+                            logging.info(
+                                'Using interactively supplied host: %s:%s', custom_host, custom_port
+                            )
+                        elif allow_supply_host:
                             raise CommandError('pam launch',
                                 'allowSupplyHost is enabled but no hostname on record. '
                                 'Use --host, --host-record, or --credential with a host:port to specify.')
