@@ -111,6 +111,7 @@ class HelpScreen(ModalScreen):
   t             Toggle JSON view
   m             Mask/Unmask
   d             Sync vault
+  L             Launch PAM connection
   W             User info
   D             Device info
   P             Preferences

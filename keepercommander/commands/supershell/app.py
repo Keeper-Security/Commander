@@ -90,6 +90,7 @@ class SuperShellApp(App):
         Binding("m", "toggle_unmask", "Toggle Unmask", show=False),
         Binding("W", "show_user_info", "User Info", show=False),
         Binding("D", "show_device_info", "Device Info", show=False),
+        Binding("L", "launch_pam", "Launch PAM", show=False),
         Binding("?", "show_help", "Help", show=False),
         # Vim-style navigation
         Binding("j", "cursor_down", "Down", show=False),
@@ -1803,6 +1804,33 @@ class SuperShellApp(App):
         except Exception as e:
             logging.debug(f"Error clearing clickable fields: {e}")
 
+    @staticmethod
+    def _strip_pam_internal_fields(output: str) -> str:
+        """Drop noisy PAM fields (pamHostname, pamSettings, trafficEncryptionSeed,
+        checkbox:*) from the legacy ``get`` output, including multi-line dict
+        continuations. The fields stay visible in JSON view; this only affects
+        the Detail view for pamMachine/pamDatabase records.
+        """
+        skip_prefixes = ('pamHostname:', 'pamSettings:', 'trafficEncryptionSeed:', 'checkbox:')
+        kept = []
+        skipping = False
+        brace_depth = 0
+        for raw_line in output.split('\n'):
+            stripped_left = raw_line.lstrip()
+            if skipping:
+                brace_depth += raw_line.count('{') - raw_line.count('}')
+                if brace_depth <= 0:
+                    skipping = False
+                continue
+            if any(stripped_left.startswith(p) for p in skip_prefixes):
+                brace_depth = raw_line.count('{') - raw_line.count('}')
+                if brace_depth > 0:
+                    skipping = True
+                # else: single-line value, just drop this one line
+                continue
+            kept.append(raw_line)
+        return '\n'.join(kept)
+
     def _display_record_with_clickable_fields(self, record_uid: str):
         """Display record details with clickable fields for copy-on-click"""
         t = self.theme_colors
@@ -1815,6 +1843,14 @@ class SuperShellApp(App):
         # Get and parse record output
         output = self._get_record_output(record_uid, format_type='detail')
         output = strip_ansi_codes(output)
+
+        # For launchable PAM records (pamMachine/pamDatabase) hide the
+        # noisy raw fields from Detail view — a parsed Launch section
+        # below replaces them. JSON view stays unchanged.
+        record_data_for_filter = self.records.get(record_uid, {})
+        record_type_for_filter = record_data_for_filter.get('record_type', '')
+        if record_type_for_filter in ('pamMachine', 'pamDatabase'):
+            output = self._strip_pam_internal_fields(output)
 
         if not output or output.strip() == '':
             detail_widget.update("[red]Failed to get record details[/red]")
@@ -1959,6 +1995,68 @@ class SuperShellApp(App):
 
             rotation_displayed = True
 
+        launch_displayed = False
+
+        def display_launch_section():
+            """Render the parsed Launch section for pamMachine/pamDatabase."""
+            nonlocal launch_displayed
+            if launch_displayed:
+                return
+            try:
+                from ..pam_launch.launch import get_launch_info
+                info = get_launch_info(self.params, record_uid)
+            except Exception as e:
+                logging.debug(f"Launch section: get_launch_info failed: {e}")
+                info = None
+            if not info:
+                return
+            protocol = (info.get('protocol') or '').upper() or 'PAM'
+            if info.get('host'):
+                host_str = f"{info['host']}:{info['port']}" if info.get('port') else info['host']
+                if info.get('allow_supply_host'):
+                    host_display = f"{host_str}  (or supplied at launch)"
+                else:
+                    host_display = host_str
+            elif info.get('allow_supply_host'):
+                host_display = "(prompted at launch)"
+            else:
+                host_display = "(not configured)"
+            if info.get('credential_uid'):
+                cred_str = info.get('credential_title') or info['credential_uid']
+                if info.get('allow_supply_user'):
+                    cred_display = f"{cred_str}  (or supplied at launch)"
+                else:
+                    cred_display = cred_str
+            elif info.get('allow_supply_user') or info.get('allow_supply_host'):
+                cred_display = "(prompted at launch)"
+            else:
+                cred_display = "(not configured)"
+            mount_line("", None)
+            mount_line(f"[bold {t['secondary']}]Launch:[/bold {t['secondary']}]", None)
+            mount_line(
+                f"  [{t['text_dim']}]Protocol:[/{t['text_dim']}]    "
+                f"[{t['primary']}]{rich_escape(protocol)}[/{t['primary']}]",
+                protocol,
+            )
+            mount_line(
+                f"  [{t['text_dim']}]Host:[/{t['text_dim']}]        "
+                f"[{t['primary']}]{rich_escape(str(host_display))}[/{t['primary']}]",
+                host_display,
+            )
+            mount_line(
+                f"  [{t['text_dim']}]Credential:[/{t['text_dim']}]  "
+                f"[{t['primary']}]{rich_escape(str(cred_display))}[/{t['primary']}]",
+                cred_display,
+            )
+            mount_line("", None)
+            mount_line(
+                f"  [bold black on {t['primary']}]  >> Press L to Launch {rich_escape(protocol)}  <<  "
+                f"[/bold black on {t['primary']}]",
+                None,
+            )
+            mount_line("", None)
+            launch_displayed = True
+
         for line in output.split('\n'):
             stripped = line.strip()
             if not stripped:
@@ -1973,6 +2071,8 @@ class SuperShellApp(App):
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key in ['Title', 'Name'] and not current_section:
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
+                    if record_type_for_filter in ('pamMachine', 'pamDatabase'):
+                        display_launch_section()
                 elif key == 'Type':
                     # Show 'app' for app records if type is blank
                     display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
@@ -2897,6 +2997,17 @@ class SuperShellApp(App):
             elif record_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
                 mask_label = "Mask" if self.unmask_secrets else "Unmask"
+                launch_hint = ""
+                if self.selected_record:
+                    try:
+                        from ..pam_launch.launch import is_launchable
+                        ok, protocol = is_launchable(self.params, self.selected_record)
+                        if ok:
+                            launch_hint = (
+                                f"  [{t['text_dim']}]L[/{t['text_dim']}]=Launch {protocol.upper()}"
+                            )
+                    except Exception as e:
+                        logging.debug(f"is_launchable check failed: {e}")
                 shortcuts_bar.update(
                     f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
                     f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle  "
@@ -2904,6 +3015,7 @@ class SuperShellApp(App):
                     f"[{t['text_dim']}]u[/{t['text_dim']}]=Username  "
                     f"[{t['text_dim']}]c[/{t['text_dim']}]=Copy All  "
                     f"[{t['text_dim']}]m[/{t['text_dim']}]={mask_label}"
+                    f"{launch_hint}"
                 )
             elif folder_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
@@ -3679,6 +3791,36 @@ class SuperShellApp(App):
                 self._update_shortcuts_bar(folder_selected=True)
         except Exception as e:
             logging.error(f"Error toggling unmask: {e}", exc_info=True)
+
+    def action_launch_pam(self):
+        """Launch a KeeperPAM connection for the selected record."""
+        if not self.selected_record or self.selected_record not in self.records:
+            self.notify("No record selected", severity="warning")
+            return
+        from ..pam_launch.launch import PAMLaunchCommand, is_launchable
+        from ...error import CommandError
+        ok, protocol = is_launchable(self.params, self.selected_record)
+        if not ok:
+            self.notify("This record is not launchable", severity="warning")
+            return
+        record_uid = self.selected_record
+        with self.suspend():
+            try:
+                PAMLaunchCommand().execute(self.params, record=record_uid)
+            except CommandError as e:
+                # User-visible launch failure — show the message, no traceback.
+                print(f"\nLaunch failed: {e}", file=sys.stderr)
+                try:
+                    input("Press Enter to return to SuperShell...")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+            except Exception as e:
+                logging.error(f"pam launch failed: {e}", exc_info=True)
+                try:
+                    input("Press Enter to return to SuperShell...")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+        self._display_record_detail(record_uid)
 
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
