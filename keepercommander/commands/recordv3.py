@@ -409,11 +409,14 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for f in pw_failures:
-            logging.warning(f)
-        if pw_failures and not kwargs.get('force'):
-            logging.warning('Use --force to bypass password policy warnings.')
-            return
+        if pw_failures:
+            for f in pw_failures:
+                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
+            if not kwargs.get('force'):
+                raise CommandError(
+                    'add',
+                    'Password does not meet enterprise complexity policy. '
+                    'Pass --force to bypass these warnings.')
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -656,11 +659,14 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for f in pw_failures:
-            logging.warning(f)
-        if pw_failures and not kwargs.get('force'):
-            logging.warning('Use --force to bypass password policy warnings.')
-            return
+        if pw_failures:
+            for f in pw_failures:
+                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
+            if not kwargs.get('force'):
+                raise CommandError(
+                    'edit',
+                    'Password does not meet enterprise complexity policy. '
+                    'Pass --force to bypass these warnings.')
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict

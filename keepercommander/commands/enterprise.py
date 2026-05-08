@@ -1004,7 +1004,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                                 formatted_enforcements[k] = ', '.join(record_types)
                                             else:
                                                 formatted_enforcements[k] = v
-                                        except:
+                                        except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+                                            logging.debug('Failed to format record_types enforcement %s: %s', k, e)
                                             formatted_enforcements[k] = v
                                     else:
                                         formatted_enforcements[k] = v

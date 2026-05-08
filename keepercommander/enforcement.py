@@ -13,7 +13,6 @@ import itertools
 import json
 import logging
 import getpass
-import re
 import threading
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict, Any, Set
@@ -37,6 +36,28 @@ def _find_enforcement_value(enforcements, key):
                 if isinstance(item, dict) and item.get('key') == key:
                     return item.get('value')
     return enforcements.get(key) if key in enforcements else None
+
+
+def _coerce_int(value):
+    # type: (Any) -> Optional[int]
+    """Coerce enforcement values to int.
+
+    Server-side enforcement payloads sometimes serialize numeric fields as
+    strings. Returns None if the value cannot be safely interpreted as int.
+    `bool` is intentionally rejected (it's a subclass of int).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if s.lstrip('-').isdigit():
+            try:
+                return int(s)
+            except ValueError:
+                return None
+    return None
 
 
 class MasterPasswordReentryEnforcer:
@@ -407,16 +428,16 @@ class PasswordComplexityEnforcer:
         if not policy or not isinstance(password, str) or not password:
             return failures
 
-        min_length = policy.get('length')
-        if isinstance(min_length, int) and min_length > 0 and len(password) < min_length:
+        min_length = _coerce_int(policy.get('length'))
+        if min_length is not None and min_length > 0 and len(password) < min_length:
             failures.append(
                 f'Password must be at least {min_length} characters (got {len(password)}).')
 
         for use_key, min_key, label, predicate in cls._CHAR_CLASSES:
             if not policy.get(use_key):
                 continue
-            required = policy.get(min_key, 1)
-            if not isinstance(required, int) or required <= 0:
+            required = _coerce_int(policy.get(min_key, 1))
+            if required is None or required <= 0:
                 continue
             count = sum(1 for c in password if predicate(c))
             if count < required:
@@ -424,8 +445,8 @@ class PasswordComplexityEnforcer:
                     f'Password must contain at least {required} {label} character(s) (got {count}).')
 
         if policy.get('special-use'):
-            required = policy.get('special-min', 1)
-            if isinstance(required, int) and required > 0:
+            required = _coerce_int(policy.get('special-min', 1))
+            if required is not None and required > 0:
                 allowed = policy.get('special') or ''
                 count = (sum(1 for c in password if c in allowed) if allowed
                          else sum(1 for c in password if not c.isalnum()))
