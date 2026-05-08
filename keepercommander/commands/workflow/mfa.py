@@ -12,6 +12,7 @@
 import datetime
 import getpass
 import logging
+import time
 from typing import NamedTuple, Optional
 
 from ..pam.router_helper import _post_request_to_router
@@ -742,6 +743,31 @@ def check_workflow_for_launch(
             except Exception as e:
                 logging.error("Failed to check out: %s", sanitize_router_error(e))
                 return WorkflowGate(allowed=False)
+
+            # Router propagation delay: the start_workflow call is processed
+            # asynchronously, so a validate() immediately after checkout can
+            # still return WS_READY_TO_START before the router has written the
+            # WS_STARTED transition.  When that happens and handled_ready_to_start
+            # is already True the outer loop falls to the "already-handled" guard
+            # and returns WorkflowGate(allowed=False) — the user sees "Workflow
+            # approved but not yet checked out" again and re-triggers checkout,
+            # producing an infinite prompt loop.
+            #
+            # Fix: poll with exponential back-off (0.5 → 1 → 2 → 2 s, ≤5.5 s
+            # total) until the router confirms WS_STARTED or we exhaust retries.
+            # On success we break out of the outer loop immediately; on failure
+            # we fall through to let the outer loop decide.
+            _poll_delays = (0.5, 1.0, 2.0, 2.0)
+            for _delay in _poll_delays:
+                time.sleep(_delay)
+                _probe = validator.validate(silent_actionable=True)
+                if _probe.get('allowed') or _probe.get('block_reason') != 'ready_to_start':
+                    result = _probe
+                    break
+            else:
+                result = validator.validate(silent_actionable=True)
+            if result.get('allowed'):
+                break
             continue
 
         if block_reason == 'waiting' and not handled_waiting and wait:
