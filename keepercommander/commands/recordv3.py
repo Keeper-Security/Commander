@@ -117,6 +117,8 @@ command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
 command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type by name or use * to list all')
 command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name or use * to list all')
+record_type_info_parser.add_argument('-ef', '--effective', dest='effective', action='store_true',
+                                     help='filter -lr results to record types allowed by your enterprise role policy')
 
 
 record_type_parser = argparse.ArgumentParser(prog='record-type', description='Add, modify or delete record type definition')
@@ -794,6 +796,17 @@ class RecordTypeInfo(Command):
         return record_type_info_parser
 
     @staticmethod
+    def _type_name(params, rtid):
+        entry = params.record_type_cache.get(rtid) if params.record_type_cache else None
+        if not entry:
+            return None
+        try:
+            schema = json.loads(entry) if isinstance(entry, str) else entry
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return schema.get('$id') if isinstance(schema, dict) else None
+
+    @staticmethod
     def resolve_record_type(params, record_type_id):
         record_type_info = {}
         if params.record_type_cache and record_type_id in params.record_type_cache:
@@ -933,6 +946,11 @@ class RecordTypeInfo(Command):
         # 2021-06-07 if no record_name or field_name specified - list all record types
         has_categories_only = False
         row_data = RecordTypeInfo.resolve_record_types(params, lrid)
+
+        if kwargs.get('effective'):
+            restricted = RecordTypeEnforcer.get_restricted_record_types(params)
+            if restricted:
+                row_data = [r for r in row_data if RecordTypeInfo._type_name(params, r[2]) not in restricted]
 
         rows = []
         for count, cat, rtid, content in row_data:
