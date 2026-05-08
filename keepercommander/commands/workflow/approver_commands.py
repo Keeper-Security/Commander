@@ -22,7 +22,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import api, crypto, utils
 
-from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error
+from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error, DashUidArgsMixin
 
 
 class WorkflowGetApprovalRequestsCommand(Command):
@@ -171,7 +171,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
         print()
 
 
-class WorkflowApproveCommand(Command):
+class WorkflowApproveCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow approve',
         description='Approve a workflow access request',
@@ -209,7 +209,7 @@ class WorkflowApproveCommand(Command):
             raise CommandError('', f'Failed to approve request: {sanitize_router_error(e)}')
 
 
-class WorkflowDenyCommand(Command):
+class WorkflowDenyCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow deny',
         description='Deny a workflow access request',
@@ -236,7 +236,14 @@ class WorkflowDenyCommand(Command):
         if reason:
             reason_bytes = reason.encode('utf-8')
             encrypted = self._encrypt_denial_reason(params, flow_uid_bytes, reason_bytes)
-            denial.denialReason = encrypted if encrypted else reason_bytes
+            if encrypted:
+                denial.denialReason = encrypted
+            else:
+                logging.warning(
+                    'Could not encrypt denial reason for the requester — reason will not be attached. '
+                    'The denial itself will still be sent.'
+                )
+                reason = ''
 
         try:
             _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=denial)
