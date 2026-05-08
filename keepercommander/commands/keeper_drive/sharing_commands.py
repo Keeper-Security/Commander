@@ -27,7 +27,7 @@ from ..base import Command
 from ...error import CommandError
 from ... import keeper_drive as _kd
 from .helpers import (
-    parse_expiration, infer_role,
+    parse_expiration, get_access_role_label,
     command_error_handler, check_result,
     check_record_share_permission,
     collect_records_in_folder,
@@ -84,6 +84,19 @@ class KeeperDriveShareRecordCommand(Command):
         if dry_run:
             self._print_dry_run(action, record_uids, emails, role, expiration)
             return
+
+        # Destructive actions (revoke / ownership transfer) prompt for
+        # confirmation unless ``-f/--force`` was supplied. ``grant`` is
+        # additive, so it skips the prompt to match the legacy CLI.
+        if not force and action in ('revoke', 'owner'):
+            self._print_dry_run(action, record_uids, emails, role, expiration)
+            prompt = ('You are about to TRANSFER OWNERSHIP. '
+                      'You will lose access to these record(s). Continue?'
+                      if action == 'owner' else
+                      'Revoke share for the record(s) listed above?')
+            if user_choice(prompt, 'yn', default='n').lower() != 'y':
+                logging.info('Aborted by user.')
+                return
 
         with command_error_handler('kd-share-record'):
             for email in emails:
@@ -418,7 +431,7 @@ class KeeperDriveRecordPermissionCommand(Command):
             if not email or email == current_user:
                 continue
 
-            cur_role = infer_role(access)
+            cur_role = get_access_role_label(access)
             is_inherited = bool(access.get('inherited'))
 
             # Pre-flight: does the current user have permission to modify this share?
