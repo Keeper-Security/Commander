@@ -28,13 +28,8 @@ from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sani
 def _add_approvers_to_workflow(params, record_uid, record_name,
                                users=None, teams=None,
                                is_escalation=False, escalation_after_ms=0):
-    """Send add_workflow_approvers for the given users / teams. Shared by
-    `pam workflow create` (when --approver flags are supplied) and
-    `pam workflow add-approver` so both go through one code path.
-
-    Caller is responsible for de-duplicating the user / team lists. Raises
-    on transport error; caller decides how to surface.
-    """
+    """Send add_workflow_approvers for the given users / teams. Shared by create + add-approver.
+    Caller must de-duplicate. Raises on transport error."""
     record_uid_bytes = utils.base64_url_decode(record_uid)
     config = workflow_pb2.WorkflowConfig()
     config.parameters.resource.CopyFrom(
@@ -83,8 +78,6 @@ class WorkflowCreateCommand(Command):
                         help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
     parser.add_argument('--time-range', type=str,
                         help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
-    parser.add_argument('--timezone', type=str,
-                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('-u', '--approver', action='append',
                         help='User email to add as an approver. Pass multiple times to '
                              'add several. Required when --approvals-needed > 0. '
@@ -97,12 +90,10 @@ class WorkflowCreateCommand(Command):
 
     def execute(self, params: KeeperParams, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        RecordResolver.validate_workflow_record_type(record)
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
-        # Pre-check: surface the "already exists" condition with a clear,
-        # actionable message instead of letting the user discover it via the
-        # raw server error from create_workflow_config. Server-side error
-        # path is still the authoritative gate; this is just nicer UX.
+        # Pre-check for nicer UX; server is still authoritative on conflicts.
         try:
             existing = _post_request_to_router(
                 params, 'read_workflow_config',
@@ -126,7 +117,6 @@ class WorkflowCreateCommand(Command):
         if approvals < 0:
             raise CommandError('', 'Approvals needed must be 0 or greater')
 
-        # Normalize and de-duplicate the approver list (preserves first-seen order).
         approvers = list(dict.fromkeys(
             a.strip() for a in (kwargs.get('approver') or []) if a and a.strip()
         ))
@@ -155,7 +145,7 @@ class WorkflowCreateCommand(Command):
         parameters.accessLength = WorkflowFormatter.parse_duration(kwargs.get('duration', '1d'))
 
         temporal_filter = WorkflowFormatter.build_temporal_filter(
-            kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+            kwargs.get('allowed_days'), kwargs.get('time_range'),
         )
         if temporal_filter:
             parameters.allowedTimes.CopyFrom(temporal_filter)
@@ -163,10 +153,6 @@ class WorkflowCreateCommand(Command):
         try:
             _post_request_to_router(params, 'create_workflow_config', rq_proto=parameters)
 
-            # Step 2: send the explicit approver list (if any). Mirrors web vault
-            # which issues create_workflow_config + add_workflow_approvers as two
-            # separate calls (save-workflow-settings.ts:78-99). No silent
-            # auto-add of the creator / record-owner.
             approvers_added = []
             if approvers:
                 try:
@@ -329,9 +315,6 @@ class WorkflowReadCommand(Command):
                 print(f"  Days: {', '.join(day_names)}")
             if at.timeRanges:
                 for tr in at.timeRanges:
-                    # startTime / endTime are HHMM (hours*100 + minutes); see
-                    # WorkflowFormatter._parse_time_to_hhmm and the canonical
-                    # ka-libs/workflow/.../WfConfigCRUD.kt::validateHHMM.
                     start_h, start_m = divmod(tr.startTime, 100)
                     end_h, end_m = divmod(tr.endTime, 100)
                     print(f"  Time: {start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}")
@@ -386,8 +369,6 @@ class WorkflowUpdateCommand(Command):
                         help='Comma-separated allowed days (e.g., "mon,tue,wed,thu,fri")')
     parser.add_argument('--time-range', type=str,
                         help='Allowed time range in HH:MM-HH:MM format (e.g., "09:00-17:00")')
-    parser.add_argument('--timezone', type=str,
-                        help='Timezone for allowed times (e.g., "America/New_York")')
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
 
@@ -434,7 +415,7 @@ class WorkflowUpdateCommand(Command):
                 updates_provided = True
 
             temporal_filter = WorkflowFormatter.build_temporal_filter(
-                kwargs.get('allowed_days'), kwargs.get('time_range'), kwargs.get('timezone'),
+                kwargs.get('allowed_days'), kwargs.get('time_range'),
             )
             if temporal_filter:
                 parameters.allowedTimes.CopyFrom(temporal_filter)
@@ -456,6 +437,8 @@ class WorkflowUpdateCommand(Command):
                 print(f"Record: {record.title} ({record_uid})")
                 print()
 
+        except (CommandError, KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to update workflow: {sanitize_router_error(e)}')
 
@@ -477,10 +460,7 @@ class WorkflowDeleteCommand(Command):
         record_uid_bytes = utils.base64_url_decode(record_uid)
         ref = ProtobufRefBuilder.record_ref(record_uid_bytes, record.title)
 
-        # Pre-check: server-side delete_workflow_config is idempotent and
-        # returns success even when no config exists, so without this check
-        # repeat calls all print "deleted successfully" — confusing in
-        # interactive use. Verify there's actually something to delete first.
+        # Server-side delete is idempotent; verify config exists for accurate user feedback.
         try:
             existing = _post_request_to_router(
                 params, 'read_workflow_config',
@@ -531,7 +511,6 @@ class WorkflowAddApproversCommand(Command):
         return WorkflowAddApproversCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
-        # De-duplicate user / team lists (preserve first-seen order).
         users = list(dict.fromkeys(
             u.strip() for u in (kwargs.get('user') or []) if u and u.strip()
         ))
@@ -582,6 +561,8 @@ class WorkflowAddApproversCommand(Command):
                     print(f"Type: Escalation approver{esc_info}")
                 print()
 
+        except (CommandError, KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to add approvers: {sanitize_router_error(e)}')
 
@@ -642,5 +623,7 @@ class WorkflowDeleteApproversCommand(Command):
                 print(f"Removed {total} approver(s)")
                 print()
 
+        except (CommandError, KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             raise CommandError('', f'Failed to remove approvers: {sanitize_router_error(e)}')
