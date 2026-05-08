@@ -27,6 +27,7 @@ from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
     ensure_keeper_drive_record, ensure_keeper_drive_folder,
+    ROOT_FOLDER_UID,
 )
 from .parsers import (
     keeper_drive_add_record_parser,
@@ -269,9 +270,19 @@ class KeeperDriveShortcutCommand(GroupCommand):
 
     @staticmethod
     def get_record_shortcuts(params):
-        """Return ``{record_uid: set(folder_uids)}`` for records in 2+ folders."""
+        """Return ``{record_uid: set(folder_uids)}`` for records in 2+ folders.
+
+        ``keeper_drive_folder_records`` can carry server-side virtual folder
+        UIDs (e.g. shared-with-me containers) that have no real folder entry
+        in ``keeper_drive_folders``. These cannot be resolved or modified, so
+        they are filtered out — counting them would inflate shortcut totals
+        and break ``kd-shortcut keep`` removals downstream.
+        """
+        kd_folders = getattr(params, 'keeper_drive_folders', {})
         records = {}
         for folder_uid, rec_set in getattr(params, 'keeper_drive_folder_records', {}).items():
+            if folder_uid != ROOT_FOLDER_UID and folder_uid not in kd_folders:
+                continue
             for record_uid in rec_set:
                 records.setdefault(record_uid, set()).add(folder_uid)
         return {k: v for k, v in records.items() if len(v) > 1}
@@ -288,9 +299,11 @@ class KeeperDriveShortcutListCommand(Command):
         target = kwargs.get('target')
 
         kd_records = getattr(params, 'keeper_drive_records', {})
+        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
         kd_folders = getattr(params, 'keeper_drive_folders', {})
 
-        to_show = self._resolve_target(params, target, records, kd_records, kd_folders) \
+        to_show = self._resolve_target(params, target, records, kd_records,
+                                       kd_record_data, kd_folders) \
             if target else set(records.keys())
 
         if not to_show:
@@ -300,10 +313,10 @@ class KeeperDriveShortcutListCommand(Command):
         fmt = kwargs.get('format') or 'table'
         table = []
         for record_uid in sorted(to_show):
-            title = kd_records.get(record_uid, {}).get('title', record_uid)
+            title = self._record_title(record_uid, kd_record_data)
             folder_names = []
             for fuid in sorted(records[record_uid]):
-                fname = kd_folders.get(fuid, {}).get('name', fuid)
+                fname = self._folder_name(fuid, kd_folders)
                 folder_names.append({'folder_uid': fuid, 'name': fname} if fmt == 'json'
                                     else f'{fname} ({fuid})')
             table.append([record_uid, title, folder_names])
@@ -313,17 +326,34 @@ class KeeperDriveShortcutListCommand(Command):
         from ..base import dump_report_data
         return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
+    # Record titles live in ``keeper_drive_record_data[uid]['data_json']``
+    # (the decrypted record payload). ``keeper_drive_records`` only stores
+    # metadata (revision/version/shared/etc.) and has no ``title`` key, so
+    # the previous lookup always fell back to the raw UID.
     @staticmethod
-    def _resolve_target(params, target, records, kd_records, kd_folders):
-        to_show = set()
+    def _record_title(record_uid, kd_record_data):
+        rd = kd_record_data.get(record_uid) or {}
+        dj = rd.get('data_json') or {}
+        title = dj.get('title')
+        return title if title else record_uid
+
+    @staticmethod
+    def _folder_name(folder_uid, kd_folders):
+        if folder_uid == ROOT_FOLDER_UID:
+            return 'root'
+        return kd_folders.get(folder_uid, {}).get('name', folder_uid)
+
+    @classmethod
+    def _resolve_target(cls, params, target, records, kd_records,
+                        kd_record_data, kd_folders):
         if target in kd_records:
             if target not in records:
                 raise CommandError('kd-shortcut list', f'Record UID {target} does not have shortcuts')
             return {target}
 
         lower = target.casefold()
-        for uid, rec in kd_records.items():
-            if rec.get('title', '').casefold() == lower:
+        for uid in kd_records:
+            if cls._record_title(uid, kd_record_data).casefold() == lower:
                 if uid not in records:
                     raise CommandError('kd-shortcut list', f'Record "{target}" does not have shortcuts')
                 return {uid}
@@ -352,7 +382,8 @@ class KeeperDriveShortcutKeepCommand(Command):
         kd_records = getattr(params, 'keeper_drive_records', {})
         kd_folders = getattr(params, 'keeper_drive_folders', {})
 
-        record_uid = self._resolve_record(target, kd_records)
+        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
+        record_uid = self._resolve_record(target, kd_records, kd_record_data)
         keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), kd_folders)
 
         records = KeeperDriveShortcutCommand.get_record_shortcuts(params)
@@ -397,10 +428,17 @@ class KeeperDriveShortcutKeepCommand(Command):
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(target, kd_records):
+    def _resolve_record(target, kd_records, kd_record_data=None):
         if target in kd_records:
             return target
         lower = target.casefold()
+        if kd_record_data:
+            for uid in kd_records:
+                rd = kd_record_data.get(uid) or {}
+                dj = rd.get('data_json') or {}
+                if (dj.get('title') or '').casefold() == lower:
+                    return uid
+
         for uid, rec in kd_records.items():
             if rec.get('title', '').casefold() == lower:
                 return uid

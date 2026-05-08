@@ -101,7 +101,18 @@ class TestCommandHelpers(TestCase):
     def test_infer_role(self):
         from keepercommander.commands.keeper_drive.helpers import infer_role
         self.assertEqual(infer_role({'can_change_ownership': True}), 'full-manager')
-        self.assertEqual(infer_role({'can_update_access': True, 'can_approve_access': True}), 'content-share-manager')
+        # ``can_update_access`` + ``can_approve_access`` alone (no edit) is
+        # ``shared-manager``; promotion to ``content-share-manager`` requires
+        # ``can_edit`` per the v3 permission matrix.
+        self.assertEqual(
+            infer_role({'can_update_access': True, 'can_approve_access': True,
+                        'can_edit': True}),
+            'content-share-manager',
+        )
+        self.assertEqual(
+            infer_role({'can_update_access': True, 'can_approve_access': True}),
+            'shared-manager',
+        )
         self.assertEqual(infer_role({'can_update_access': True}), 'shared-manager')
         self.assertEqual(infer_role({'can_edit': True}), 'content-manager')
         self.assertEqual(infer_role({'can_view': True, 'can_list_access': True}), 'viewer')

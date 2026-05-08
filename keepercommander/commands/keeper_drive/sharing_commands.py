@@ -27,7 +27,7 @@ from ..base import Command
 from ...error import CommandError
 from ... import keeper_drive as _kd
 from .helpers import (
-    parse_expiration, infer_role,
+    parse_expiration, get_access_role_label,
     command_error_handler, check_result,
     check_record_share_permission,
     collect_records_in_folder,
@@ -51,8 +51,6 @@ class KeeperDriveShareRecordCommand(Command):
         return keeper_drive_share_record_parser
 
     def execute(self, params, **kwargs):
-        from keepercommander.commands.base import user_choice
-
         record_arg = kwargs.get('record')
         emails = kwargs.get('email') or []
         action = kwargs.get('action') or 'grant'
@@ -418,7 +416,7 @@ class KeeperDriveRecordPermissionCommand(Command):
             if not email or email == current_user:
                 continue
 
-            cur_role = infer_role(access)
+            cur_role = get_access_role_label(access)
             is_inherited = bool(access.get('inherited'))
 
             # Pre-flight: does the current user have permission to modify this share?
