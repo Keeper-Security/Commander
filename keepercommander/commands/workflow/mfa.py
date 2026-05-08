@@ -24,7 +24,8 @@ from .helpers import (
     ProtobufRefBuilder,
     WorkflowFormatter,
     is_gateway_online_for_record,
-    is_workflow_exempt,
+    is_on_approver_list,
+    is_record_owner,
     prompt_for_reason_ticket,
     sanitize_router_error,
     start_workflow_for_record,
@@ -40,7 +41,7 @@ _TRANSPORT_ERROR = object()
 
 
 class WorkflowGate(NamedTuple):
-    """Result of the pre-launch workflow gate, consumed by pam launch / pam tunnel."""
+    """Result of the pre-launch workflow gate."""
     allowed: bool
     two_factor_value: Optional[str] = None
     flow_uid: Optional[bytes] = None
@@ -68,24 +69,9 @@ class WorkflowAccessValidator:
         self.record_name = record.title if record else record_uid
 
     def validate(self, silent_actionable: bool = False) -> dict:
-        if is_workflow_exempt(self.params, self.record_uid):
+        if is_record_owner(self.params, self.record_uid):
             return dict(self._DEFAULT_RESULT)
 
-        # Workflow REST endpoints (`read_workflow_config`,
-        # `get_user_access_state`, `get_workflow_state`) are not yet deployed
-        # on every router. On a router that doesn't expose them, the call
-        # raises (404 / unsupported / RRC error) and `_post_request_to_router`
-        # bubbles it up; the wrappers below convert that into _TRANSPORT_ERROR.
-        # We can't tell from the wire whether the failure is "endpoint not
-        # deployed" (prod today) or "endpoint deployed but momentarily
-        # unreachable" (transient QA hiccup). Erring on the side of legacy
-        # compatibility: treat _TRANSPORT_ERROR as "no workflow protection
-        # on this record, defer to the gateway." The gateway is the
-        # authoritative gate on prod; on QA the workflow service still
-        # enforces server-side, so a flaky read just relaxes the *client*
-        # gate without opening a real security gap. Old behavior (block
-        # with a banner) was correct for QA but a hard regression on prod
-        # legacy launches that have never seen workflow.
         config = self._read_workflow_config()
         if config is _TRANSPORT_ERROR:
             logging.debug(
@@ -95,6 +81,9 @@ class WorkflowAccessValidator:
             )
             return dict(self._DEFAULT_RESULT)
         if config is None:
+            return dict(self._DEFAULT_RESULT)
+
+        if is_on_approver_list(self.params, config):
             return dict(self._DEFAULT_RESULT)
 
         mfa_required = bool(config.parameters and config.parameters.requireMFA)
@@ -119,10 +108,6 @@ class WorkflowAccessValidator:
                 )
                 return dict(self._DEFAULT_RESULT)
         if workflow is None:
-            # Carry the workflow config's required-field flags back so the
-            # orchestrator can inline-prompt + submit the initial access
-            # request from no_workflow state, matching web vault's "click
-            # Launch -> reason/ticket dialog" first-time flow.
             requires_reason = bool(config.parameters and config.parameters.requireReason)
             requires_ticket = bool(config.parameters and config.parameters.requireTicket)
             approvals_needed = int(config.parameters.approvalsNeeded) if config.parameters else 0
@@ -204,9 +189,6 @@ class WorkflowAccessValidator:
                 return False
 
         if at.timeRanges:
-            # TimeOfDayRange.startTime / .endTime are HHMM-encoded integers
-            # (server-validated: HH in 0-23, MM in 0-59). e.g. 03:00 -> 300,
-            # 17:30 -> 1730. Compare current wall-clock in the same encoding.
             current_hhmm = now.hour * 100 + now.minute
             in_range = False
             for r in at.timeRanges:
@@ -323,8 +305,7 @@ class WorkflowAccessValidator:
                 cond_str = WorkflowFormatter.format_conditions(conditions)
                 print(f"Pending conditions: {cond_str}")
         elif flow_uid_bytes:
-            flow_uid_str = utils.base64_url_encode(flow_uid_bytes)
-            print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {flow_uid_str}{bcolors.ENDC} "
+            print(f"Run: {bcolors.OKBLUE}pam workflow state {self.record_name}{bcolors.ENDC} "
                   f"to see details.")
         print()
 
@@ -359,6 +340,8 @@ class WorkflowAccessValidator:
 
 class WorkflowMfaPrompt:
 
+    _NO_2FA_CONFIGURED = object()
+
     def __init__(self, params: KeeperParams):
         self.params = params
 
@@ -367,6 +350,13 @@ class WorkflowMfaPrompt:
         from ... import api
 
         tfa_list = self._fetch_2fa_list(self.params, api, APIRequest_pb2)
+        if tfa_list is self._NO_2FA_CONFIGURED:
+            print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
+            print(
+                "Your account does not have any 2FA methods configured. "
+                f"For available methods, run: {bcolors.OKBLUE}2fa add -h{bcolors.ENDC}\n"
+            )
+            return None
         if tfa_list is None:
             try:
                 code = getpass.getpass('2FA required. Enter TOTP code: ').strip()
@@ -405,12 +395,7 @@ class WorkflowMfaPrompt:
             return None
 
         if not tfa_list.channels:
-            print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
-            print(
-                "Your account does not have any 2FA methods configured. "
-                f"For available methods, run: {bcolors.OKBLUE}2fa add -h{bcolors.ENDC}"
-            )
-            return None
+            return WorkflowMfaPrompt._NO_2FA_CONFIGURED
 
         return tfa_list
 
@@ -546,12 +531,7 @@ _WAIT_POLL_INTERVAL_SECONDS = 8
 
 def _poll_until_state_change(validator: 'WorkflowAccessValidator',
                              timeout_seconds: int) -> Optional[dict]:
-    """Poll the workflow state at _WAIT_POLL_INTERVAL_SECONDS until the
-    state is no longer 'waiting' or until timeout_seconds elapses.
-
-    Returns the new validator result dict on state change, or None on
-    timeout / Ctrl+C / transport error.
-    """
+    """Poll until state is no longer 'waiting' or timeout. Returns None on timeout/cancel/error."""
     import time as _time
     deadline = _time.time() + max(timeout_seconds, _WAIT_POLL_INTERVAL_SECONDS)
     print(
@@ -564,8 +544,6 @@ def _poll_until_state_change(validator: 'WorkflowAccessValidator',
             r = validator.validate(silent_actionable=True)
             block_reason = r.get('block_reason')
             if r.get('allowed', True) or block_reason != 'waiting':
-                # Suppress chatty output on state change; orchestrator will
-                # handle the next state in its own loop iteration.
                 return r
         print(f"{bcolors.WARNING}Approval not received within {timeout_seconds}s.{bcolors.ENDC}\n")
         return None
@@ -584,32 +562,8 @@ def check_workflow_for_launch(
     wait: bool = False,
     wait_timeout: int = 600,
 ) -> WorkflowGate:
-    """Pre-launch workflow gate: validate access, optionally submit a missing
-    reason/ticket request and check out the record inline, prompt for MFA if
-    required, and return the active flow's UID and lease expiry (millis since
-    epoch) so callers can auto check-in and force-disconnect on lease expiry.
-
-    Three actionable validator states are auto-handled:
-
-    * **`'no_workflow'` / `'needs_start'`** — workflow config exists on the
-      record but no flow process exists yet for the user (first-time access).
-      If the config requires a reason / ticket, the supplied --reason /
-      --ticket flags are used or the user is prompted inline; the initial
-      access request is submitted via `submit_access_request`. Mirrors web
-      vault's "click Launch -> reason/ticket dialog" on first-time access.
-
-    * **`'needs_action'`** — flow exists in WS_NEEDS_ACTION with
-      AC_REASON / AC_TICKET pending; same prompt+submit logic but driven off
-      the conditions list returned by the server.
-
-    * **`'ready_to_start'`** — flow approved but not yet checked out; user is
-      prompted (or `auto_checkout=True` confirms automatically), then
-      `start_workflow` is called and the gate reports `started_by_launch=True`
-      so the caller can release the lease in its cleanup path.
-
-    Optional `wait=True` polls past `'waiting'` until approval or
-    `wait_timeout` elapses.
-    """
+    """Pre-launch workflow gate: validate, auto-handle no_workflow/needs_action/ready_to_start,
+    prompt for MFA, and return flow UID + lease expiry. With `wait=True`, polls past 'waiting'."""
     validator = WorkflowAccessValidator(params, record_uid)
     started_by_launch = False
     handled_needs_action = False
@@ -617,8 +571,7 @@ def check_workflow_for_launch(
     handled_waiting = False
     handled_no_workflow = False
 
-    # Up to 5 transitions:
-    # no_workflow -> needs_action -> waiting -> ready_to_start -> started.
+    # no_workflow -> needs_action -> waiting -> ready_to_start -> started (max 5 transitions).
     for _attempt in range(5):
         result = validator.validate(silent_actionable=True)
         if result.get('allowed', True):
@@ -627,13 +580,6 @@ def check_workflow_for_launch(
 
         if (block_reason in ('no_workflow', 'needs_start')
                 and not handled_no_workflow):
-            # First-time access on a workflow-protected record: no flow row
-            # exists for this user yet. Match web vault's "click Launch ->
-            # reason/ticket dialog" first-time flow by inline-prompting
-            # for the required fields (driven off the workflow config's
-            # require* flags carried in the validator result) and submitting
-            # the initial access request. Re-validate to land in waiting /
-            # needs_action / ready_to_start / started naturally.
             handled_no_workflow = True
             requires_reason = bool(result.get('requires_reason'))
             requires_ticket = bool(result.get('requires_ticket'))
@@ -754,12 +700,7 @@ def check_workflow_for_launch(
                 break
             continue
 
-        # Block reason we don't auto-handle (waiting w/o --wait,
-        # transport_error, outside_time_window, no_status, or a re-visit of
-        # an already-handled actionable). Validator paths print their own
-        # message in non-silent branches; for the silent-suppressed ones
-        # (needs_action, ready_to_start, waiting, no_workflow, needs_start)
-        # fall back to the explicit print so the user always sees something.
+        # Fall-through for unhandled states; print explicit message so user always sees something.
         if block_reason == 'needs_action':
             validator._print_needs_action(
                 result.get('pending_conditions') or (),
@@ -783,10 +724,7 @@ def check_workflow_for_launch(
 
     two_factor_value = None
     if result.get('require_mfa', False):
-        # Match web vault: skip the MFA prompt when the gateway is known to
-        # be offline. The launch will surface its own gateway-offline error
-        # later. is_gateway_online_for_record returns None on first launch
-        # (no cache yet) — in that case keep the prompt to be safe.
+        # Skip MFA prompt when gateway is known offline; launch surfaces its own error.
         if is_gateway_online_for_record(params, record_uid) is False:
             logging.debug("Skipping workflow MFA prompt — gateway is offline.")
         else:
@@ -804,8 +742,6 @@ def check_workflow_for_launch(
 
 
 def check_workflow_and_prompt_2fa(params: KeeperParams, record_uid: str):
-    """Backward-compatible wrapper around check_workflow_for_launch.
-    Prefer check_workflow_for_launch in new code — it carries flow_uid and
-    expires_on_ms needed for auto check-in and lease-expiry teardown."""
+    """Backward-compatible wrapper. Prefer check_workflow_for_launch (carries flow_uid + expiry)."""
     gate = check_workflow_for_launch(params, record_uid)
     return (gate.allowed, gate.two_factor_value)

@@ -27,6 +27,7 @@ from .helpers import (
     is_workflow_exempt,
     print_exempt_message,
     submit_access_request,
+    DashUidArgsMixin,
 )
 
 
@@ -66,6 +67,7 @@ class WorkflowRequestAccessCommand(Command):
     @staticmethod
     def _request(params, **kwargs):
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
+        RecordResolver.validate_workflow_record_type(record)
         if is_workflow_exempt(params, record_uid):
             print_exempt_message(kwargs.get('format', 'table'))
             return
@@ -173,7 +175,7 @@ class WorkflowRequestAccessCommand(Command):
             raise CommandError('', f'Failed to cancel request: {sanitize_router_error(e)}')
 
 
-class WorkflowStartCommand(Command):
+class WorkflowStartCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow start',
         description='Start a workflow (check-out). '
@@ -225,7 +227,7 @@ class WorkflowStartCommand(Command):
             raise CommandError('', f'Failed to start workflow: {sanitize_router_error(e)}')
 
 
-class WorkflowEndCommand(Command):
+class WorkflowEndCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow end',
         description='End a workflow (check-in).',
