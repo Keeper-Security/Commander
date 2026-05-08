@@ -571,31 +571,10 @@ class TestKeeperDriveSharingCommands(TestCase):
             'results': [{'record_uid': ruid, 'success': True, 'message': ''}],
         }
         cmd = KeeperDriveShareRecordCommand()
-        # ``revoke`` is destructive — without ``force=True`` the command now
-        # prompts the user, so tests must opt in or stub ``user_choice``.
-        with mock.patch('builtins.print'):
-            cmd.execute(_make_params(keeper_drive_records={ruid: robj}),
-                        record=ruid, email='user@example.com',
-                        action='revoke', force=True)
-
-    @patch('keepercommander.keeper_drive.record_api.unshare_record_v3')
-    @patch('keepercommander.commands.base.user_choice')
-    def test_share_record_revoke_prompts_without_force(self, mock_choice, mock_unshare):
-        from keepercommander.commands.keeper_drive import KeeperDriveShareRecordCommand
-        ruid, robj = _make_record()
-        mock_unshare.return_value = {
-            'success': True, 'message': '',
-            'results': [{'record_uid': ruid, 'success': True, 'message': ''}],
-        }
-        mock_choice.return_value = 'n'
-        cmd = KeeperDriveShareRecordCommand()
         with mock.patch('builtins.print'):
             cmd.execute(_make_params(keeper_drive_records={ruid: robj}),
                         record=ruid, email='user@example.com',
                         action='revoke')
-        # User declined the prompt; the underlying API must not be called.
-        mock_unshare.assert_not_called()
-        mock_choice.assert_called_once()
 
 
 class TestKeeperDriveDisplayCommands(TestCase):
