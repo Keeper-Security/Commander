@@ -2226,7 +2226,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
 
         # disable_dynamic_resizing ? "" : "display-update"
         val = utils.value_to_boolean(data.get("disable_dynamic_resizing", None))
-        if val is not True: obj.resizeMethod = "display-update"
+        obj.resizeMethod = "" if val is True else "display-update"
 
         return obj
 
@@ -2272,7 +2272,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             kvp["enableWallpaper"] = self.enableWallpaper
 
         # populated on load - "resizeMethod": disable_dynamic_resizing ? "" : "display-update"
-        if str(self.resizeMethod) == "display-update":
+        if isinstance(self.resizeMethod, str):
             kvp["resizeMethod"] = self.resizeMethod
 
         if isinstance(self.sftp, SFTPConnectionSettings):
