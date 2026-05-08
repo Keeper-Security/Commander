@@ -350,12 +350,20 @@ def infer_role(access):
 
         full-manager > content-share-manager > shared-manager >
         content-manager > viewer > contributor > requestor > navigator
+
+    The distinguishing trait between ``shared-manager`` and
+    ``content-share-manager`` is the ability to *edit* records: both roles
+    grant ``can_update_access`` + ``can_approve_access``, but only
+    ``content-share-manager`` also grants ``can_edit``. Without that check
+    every shared-manager would be reported as content-share-manager.
     """
     get = access.get
     if get('can_change_ownership') or get('can_delete'):
         return 'full-manager'
-    if get('can_update_access') and get('can_approve_access'):
+    if get('can_update_access') and get('can_approve_access') and get('can_edit'):
         return 'content-share-manager'
+    if get('can_update_access') and get('can_approve_access'):
+        return 'shared-manager'
     if get('can_update_access'):
         return 'shared-manager'
     if get('can_edit'):
