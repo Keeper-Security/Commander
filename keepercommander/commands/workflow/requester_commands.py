@@ -27,7 +27,7 @@ from .helpers import (
     is_workflow_exempt,
     print_exempt_message,
     submit_access_request,
-    fix_dash_uid_args,
+    DashUidArgsMixin,
 )
 
 
@@ -175,7 +175,7 @@ class WorkflowRequestAccessCommand(Command):
             raise CommandError('', f'Failed to cancel request: {sanitize_router_error(e)}')
 
 
-class WorkflowStartCommand(Command):
+class WorkflowStartCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow start',
         description='Start a workflow (check-out). '
@@ -187,10 +187,6 @@ class WorkflowStartCommand(Command):
 
     def get_parser(self):
         return WorkflowStartCommand.parser
-
-    def execute_args(self, params, args, **kwargs):
-        args = fix_dash_uid_args(self.get_parser(), args)
-        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         uid = kwargs.get('uid')
@@ -231,7 +227,7 @@ class WorkflowStartCommand(Command):
             raise CommandError('', f'Failed to start workflow: {sanitize_router_error(e)}')
 
 
-class WorkflowEndCommand(Command):
+class WorkflowEndCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow end',
         description='End a workflow (check-in).',
@@ -244,10 +240,6 @@ class WorkflowEndCommand(Command):
 
     def get_parser(self):
         return WorkflowEndCommand.parser
-
-    def execute_args(self, params, args, **kwargs):
-        args = fix_dash_uid_args(self.get_parser(), args)
-        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         if kwargs.get('force'):

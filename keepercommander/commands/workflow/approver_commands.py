@@ -22,7 +22,7 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import api, crypto, utils
 
-from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error, fix_dash_uid_args
+from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error, DashUidArgsMixin
 
 
 class WorkflowGetApprovalRequestsCommand(Command):
@@ -171,7 +171,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
         print()
 
 
-class WorkflowApproveCommand(Command):
+class WorkflowApproveCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow approve',
         description='Approve a workflow access request',
@@ -182,10 +182,6 @@ class WorkflowApproveCommand(Command):
 
     def get_parser(self):
         return WorkflowApproveCommand.parser
-
-    def execute_args(self, params, args, **kwargs):
-        args = fix_dash_uid_args(self.get_parser(), args)
-        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
@@ -213,7 +209,7 @@ class WorkflowApproveCommand(Command):
             raise CommandError('', f'Failed to approve request: {sanitize_router_error(e)}')
 
 
-class WorkflowDenyCommand(Command):
+class WorkflowDenyCommand(DashUidArgsMixin, Command):
     parser = argparse.ArgumentParser(
         prog='pam workflow deny',
         description='Deny a workflow access request',
@@ -225,10 +221,6 @@ class WorkflowDenyCommand(Command):
 
     def get_parser(self):
         return WorkflowDenyCommand.parser
-
-    def execute_args(self, params, args, **kwargs):
-        args = fix_dash_uid_args(self.get_parser(), args)
-        return super().execute_args(params, args, **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
         flow_uid = kwargs.get('flow_uid')
