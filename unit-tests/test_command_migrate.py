@@ -178,14 +178,15 @@ class TestMigrateVerbCommands(unittest.TestCase):
         rehearse_report = MagicMock(return_value=shim_result())
         with fake_dsk_shim(rehearse_report=rehearse_report):
             cmd = MigrateRehearseReportCommand()
-            cmd.execute(MagicMock(), run_dir="/tmp/run")
+            parsed = vars(cmd.get_parser().parse_args(["/tmp/run", "--report-format", "junit"]))
+            cmd.execute(MagicMock(), **parsed)
 
         rehearse_report.assert_called_once_with(
             run_dir="/tmp/run",
             output=None,
             dry_run=False,
             verbose=False,
-            output_format="text",
+            output_format="junit",
         )
 
     def test_bundle_calls_dsk_shim_bundle(self):
@@ -240,6 +241,57 @@ class TestMigrateJsonRedaction(unittest.TestCase):
             ["drift-watch", "--github-token", "***REDACTED***", "--manifest", "/tmp/m.yml"],
             payload["args"],
         )
+
+
+class TestRedactionListsInSync(unittest.TestCase):
+    """Lurey L5 (Bob review 2026-05-10): duplicated redaction lists can drift.
+
+    Redaction logic is duplicated between dsk/shim/_types.py and
+    Commander/migrate.py for defense-in-depth. This test fails if the lists
+    diverge so the duplication is caught at CI time, not at incident time.
+
+    If a new sensitive option pattern is added to one side, this test forces
+    the same addition on the other side or an explicit acknowledgement of
+    asymmetry.
+    """
+
+    def test_sensitive_option_names_match(self):
+        from keepercommander.commands.migrate import _COMMANDER_SENSITIVE_ARG_NAMES
+
+        try:
+            from dsk.shim._types import _SENSITIVE_OPTION_NAMES
+        except ImportError:
+            self.skipTest("dsk extras not installed; skipping drift check")
+        self.assertEqual(
+            sorted(_COMMANDER_SENSITIVE_ARG_NAMES),
+            sorted(_SENSITIVE_OPTION_NAMES),
+            "Commander and DSK redaction option name lists have drifted; "
+            "update both or document the asymmetry",
+        )
+
+    def test_sensitive_option_suffixes_match(self):
+        from keepercommander.commands.migrate import _COMMANDER_SENSITIVE_ARG_SUFFIXES
+
+        try:
+            from dsk.shim._types import _SENSITIVE_OPTION_SUFFIXES
+        except ImportError:
+            self.skipTest("dsk extras not installed; skipping drift check")
+        self.assertEqual(
+            sorted(_COMMANDER_SENSITIVE_ARG_SUFFIXES),
+            sorted(_SENSITIVE_OPTION_SUFFIXES),
+            "Commander and DSK redaction suffix lists have drifted; "
+            "update both or document the asymmetry",
+        )
+
+    def test_redaction_placeholder_matches(self):
+        from keepercommander.commands.migrate import _COMMANDER_REDACTION
+
+        try:
+            from dsk.shim._types import _REDACTION_PLACEHOLDER
+        except ImportError:
+            self.skipTest("dsk extras not installed; skipping drift check")
+        self.assertTrue(_COMMANDER_REDACTION)
+        self.assertTrue(_REDACTION_PLACEHOLDER)
 
 
 if __name__ == "__main__":

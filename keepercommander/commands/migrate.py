@@ -1,7 +1,13 @@
-"""Keeper Tenant Migration commands (`migrate <verb>`).
+"""keeper migrate <verb> commands - wraps the DSK shim.
 
-Wraps the DSK shim and keeper_tenant_migrate plugin into a Commander command
-surface. Requires `pip install keepercommander[migrate]` for the optional deps.
+Provides 8 absorption verbs (adopt, plan, apply, diff, audit-explain,
+drift-watch, rehearse-report, bundle) as Commander GroupCommand subcommands.
+Each verb delegates to dsk.shim.<verb> and serializes the result to operator
+stdout (JSON or human-readable).
+
+The Commander `setup.cfg` extras_require[migrate] also pulls
+`keeper-tenant-migrate` because dsk.shim.adopt transitively requires it, but
+this module does not directly import keeper_tenant_migrate.
 """
 from __future__ import annotations
 
@@ -85,14 +91,6 @@ def _require_dsk_shim():
     return dsk_shim
 
 
-def _require_keeper_tenant_migrate():
-    try:
-        import keeper_tenant_migrate
-    except ImportError as exc:
-        raise RuntimeError(_MIGRATE_EXTRAS_HELP) from exc
-    return keeper_tenant_migrate
-
-
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--format",
@@ -164,6 +162,9 @@ def _shim_or_command_error(command: str):
         raise CommandError(command, str(exc)) from exc
 
 
+# 8 verbs intentionally implemented as parallel Command subclasses for review
+# readability. DO NOT collapse via metaclass / class factory. Keeper-engineering
+# review benefits from reading 8 obvious classes. Lurey style: explicit > clever.
 class MigrateAdoptCommand(Command):
     """Adopt a keeperCMD run-dir into a DSK manifest."""
 
@@ -373,7 +374,7 @@ class MigrateRehearseReportCommand(Command):
     parser.add_argument("--dry-run", action="store_true", default=False, help="Do not write ownership markers")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
-        "--format",
+        "--report-format",
         dest="output_format",
         choices=("text", "junit"),
         default="text",
