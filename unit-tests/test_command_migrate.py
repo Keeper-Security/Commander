@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 import unittest
@@ -199,6 +200,45 @@ class TestMigrateVerbCommands(unittest.TestCase):
             manifest_path="/tmp/compliance.yml",
             output_dir=None,
             dry_run=False,
+        )
+
+
+class TestMigrateJsonRedaction(unittest.TestCase):
+    def test_json_serialization_redacts_sensitive_args(self):
+        from keepercommander.commands.migrate import _redact_args_for_safety
+
+        raw = ["drift-watch", "--github-token", "ghp_secret", "--manifest", "/tmp/m.yml"]
+        redacted = _redact_args_for_safety(raw)
+
+        self.assertNotIn("ghp_secret", redacted)
+        self.assertIn("***REDACTED***", redacted)
+        self.assertIn("--manifest", redacted)
+        self.assertIn("/tmp/m.yml", redacted)
+
+    def test_json_output_path_redacts_sensitive_args(self):
+        from keepercommander.commands.migrate import _emit_result
+
+        output = _emit_result(
+            {
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "args": [
+                    "drift-watch",
+                    "--github-token",
+                    "ghp_secret",
+                    "--manifest",
+                    "/tmp/m.yml",
+                ],
+            },
+            {"format": "json"},
+        )
+        payload = json.loads(output)
+
+        self.assertNotIn("ghp_secret", output)
+        self.assertEqual(
+            ["drift-watch", "--github-token", "***REDACTED***", "--manifest", "/tmp/m.yml"],
+            payload["args"],
         )
 
 

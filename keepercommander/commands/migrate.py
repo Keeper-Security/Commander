@@ -26,6 +26,54 @@ _MIGRATE_EXTRAS_HELP = (
     "The `migrate` commands require the optional dependencies. "
     "Install them with: pip install keepercommander[migrate]"
 )
+_COMMANDER_SENSITIVE_ARG_NAMES = (
+    "--github-token",
+    "--slack-webhook",
+    "--servicenow-api-key",
+    "--password",
+    "--passphrase",
+    "--api-key",
+    "--secret",
+    "--token",
+)
+_COMMANDER_SENSITIVE_ARG_SUFFIXES = (
+    "-token",
+    "-secret",
+    "-webhook",
+    "-api-key",
+    "-key",
+    "-password",
+)
+_COMMANDER_REDACTION = "***REDACTED***"
+
+
+def _is_sensitive_arg_name(arg: str) -> bool:
+    return arg in _COMMANDER_SENSITIVE_ARG_NAMES or any(
+        arg.endswith(suffix) for suffix in _COMMANDER_SENSITIVE_ARG_SUFFIXES
+    )
+
+
+def _redact_args_for_safety(args: list[str]) -> list[str]:
+    """Mirror DSK shim arg redaction before Commander emits JSON."""
+    redacted: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if "=" in arg and arg.startswith("--"):
+            opt_name = arg.split("=", 1)[0]
+            if _is_sensitive_arg_name(opt_name):
+                redacted.append(f"{opt_name}={_COMMANDER_REDACTION}")
+                i += 1
+                continue
+        elif _is_sensitive_arg_name(arg):
+            redacted.append(arg)
+            if i + 1 < len(args):
+                redacted.append(_COMMANDER_REDACTION)
+                i += 2
+                continue
+        redacted.append(arg)
+        i += 1
+    return redacted
 
 
 def _require_dsk_shim():
@@ -77,7 +125,16 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):
-        return {str(k): _to_jsonable(v) for k, v in value.items()}
+        jsonable = {}
+        for k, v in value.items():
+            key = str(k)
+            if key == "args" and isinstance(v, Sequence) and not isinstance(
+                v, (str, bytes, bytearray)
+            ):
+                jsonable[key] = _redact_args_for_safety([str(arg) for arg in v])
+            else:
+                jsonable[key] = _to_jsonable(v)
+        return jsonable
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_to_jsonable(v) for v in value]
     if value is None or isinstance(value, (str, int, float, bool)):
