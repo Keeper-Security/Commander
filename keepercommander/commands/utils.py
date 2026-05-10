@@ -1386,7 +1386,7 @@ class WhoamiCommand(Command):
                         
                         addons = []
                         addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
-                        for ao in x.get('add_ons'):
+                        for ao in x.get('add_ons') or []:
                             if isinstance(ao, dict):
                                 enabled = ao.get('enabled') is True
                                 if enabled:
@@ -1531,7 +1531,7 @@ class WhoamiCommand(Command):
                         print(label_value('Secure File Storage', file_plan_lookup.get(file_plan, '')))
                         addons = []
                         addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
-                        for ao in x.get('add_ons'):
+                        for ao in x.get('add_ons') or []:
                             if isinstance(ao, dict):
                                 enabled = ao.get('enabled') is True
                                 if enabled:
