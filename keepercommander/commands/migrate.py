@@ -437,9 +437,14 @@ class MigrateGroupCommand(GroupCommand):
         self.default_verb = "help"
 
 
-def register_commands(commands: dict) -> None:
-    """Register the `migrate` group command into Commander's command registry."""
-    commands["migrate"] = MigrateGroupCommand()
+def register_commands(commands: dict[str, Command]) -> None:
+    """Leave migrate out of default command visibility."""
+    # J8 ratification 2026-05-10: migrate is enterprise-gated.
+
+
+def register_enterprise_commands(enterprise_commands: dict[str, Command]) -> None:
+    """Expose migrate only when enterprise commands are loaded."""
+    enterprise_commands["migrate"] = MigrateGroupCommand()
 
 
 def register_command_info(aliases: dict, command_info: dict) -> None:

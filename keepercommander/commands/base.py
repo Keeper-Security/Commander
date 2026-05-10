@@ -199,6 +199,8 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_create_user.register_command_info(aliases, command_info)
     from .. import importer
     importer.register_enterprise_commands(commands)
+    from . import migrate
+    migrate.register_enterprise_commands(commands)
     from . import scim
     scim.register_commands(commands)
     scim.register_command_info(aliases, command_info)

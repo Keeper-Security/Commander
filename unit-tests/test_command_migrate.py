@@ -21,15 +21,29 @@ def shim_result():
     return {"exit_code": 0, "stdout": "ok", "stderr": "", "args": []}
 
 
-class TestMigrateRegistration(unittest.TestCase):
-    def test_register_commands_adds_migrate(self):
+class TestMigrateEnterpriseGated(unittest.TestCase):
+    """L8: migrate visibility is enterprise-gated per joao J8=B."""
+
+    def test_register_commands_does_not_add_migrate_to_default_commands(self):
         from keepercommander.commands import migrate
 
         commands = {}
         migrate.register_commands(commands)
-        self.assertIn("migrate", commands)
+        self.assertNotIn(
+            "migrate",
+            commands,
+            "migrate must be enterprise-gated; not in default commands",
+        )
 
-    def test_register_command_info_adds_migrate_help(self):
+    def test_register_enterprise_commands_adds_migrate(self):
+        from keepercommander.commands import migrate
+
+        enterprise_commands = {}
+        migrate.register_enterprise_commands(enterprise_commands)
+        self.assertIn("migrate", enterprise_commands)
+        self.assertIsInstance(enterprise_commands["migrate"], migrate.MigrateGroupCommand)
+
+    def test_register_command_info_still_populates_help_text(self):
         from keepercommander.commands import migrate
 
         aliases = {}
