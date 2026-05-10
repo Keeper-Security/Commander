@@ -77,6 +77,8 @@ def _redact_args_for_safety(args: list[str]) -> list[str]:
                 redacted.append(_COMMANDER_REDACTION)
                 i += 2
                 continue
+            i += 1
+            continue
         redacted.append(arg)
         i += 1
     return redacted
@@ -448,5 +450,10 @@ def register_enterprise_commands(enterprise_commands: dict[str, Command]) -> Non
 
 
 def register_command_info(aliases: dict, command_info: dict) -> None:
-    """Register migrate help info and any aliases."""
+    """Leave migrate out of default command help visibility."""
+    # J8 ratification 2026-05-10: migrate is enterprise-gated.
+
+
+def register_enterprise_command_info(aliases: dict, command_info: dict) -> None:
+    """Register migrate help info and any aliases for enterprise sessions."""
     command_info["migrate"] = "Tenant migration commands (requires [migrate] extras)"

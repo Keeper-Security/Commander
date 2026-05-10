@@ -43,12 +43,20 @@ class TestMigrateEnterpriseGated(unittest.TestCase):
         self.assertIn("migrate", enterprise_commands)
         self.assertIsInstance(enterprise_commands["migrate"], migrate.MigrateGroupCommand)
 
-    def test_register_command_info_still_populates_help_text(self):
+    def test_register_command_info_does_not_add_migrate_to_default_help_text(self):
         from keepercommander.commands import migrate
 
         aliases = {}
         command_info = {}
         migrate.register_command_info(aliases, command_info)
+        self.assertNotIn("migrate", command_info)
+
+    def test_register_enterprise_command_info_adds_migrate_help_text(self):
+        from keepercommander.commands import migrate
+
+        aliases = {}
+        command_info = {}
+        migrate.register_enterprise_command_info(aliases, command_info)
         self.assertIn("migrate", command_info)
 
 
@@ -306,6 +314,23 @@ class TestRedactionListsInSync(unittest.TestCase):
             self.skipTest("dsk extras not installed; skipping drift check")
         self.assertTrue(_COMMANDER_REDACTION)
         self.assertTrue(_REDACTION_PLACEHOLDER)
+
+
+class TestRedactionByteParity(unittest.TestCase):
+    def test_trailing_bare_sensitive_flag_matches_dsk(self):
+        from keepercommander.commands.migrate import _redact_args_for_safety
+
+        raw = ["--source-config", "x.json", "--password"]
+        commander_redacted = _redact_args_for_safety(raw)
+
+        try:
+            from dsk.shim._types import _redact_sensitive_args
+        except ImportError:
+            self.assertEqual(1, commander_redacted.count("--password"))
+            return
+
+        dsk_redacted = list(_redact_sensitive_args(raw))
+        self.assertEqual(dsk_redacted, commander_redacted)
 
 
 if __name__ == "__main__":
