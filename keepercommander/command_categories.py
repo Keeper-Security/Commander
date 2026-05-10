@@ -29,7 +29,7 @@ COMMAND_CATEGORIES = {
     # Import and Exporting Data
     'Import and Exporting Data': {
         'import', 'export', 'download-membership', 'apply-membership', 'load-record-types',
-        'download-record-types', 'license-consumption-report'
+        'download-record-types', 'license-consumption-report', 'migrate'
     },
     
     # Reporting Commands
