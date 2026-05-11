@@ -26,6 +26,7 @@ from .base import suppress_exit, raise_parse_exception, dump_report_data, Comman
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
 from ..display import bcolors
+from ..enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..proto import record_pb2 as records
@@ -116,6 +117,8 @@ command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
 command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type by name or use * to list all')
 command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name or use * to list all')
+record_type_info_parser.add_argument('-ef', '--effective', dest='effective', action='store_true',
+                                     help='filter -lr results to record types allowed by your enterprise role policy')
 
 
 record_type_parser = argparse.ArgumentParser(prog='record-type', description='Add, modify or delete record type definition')
@@ -222,6 +225,8 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 # logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
                 #     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 raise CommandError('add', f'Record type definition not found for type: {rt} - to get list of all available record types use: record-type-info -lr')
+
+            RecordTypeEnforcer.enforce(params, rt, 'add')
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
@@ -404,6 +409,16 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
+        if pw_failures:
+            for f in pw_failures:
+                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
+            if not kwargs.get('force'):
+                raise CommandError(
+                    'add',
+                    'Password does not meet enterprise complexity policy. '
+                    'Pass --force to bypass these warnings.')
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -602,6 +617,9 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
                     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
+            if rt and rt != rt_name:
+                RecordTypeEnforcer.enforce(params, rt, 'edit')
+
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
         data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
@@ -641,6 +659,16 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
+        if pw_failures:
+            for f in pw_failures:
+                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
+            if not kwargs.get('force'):
+                raise CommandError(
+                    'edit',
+                    'Password does not meet enterprise complexity policy. '
+                    'Pass --force to bypass these warnings.')
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict
@@ -766,6 +794,17 @@ Column Name       Description
 class RecordTypeInfo(Command):
     def get_parser(self):
         return record_type_info_parser
+
+    @staticmethod
+    def _type_name(params, rtid):
+        entry = params.record_type_cache.get(rtid) if params.record_type_cache else None
+        if not entry:
+            return None
+        try:
+            schema = json.loads(entry) if isinstance(entry, str) else entry
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return schema.get('$id') if isinstance(schema, dict) else None
 
     @staticmethod
     def resolve_record_type(params, record_type_id):
@@ -907,6 +946,11 @@ class RecordTypeInfo(Command):
         # 2021-06-07 if no record_name or field_name specified - list all record types
         has_categories_only = False
         row_data = RecordTypeInfo.resolve_record_types(params, lrid)
+
+        if kwargs.get('effective'):
+            restricted = RecordTypeEnforcer.get_restricted_record_types(params)
+            if restricted:
+                row_data = [r for r in row_data if RecordTypeInfo._type_name(params, r[2]) not in restricted]
 
         rows = []
         for count, cat, rtid, content in row_data:

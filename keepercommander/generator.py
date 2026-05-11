@@ -132,6 +132,26 @@ class KeeperPasswordGenerator(PasswordGenerator):
         length = sum(rule_list) if length is None else length
         return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols, special_characters=special_characters)
 
+    @classmethod
+    def create_from_policy(cls, policy, length_override=None):
+        # type: (dict, Optional[int]) -> KeeperPasswordGenerator
+        """Create a generator that satisfies the given password complexity enforcement policy."""
+        pw_length = length_override or policy.get('length') or DEFAULT_PASSWORD_LENGTH
+        lower_min = policy.get('lower-min', 0) if policy.get('lower-use') else None
+        upper_min = policy.get('upper-min', 0) if policy.get('upper-use') else None
+        digit_min = policy.get('digit-min', 0) if policy.get('digit-use') else None
+        special_min = policy.get('special-min', 0) if policy.get('special-use') else None
+        special_chars = policy.get('special', PW_SPECIAL_CHARACTERS) or PW_SPECIAL_CHARACTERS
+
+        return cls(
+            length=pw_length,
+            lower=lower_min,
+            caps=upper_min,
+            digits=digit_min,
+            symbols=special_min,
+            special_characters=special_chars
+        )
+
 
 class DicewarePasswordGenerator(PasswordGenerator):
     def __init__(self, number_of_rolls, word_list_file=None, delimiter=' '):   # type: (int, Optional[str], str) -> None
