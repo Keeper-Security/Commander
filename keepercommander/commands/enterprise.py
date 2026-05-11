@@ -809,6 +809,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                         role_ids.update(team_roles[team_uid])
                             if column == 'role_count':
                                 row.append(len(role_ids))
+                            elif kwargs.get('format') == 'json':
+                                role_info = [{'role_id': rid, 'role_name': roles[rid]['name']}
+                                             for rid in role_ids if rid in roles]
+                                row.append(role_info)
                             else:
                                 role_names = [roles[role_id]['name'] for role_id in role_ids if role_id in roles]
                                 row.append(role_names)
@@ -987,6 +991,22 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                     enforcement_type = constants.ENFORCEMENTS.get(k)
                                     if enforcement_type == 'two_factor_duration':
                                         formatted_enforcements[k] = constants.format_two_factor_duration(v)
+                                    elif enforcement_type == 'record_types':
+                                        try:
+                                            rto = v if isinstance(v, dict) else json.loads(v)
+                                            if params.record_type_cache:
+                                                record_types = []
+                                                for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                                    if record_type_id in params.record_type_cache:
+                                                        rtc = json.loads(params.record_type_cache[record_type_id])
+                                                        if '$id' in rtc:
+                                                            record_types.append(rtc['$id'])
+                                                formatted_enforcements[k] = ', '.join(record_types)
+                                            else:
+                                                formatted_enforcements[k] = v
+                                        except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+                                            logging.debug('Failed to format record_types enforcement %s: %s', k, e)
+                                            formatted_enforcements[k] = v
                                     else:
                                         formatted_enforcements[k] = v
                                 row.append(formatted_enforcements)
