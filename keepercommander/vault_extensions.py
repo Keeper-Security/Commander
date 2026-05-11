@@ -401,7 +401,7 @@ def extract_typed_field(field):     # type: (vault.TypedField) -> dict
         if rt.type in record_types.FieldTypes:
             ft = record_types.FieldTypes[rt.type]
             default_value = ft.value
-    if field.value:
+    if field.value is not None:
         values = field.value
         if isinstance(values, (str, int, dict)):
             values = [values]
@@ -410,7 +410,7 @@ def extract_typed_field(field):     # type: (vault.TypedField) -> dict
 
         if isinstance(values, list):
             for value in values:
-                if not value:
+                if value is None:
                     continue
                 if default_value is not None:
                     if not isinstance(value, type(default_value)):

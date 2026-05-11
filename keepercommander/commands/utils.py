@@ -1695,7 +1695,8 @@ class LoginCommand(Command):
                     # Check extended server list
                     region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
                 print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}', file=sys.stderr)
-                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
+                hint_cmd = 'keeper login --server <region>' if params.batch_mode else 'login --server <region>'
+                print(f'{Fore.CYAN}Use {Fore.GREEN}{hint_cmd}{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
                 print('', file=sys.stderr)
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:

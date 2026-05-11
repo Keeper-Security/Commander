@@ -133,13 +133,7 @@ class KeeperDriveUpdateFolderCommand(Command):
             if not new_name:
                 raise CommandError('kd-rndir', 'Folder name cannot be empty')
 
-        inherit_permissions = None
-        if kwargs.get('inherit_permissions'):
-            inherit_permissions = True
-        elif kwargs.get('no_inherit_permissions'):
-            inherit_permissions = False
-
-        if new_name is None and color is None and inherit_permissions is None:
+        if new_name is None and color is None:
             raise CommandError('kd-rndir', 'New folder name and/or color parameters are required.')
 
         folder_uid = resolve_folder_uid(params, folder_arg)
@@ -151,7 +145,7 @@ class KeeperDriveUpdateFolderCommand(Command):
         with command_error_handler('kd-rndir'):
             result = _kd.update_folder_v3(
                 params=params, folder_uid=folder_arg, folder_name=new_name,
-                color=color, inherit_permissions=inherit_permissions,
+                color=color,
             )
             check_result(result, 'kd-rndir')
             params.sync_data = True

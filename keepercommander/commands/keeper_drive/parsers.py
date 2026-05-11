@@ -56,12 +56,6 @@ keeper_drive_update_folder_parser.add_argument(
     choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'gray'],
     help='folder color')
 keeper_drive_update_folder_parser.add_argument(
-    '--inherit', dest='inherit_permissions', action='store_true',
-    help='set folder to inherit parent permissions')
-keeper_drive_update_folder_parser.add_argument(
-    '--no-inherit', dest='no_inherit_permissions', action='store_true',
-    help='set folder to not inherit parent permissions')
-keeper_drive_update_folder_parser.add_argument(
     '-q', '--quiet', dest='quiet', action='store_true',
     help='rename folder without confirmation message')
 keeper_drive_update_folder_parser.add_argument(

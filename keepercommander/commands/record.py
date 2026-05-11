@@ -744,14 +744,28 @@ class RecordGetUidCommand(Command):
             if total_matches == 1:
                 # If only one match, display it directly
                 if len(matched_records) == 1:
-                    return self.execute(params, uid=matched_records[0].record_uid, format=fmt, unmask=kwargs.get('unmask'), legacy=kwargs.get('legacy'))
+                    return self.execute(
+                        params,
+                        uid=matched_records[0].record_uid,
+                        format=fmt,
+                        unmask=kwargs.get('unmask'),
+                        legacy=kwargs.get('legacy'),
+                        include_dag=kwargs.get('include_dag')
+                    )
                 elif len(matched_folders) == 1:
                     uid = matched_folders[0].uid
                     f = params.folder_cache[uid]
                     sf_uid = f.uid if isinstance(f, subfolder.SharedFolderNode) else \
                         (f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) else None)
                     if sf_uid and api.is_shared_folder(params, sf_uid):
-                        return self.execute(params, uid=sf_uid, format=fmt, unmask=kwargs.get('unmask'), legacy=kwargs.get('legacy'))
+                        return self.execute(
+                            params,
+                            uid=sf_uid,
+                            format=fmt,
+                            unmask=kwargs.get('unmask'),
+                            legacy=kwargs.get('legacy'),
+                            include_dag=kwargs.get('include_dag')
+                        )
                     if fmt == 'json':
                         fo = {
                             'folder_uid': f.uid,
