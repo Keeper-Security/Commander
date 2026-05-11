@@ -5,8 +5,8 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Copyright 2026 Keeper Security Inc.
+# Contact: commander@keepersecurity.com
 #
 
 import json
