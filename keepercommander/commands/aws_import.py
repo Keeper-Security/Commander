@@ -15,9 +15,11 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple
 
 from .base import Command
-from .. import vault, record_management
+from ._cloud_import_base import BATCH_SIZE
+from .. import api, utils, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
+from ..proto import record_pb2
 
 aws_secrets_import_parser = argparse.ArgumentParser(
     prog='aws-secrets-import',
@@ -347,45 +349,83 @@ class AwsSecretsImportCommand(Command):
 
         logging.info('aws-secrets-import: found %d secret(s).', len(secrets))
 
-        created = 0
-        skipped = 0
-
+        # Phase 1 – filter secrets; honour dry-run.
+        matched_names = []
         for secret_meta in secrets:
             skrt_name = secret_meta.get('Name') or ''
             if not skrt_name:
                 continue
-
             if not self._matches_filters(
                 secret_meta, filter_name, filter_starts, filter_ends,
                 filter_contains, required_tags
             ):
                 continue
-
             if dry_run:
                 print(f'  [dry-run] would import: {skrt_name}')
                 continue
+            matched_names.append(skrt_name)
 
-            # Fetch the actual secret value
+        if dry_run:
+            return
+
+        # Phase 2 – fetch secret values from AWS (individual AWS API calls),
+        # then build TypedRecord objects and serialise to protobuf without
+        # touching the Keeper API yet.
+        skipped = 0
+        pending = []   # type: List[Tuple[vault.TypedRecord, record_pb2.RecordAdd]]
+
+        for skrt_name in matched_names:
             try:
                 secret_string = self._get_secret_value(skrt_name, region)
             except Exception as exc:
-                logging.warning('aws-secrets-import: skipping "%s" – could not retrieve value: %s', skrt_name, exc)
+                logging.warning('aws-secrets-import: skipping "%s" – could not retrieve value: %s',
+                                skrt_name, exc)
                 skipped += 1
                 continue
 
             fields = self._parse_secret_string(secret_string)
-
             record = self._build_record(skrt_name, fields, record_type)
+            pb = record_management.add_record_to_folder(params, record, folder_uid, pb_only=True)
+            if pb is not None:
+                pending.append((record, pb))
+
+        if not pending:
+            print(f'aws-secrets-import: 0 record(s) created, {skipped} skipped.')
+            return
+
+        # Phase 3 – batch-send to Keeper (up to BATCH_SIZE records per request).
+        created = 0
+
+        for batch_start in range(0, len(pending), BATCH_SIZE):
+            batch = pending[batch_start:batch_start + BATCH_SIZE]
+            batch_num = batch_start // BATCH_SIZE + 1
+            logging.info('aws-secrets-import: sending batch %d (%d record(s))', batch_num, len(batch))
+
+            rq = api.get_records_add_request(params)
+            for _, pb in batch:
+                rq.records.append(pb)
 
             try:
-                record_management.add_record_to_folder(params, record, folder_uid)
-                logging.info('aws-secrets-import: created record "%s"', skrt_name)
-                created += 1
+                rs = api.communicate_rest(
+                    params, rq, 'vault/records_add',
+                    rs_type=record_pb2.RecordsModifyResponse
+                )
             except Exception as exc:
-                logging.warning('aws-secrets-import: failed to create record for "%s": %s', skrt_name, exc)
-                skipped += 1
+                logging.warning('aws-secrets-import: batch %d failed: %s', batch_num, exc)
+                skipped += len(batch)
+                continue
 
-        if not dry_run:
-            if created:
-                params.sync_data = True
-            print(f'aws-secrets-import: {created} record(s) created, {skipped} skipped.')
+            rs_by_uid = {utils.base64_url_encode(r.record_uid): r for r in rs.records}
+            for record, _ in batch:
+                rs_rec = rs_by_uid.get(record.record_uid)
+                if rs_rec is None or rs_rec.status == record_pb2.RS_SUCCESS:
+                    logging.info('aws-secrets-import: created record "%s"', record.title)
+                    created += 1
+                else:
+                    logging.warning('aws-secrets-import: failed to create record "%s": status=%s',
+                                    record.title, rs_rec.status)
+                    skipped += 1
+
+        if created:
+            params.sync_data = True
+        print(f'aws-secrets-import: {created} record(s) created, {skipped} skipped.')

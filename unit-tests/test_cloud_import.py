@@ -8,9 +8,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from data_vault import get_synced_params
 
-from keepercommander import vault
+from keepercommander import utils as keeper_utils, vault
 from keepercommander.subfolder import SharedFolderNode, BaseFolderNode
 from keepercommander.error import CommandError
+from keepercommander.proto import record_pb2
 from keepercommander.commands._cloud_import_base import CloudImportMixin
 from keepercommander.commands.aws_import import AwsSecretsImportCommand
 from keepercommander.commands.azure_import import AzureSecretsImportCommand
@@ -32,11 +33,39 @@ def _make_params():
     return params
 
 
-def _fake_add_record(captured):
-    """Return a side-effect that appends the created record to *captured*."""
-    def _side_effect(params, record, folder_uid):
+def _fake_add_record_pb(captured):
+    """
+    Side-effect for record_management.add_record_to_folder that supports the
+    pb_only=True batch path.
+
+    - Always appends the record to *captured* so tests can assert on it.
+    - When pb_only=True, returns a real record_pb2.RecordAdd whose record_uid
+      bytes match the record's UID string so the batch-response matcher works.
+    """
+    def _side_effect(params, record, folder_uid, pb_only=False):
+        if not record.record_uid:
+            record.record_uid = keeper_utils.generate_uid()
         captured.append(record)
+        if pb_only:
+            pb = record_pb2.RecordAdd()
+            pb.record_uid = keeper_utils.base64_url_decode(record.record_uid)
+            return pb
     return _side_effect
+
+
+def _fake_records_add_success(params_arg, rq, endpoint, rs_type=None):
+    """
+    Side-effect for api.communicate_rest that returns a successful
+    RecordsModifyResponse for every record in the request.
+    """
+    rs = record_pb2.RecordsModifyResponse()
+    rs.revision = 1
+    for pb_rec in rq.records:
+        rec_rs = record_pb2.RecordModifyStatus()
+        rec_rs.record_uid = bytes(pb_rec.record_uid)
+        rec_rs.status = record_pb2.RS_SUCCESS
+        rs.records.append(rec_rs)
+    return rs
 
 
 # ---------------------------------------------------------------------------
@@ -210,11 +239,13 @@ class TestCloudImportBase(TestCase):
         secrets = [{'name': 'my-secret', 'value': 'pw=s3cr3t', 'tags': {}}]
 
         with mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
+                mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
                 mock.patch('builtins.print') as print_mock:
             mixin._run_import(params, secrets, FOLDER_UID, 'login',
                               None, None, None, None, [], True, 'cmd')
 
         add_mock.assert_not_called()
+        rest_mock.assert_not_called()
         printed = ' '.join(str(a) for call in print_mock.call_args_list for a in call.args)
         self.assertIn('my-secret', printed)
 
@@ -228,7 +259,10 @@ class TestCloudImportBase(TestCase):
         captured = []
 
         with mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)):
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
             mixin._run_import(params, secrets, FOLDER_UID, 'login',
                               None, None, None, None, [], False, 'cmd')
 
@@ -246,7 +280,10 @@ class TestCloudImportBase(TestCase):
         captured = []
 
         with mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)):
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
             mixin._run_import(params, secrets, FOLDER_UID, 'login',
                               None, 'prod/', None, None, [], False, 'cmd')
 
@@ -263,7 +300,10 @@ class TestCloudImportBase(TestCase):
         captured = []
 
         with mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)):
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
             mixin._run_import(params, secrets, FOLDER_UID, 'login',
                               None, None, None, None, [('Env', 'prod')], False, 'cmd')
 
@@ -277,8 +317,10 @@ class TestCloudImportBase(TestCase):
         secrets = [{'name': 'sec', 'value': 'v=1', 'tags': {}}]
 
         with mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record([])), \
-                mock.patch('builtins.print'):
+                        side_effect=_fake_add_record_pb([])), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
             mixin._run_import(params, secrets, FOLDER_UID, 'login',
                               None, None, None, None, [], False, 'cmd')
 
@@ -324,16 +366,19 @@ class TestAwsSecretsImport(TestCase):
     def _run_with_mocked_aws(self, params, aws_secrets, **extra_kwargs):
         """Helper: run execute() with _list_secrets and _get_secret_value mocked."""
         secret_values = {s['Name']: s.get('_value', '') for s in aws_secrets}
+        captured = []
 
         with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
              mock.patch.object(self.cmd, '_get_secret_value',
-                               side_effect=lambda name, region: secret_values.get(name, '')):
-            captured = []
-            with mock.patch('keepercommander.record_management.add_record_to_folder',
-                            side_effect=_fake_add_record(captured)), \
-                    mock.patch('builtins.print'):
-                self.cmd.execute(params, folder=FOLDER_UID, **extra_kwargs)
-            return captured
+                               side_effect=lambda name, region: secret_values.get(name, '')), \
+             mock.patch('keepercommander.record_management.add_record_to_folder',
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
+            self.cmd.execute(params, folder=FOLDER_UID, **extra_kwargs)
+
+        return captured
 
     def test_execute_imports_all_secrets(self):
         params = _make_params()
@@ -365,10 +410,12 @@ class TestAwsSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
              mock.patch.object(self.cmd, '_get_secret_value', return_value=''), \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
+             mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID, dry_run=True)
 
         add_mock.assert_not_called()
+        rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
@@ -394,8 +441,7 @@ class TestAwsSecretsImport(TestCase):
 
     def test_execute_no_secrets_returns_without_error(self):
         params = _make_params()
-        with mock.patch.object(self.cmd, '_list_secrets', return_value=[]), \
-             mock.patch('builtins.print'):
+        with mock.patch.object(self.cmd, '_list_secrets', return_value=[]):
             self.cmd.execute(params, folder=FOLDER_UID)
 
     def test_execute_get_value_error_skips_secret(self):
@@ -415,7 +461,9 @@ class TestAwsSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
              mock.patch.object(self.cmd, '_get_secret_value', side_effect=_get_value), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)), \
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID)
 
@@ -497,7 +545,9 @@ class TestAzureSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
              mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)), \
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
              mock.patch('builtins.print'):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID, **extra_kwargs)
 
@@ -523,10 +573,12 @@ class TestAzureSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
              mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
+             mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID, dry_run=True)
 
         add_mock.assert_not_called()
+        rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
@@ -554,8 +606,7 @@ class TestAzureSecretsImport(TestCase):
         params = _make_params()
         mock_credential = mock.MagicMock()
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]), \
-             mock.patch('builtins.print'):
+             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID)
 
     def test_execute_uses_default_record_type(self):
@@ -605,7 +656,9 @@ class TestGcpSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
              mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
-                        side_effect=_fake_add_record(captured)), \
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project', **extra_kwargs)
 
@@ -631,10 +684,12 @@ class TestGcpSecretsImport(TestCase):
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
              mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
+             mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project', dry_run=True)
 
         add_mock.assert_not_called()
+        rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
@@ -662,8 +717,7 @@ class TestGcpSecretsImport(TestCase):
         params = _make_params()
         mock_client = mock.MagicMock()
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]), \
-             mock.patch('builtins.print'):
+             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]):
             self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project')
 
     def test_execute_uses_default_record_type(self):
@@ -682,5 +736,5 @@ class TestGcpSecretsImport(TestCase):
         params = _make_params()
         params.sync_data = False
         secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        self._run_with_mocked_gcp(params, secrets)
+        self._run_with_mocked_gcp(params, secrets)   # already mocks communicate_rest
         self.assertTrue(params.sync_data)

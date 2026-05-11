@@ -15,9 +15,13 @@ import json
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from .. import vault, record_management
+from .. import api, utils, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
+from ..proto import record_pb2
+
+# Maximum records per vault/records_add API call.
+BATCH_SIZE = 999
 
 
 def add_filter_args(parser):
@@ -212,42 +216,80 @@ class CloudImportMixin:
         # type: (KeeperParams, list, str, str, Optional[str], Optional[str], Optional[str], Optional[str], List[Tuple[str, str]], bool, str) -> None
         """
         Iterate *secrets* — a list of dicts with keys 'name', 'value', and
-        'tags' (a plain Dict[str, str]) — apply all filters, and create a
-        Keeper record in *folder_uid* for each match.
+        'tags' (a plain Dict[str, str]) — apply all filters, and create Keeper
+        records in *folder_uid* via batched vault/records_add calls (up to
+        BATCH_SIZE records per request).
         """
-        created = 0
-        skipped = 0
 
+        # Phase 1 – filter.  Collect matching items; honour dry-run.
+        matched = []
         for item in secrets:
             name = item.get('name') or ''
             if not name:
                 continue
-
-            if not self._matches_name_filters(name, filter_name, filter_starts, filter_ends, filter_contains):
+            if not self._matches_name_filters(name, filter_name, filter_starts,
+                                              filter_ends, filter_contains):
                 logging.debug('%s: skipping "%s" (name filter mismatch)', command_name, name)
                 continue
-
             if required_tags and not self._matches_tag_filters(item.get('tags') or {}, required_tags):
                 logging.debug('%s: skipping "%s" (tag filter mismatch)', command_name, name)
                 continue
-
             if dry_run:
                 print(f'  [dry-run] would import: {name}')
                 continue
+            matched.append(item)
 
-            secret_value = item.get('value') or ''
-            fields = self._parse_secret_string(secret_value)
-            record = self._build_keeper_record(name, fields, record_type)
+        if dry_run:
+            return
+
+        # Phase 2 – build TypedRecord objects and their serialised protobuf
+        # representations without touching the Keeper API yet.
+        pending = []   # type: List[Tuple[vault.TypedRecord, record_pb2.RecordAdd]]
+        for item in matched:
+            fields = self._parse_secret_string(item.get('value') or '')
+            record = self._build_keeper_record(item['name'], fields, record_type)
+            pb = record_management.add_record_to_folder(params, record, folder_uid, pb_only=True)
+            if pb is not None:
+                pending.append((record, pb))
+
+        if not pending:
+            print(f'{command_name}: 0 record(s) created, 0 skipped.')
+            return
+
+        # Phase 3 – send in batches of up to BATCH_SIZE to vault/records_add.
+        created = 0
+        skipped = 0
+
+        for batch_start in range(0, len(pending), BATCH_SIZE):
+            batch = pending[batch_start:batch_start + BATCH_SIZE]
+            batch_num = batch_start // BATCH_SIZE + 1
+            logging.info('%s: sending batch %d (%d record(s))', command_name, batch_num, len(batch))
+
+            rq = api.get_records_add_request(params)
+            for _, pb in batch:
+                rq.records.append(pb)
 
             try:
-                record_management.add_record_to_folder(params, record, folder_uid)
-                logging.info('%s: created record "%s"', command_name, name)
-                created += 1
+                rs = api.communicate_rest(
+                    params, rq, 'vault/records_add',
+                    rs_type=record_pb2.RecordsModifyResponse
+                )
             except Exception as exc:
-                logging.warning('%s: failed to create record for "%s": %s', command_name, name, exc)
-                skipped += 1
+                logging.warning('%s: batch %d failed: %s', command_name, batch_num, exc)
+                skipped += len(batch)
+                continue
 
-        if not dry_run:
-            if created:
-                params.sync_data = True
-            print(f'{command_name}: {created} record(s) created, {skipped} skipped.')
+            rs_by_uid = {utils.base64_url_encode(r.record_uid): r for r in rs.records}
+            for record, _ in batch:
+                rs_rec = rs_by_uid.get(record.record_uid)
+                if rs_rec is None or rs_rec.status == record_pb2.RS_SUCCESS:
+                    logging.info('%s: created record "%s"', command_name, record.title)
+                    created += 1
+                else:
+                    logging.warning('%s: failed to create record "%s": status=%s',
+                                    command_name, record.title, rs_rec.status)
+                    skipped += 1
+
+        if created:
+            params.sync_data = True
+        print(f'{command_name}: {created} record(s) created, {skipped} skipped.')
