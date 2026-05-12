@@ -115,7 +115,7 @@ ROLE_NAME_MAP: Dict[str, int] = {
     'requestor':             1,
     'viewer':                2,
     'shared_manager':        3,
-    'share-manager':        3,
+    'share_manager':         3,
     'content_manager':       4,
     'content-manager':       4,
     'content_share_manager': 5,
