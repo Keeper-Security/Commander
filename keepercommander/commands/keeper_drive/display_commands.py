@@ -351,7 +351,7 @@ class KeeperDriveGetCommand(Command):
 
         Uses the server-supplied ``role`` (an ``AccessRoleType`` enum name) and
         renders it as a canonical KeeperDrive role label (e.g. ``full-manager``,
-        ``shared-manager``, ``viewer``). Falls back to permission-flag based
+        ``share-manager``, ``viewer``). Falls back to permission-flag based
         inference for legacy access rows that omit ``role``.
         """
         if not isinstance(accessor, dict):

@@ -242,7 +242,7 @@ class KeeperDriveRecordPermissionCommand(Command):
     """Bulk-update sharing permissions on records within a KeeperDrive folder."""
 
     _ROLE_NAMES = [
-        'viewer', 'shared-manager',
+        'viewer', 'share-manager',
         'content-manager', 'content-share-manager', 'full-manager',
     ]
 
