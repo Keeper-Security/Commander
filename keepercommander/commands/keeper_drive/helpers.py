@@ -348,14 +348,14 @@ def infer_role(access):
 
     Follows the official permission matrix::
 
-        full-manager > content-share-manager > shared-manager >
+        full-manager > content-share-manager > share-manager >
         content-manager > viewer > contributor > requestor > navigator
 
-    The distinguishing trait between ``shared-manager`` and
+    The distinguishing trait between ``share-manager`` and
     ``content-share-manager`` is the ability to *edit* records: both roles
     grant ``can_update_access`` + ``can_approve_access``, but only
     ``content-share-manager`` also grants ``can_edit``. Without that check
-    every shared-manager would be reported as content-share-manager.
+    every share-manager would be reported as content-share-manager.
     """
     get = access.get
     if get('can_change_ownership') or get('can_delete'):
@@ -363,9 +363,9 @@ def infer_role(access):
     if get('can_update_access') and get('can_approve_access') and get('can_edit'):
         return 'content-share-manager'
     if get('can_update_access') and get('can_approve_access'):
-        return 'shared-manager'
+        return 'share-manager'
     if get('can_update_access'):
-        return 'shared-manager'
+        return 'share-manager'
     if get('can_edit'):
         return 'content-manager'
     if get('can_view') and get('can_list_access'):
@@ -395,7 +395,7 @@ _ACCESS_ROLE_DISPLAY_LABELS = {
     'NAVIGATOR':             'contributor',
     'REQUESTOR':             'contributor',
     'VIEWER':                'viewer',
-    'SHARED_MANAGER':        'shared-manager',
+    'SHARED_MANAGER':        'share-manager',
     'CONTENT_MANAGER':       'content-manager',
     'CONTENT_SHARE_MANAGER': 'content-share-manager',
     'MANAGER':               'full-manager',
@@ -408,7 +408,7 @@ def format_role_display(role):
 
     Accepts either the proto enum name (``'SHARED_MANAGER'``) or its integer
     value, and returns the canonical hyphenated lowercase label used across
-    KeeperDrive (``'shared-manager'``, ``'full-manager'``, ``'viewer'`` …).
+    KeeperDrive (``'share-manager'``, ``'full-manager'``, ``'viewer'`` …).
     Falls back to a best-effort lowercase form when the role is unknown.
     """
     if role is None or role == '':
@@ -431,7 +431,7 @@ def get_access_role_label(access):
     Prefers the stored ``access_role_type`` (proto enum int) when available;
     otherwise falls back to inferring the role from permission flags. The
     returned label uses the canonical hyphenated lowercase KeeperDrive form
-    (e.g. ``'full-manager'``, ``'shared-manager'``, ``'viewer'``).
+    (e.g. ``'full-manager'``, ``'share-manager'``, ``'viewer'``).
     """
     role_int = access.get('access_role_type')
     if role_int is not None:
