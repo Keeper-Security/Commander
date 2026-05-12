@@ -394,9 +394,11 @@ class PAMCreateRecordRotationCommand(Command):
     parser.add_argument('--iam-aad-config', '-iac', dest='iam_aad_config_uid', action='store',
                         help='UID of a PAM Configuration. Used for an IAM or Azure AD user in place of --resource.')
     parser.add_argument('--rotation-profile', '-rp', dest='rotation_profile', action='store',
-                        choices=['general', 'iam_user', 'scripts_only'],
+                        choices=['general', 'iam_user', 'scripts_only', 'saas'],
                         help='Rotation profile type: general (resource-based), iam_user (IAM/Azure user), '
-                             'scripts_only (run PAM scripts only)')
+                             'scripts_only (run PAM scripts only), saas (SaaS only)')
+    parser.add_argument('--saas-config-uid', dest='saas_config_uid', action='store',
+                        help='For saas rotation profile, the SaaS configuration UID')
     parser.add_argument('--resource', '-rs', dest='resource', action='store',
                         help='UID or path of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
@@ -1181,6 +1183,17 @@ class PAMCreateRecordRotationCommand(Command):
                         if not resource_uid:
                             raise CommandError('', 'General rotation profile requires --resource to be specified.')
                         config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
+                    elif rotation_profile == 'saas':
+                        saas_config_uid = kwargs.get("saas_config_uid")  # type: Optional[str]
+                        if saas_config_uid is None:
+                            raise CommandError('', 'SaaS rotation profile requires '
+                                                   '--saas-config-uid to be specified.')
+                        saas_command = PAMActionSaasSetCommand()
+                        saas_command.execute(params,
+                                             user_uid=_record.record_uid,
+                                             pam_config_uid=config_uid,
+                                             config_record_uid=saas_config_uid)
+
                 # NB! --folder=UID without --iam-aad-config, or --schedule-only converts to General rotation
                 elif iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
