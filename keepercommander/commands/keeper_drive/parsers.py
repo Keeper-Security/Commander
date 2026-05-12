@@ -89,7 +89,7 @@ keeper_drive_share_folder_parser.add_argument(
 keeper_drive_share_folder_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'viewer', 'shared-manager',
+        'viewer', 'share-manager',
         'content-manager', 'content-share-manager', 'full-manager',
     ],
     default='viewer',
@@ -206,7 +206,7 @@ keeper_drive_share_record_parser.add_argument(
 keeper_drive_share_record_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'viewer', 'shared-manager',
+        'viewer', 'share-manager',
         'content-manager', 'content-share-manager', 'full-manager',
     ],
     help='permission role. Required for grant/update actions')
@@ -243,7 +243,7 @@ keeper_drive_record_permission_parser.add_argument(
 keeper_drive_record_permission_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
-        'viewer', 'shared-manager',
+        'viewer', 'share-manager',
         'content-manager', 'content-share-manager', 'full-manager',
     ],
     help='Permission role to grant, or filter for revoke')

@@ -12,7 +12,7 @@ To get help on a particular command, run:
 | Command                  | Description                                                         |
 | ------------------------ | ------------------------------------------------------------------- |
 | `[kd-mkdir]`             | Create a new KeeperDrive folder                                     |
-| `[kd-rndir]`             | Rename a folder, change its color, or update permission inheritance |
+| `[kd-rndir]`             | Rename a folder or change its color                                 |
 | `[kd-list]`              | List KeeperDrive folders and records                                |
 | `[kd-rmdir]`             | Remove one or more KeeperDrive folders                              |
 | `[kd-share-folder]`      | Grant or remove a user's access to a folder                         |
@@ -34,7 +34,7 @@ To get help on a particular command, run:
 | Role                    | Description                                   |
 | ----------------------- | --------------------------------------------- |
 | `viewer`                | Read-only access                              |
-| `shared-manager`        | Can manage access grants                      |
+| `share-manager`         | Can manage access grants                      |
 | `content-manager`       | Can add/edit records                          |
 | `content-share-manager` | Can add/remove/edit records and manage access |
 | `full-manager`          | Full control                                  |
@@ -76,7 +76,7 @@ kd-mkdir "Reports//2026"
 
 **Command:** `kd-rndir`
 
-**Detail:** Rename a folder, change its color, or update its permission-inheritance setting. At least one of `--name`, `--color`, `--inherit`, or `--no-inherit` is required.
+**Detail:** Rename a folder or change its color. At least one of `--name` or `--color` is required.
 
 **Parameters:**
 
@@ -88,9 +88,7 @@ Folder UID, name, or path
 
 `--color <COLOR>` New color: `none` `red` `orange` `yellow` `green` `blue` `gray`
 
-`--inherit` Enable permission inheritance from parent folder
 
-`--no-inherit` Disable permission inheritance from parent folder
 
 `-q`, `--quiet` Suppress confirmation message
 
@@ -99,13 +97,13 @@ Folder UID, name, or path
 ```
 kd-rndir "Old Name" --name "New Name"
 kd-rndir abc123 --color blue
-kd-rndir abc123 --name "Archive Q4" --color gray --inherit
+kd-rndir abc123 --name "Archive Q4" --color gray
 kd-rndir abc123 --name "Finance" -q
 ```
 
 1. Rename a folder by its current name
 2. Change a folder's color using its UID
-3. Rename, recolor, and enable permission inheritance in one command
+3. Rename and recolor a folder in one command
 4. Rename a folder silently with no confirmation output
 
 ---
