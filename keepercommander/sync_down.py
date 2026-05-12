@@ -589,6 +589,22 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.user_cache[account_uid] = params.user
 
         if len(response.recordRotations) > 0:
+            # Stuff still uses record_rotation_cache; it cannot just be removed.
+            for rr in response.recordRotations:
+                record_uid = utils.base64_url_encode(rr.recordUid)
+                rr_obj = {
+                    'record_uid': record_uid,
+                    'revision': rr.revision,
+                    'configuration_uid': utils.base64_url_encode(rr.configurationUid),
+                    'schedule': rr.schedule,
+                    'pwd_complexity': utils.base64_url_encode(rr.pwdComplexity),
+                    'disabled': rr.disabled,
+                    'resource_uid': utils.base64_url_encode(rr.resourceUid),
+                    'last_rotation': rr.lastRotation,
+                    'last_rotation_status': rr.lastRotationStatus,
+                }
+                params.record_rotation_cache[record_uid] = rr_obj
+
             record_rotation_items.extend(response.recordRotations)
 
         params.sync_down_token = response.continuationToken
