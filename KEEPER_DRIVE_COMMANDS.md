@@ -103,7 +103,7 @@ kd-rndir abc123 --name "Finance" -q
 
 1. Rename a folder by its current name
 2. Change a folder's color using its UID
-3. Rename, recolor, and enable permission inheritance in one command
+3. Rename, recolor folder's color
 4. Rename a folder silently with no confirmation output
 
 ---
