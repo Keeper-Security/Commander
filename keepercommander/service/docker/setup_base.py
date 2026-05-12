@@ -181,10 +181,16 @@ class DockerSetupBase:
             raise CommandError('docker-setup', f'Failed to create record: {str(e)}')
 
     def _upload_config_file(self, params, record_uid: str, config_path: str) -> None:
-        """Upload config.json as attachment, or store as custom field if no file storage plan."""
+        """Upload config.json as attachment, or store as custom field if no file storage plan.
+
+        When OS-native keychain storage is active, config.json only contains the
+        ``config_storage`` pointer and no credentials.  In that case the essential
+        auth fields are sourced from ``params`` (which already has them loaded from
+        the keychain) and written to a temporary file for upload.
+        """
         temp_config_path = None
         try:
-            cleaned_config_path = self._clean_config_json(config_path)
+            cleaned_config_path = self._get_uploadable_config(params, config_path)
             if cleaned_config_path != config_path:
                 temp_config_path = cleaned_config_path
 
@@ -202,6 +208,54 @@ class DockerSetupBase:
                     os.unlink(temp_config_path)
                 except OSError:
                     pass
+
+    def _get_uploadable_config(self, params, config_path: str) -> str:
+        """Return a path to a config file containing only essential auth keys.
+
+        If the active storage backend is the OS keychain (config.json only has
+        the ``config_storage`` pointer), the credentials are read from ``params``
+        and written to a temp file.  Otherwise the existing ``_clean_config_json``
+        logic is used to strip non-essential keys from the file on disk.
+        """
+        try:
+            with open(config_path, 'r') as f:
+                config_data = json.load(f)
+        except Exception:
+            return config_path
+
+        config_storage = config_data.get('config_storage', '')
+        if config_storage and config_storage != 'file':
+            # Keychain mode: credentials live in the OS keychain, not in the file.
+            # Build the essential-keys dict from the already-loaded params object.
+            essential_config = {}
+            for file_key, params_attr in [
+                ('server', 'server'),
+                ('user', 'user'),
+                ('device_token', 'device_token'),
+                ('private_key', 'device_private_key'),
+                ('clone_code', 'clone_code'),
+            ]:
+                value = getattr(params, params_attr, None)
+                if value:
+                    essential_config[file_key] = value
+
+            if not essential_config:
+                raise CommandError(
+                    'docker-setup',
+                    'No credentials found in params. Please log in before running this command.'
+                )
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+                json.dump(essential_config, tmp, indent=2)
+                temp_path = tmp.name
+
+            DockerSetupPrinter.print_success(
+                f'Config sourced from OS keychain ({len(essential_config)} essential keys)'
+            )
+            return temp_path
+
+        # File-based storage: clean the JSON as before.
+        return self._clean_config_json(config_path)
 
     def _upload_config_as_attachment(self, params, record_uid: str, config_path: str) -> None:
         """Upload config.json as a file attachment (requires file storage plan)."""
