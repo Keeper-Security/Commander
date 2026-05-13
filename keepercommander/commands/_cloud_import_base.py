@@ -34,6 +34,26 @@ _KV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 _DEDUP_TYPED = frozenset({'login', 'password', 'url', 'email'})
 
 
+def _coerce_json_value(v):
+    # type: (object) -> str
+    """
+    Convert a JSON-decoded Python value to a plain string suitable for a
+    Keeper text field, preserving semantics rather than using Python's str().
+
+      None  → ''            (avoids the literal string 'None')
+      bool  → 'true'/'false' (JSON casing, not Python's 'True'/'False')
+      dict/list → json.dumps() (round-trippable JSON, not Python repr)
+      anything else → str()
+    """
+    if v is None:
+        return ''
+    if isinstance(v, bool):
+        return 'true' if v else 'false'
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
+
+
 def add_filter_args(parser):
     """Attach the standard five filter arguments to *parser*."""
     group = parser.add_argument_group(
@@ -98,7 +118,7 @@ class CloudImportMixin:
             try:
                 obj = json.loads(secret_string)
                 if isinstance(obj, dict):
-                    return {str(k): str(v) for k, v in obj.items()}
+                    return {str(k): _coerce_json_value(v) for k, v in obj.items()}
             except (json.JSONDecodeError, ValueError):
                 pass
 
@@ -140,6 +160,7 @@ class CloudImportMixin:
         - 'username' / 'user' / 'login'  → typed login field.
         - 'password' / 'pass' / 'secret' / 'secret_value' → typed password field.
         - 'url' / 'endpoint' / 'host'    → typed url field.
+        - 'email' / 'mail'              → typed email field.
         - Everything else                → text typed field.
         - Duplicate semantic types (login, password, url, email) route subsequent
           occurrences to custom fields to avoid server-side rejection.
@@ -168,6 +189,8 @@ class CloudImportMixin:
                 keeper_type = 'password'
             elif lower in ('url', 'endpoint', 'host'):
                 keeper_type = 'url'
+            elif lower in ('email', 'mail'):
+                keeper_type = 'email'
 
             if keeper_type in _DEDUP_TYPED and keeper_type in used_typed:
                 # Duplicate semantic type — store with original label as custom text.

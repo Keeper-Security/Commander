@@ -130,6 +130,37 @@ class TestCloudImportBase(TestCase):
         result = CloudImportMixin._parse_secret_string('API_TOKEN=abc123')
         self.assertEqual(result, {'API_TOKEN': 'abc123'})
 
+    def test_parse_json_null_value_becomes_empty_string(self):
+        """JSON null must not become the literal string 'None'."""
+        result = CloudImportMixin._parse_secret_string('{"dbname": null}')
+        self.assertEqual(result['dbname'], '')
+
+    def test_parse_json_bool_true_becomes_lowercase(self):
+        """JSON true must become 'true', not Python's 'True'."""
+        result = CloudImportMixin._parse_secret_string('{"enabled": true}')
+        self.assertEqual(result['enabled'], 'true')
+
+    def test_parse_json_bool_false_becomes_lowercase(self):
+        result = CloudImportMixin._parse_secret_string('{"enabled": false}')
+        self.assertEqual(result['enabled'], 'false')
+
+    def test_parse_json_nested_object_becomes_json_string(self):
+        """Nested dict must be json.dumps'd, not Python repr'd."""
+        result = CloudImportMixin._parse_secret_string('{"config": {"host": "x", "port": 5432}}')
+        import json as _json
+        # Must be valid JSON, not Python repr with single quotes
+        parsed = _json.loads(result['config'])
+        self.assertEqual(parsed, {'host': 'x', 'port': 5432})
+
+    def test_parse_json_array_becomes_json_string(self):
+        result = CloudImportMixin._parse_secret_string('{"hosts": ["h1", "h2"]}')
+        import json as _json
+        self.assertEqual(_json.loads(result['hosts']), ['h1', 'h2'])
+
+    def test_parse_json_integer_becomes_string(self):
+        result = CloudImportMixin._parse_secret_string('{"port": 5432}')
+        self.assertEqual(result['port'], '5432')
+
     # --- _build_keeper_record ---
 
     def test_build_record_sets_title_and_type(self):
@@ -188,6 +219,23 @@ class TestCloudImportBase(TestCase):
         record = CloudImportMixin._build_keeper_record('s', fields, 'login')
         typed_types = [f.type for f in record.fields]
         self.assertEqual(typed_types.count('password'), 1)
+        self.assertEqual(len(record.custom), 1)
+
+    def test_build_record_email_key_maps_to_email_typed_field(self):
+        """'email' and 'mail' keys must produce a typed email field, not text."""
+        record = CloudImportMixin._build_keeper_record('s', {'email': 'u@example.com'}, 'login')
+        types = [f.type for f in record.fields]
+        self.assertIn('email', types)
+        self.assertEqual(len(record.custom), 0)
+
+    def test_build_record_mail_key_maps_to_email_typed_field(self):
+        record = CloudImportMixin._build_keeper_record('s', {'mail': 'u@example.com'}, 'login')
+        self.assertIn('email', {f.type for f in record.fields})
+
+    def test_build_record_duplicate_email_goes_to_custom(self):
+        fields = {'email': 'primary@example.com', 'mail': 'alt@example.com'}
+        record = CloudImportMixin._build_keeper_record('s', fields, 'login')
+        self.assertEqual([f.type for f in record.fields].count('email'), 1)
         self.assertEqual(len(record.custom), 1)
 
     def test_build_record_mixed_fields(self):
@@ -871,3 +919,50 @@ class TestGcpSecretsImport(TestCase):
         params.sync_data = False
         self._run_with_mocked_gcp(params, [{'name': 'sec', 'tags': {}}], {'sec': 'pw=x'})
         self.assertTrue(params.sync_data)
+
+    def test_get_secret_value_binary_raises_command_error(self):
+        """Binary (non-UTF-8) payloads must raise CommandError, not propagate UnicodeDecodeError."""
+        mock_client = mock.MagicMock()
+        binary_payload = b'\x30\x82\x03\x01\x00\x01'   # DER-encoded bytes
+        mock_version = mock.MagicMock()
+        mock_version.payload.data = binary_payload
+        mock_client.access_secret_version.return_value = mock_version
+
+        with self.assertRaises(CommandError) as ctx:
+            self.cmd._get_secret_value(mock_client, 'projects/p/secrets/tls-cert')
+
+        self.assertIn('binary data', str(ctx.exception).lower())
+        self.assertIn('tls-cert', str(ctx.exception))
+
+    def test_get_secret_value_binary_skipped_gracefully_in_run_import(self):
+        """Binary secrets must be counted as skipped, not abort the whole import."""
+        params = _make_params()
+        binary_bytes = b'\x30\x82\xff\xfe'
+
+        mock_client = mock.MagicMock()
+        good_version = mock.MagicMock()
+        good_version.payload.data = b'password=s3cr3t'
+        bad_version = mock.MagicMock()
+        bad_version.payload.data = binary_bytes
+
+        def _access_version(request):
+            if 'tls-cert' in request['name']:
+                return bad_version
+            return good_version
+
+        mock_client.access_secret_version.side_effect = _access_version
+
+        meta = [{'name': 'my-db', 'tags': {}}, {'name': 'tls-cert', 'tags': {}}]
+        captured = []
+
+        with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
+             mock.patch('keepercommander.record_management.add_record_to_folder',
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
+            self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project')
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].title, 'my-db')

@@ -119,17 +119,29 @@ class GcpSecretsImportCommand(Command, CloudImportMixin):
 
         *full_resource_name* is the GCP resource path
         ``projects/{project}/secrets/{secret-id}/versions/latest``.
+
+        Raises CommandError if the payload is binary (non-UTF-8), since Keeper
+        text fields cannot represent arbitrary bytes.
         """
         from google.api_core.exceptions import NotFound, PermissionDenied
 
+        secret_name = full_resource_name.split('/')[-1]
         version_name = f'{full_resource_name}/versions/latest'
         try:
             response = client.access_secret_version(request={'name': version_name})
-            return response.payload.data.decode('utf-8')
         except NotFound:
-            raise ValueError(f'no accessible version for "{full_resource_name.split("/")[-1]}"')
+            raise ValueError(f'no accessible version for "{secret_name}"')
         except PermissionDenied:
-            raise PermissionError(f'permission denied accessing "{full_resource_name.split("/")[-1]}"')
+            raise PermissionError(f'permission denied accessing "{secret_name}"')
+
+        try:
+            return response.payload.data.decode('utf-8')
+        except UnicodeDecodeError:
+            raise CommandError(
+                'gcp-secrets-import',
+                f'"{secret_name}" contains binary data which is not supported. '
+                'Only text secrets can be imported.'
+            )
 
     # ------------------------------------------------------------------
     # Main entry point

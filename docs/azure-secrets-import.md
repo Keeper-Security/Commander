@@ -212,9 +212,11 @@ Parsed key/value pairs from the secret are mapped to Keeper field types before b
 | `username`, `user`, `login` | `login` | Typed fields |
 | `password`, `pass`, `secret`, `secret_value` | `password` | Typed fields |
 | `url`, `endpoint`, `host` | `url` | Typed fields |
-| anything else | `text` | Custom fields |
+| `email`, `mail` | `email` | Typed fields |
+| `note`, `notes` | — | Record Notes section |
+| anything else | `text` | Typed fields |
 
-Fields whose type matches a known Keeper typed field (`login`, `password`, `url`, `email`, `text`, `note`) are placed in the record's **typed fields** list. All other parsed keys are stored as **custom fields** with type `text`.
+The `note` and `notes` keys are written to the record's **Notes** field rather than appearing as a typed or custom field. All other keys not listed above are stored as `text` typed fields. If the same semantic type (e.g. `login`, `password`, `url`, `email`) appears more than once, the first occurrence takes the typed field slot and subsequent ones are stored as **custom fields**.
 
 ---
 
