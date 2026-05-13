@@ -27,7 +27,8 @@ sso_cloud_get_parser.add_argument(
     '--format', dest='format', action='store', choices=['table', 'json'], default='table',
     help='Output format.')
 sso_cloud_get_parser.add_argument(
-    '--output', dest='output', action='store', help='Path to output file.')
+    '--output', dest='output', action='store',
+    help='Path to output file (ignored for "table" format).')
 
 sso_cloud_guide_parser = argparse.ArgumentParser(
     prog='sso-cloud-guide', description='Show IdP-specific setup guide for an SSO Cloud configuration.')
@@ -43,7 +44,8 @@ sso_cloud_config_list_parser.add_argument(
     '--format', dest='format', action='store', choices=['table', 'json'], default='table',
     help='Output format.')
 sso_cloud_config_list_parser.add_argument(
-    '--output', dest='output', action='store', help='Path to output file.')
+    '--output', dest='output', action='store',
+    help='Path to output file (ignored for "table" format).')
 
 sso_cloud_create_parser = argparse.ArgumentParser(
     prog='sso-cloud-create', description='Create a new SSO Cloud service provider and SAML2 configuration.')
@@ -95,7 +97,8 @@ sso_cloud_log_parser.add_argument('--verbose', '-v', dest='verbose', action='sto
                                   help='Show full SAML XML content for each entry.')
 sso_cloud_log_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                                   default='table', help='Output format.')
-sso_cloud_log_parser.add_argument('--output', dest='output', action='store', help='Path to output file.')
+sso_cloud_log_parser.add_argument('--output', dest='output', action='store',
+                                  help='Path to output file (ignored for "table" format).')
 
 sso_cloud_log_clear_parser = argparse.ArgumentParser(
     prog='sso-cloud-log-clear', description='Clear SAML log entries for an SSO Cloud service provider.')
