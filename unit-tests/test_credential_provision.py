@@ -582,16 +582,20 @@ class TestComprehensiveValidation(unittest.TestCase):
         self.assertEqual(len(errors), 0, 'Valid config should have no errors')
 
     def test_missing_required_sections(self):
-        """Test detection of missing required sections."""
+        """Test detection of missing required sections.
+
+        Note: rotation is OPTIONAL as of cp-rotation-skip-feat (omitting it means
+        Commander will not manage rotation for the record). Only user and account
+        are required top-level sections.
+        """
         config = {
             'user': {'first_name': 'John'},
-            # Missing account, rotation sections
+            # Missing account section
         }
         errors = self.cmd._validate_config(self.mock_params, config)
         self.assertGreater(len(errors), 0, 'Should detect missing sections')
         error_text = ' '.join(errors)
         self.assertIn('account', error_text)
-        self.assertIn('rotation', error_text)
 
     def test_multiple_validation_errors(self):
         """Test that multiple errors are collected (not fail-fast)."""
