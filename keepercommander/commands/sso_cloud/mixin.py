@@ -172,9 +172,15 @@ class SsoCloudMixin(object):
         """Show IdP-specific setup guidance with formatted output."""
         idp_type_name = SsoCloudMixin._get_idp_type_name(config_rs)
         if not idp_type_name:
+            logging.warning('No IdP type set on this configuration. '
+                            'Use "sso-cloud set <sp> --set sso_idp_type_id=<id>" to set the IdP type, '
+                            'then re-run "sso-cloud guide".')
             return
         guidance = IDP_SETUP_GUIDANCE.get(idp_type_name)
         if not guidance:
+            supported = ', '.join(sorted(IDP_SETUP_GUIDANCE.keys()))
+            logging.warning('No setup guide is available for IdP type "%s". '
+                            'Guides currently exist for: %s.', idp_type_name, supported)
             return
 
         sp = SsoCloudMixin._extract_sp_values(config_rs)

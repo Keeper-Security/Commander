@@ -76,7 +76,7 @@ class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
             logging.info('File "%s" uploaded to configuration "%s" (ID: %s).',
                          filename, config_rs.name, config_id)
 
-        if kwargs.get('force_authn'):
+        if not has_errors and kwargs.get('force_authn'):
             setting_rq = ssocloud.SsoCloudConfigurationRequest()
             setting_rq.ssoServiceProviderId = sp_id
             setting_rq.ssoSpConfigurationId = config_id
@@ -89,6 +89,8 @@ class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
                 params, setting_rq, 'sso/config/sso_cloud_configuration_setting_set',
                 rs_type=ssocloud.SsoCloudConfigurationResponse)
             logging.info('ForceAuthn enabled.')
+        elif has_errors and kwargs.get('force_authn'):
+            logging.warning('Skipping --force-authn activation because metadata upload had validation errors.')
 
 
 class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
@@ -107,7 +109,12 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
             server_base += '/'
         metadata_url = f'{server_base}sso/saml/metadata/{sp_id}'
 
-        rs = http_requests.get(metadata_url, timeout=30)
+        rs = http_requests.get(
+            metadata_url,
+            proxies=params.rest_context.proxies,
+            verify=params.rest_context.certificate_check,
+            timeout=30,
+        )
         if rs.status_code != 200:
             raise CommandError('sso-cloud',
                                f'Failed to download SP metadata (HTTP {rs.status_code}): {rs.text[:200]}')
