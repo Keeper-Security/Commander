@@ -922,41 +922,52 @@ class TestGcpSecretsImport(TestCase):
 
     def test_get_secret_value_binary_raises_command_error(self):
         """Binary (non-UTF-8) payloads must raise CommandError, not propagate UnicodeDecodeError."""
+        import sys
+        import types
+
+        # google-cloud-secret-manager is an optional extra and may not be installed
+        # in the test environment.  Provide a minimal mock so the import inside
+        # _get_secret_value succeeds without the real package.
+        mock_exc_module = types.ModuleType('google.api_core.exceptions')
+        mock_exc_module.NotFound = type('NotFound', (Exception,), {})
+        mock_exc_module.PermissionDenied = type('PermissionDenied', (Exception,), {})
+
         mock_client = mock.MagicMock()
         binary_payload = b'\x30\x82\x03\x01\x00\x01'   # DER-encoded bytes
         mock_version = mock.MagicMock()
         mock_version.payload.data = binary_payload
         mock_client.access_secret_version.return_value = mock_version
 
-        with self.assertRaises(CommandError) as ctx:
+        with mock.patch.dict(sys.modules, {'google.api_core.exceptions': mock_exc_module}), \
+             self.assertRaises(CommandError) as ctx:
             self.cmd._get_secret_value(mock_client, 'projects/p/secrets/tls-cert')
 
         self.assertIn('binary data', str(ctx.exception).lower())
         self.assertIn('tls-cert', str(ctx.exception))
 
     def test_get_secret_value_binary_skipped_gracefully_in_run_import(self):
-        """Binary secrets must be counted as skipped, not abort the whole import."""
+        """
+        A binary secret raises CommandError from _get_secret_value; execute()
+        must count it as skipped while still importing text secrets.
+
+        _get_secret_value is mocked directly here — the binary-detection logic
+        is already covered by test_get_secret_value_binary_raises_command_error.
+        This test focuses on the execute() / _run_import integration.
+        """
         params = _make_params()
-        binary_bytes = b'\x30\x82\xff\xfe'
 
-        mock_client = mock.MagicMock()
-        good_version = mock.MagicMock()
-        good_version.payload.data = b'password=s3cr3t'
-        bad_version = mock.MagicMock()
-        bad_version.payload.data = binary_bytes
-
-        def _access_version(request):
-            if 'tls-cert' in request['name']:
-                return bad_version
-            return good_version
-
-        mock_client.access_secret_version.side_effect = _access_version
+        def _get_value(client, full_name):
+            if 'tls-cert' in full_name:
+                raise CommandError('gcp-secrets-import',
+                                   '"tls-cert" contains binary data which is not supported.')
+            return 'password=s3cr3t'
 
         meta = [{'name': 'my-db', 'tags': {}}, {'name': 'tls-cert', 'tags': {}}]
         captured = []
 
-        with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
+        with mock.patch.object(self.cmd, '_get_client', return_value=mock.MagicMock()), \
              mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
+             mock.patch.object(self.cmd, '_get_secret_value', side_effect=_get_value), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
                         side_effect=_fake_add_record_pb(captured)), \
              mock.patch('keepercommander.api.communicate_rest',
