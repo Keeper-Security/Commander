@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from data_vault import get_synced_params
 
 from keepercommander import utils as keeper_utils, vault
-from keepercommander.subfolder import SharedFolderNode, BaseFolderNode
+from keepercommander.subfolder import SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
 from keepercommander.error import CommandError
 from keepercommander.proto import record_pb2
 from keepercommander.commands._cloud_import_base import CloudImportMixin
@@ -22,25 +22,32 @@ from keepercommander.commands.gcp_import import GcpSecretsImportCommand
 # ---------------------------------------------------------------------------
 
 FOLDER_UID = 'TEST_SHARED_FOLDER_UID'
+PERSONAL_FOLDER_UID = 'TEST_PERSONAL_FOLDER_UID'
 
 
 def _make_params():
-    """Return synced KeeperParams with a shared folder in the cache."""
+    """Return synced KeeperParams with a shared folder and a personal folder."""
     params = get_synced_params()
-    folder = SharedFolderNode()
-    folder.uid = FOLDER_UID
-    params.folder_cache[FOLDER_UID] = folder
+
+    shared = SharedFolderNode()
+    shared.uid = FOLDER_UID
+    params.folder_cache[FOLDER_UID] = shared
+
+    # Personal (user) folder — should be rejected by _validate_folder
+    from keepercommander.subfolder import UserFolderNode
+    personal = UserFolderNode()
+    personal.uid = PERSONAL_FOLDER_UID
+    params.folder_cache[PERSONAL_FOLDER_UID] = personal
+
     return params
 
 
 def _fake_add_record_pb(captured):
     """
-    Side-effect for record_management.add_record_to_folder that supports the
-    pb_only=True batch path.
+    Side-effect for record_management.add_record_to_folder (pb_only path).
 
-    - Always appends the record to *captured* so tests can assert on it.
-    - When pb_only=True, returns a real record_pb2.RecordAdd whose record_uid
-      bytes match the record's UID string so the batch-response matcher works.
+    Appends the record to *captured* and returns a real RecordAdd whose
+    record_uid bytes match the record UID so the batch response matcher works.
     """
     def _side_effect(params, record, folder_uid, pb_only=False):
         if not record.record_uid:
@@ -54,10 +61,7 @@ def _fake_add_record_pb(captured):
 
 
 def _fake_records_add_success(params_arg, rq, endpoint, rs_type=None):
-    """
-    Side-effect for api.communicate_rest that returns a successful
-    RecordsModifyResponse for every record in the request.
-    """
+    """Side-effect for api.communicate_rest: returns RS_SUCCESS for every record."""
     rs = record_pb2.RecordsModifyResponse()
     rs.revision = 1
     for pb_rec in rq.records:
@@ -65,6 +69,13 @@ def _fake_records_add_success(params_arg, rq, endpoint, rs_type=None):
         rec_rs.record_uid = bytes(pb_rec.record_uid)
         rec_rs.status = record_pb2.RS_SUCCESS
         rs.records.append(rec_rs)
+    return rs
+
+
+def _fake_records_add_empty_response(params_arg, rq, endpoint, rs_type=None):
+    """Side-effect that returns an empty records list (simulates truncated response)."""
+    rs = record_pb2.RecordsModifyResponse()
+    rs.revision = 1
     return rs
 
 
@@ -102,10 +113,22 @@ class TestCloudImportBase(TestCase):
         self.assertEqual(CloudImportMixin._parse_secret_string(''), {})
         self.assertEqual(CloudImportMixin._parse_secret_string(None), {})
 
-    def test_parse_invalid_json_falls_through_to_kv(self):
-        # Looks like JSON but is malformed → falls through to KEY=VALUE
+    def test_parse_invalid_json_falls_through_to_fallback(self):
         result = CloudImportMixin._parse_secret_string('{bad json')
         self.assertEqual(result, {'value': '{bad json'})
+
+    def test_parse_kv_non_posix_key_falls_through_to_fallback(self):
+        """A line whose key contains non-POSIX chars must not be parsed as KEY=VALUE."""
+        # JWT-like single line: key contains dots and slashes
+        jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.abc123=='
+        result = CloudImportMixin._parse_secret_string(jwt)
+        # '=' in the JWT triggers partition but the key contains '.' → not POSIX → fallback
+        self.assertEqual(result, {'value': jwt})
+
+    def test_parse_kv_single_line_with_posix_key_still_parsed(self):
+        """A single KEY=VALUE with a valid POSIX key is legitimately parsed."""
+        result = CloudImportMixin._parse_secret_string('API_TOKEN=abc123')
+        self.assertEqual(result, {'API_TOKEN': 'abc123'})
 
     # --- _build_keeper_record ---
 
@@ -116,32 +139,58 @@ class TestCloudImportBase(TestCase):
 
     def test_build_record_maps_username_to_login_typed_field(self):
         record = CloudImportMixin._build_keeper_record('s', {'username': 'admin'}, 'login')
-        types = [f.type for f in record.fields]
-        self.assertIn('login', types)
-        self.assertEqual(len(record.custom), 0)
+        self.assertIn('login', {f.type for f in record.fields})
 
     def test_build_record_maps_password_to_typed_field(self):
         record = CloudImportMixin._build_keeper_record('s', {'password': 'pw'}, 'login')
-        types = [f.type for f in record.fields]
-        self.assertIn('password', types)
+        self.assertIn('password', {f.type for f in record.fields})
 
     def test_build_record_maps_url_to_typed_field(self):
         record = CloudImportMixin._build_keeper_record('s', {'url': 'https://example.com'}, 'login')
-        types = [f.type for f in record.fields]
-        self.assertIn('url', types)
+        self.assertIn('url', {f.type for f in record.fields})
 
     def test_build_record_unmapped_key_uses_text_typed_field(self):
-        # Keys with no special mapping fall back to keeper_type='text',
-        # which is in KNOWN_TYPED_FIELDS, so they land in record.fields not custom.
         record = CloudImportMixin._build_keeper_record('s', {'region': 'us-east-1'}, 'login')
         self.assertEqual(len(record.fields), 1)
         self.assertEqual(record.fields[0].type, 'text')
         self.assertEqual(record.fields[0].label, 'region')
         self.assertEqual(len(record.custom), 0)
 
+    def test_build_record_note_key_goes_to_notes_property(self):
+        """'note' and 'notes' must be written to record.notes, not a typed field."""
+        record = CloudImportMixin._build_keeper_record('s', {'note': 'rotate weekly'}, 'login')
+        self.assertEqual(record.notes, 'rotate weekly')
+        self.assertEqual(len(record.fields), 0)
+        self.assertEqual(len(record.custom), 0)
+
+    def test_build_record_notes_key_goes_to_notes_property(self):
+        record = CloudImportMixin._build_keeper_record('s', {'notes': 'rotate monthly'}, 'login')
+        self.assertEqual(record.notes, 'rotate monthly')
+
+    def test_build_record_first_note_wins(self):
+        """Only the first note/notes field populates record.notes."""
+        record = CloudImportMixin._build_keeper_record(
+            's', {'note': 'first', 'notes': 'second'}, 'login')
+        self.assertEqual(record.notes, 'first')
+
+    def test_build_record_duplicate_login_goes_to_custom(self):
+        """Second 'login'-typed field should be stored in custom fields."""
+        fields = {'username': 'u1', 'login': 'u2'}
+        record = CloudImportMixin._build_keeper_record('s', fields, 'login')
+        typed_types = [f.type for f in record.fields]
+        self.assertEqual(typed_types.count('login'), 1)
+        self.assertEqual(len(record.custom), 1)
+        self.assertEqual(record.custom[0].type, 'text')
+
+    def test_build_record_duplicate_password_goes_to_custom(self):
+        """Second 'password'-typed field should be stored in custom fields."""
+        fields = {'password': 'p1', 'pass': 'p2'}
+        record = CloudImportMixin._build_keeper_record('s', fields, 'login')
+        typed_types = [f.type for f in record.fields]
+        self.assertEqual(typed_types.count('password'), 1)
+        self.assertEqual(len(record.custom), 1)
+
     def test_build_record_mixed_fields(self):
-        # All three fields land in record.fields: login and password by explicit mapping,
-        # region by the default 'text' fallback (which is in KNOWN_TYPED_FIELDS).
         fields = {'username': 'admin', 'password': 'pw', 'region': 'us-east-1'}
         record = CloudImportMixin._build_keeper_record('s', fields, 'login')
         typed_types = {f.type for f in record.fields}
@@ -153,20 +202,20 @@ class TestCloudImportBase(TestCase):
     # --- _parse_tag_filter ---
 
     def test_parse_tag_filter_single(self):
-        result = CloudImportMixin._parse_tag_filter('Env=prod', 'cmd')
-        self.assertEqual(result, [('Env', 'prod')])
+        self.assertEqual(CloudImportMixin._parse_tag_filter('Env=prod', 'cmd'),
+                         [('Env', 'prod')])
 
     def test_parse_tag_filter_multiple(self):
-        result = CloudImportMixin._parse_tag_filter('Env=prod,Team=ops', 'cmd')
-        self.assertEqual(result, [('Env', 'prod'), ('Team', 'ops')])
+        self.assertEqual(CloudImportMixin._parse_tag_filter('Env=prod,Team=ops', 'cmd'),
+                         [('Env', 'prod'), ('Team', 'ops')])
 
     def test_parse_tag_filter_invalid_raises(self):
         with self.assertRaises(CommandError):
             CloudImportMixin._parse_tag_filter('Env', 'cmd')
 
     def test_parse_tag_filter_ignores_empty_tokens(self):
-        result = CloudImportMixin._parse_tag_filter('Env=prod,', 'cmd')
-        self.assertEqual(result, [('Env', 'prod')])
+        self.assertEqual(CloudImportMixin._parse_tag_filter('Env=prod,', 'cmd'),
+                         [('Env', 'prod')])
 
     # --- _matches_name_filters ---
 
@@ -190,10 +239,8 @@ class TestCloudImportBase(TestCase):
         self.assertTrue(CloudImportMixin._matches_name_filters('anything', None, None, None, None))
 
     def test_name_filter_combined_all_must_pass(self):
-        # starts with prod/ AND contains rds → pass
         self.assertTrue(CloudImportMixin._matches_name_filters(
             'prod/rds/pw', None, 'prod/', None, 'rds'))
-        # starts with prod/ but doesn't contain rds → fail
         self.assertFalse(CloudImportMixin._matches_name_filters(
             'prod/mysql/pw', None, 'prod/', None, 'rds'))
 
@@ -208,8 +255,7 @@ class TestCloudImportBase(TestCase):
         self.assertFalse(CloudImportMixin._matches_tag_filters(tags, [('Env', 'prod'), ('Team', 'ops')]))
 
     def test_tag_filter_missing_key(self):
-        tags = {'Team': 'ops'}
-        self.assertFalse(CloudImportMixin._matches_tag_filters(tags, [('Env', 'prod')]))
+        self.assertFalse(CloudImportMixin._matches_tag_filters({'Team': 'ops'}, [('Env', 'prod')]))
 
     def test_tag_filter_empty_required_always_passes(self):
         self.assertTrue(CloudImportMixin._matches_tag_filters({}, []))
@@ -226,14 +272,28 @@ class TestCloudImportBase(TestCase):
         with self.assertRaises(CommandError):
             CloudImportMixin._validate_folder(params, 'NONEXISTENT_UID', 'cmd')
 
-    def test_validate_folder_known_uid_passes(self):
+    def test_validate_folder_personal_folder_raises(self):
+        """A personal (user) folder UID must be rejected."""
+        params = _make_params()
+        with self.assertRaises(CommandError):
+            CloudImportMixin._validate_folder(params, PERSONAL_FOLDER_UID, 'cmd')
+
+    def test_validate_folder_shared_uid_passes(self):
         params = _make_params()
         CloudImportMixin._validate_folder(params, FOLDER_UID, 'cmd')
+
+    def test_validate_folder_shared_folder_folder_passes(self):
+        """A SharedFolderFolderNode (sub-folder inside a shared folder) is also valid."""
+        params = _make_params()
+        from keepercommander.subfolder import SharedFolderFolderNode
+        sff = SharedFolderFolderNode()
+        sff.uid = 'SFF_UID'
+        params.folder_cache['SFF_UID'] = sff
+        CloudImportMixin._validate_folder(params, 'SFF_UID', 'cmd')
 
     # --- _run_import ---
 
     def test_run_import_dry_run_does_not_create_records(self):
-        """In dry-run mode _run_import should print but not call add_record_to_folder."""
         mixin = CloudImportMixin()
         params = _make_params()
         secrets = [{'name': 'my-secret', 'value': 'pw=s3cr3t', 'tags': {}}]
@@ -275,7 +335,7 @@ class TestCloudImportBase(TestCase):
         params = _make_params()
         secrets = [
             {'name': 'prod/db', 'value': 'password=pw', 'tags': {}},
-            {'name': 'dev/db', 'value': 'password=pw', 'tags': {}},
+            {'name': 'dev/db',  'value': 'password=pw', 'tags': {}},
         ]
         captured = []
 
@@ -309,6 +369,69 @@ class TestCloudImportBase(TestCase):
 
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0].title, 'secret-a')
+
+    def test_run_import_value_fetcher_called_after_filter(self):
+        """value_fetcher must only be called for secrets that pass all filters."""
+        mixin = CloudImportMixin()
+        params = _make_params()
+        secrets = [
+            {'name': 'prod/db', 'tags': {}},
+            {'name': 'dev/db',  'tags': {}},
+        ]
+        fetched_names = []
+
+        def _fetcher(name):
+            fetched_names.append(name)
+            return 'password=pw'
+
+        captured = []
+        with mock.patch('keepercommander.record_management.add_record_to_folder',
+                        side_effect=_fake_add_record_pb(captured)), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_success), \
+             mock.patch('builtins.print'):
+            mixin._run_import(params, secrets, FOLDER_UID, 'login',
+                              None, 'prod/', None, None, [], False, 'cmd',
+                              value_fetcher=_fetcher)
+
+        self.assertEqual(fetched_names, ['prod/db'])
+        self.assertEqual(len(captured), 1)
+
+    def test_run_import_value_fetcher_not_called_on_dry_run(self):
+        """value_fetcher must NOT be called during a dry run."""
+        mixin = CloudImportMixin()
+        params = _make_params()
+        secrets = [{'name': 'sec', 'tags': {}}]
+        fetch_calls = []
+
+        with mock.patch('keepercommander.api.communicate_rest'), \
+             mock.patch('builtins.print'):
+            mixin._run_import(params, secrets, FOLDER_UID, 'login',
+                              None, None, None, None, [], True, 'cmd',
+                              value_fetcher=lambda n: fetch_calls.append(n) or 'v=1')
+
+        self.assertEqual(fetch_calls, [])
+
+    def test_run_import_absent_uid_in_response_counts_as_skipped(self):
+        """Records missing from the server response must be counted as skipped, not created."""
+        mixin = CloudImportMixin()
+        params = _make_params()
+        params.sync_data = False
+        secrets = [{'name': 'sec', 'value': 'v=1', 'tags': {}}]
+
+        with mock.patch('keepercommander.record_management.add_record_to_folder',
+                        side_effect=_fake_add_record_pb([])), \
+             mock.patch('keepercommander.api.communicate_rest',
+                        side_effect=_fake_records_add_empty_response), \
+             mock.patch('builtins.print') as print_mock:
+            mixin._run_import(params, secrets, FOLDER_UID, 'login',
+                              None, None, None, None, [], False, 'cmd')
+
+        # sync_data must NOT be set — nothing was successfully created
+        self.assertFalse(params.sync_data)
+        printed = ' '.join(str(a) for call in print_mock.call_args_list for a in call.args)
+        self.assertIn('0 record(s) created', printed)
+        self.assertIn('1 skipped', printed)
 
     def test_run_import_sets_sync_data_when_records_created(self):
         mixin = CloudImportMixin()
@@ -351,6 +474,11 @@ class TestAwsSecretsImport(TestCase):
         with self.assertRaises(CommandError):
             self.cmd.execute(params, folder='NONEXISTENT')
 
+    def test_execute_personal_folder_raises(self):
+        params = _make_params()
+        with self.assertRaises(CommandError):
+            self.cmd.execute(params, folder=PERSONAL_FOLDER_UID)
+
     def test_execute_access_key_without_secret_key_raises(self):
         params = _make_params()
         with self.assertRaises(CommandError):
@@ -363,14 +491,20 @@ class TestAwsSecretsImport(TestCase):
 
     # --- happy path ---
 
-    def _run_with_mocked_aws(self, params, aws_secrets, **extra_kwargs):
-        """Helper: run execute() with _list_secrets and _get_secret_value mocked."""
-        secret_values = {s['Name']: s.get('_value', '') for s in aws_secrets}
+    def _run_with_mocked_aws(self, params, secret_meta, value_map=None, **extra_kwargs):
+        """
+        Run execute() with AWS internals mocked.
+
+        *secret_meta* is a list of {'name', 'tags'} dicts (the normalised format
+        returned by _list_secret_metadata after this refactor).
+        *value_map* maps name → secret value string.
+        """
+        value_map = value_map or {}
         captured = []
 
-        with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
+        with mock.patch.object(self.cmd, '_list_secret_metadata', return_value=secret_meta), \
              mock.patch.object(self.cmd, '_get_secret_value',
-                               side_effect=lambda name, region: secret_values.get(name, '')), \
+                               side_effect=lambda name, region: value_map.get(name, '')), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
                         side_effect=_fake_add_record_pb(captured)), \
              mock.patch('keepercommander.api.communicate_rest',
@@ -382,83 +516,73 @@ class TestAwsSecretsImport(TestCase):
 
     def test_execute_imports_all_secrets(self):
         params = _make_params()
-        aws_secrets = [
-            {'Name': 'prod/db', 'Tags': [], '_value': '{"username": "admin", "password": "pw"}'},
-            {'Name': 'prod/api', 'Tags': [], '_value': 'token=abc123'},
-        ]
-        records = self._run_with_mocked_aws(params, aws_secrets)
+        meta = [{'name': 'prod/db', 'tags': {}}, {'name': 'prod/api', 'tags': {}}]
+        values = {'prod/db': '{"username": "admin", "password": "pw"}',
+                  'prod/api': 'token=abc123'}
+        records = self._run_with_mocked_aws(params, meta, values)
         self.assertEqual(len(records), 2)
-        titles = {r.title for r in records}
-        self.assertIn('prod/db', titles)
-        self.assertIn('prod/api', titles)
+        self.assertEqual({r.title for r in records}, {'prod/db', 'prod/api'})
 
     def test_execute_json_secret_fields_mapped_correctly(self):
         params = _make_params()
-        aws_secrets = [{'Name': 'my-cred', 'Tags': [],
-                        '_value': '{"username": "alice", "password": "s3cr3t"}'}]
-        records = self._run_with_mocked_aws(params, aws_secrets)
+        meta = [{'name': 'my-cred', 'tags': {}}]
+        values = {'my-cred': '{"username": "alice", "password": "s3cr3t"}'}
+        records = self._run_with_mocked_aws(params, meta, values)
         self.assertEqual(len(records), 1)
-        rec = records[0]
-        field_types = {f.type for f in rec.fields}
-        self.assertIn('login', field_types)
-        self.assertIn('password', field_types)
+        self.assertIn('login', {f.type for f in records[0].fields})
+        self.assertIn('password', {f.type for f in records[0].fields})
 
     def test_execute_dry_run_does_not_create_records(self):
         params = _make_params()
-        aws_secrets = [{'Name': 'prod/db', 'Tags': [], '_value': 'pw=secret'}]
-
-        with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
-             mock.patch.object(self.cmd, '_get_secret_value', return_value=''), \
+        meta = [{'name': 'prod/db', 'tags': {}}]
+        with mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
+             mock.patch.object(self.cmd, '_get_secret_value') as val_mock, \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
              mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID, dry_run=True)
 
+        val_mock.assert_not_called()
         add_mock.assert_not_called()
         rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
-        aws_secrets = [
-            {'Name': 'prod/db', 'Tags': [], '_value': 'v=1'},
-            {'Name': 'dev/db', 'Tags': [], '_value': 'v=2'},
-        ]
-        records = self._run_with_mocked_aws(params, aws_secrets,
+        meta = [{'name': 'prod/db', 'tags': {}}, {'name': 'dev/db', 'tags': {}}]
+        values = {'prod/db': 'v=1'}
+        records = self._run_with_mocked_aws(params, meta, values,
                                             filter_name_starts_with='prod/')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod/db')
 
-    def test_execute_tag_filter_aws_format(self):
-        """AWS tags are a list of {Key, Value} dicts."""
+    def test_execute_tag_filter_normalised_format(self):
+        """Tags are now plain dicts (normalised in _list_secret_metadata)."""
         params = _make_params()
-        aws_secrets = [
-            {'Name': 'prod/db', 'Tags': [{'Key': 'Env', 'Value': 'prod'}], '_value': 'v=1'},
-            {'Name': 'dev/db',  'Tags': [{'Key': 'Env', 'Value': 'dev'}],  '_value': 'v=2'},
+        meta = [
+            {'name': 'prod/db', 'tags': {'Env': 'prod'}},
+            {'name': 'dev/db',  'tags': {'Env': 'dev'}},
         ]
-        records = self._run_with_mocked_aws(params, aws_secrets, filter_tags='Env=prod')
+        values = {'prod/db': 'v=1'}
+        records = self._run_with_mocked_aws(params, meta, values, filter_tags='Env=prod')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod/db')
 
     def test_execute_no_secrets_returns_without_error(self):
         params = _make_params()
-        with mock.patch.object(self.cmd, '_list_secrets', return_value=[]):
+        with mock.patch.object(self.cmd, '_list_secret_metadata', return_value=[]):
             self.cmd.execute(params, folder=FOLDER_UID)
 
     def test_execute_get_value_error_skips_secret(self):
-        """A secret that raises during value fetch should be skipped, not abort."""
         params = _make_params()
-        aws_secrets = [
-            {'Name': 'good/secret', 'Tags': [], '_value': 'password=pw'},
-            {'Name': 'bad/secret', 'Tags': []},
-        ]
+        meta = [{'name': 'good', 'tags': {}}, {'name': 'bad', 'tags': {}}]
 
         def _get_value(name, region):
-            if name == 'bad/secret':
+            if name == 'bad':
                 raise RuntimeError('access denied')
             return 'password=pw'
 
         captured = []
-        with mock.patch.object(self.cmd, '_list_secrets', return_value=aws_secrets), \
+        with mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
              mock.patch.object(self.cmd, '_get_secret_value', side_effect=_get_value), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
                         side_effect=_fake_add_record_pb(captured)), \
@@ -468,35 +592,24 @@ class TestAwsSecretsImport(TestCase):
             self.cmd.execute(params, folder=FOLDER_UID)
 
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0].title, 'good/secret')
+        self.assertEqual(captured[0].title, 'good')
 
-    # --- _parse_tags (AWS-specific method) ---
+    # --- _list_secret_metadata tag normalisation ---
 
-    def test_parse_tags_single(self):
-        result = self.cmd._parse_tags('Env=prod')
-        self.assertEqual(result, [('Env', 'prod')])
+    def test_list_secret_metadata_normalises_aws_tags(self):
+        """AWS list-of-dicts tags must be converted to a plain dict."""
+        mock_sm = mock.MagicMock()
+        mock_sm.get_paginator.return_value.paginate.return_value = [{
+            'SecretList': [
+                {'Name': 'prod/db',
+                 'Tags': [{'Key': 'Env', 'Value': 'prod'}, {'Key': 'Team', 'Value': 'ops'}]},
+            ]
+        }]
+        self.cmd._access_key = None
+        with mock.patch.object(self.cmd, 'get_client', return_value=mock_sm):
+            result = self.cmd._list_secret_metadata('us-east-1')
 
-    def test_parse_tags_multiple(self):
-        result = self.cmd._parse_tags('Env=prod,Team=ops')
-        self.assertEqual(result, [('Env', 'prod'), ('Team', 'ops')])
-
-    def test_parse_tags_invalid_raises(self):
-        with self.assertRaises(CommandError):
-            self.cmd._parse_tags('NotAKeyValuePair')
-
-    # --- _matches_filters (AWS list-of-dicts tag format) ---
-
-    def test_matches_filters_tag_match(self):
-        meta = {'Name': 'prod/db', 'Tags': [{'Key': 'Env', 'Value': 'prod'}]}
-        self.assertTrue(self.cmd._matches_filters(meta, None, None, None, None, [('Env', 'prod')]))
-
-    def test_matches_filters_tag_mismatch(self):
-        meta = {'Name': 'dev/db', 'Tags': [{'Key': 'Env', 'Value': 'dev'}]}
-        self.assertFalse(self.cmd._matches_filters(meta, None, None, None, None, [('Env', 'prod')]))
-
-    def test_matches_filters_no_tags_on_secret(self):
-        meta = {'Name': 'prod/db', 'Tags': []}
-        self.assertFalse(self.cmd._matches_filters(meta, None, None, None, None, [('Env', 'prod')]))
+        self.assertEqual(result, [{'name': 'prod/db', 'tags': {'Env': 'prod', 'Team': 'ops'}}])
 
 
 # ---------------------------------------------------------------------------
@@ -523,27 +636,39 @@ class TestAzureSecretsImport(TestCase):
         with self.assertRaises(CommandError):
             self.cmd.execute(params, vault_name='my-vault', folder='NONEXISTENT')
 
-    def test_execute_partial_sp_credentials_raises(self):
-        """Providing only some service-principal flags should raise."""
+    def test_execute_personal_folder_raises(self):
         params = _make_params()
-        # tenant only
+        with self.assertRaises(CommandError):
+            self.cmd.execute(params, vault_name='my-vault', folder=PERSONAL_FOLDER_UID)
+
+    def test_execute_partial_sp_credentials_raises(self):
+        params = _make_params()
         with self.assertRaises(CommandError):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID,
                              tenant_id='tid', client_id=None, client_secret=None)
-        # tenant + client_id, missing secret
         with self.assertRaises(CommandError):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID,
                              tenant_id='tid', client_id='cid', client_secret=None)
 
     # --- happy path ---
 
-    def _run_with_mocked_azure(self, params, secrets, **extra_kwargs):
-        """Helper: run execute() with _fetch_secrets and _get_credential mocked."""
+    def _run_with_mocked_azure(self, params, secret_meta, value_map=None, **extra_kwargs):
+        """
+        Run execute() with Azure internals mocked.
+
+        *secret_meta*: list of {'name', 'tags'} dicts.
+        *value_map*:   name → secret value string.
+        """
+        value_map = value_map or {}
         mock_credential = mock.MagicMock()
+        mock_client = mock.MagicMock()
         captured = []
 
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
+             mock.patch.object(self.cmd, '_make_client', return_value=mock_client), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=secret_meta), \
+             mock.patch.object(self.cmd, '_get_secret_value',
+                               side_effect=lambda client, name: value_map.get(name, '')), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
                         side_effect=_fake_add_record_pb(captured)), \
              mock.patch('keepercommander.api.communicate_rest',
@@ -555,70 +680,70 @@ class TestAzureSecretsImport(TestCase):
 
     def test_execute_imports_all_secrets(self):
         params = _make_params()
-        secrets = [
-            {'name': 'db-password', 'value': '{"username": "admin", "password": "pw"}', 'tags': {}},
-            {'name': 'api-token',   'value': 'token=abc123', 'tags': {}},
-        ]
-        records = self._run_with_mocked_azure(params, secrets)
+        meta = [{'name': 'db-password', 'tags': {}}, {'name': 'api-token', 'tags': {}}]
+        values = {'db-password': '{"username": "admin", "password": "pw"}',
+                  'api-token': 'token=abc123'}
+        records = self._run_with_mocked_azure(params, meta, values)
         self.assertEqual(len(records), 2)
-        titles = {r.title for r in records}
-        self.assertIn('db-password', titles)
-        self.assertIn('api-token', titles)
+        self.assertEqual({r.title for r in records}, {'db-password', 'api-token'})
 
     def test_execute_dry_run_does_not_create_records(self):
         params = _make_params()
-        secrets = [{'name': 'db-password', 'value': 'pw=s3cr3t', 'tags': {}}]
+        meta = [{'name': 'db-password', 'tags': {}}]
         mock_credential = mock.MagicMock()
+        mock_client = mock.MagicMock()
 
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
+             mock.patch.object(self.cmd, '_make_client', return_value=mock_client), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
+             mock.patch.object(self.cmd, '_get_secret_value') as val_mock, \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
              mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID, dry_run=True)
 
+        val_mock.assert_not_called()
         add_mock.assert_not_called()
         rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
-        secrets = [
-            {'name': 'prod-db', 'value': 'v=1', 'tags': {}},
-            {'name': 'dev-db',  'value': 'v=2', 'tags': {}},
-        ]
-        records = self._run_with_mocked_azure(params, secrets,
+        meta = [{'name': 'prod-db', 'tags': {}}, {'name': 'dev-db', 'tags': {}}]
+        values = {'prod-db': 'v=1'}
+        records = self._run_with_mocked_azure(params, meta, values,
                                               filter_name_starts_with='prod-')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod-db')
 
-    def test_execute_tag_filter_azure_format(self):
-        """Azure tags are a plain dict (already converted in _fetch_secrets)."""
+    def test_execute_tag_filter(self):
         params = _make_params()
-        secrets = [
-            {'name': 'prod-secret', 'value': 'v=1', 'tags': {'Env': 'prod'}},
-            {'name': 'dev-secret',  'value': 'v=2', 'tags': {'Env': 'dev'}},
-        ]
-        records = self._run_with_mocked_azure(params, secrets, filter_tags='Env=prod')
+        meta = [{'name': 'prod-secret', 'tags': {'Env': 'prod'}},
+                {'name': 'dev-secret',  'tags': {'Env': 'dev'}}]
+        values = {'prod-secret': 'v=1'}
+        records = self._run_with_mocked_azure(params, meta, values, filter_tags='Env=prod')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod-secret')
 
     def test_execute_no_secrets_returns_without_error(self):
         params = _make_params()
         mock_credential = mock.MagicMock()
+        mock_client = mock.MagicMock()
         with mock.patch.object(self.cmd, '_get_credential', return_value=mock_credential), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]):
+             mock.patch.object(self.cmd, '_make_client', return_value=mock_client), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=[]):
             self.cmd.execute(params, vault_name='my-vault', folder=FOLDER_UID)
 
     def test_execute_uses_default_record_type(self):
         params = _make_params()
-        secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        records = self._run_with_mocked_azure(params, secrets)
+        records = self._run_with_mocked_azure(params, [{'name': 'sec', 'tags': {}}],
+                                              {'sec': 'password=pw'})
         self.assertEqual(records[0].type_name, 'login')
 
     def test_execute_custom_record_type(self):
         params = _make_params()
-        secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        records = self._run_with_mocked_azure(params, secrets, record_type='serverCredentials')
+        records = self._run_with_mocked_azure(params, [{'name': 'sec', 'tags': {}}],
+                                              {'sec': 'password=pw'},
+                                              record_type='serverCredentials')
         self.assertEqual(records[0].type_name, 'serverCredentials')
 
 
@@ -646,15 +771,28 @@ class TestGcpSecretsImport(TestCase):
         with self.assertRaises(CommandError):
             self.cmd.execute(params, folder='NONEXISTENT', project_id='my-project')
 
+    def test_execute_personal_folder_raises(self):
+        params = _make_params()
+        with self.assertRaises(CommandError):
+            self.cmd.execute(params, folder=PERSONAL_FOLDER_UID, project_id='my-project')
+
     # --- happy path ---
 
-    def _run_with_mocked_gcp(self, params, secrets, **extra_kwargs):
-        """Helper: run execute() with _get_client and _fetch_secrets mocked."""
+    def _run_with_mocked_gcp(self, params, secret_meta, value_map=None, **extra_kwargs):
+        """
+        Run execute() with GCP internals mocked.
+
+        *secret_meta*: list of {'name', 'tags'} dicts.
+        *value_map*:   name → secret value string.
+        """
+        value_map = value_map or {}
         mock_client = mock.MagicMock()
         captured = []
 
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=secret_meta), \
+             mock.patch.object(self.cmd, '_get_secret_value',
+                               side_effect=lambda client, full_name: value_map.get(full_name.split('/')[-1], '')), \
              mock.patch('keepercommander.record_management.add_record_to_folder',
                         side_effect=_fake_add_record_pb(captured)), \
              mock.patch('keepercommander.api.communicate_rest',
@@ -666,50 +804,45 @@ class TestGcpSecretsImport(TestCase):
 
     def test_execute_imports_all_secrets(self):
         params = _make_params()
-        secrets = [
-            {'name': 'db-password', 'value': '{"username": "root", "password": "pw"}', 'tags': {}},
-            {'name': 'api-key',     'value': 'token=xyz789', 'tags': {}},
-        ]
-        records = self._run_with_mocked_gcp(params, secrets)
+        meta = [{'name': 'db-password', 'tags': {}}, {'name': 'api-key', 'tags': {}}]
+        values = {'db-password': '{"username": "root", "password": "pw"}',
+                  'api-key': 'token=xyz789'}
+        records = self._run_with_mocked_gcp(params, meta, values)
         self.assertEqual(len(records), 2)
-        titles = {r.title for r in records}
-        self.assertIn('db-password', titles)
-        self.assertIn('api-key', titles)
+        self.assertEqual({r.title for r in records}, {'db-password', 'api-key'})
 
     def test_execute_dry_run_does_not_create_records(self):
         params = _make_params()
-        secrets = [{'name': 'db-password', 'value': 'pw=s3cr3t', 'tags': {}}]
+        meta = [{'name': 'db-password', 'tags': {}}]
         mock_client = mock.MagicMock()
 
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=secrets), \
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=meta), \
+             mock.patch.object(self.cmd, '_get_secret_value') as val_mock, \
              mock.patch('keepercommander.record_management.add_record_to_folder') as add_mock, \
              mock.patch('keepercommander.api.communicate_rest') as rest_mock, \
              mock.patch('builtins.print'):
             self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project', dry_run=True)
 
+        val_mock.assert_not_called()
         add_mock.assert_not_called()
         rest_mock.assert_not_called()
 
     def test_execute_name_filter(self):
         params = _make_params()
-        secrets = [
-            {'name': 'prod-db', 'value': 'v=1', 'tags': {}},
-            {'name': 'dev-db',  'value': 'v=2', 'tags': {}},
-        ]
-        records = self._run_with_mocked_gcp(params, secrets,
+        meta = [{'name': 'prod-db', 'tags': {}}, {'name': 'dev-db', 'tags': {}}]
+        values = {'prod-db': 'v=1'}
+        records = self._run_with_mocked_gcp(params, meta, values,
                                             filter_name_starts_with='prod-')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod-db')
 
-    def test_execute_label_filter_gcp_format(self):
-        """GCP labels are already a plain dict (normalised in _fetch_secrets)."""
+    def test_execute_label_filter(self):
         params = _make_params()
-        secrets = [
-            {'name': 'prod-secret', 'value': 'v=1', 'tags': {'env': 'prod'}},
-            {'name': 'dev-secret',  'value': 'v=2', 'tags': {'env': 'dev'}},
-        ]
-        records = self._run_with_mocked_gcp(params, secrets, filter_tags='env=prod')
+        meta = [{'name': 'prod-secret', 'tags': {'env': 'prod'}},
+                {'name': 'dev-secret',  'tags': {'env': 'dev'}}]
+        values = {'prod-secret': 'v=1'}
+        records = self._run_with_mocked_gcp(params, meta, values, filter_tags='env=prod')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].title, 'prod-secret')
 
@@ -717,24 +850,24 @@ class TestGcpSecretsImport(TestCase):
         params = _make_params()
         mock_client = mock.MagicMock()
         with mock.patch.object(self.cmd, '_get_client', return_value=mock_client), \
-             mock.patch.object(self.cmd, '_fetch_secrets', return_value=[]):
+             mock.patch.object(self.cmd, '_list_secret_metadata', return_value=[]):
             self.cmd.execute(params, folder=FOLDER_UID, project_id='my-project')
 
     def test_execute_uses_default_record_type(self):
         params = _make_params()
-        secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        records = self._run_with_mocked_gcp(params, secrets)
+        records = self._run_with_mocked_gcp(params, [{'name': 'sec', 'tags': {}}],
+                                            {'sec': 'password=pw'})
         self.assertEqual(records[0].type_name, 'login')
 
     def test_execute_custom_record_type(self):
         params = _make_params()
-        secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        records = self._run_with_mocked_gcp(params, secrets, record_type='serverCredentials')
+        records = self._run_with_mocked_gcp(params, [{'name': 'sec', 'tags': {}}],
+                                            {'sec': 'password=pw'},
+                                            record_type='serverCredentials')
         self.assertEqual(records[0].type_name, 'serverCredentials')
 
     def test_execute_sets_sync_data_after_import(self):
         params = _make_params()
         params.sync_data = False
-        secrets = [{'name': 'sec', 'value': 'password=pw', 'tags': {}}]
-        self._run_with_mocked_gcp(params, secrets)   # already mocks communicate_rest
+        self._run_with_mocked_gcp(params, [{'name': 'sec', 'tags': {}}], {'sec': 'pw=x'})
         self.assertTrue(params.sync_data)

@@ -95,51 +95,41 @@ class GcpSecretsImportCommand(Command, CloudImportMixin):
     # GCP Secret Manager helpers
     # ------------------------------------------------------------------
 
-    def _fetch_secrets(self, client, project_id):
+    def _list_secret_metadata(self, client, project_id):
         # type: (Any, str) -> List[dict]
         """
-        Return a list of normalised secret dicts:
-          {'name': str, 'value': str, 'tags': Dict[str, str]}
+        Return secret metadata only — no values fetched.
+        Result: [{'name': str, 'tags': Dict[str, str]}]
 
         GCP labels (the equivalent of tags) are a plain dict on each Secret.
-        Only the latest enabled version of each secret is fetched.
+        Value fetching is deferred until after filtering so that --dry-run
+        does not trigger cloud API calls or generate audit-log entries.
         """
-        try:
-            from google.api_core.exceptions import NotFound, PermissionDenied
-        except ImportError:
-            NotFound = Exception
-            PermissionDenied = Exception
-
         parent = f'projects/{project_id}'
         results = []
-
         for secret in client.list_secrets(request={'parent': parent}):
-            # secret.name is the full resource name, e.g.
-            # "projects/my-project/secrets/my-secret"
             short_name = secret.name.split('/')[-1]
-            labels = dict(secret.labels or {})
-
-            version_name = f'{secret.name}/versions/latest'
-            try:
-                response = client.access_secret_version(request={'name': version_name})
-                value = response.payload.data.decode('utf-8')
-            except NotFound:
-                logging.warning('gcp-secrets-import: no accessible version for "%s", skipping', short_name)
-                continue
-            except PermissionDenied:
-                logging.warning('gcp-secrets-import: permission denied accessing "%s", skipping', short_name)
-                continue
-            except Exception as exc:
-                logging.warning('gcp-secrets-import: could not retrieve "%s": %s', short_name, exc)
-                continue
-
-            results.append({
-                'name': short_name,
-                'value': value,
-                'tags': labels,
-            })
-
+            results.append({'name': short_name, 'tags': dict(secret.labels or {})})
         return results
+
+    def _get_secret_value(self, client, full_resource_name):
+        # type: (Any, str) -> str
+        """
+        Fetch and return the payload of the latest version of a secret.
+
+        *full_resource_name* is the GCP resource path
+        ``projects/{project}/secrets/{secret-id}/versions/latest``.
+        """
+        from google.api_core.exceptions import NotFound, PermissionDenied
+
+        version_name = f'{full_resource_name}/versions/latest'
+        try:
+            response = client.access_secret_version(request={'name': version_name})
+            return response.payload.data.decode('utf-8')
+        except NotFound:
+            raise ValueError(f'no accessible version for "{full_resource_name.split("/")[-1]}"')
+        except PermissionDenied:
+            raise PermissionError(f'permission denied accessing "{full_resource_name.split("/")[-1]}"')
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -170,7 +160,7 @@ class GcpSecretsImportCommand(Command, CloudImportMixin):
 
         logging.info('gcp-secrets-import: listing secrets in project "%s"…', project_id)
         try:
-            secrets = self._fetch_secrets(client, project_id)
+            secrets = self._list_secret_metadata(client, project_id)
         except CommandError:
             raise
         except Exception as exc:
@@ -182,8 +172,13 @@ class GcpSecretsImportCommand(Command, CloudImportMixin):
 
         logging.info('gcp-secrets-import: found %d secret(s).', len(secrets))
 
+        def _fetch_value(name):
+            full_name = f'projects/{project_id}/secrets/{name}'
+            return self._get_secret_value(client, full_name)
+
         self._run_import(
             params, secrets, folder_uid, record_type,
             filter_name, filter_starts, filter_ends, filter_contains,
-            required_tags, dry_run, 'gcp-secrets-import'
+            required_tags, dry_run, 'gcp-secrets-import',
+            value_fetcher=_fetch_value
         )

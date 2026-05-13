@@ -13,15 +13,25 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .. import api, utils, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2
+from ..subfolder import SharedFolderNode, SharedFolderFolderNode
 
 # Maximum records per vault/records_add API call.
 BATCH_SIZE = 999
+
+# Keys in KEY=VALUE lines must look like POSIX identifiers to avoid
+# false-positives on base64 blobs, JWTs, connection strings, etc.
+_KV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+# Typed-field types where only one instance per record is valid.
+# Subsequent occurrences of the same type are rerouted to custom fields.
+_DEDUP_TYPED = frozenset({'login', 'password', 'url', 'email'})
 
 
 def add_filter_args(parser):
@@ -74,8 +84,11 @@ class CloudImportMixin:
 
         Supported formats (in priority order):
           1. JSON object  -> {"key": "value", ...}
-          2. KEY=VALUE lines (one per line, shell-style)
+          2. KEY=VALUE lines — keys must be POSIX identifiers ([A-Za-z_][A-Za-z0-9_]*)
           3. Fallback: whole string stored under a field named "value"
+
+        The POSIX identifier requirement for KEY=VALUE prevents false-positives on
+        base64 blobs, JWTs, connection strings, and similar opaque values.
         """
         secret_string = (secret_string or '').strip()
         if not secret_string:
@@ -97,7 +110,11 @@ class CloudImportMixin:
                 continue
             if '=' in line:
                 key, _, val = line.partition('=')
-                pairs[key.strip()] = val.strip()
+                key = key.strip()
+                if not _KV_KEY_RE.match(key):
+                    parsed_as_kv = False
+                    break
+                pairs[key] = val.strip()
                 parsed_as_kv = True
             else:
                 parsed_as_kv = False
@@ -118,26 +135,51 @@ class CloudImportMixin:
         """
         Build a TypedRecord from a title and a dict of field name/value pairs.
 
-        Known Keeper field types (login, password, url, …) are placed in the
-        typed fields list; everything else lands in custom fields.
+        Field mapping rules:
+        - 'note' / 'notes' keys are written to record.notes (not a typed field).
+        - 'username' / 'user' / 'login'  → typed login field.
+        - 'password' / 'pass' / 'secret' / 'secret_value' → typed password field.
+        - 'url' / 'endpoint' / 'host'    → typed url field.
+        - Everything else                → text typed field.
+        - Duplicate semantic types (login, password, url, email) route subsequent
+          occurrences to custom fields to avoid server-side rejection.
         """
-        KNOWN_TYPED_FIELDS = {'login', 'password', 'url', 'email', 'text', 'note'}
+        KNOWN_TYPED_FIELDS = {'login', 'password', 'url', 'email', 'text'}
 
         record = vault.TypedRecord()
         record.type_name = record_type
         record.title = title
 
+        used_typed = set()  # tracks which de-dup types have already been placed
+
         for field_name, field_value in fields.items():
+            lower = field_name.lower()
+
+            # Map 'note'/'notes' to the record's notes property, not a typed field.
+            if lower in ('note', 'notes'):
+                if not record.notes:
+                    record.notes = field_value
+                continue
+
             keeper_type = 'text'
-            if field_name.lower() in ('username', 'user', 'login'):
+            if lower in ('username', 'user', 'login'):
                 keeper_type = 'login'
-            elif field_name.lower() in ('password', 'pass', 'secret', 'secret_value'):
+            elif lower in ('password', 'pass', 'secret', 'secret_value'):
                 keeper_type = 'password'
-            elif field_name.lower() in ('url', 'endpoint', 'host'):
+            elif lower in ('url', 'endpoint', 'host'):
                 keeper_type = 'url'
+
+            if keeper_type in _DEDUP_TYPED and keeper_type in used_typed:
+                # Duplicate semantic type — store with original label as custom text.
+                record.custom.append(vault.TypedField.new_field('text', field_value, field_name))
+                logging.debug('_build_keeper_record: duplicate %s field "%s" routed to custom',
+                              keeper_type, field_name)
+                continue
 
             if keeper_type in KNOWN_TYPED_FIELDS:
                 record.fields.append(vault.TypedField.new_field(keeper_type, field_value, field_name))
+                if keeper_type in _DEDUP_TYPED:
+                    used_typed.add(keeper_type)
             else:
                 record.custom.append(vault.TypedField.new_field('text', field_value, field_name))
 
@@ -199,10 +241,19 @@ class CloudImportMixin:
         # type: (KeeperParams, str, str) -> None
         if not folder_uid:
             raise CommandError(command_name, 'A shared folder UID is required.')
-        if folder_uid not in params.folder_cache:
+        folder = params.folder_cache.get(folder_uid)
+        if folder is None:
             raise CommandError(
                 command_name,
                 f'Folder UID "{folder_uid}" not found in your vault. '
+                'Use "list-sf" to find the correct shared folder UID, '
+                'or run "sync-down" if the folder was recently shared.'
+            )
+        if not isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
+            raise CommandError(
+                command_name,
+                f'"{folder_uid}" is a personal folder. '
+                'Secrets must be imported into a shared folder. '
                 'Use "list-sf" to find the correct shared folder UID.'
             )
 
@@ -212,13 +263,17 @@ class CloudImportMixin:
 
     def _run_import(self, params, secrets, folder_uid, record_type, filter_name,
                     filter_starts, filter_ends, filter_contains, required_tags,
-                    dry_run, command_name):
-        # type: (KeeperParams, list, str, str, Optional[str], Optional[str], Optional[str], Optional[str], List[Tuple[str, str]], bool, str) -> None
+                    dry_run, command_name, value_fetcher=None):
+        # type: (KeeperParams, list, str, str, Optional[str], Optional[str], Optional[str], Optional[str], List[Tuple[str, str]], bool, str, Optional[Callable]) -> None
         """
-        Iterate *secrets* — a list of dicts with keys 'name', 'value', and
-        'tags' (a plain Dict[str, str]) — apply all filters, and create Keeper
-        records in *folder_uid* via batched vault/records_add calls (up to
-        BATCH_SIZE records per request).
+        Iterate *secrets* (list of dicts with at minimum 'name' and 'tags'),
+        apply all filters, then create Keeper records via batched vault/records_add
+        calls (up to BATCH_SIZE records per request).
+
+        *value_fetcher*, when provided, is called as ``value_fetcher(name) -> str``
+        for each secret that passes filters and is not a dry-run.  This enables
+        lazy value fetching (only matched, non-dry-run secrets incur a cloud API
+        call).  When None, falls back to ``item.get('value', '')``.
         """
 
         # Phase 1 – filter.  Collect matching items; honour dry-run.
@@ -242,23 +297,36 @@ class CloudImportMixin:
         if dry_run:
             return
 
-        # Phase 2 – build TypedRecord objects and their serialised protobuf
-        # representations without touching the Keeper API yet.
+        # Phase 2 – fetch values (if needed) and build TypedRecord + protobuf
+        # objects without touching the Keeper API yet.
+        skipped = 0
         pending = []   # type: List[Tuple[vault.TypedRecord, record_pb2.RecordAdd]]
+
         for item in matched:
-            fields = self._parse_secret_string(item.get('value') or '')
-            record = self._build_keeper_record(item['name'], fields, record_type)
+            name = item['name']
+            if value_fetcher is not None:
+                try:
+                    value = value_fetcher(name)
+                except Exception as exc:
+                    logging.warning('%s: skipping "%s" – could not retrieve value: %s',
+                                    command_name, name, exc)
+                    skipped += 1
+                    continue
+            else:
+                value = item.get('value', '')
+
+            fields = self._parse_secret_string(value)
+            record = self._build_keeper_record(name, fields, record_type)
             pb = record_management.add_record_to_folder(params, record, folder_uid, pb_only=True)
             if pb is not None:
                 pending.append((record, pb))
 
         if not pending:
-            print(f'{command_name}: 0 record(s) created, 0 skipped.')
+            print(f'{command_name}: 0 record(s) created, {skipped} skipped.')
             return
 
         # Phase 3 – send in batches of up to BATCH_SIZE to vault/records_add.
         created = 0
-        skipped = 0
 
         for batch_start in range(0, len(pending), BATCH_SIZE):
             batch = pending[batch_start:batch_start + BATCH_SIZE]
@@ -282,12 +350,16 @@ class CloudImportMixin:
             rs_by_uid = {utils.base64_url_encode(r.record_uid): r for r in rs.records}
             for record, _ in batch:
                 rs_rec = rs_by_uid.get(record.record_uid)
-                if rs_rec is None or rs_rec.status == record_pb2.RS_SUCCESS:
-                    logging.info('%s: created record "%s"', command_name, record.title)
+                if rs_rec is not None and rs_rec.status == record_pb2.RS_SUCCESS:
+                    logging.debug('%s: created record "%s"', command_name, record.title)
                     created += 1
                 else:
-                    logging.warning('%s: failed to create record "%s": status=%s',
-                                    command_name, record.title, rs_rec.status)
+                    if rs_rec is None:
+                        logging.warning('%s: record "%s" absent from server response',
+                                        command_name, record.title)
+                    else:
+                        logging.warning('%s: failed to create record "%s": status=%s',
+                                        command_name, record.title, rs_rec.status)
                     skipped += 1
 
         if created:

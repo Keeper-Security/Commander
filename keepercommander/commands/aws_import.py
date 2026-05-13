@@ -10,16 +10,13 @@
 #
 
 import argparse
-import json
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 
 from .base import Command
-from ._cloud_import_base import BATCH_SIZE
-from .. import api, utils, vault, record_management
+from ._cloud_import_base import CloudImportMixin, add_filter_args
 from ..error import CommandError
 from ..params import KeeperParams
-from ..proto import record_pb2
 
 aws_secrets_import_parser = argparse.ArgumentParser(
     prog='aws-secrets-import',
@@ -52,35 +49,10 @@ aws_secrets_import_parser.add_argument(
     '--record-type', dest='record_type', action='store', default='login',
     help='Keeper record type for imported records (default: login)'
 )
-
-filter_group = aws_secrets_import_parser.add_argument_group(
-    'filters',
-    'Restrict which secrets are imported. All provided filters must match (AND logic).'
-)
-filter_group.add_argument(
-    '--name', dest='filter_name', action='store', metavar='NAME',
-    help='Import only the secret with this exact name'
-)
-filter_group.add_argument(
-    '--name-starts-with', dest='filter_name_starts_with', action='store', metavar='PREFIX',
-    help='Import only secrets whose name starts with PREFIX'
-)
-filter_group.add_argument(
-    '--name-ends-with', dest='filter_name_ends_with', action='store', metavar='SUFFIX',
-    help='Import only secrets whose name ends with SUFFIX'
-)
-filter_group.add_argument(
-    '--name-contains', dest='filter_name_contains', action='store', metavar='SUBSTRING',
-    help='Import only secrets whose name contains SUBSTRING'
-)
-filter_group.add_argument(
-    '--tags', dest='filter_tags', action='store', metavar='KEY=VALUE[,KEY=VALUE,...]',
-    help='Import only secrets tagged with ALL specified key=value pairs '
-         '(e.g. --tags Env=prod,Team=ops)'
-)
+add_filter_args(aws_secrets_import_parser)
 
 
-class AwsSecretsImportCommand(Command):
+class AwsSecretsImportCommand(Command, CloudImportMixin):
     """Import AWS Secrets Manager secrets as Keeper records into a shared folder."""
 
     def __init__(self):
@@ -88,13 +60,12 @@ class AwsSecretsImportCommand(Command):
         self._boto3_clients = {}  # type: Dict[str, Any]
         self._access_key = None   # type: Optional[str]
         self._secret_key = None   # type: Optional[str]
-        self.using_session = False
 
     def get_parser(self):
         return aws_secrets_import_parser
 
     # ------------------------------------------------------------------
-    # boto3 client management (follows architecture guidance)
+    # boto3 client management
     # ------------------------------------------------------------------
 
     def _get_aws_kwargs(self, region_name=None):
@@ -116,23 +87,28 @@ class AwsSecretsImportCommand(Command):
         except ImportError:
             raise CommandError(
                 'aws-secrets-import',
-                'boto3 is required. Install it with: pip install boto3'
+                'boto3 is required. Install it with: pip install keeper-commander[aws]'
             )
 
         session = boto3.Session()
         credentials = session.get_credentials()
         if credentials is not None and self._access_key is None:
             logging.info('aws-secrets-import: using AWS session from attached role or ~/.aws credentials')
-            self.using_session = True
             kwargs = {}
             if region_name:
                 kwargs['region_name'] = region_name
             client_obj = session.client(client, **kwargs)
-        else:
+        elif self._access_key is not None:
             logging.info('aws-secrets-import: using explicit AWS access key / secret key')
-            self.using_session = False
             kwargs = self._get_aws_kwargs(region_name)
             client_obj = boto3.client(client, **kwargs)
+        else:
+            raise CommandError(
+                'aws-secrets-import',
+                'No AWS credentials found. Provide --access-key and --secret-key, '
+                'set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, '
+                'or configure ~/.aws/credentials.'
+            )
 
         self._boto3_clients[key] = client_obj
         return client_obj
@@ -141,158 +117,34 @@ class AwsSecretsImportCommand(Command):
     # AWS Secrets Manager helpers
     # ------------------------------------------------------------------
 
-    def _list_secrets(self, region_name=None):
-        """Return a list of all secret metadata dicts from Secrets Manager."""
+    def _list_secret_metadata(self, region_name=None):
+        # type: (Optional[str]) -> List[dict]
+        """
+        Return normalised secret metadata: [{'name': str, 'tags': {k: v}}].
+
+        AWS tags are converted from the native list-of-dicts format
+        ([{'Key': k, 'Value': v}]) to a plain dict so filters work the same
+        way as for Azure and GCP.
+        """
         sm = self.get_client('secretsmanager', region_name)
-        secrets = []
+        results = []
         paginator = sm.get_paginator('list_secrets')
         for page in paginator.paginate():
-            secrets.extend(page.get('SecretList', []))
-        return secrets
+            for secret in page.get('SecretList', []):
+                name = secret.get('Name') or ''
+                if not name:
+                    continue
+                tags = {t.get('Key'): t.get('Value')
+                        for t in (secret.get('Tags') or [])}
+                results.append({'name': name, 'tags': tags})
+        return results
 
     def _get_secret_value(self, secret_name, region_name=None):
+        # type: (str, Optional[str]) -> str
         """Fetch and return the raw secret string for *secret_name*."""
         sm = self.get_client('secretsmanager', region_name)
         response = sm.get_secret_value(SecretId=secret_name)
         return response.get('SecretString') or ''
-
-    # ------------------------------------------------------------------
-    # Parsing helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_secret_string(secret_string):
-        # type: (str) -> Dict[str, str]
-        """
-        Parse the secret string into name/value pairs.
-
-        Supported formats (in priority order):
-          1. JSON object  -> {"key": "value", ...}
-          2. KEY=VALUE lines (one per line, shell-style)
-          3. Fallback: store the whole string under a single field named "value"
-        """
-        secret_string = (secret_string or '').strip()
-        if not secret_string:
-            return {}
-
-        # Try JSON first
-        if secret_string.startswith('{'):
-            try:
-                obj = json.loads(secret_string)
-                if isinstance(obj, dict):
-                    return {str(k): str(v) for k, v in obj.items()}
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # Try KEY=VALUE lines
-        pairs = {}
-        lines = secret_string.splitlines()
-        parsed_as_kv = False
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if '=' in line:
-                key, _, val = line.partition('=')
-                pairs[key.strip()] = val.strip()
-                parsed_as_kv = True
-            else:
-                parsed_as_kv = False
-                break
-
-        if parsed_as_kv and pairs:
-            return pairs
-
-        # Fallback: single field
-        return {'value': secret_string}
-
-    # ------------------------------------------------------------------
-    # Keeper record builder
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_record(title, fields, record_type='login'):
-        # type: (str, Dict[str, str], str) -> vault.TypedRecord
-        """
-        Build a TypedRecord from a title and a dict of field name/value pairs.
-
-        Known Keeper field types (text, login, password, url, …) are placed in
-        the typed *fields* list; everything else lands in *custom* fields.
-        """
-        KNOWN_TYPED_FIELDS = {'login', 'password', 'url', 'email', 'text', 'note'}
-
-        record = vault.TypedRecord()
-        record.type_name = record_type
-        record.title = title
-
-        for field_name, field_value in fields.items():
-            # Map common AWS naming conventions to Keeper field types
-            keeper_type = 'text'
-            if field_name.lower() in ('username', 'user', 'login'):
-                keeper_type = 'login'
-            elif field_name.lower() in ('password', 'pass', 'secret', 'secret_value'):
-                keeper_type = 'password'
-            elif field_name.lower() in ('url', 'endpoint', 'host'):
-                keeper_type = 'url'
-
-            if keeper_type in KNOWN_TYPED_FIELDS:
-                typed_field = vault.TypedField.new_field(keeper_type, field_value, field_name)
-                record.fields.append(typed_field)
-            else:
-                custom_field = vault.TypedField.new_field('text', field_value, field_name)
-                record.custom.append(custom_field)
-
-        return record
-
-    # ------------------------------------------------------------------
-    # Filtering helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_tags(tags_str):
-        # type: (str) -> List[Tuple[str, str]]
-        """Parse 'Key1=Val1,Key2=Val2' into [(Key1, Val1), (Key2, Val2)]."""
-        pairs = []
-        for token in tags_str.split(','):
-            token = token.strip()
-            if not token:
-                continue
-            if '=' not in token:
-                raise CommandError(
-                    'aws-secrets-import',
-                    f'Invalid --tags format: "{token}". Expected KEY=VALUE pairs separated by commas.'
-                )
-            key, _, value = token.partition('=')
-            pairs.append((key.strip(), value.strip()))
-        return pairs
-
-    @staticmethod
-    def _matches_filters(secret_meta, filter_name, filter_starts, filter_ends,
-                         filter_contains, required_tags):
-        # type: (dict, Optional[str], Optional[str], Optional[str], Optional[str], List[Tuple[str, str]]) -> bool
-        """Return True only if the secret satisfies every provided filter."""
-        name = secret_meta.get('Name') or ''
-
-        if filter_name is not None and name != filter_name:
-            return False
-        if filter_starts is not None and not name.startswith(filter_starts):
-            return False
-        if filter_ends is not None and not name.endswith(filter_ends):
-            return False
-        if filter_contains is not None and filter_contains not in name:
-            return False
-
-        if required_tags:
-            # AWS returns Tags as [{"Key": "...", "Value": "..."}, ...]
-            secret_tags = {
-                t.get('Key'): t.get('Value')
-                for t in (secret_meta.get('Tags') or [])
-            }
-            for tag_key, tag_value in required_tags:
-                if secret_tags.get(tag_key) != tag_value:
-                    return False
-
-        return True
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -313,33 +165,23 @@ class AwsSecretsImportCommand(Command):
         tags_str = kwargs.get('filter_tags') or ''
         required_tags = []   # type: List[Tuple[str, str]]
         if tags_str:
-            required_tags = self._parse_tags(tags_str)
+            required_tags = self._parse_tag_filter(tags_str, 'aws-secrets-import')
 
-        if not folder_uid:
-            raise CommandError('aws-secrets-import', 'A shared folder UID is required.')
-
-        # Verify the UID exists in the vault folder cache
-        if folder_uid not in params.folder_cache:
-            raise CommandError(
-                'aws-secrets-import',
-                f'Folder UID "{folder_uid}" not found in your vault. '
-                'Use "list-sf" to find the correct shared folder UID.'
-            )
-
-        # Store credentials for use in get_client / _get_aws_kwargs
-        self._access_key = access_key or None
-        self._secret_key = secret_key or None
-        self._boto3_clients.clear()
-
+        # Validate credential flags before mutating any instance state.
         if access_key and not secret_key:
             raise CommandError('aws-secrets-import', '--secret-key is required when --access-key is provided.')
         if secret_key and not access_key:
             raise CommandError('aws-secrets-import', '--access-key is required when --secret-key is provided.')
 
-        # Fetch all secret metadata
+        self._validate_folder(params, folder_uid, 'aws-secrets-import')
+
+        self._access_key = access_key or None
+        self._secret_key = secret_key or None
+        self._boto3_clients.clear()
+
         logging.info('aws-secrets-import: listing secrets from AWS Secrets Manager…')
         try:
-            secrets = self._list_secrets(region)
+            secrets = self._list_secret_metadata(region)
         except Exception as exc:
             raise CommandError('aws-secrets-import', f'Failed to list secrets from AWS: {exc}')
 
@@ -349,83 +191,9 @@ class AwsSecretsImportCommand(Command):
 
         logging.info('aws-secrets-import: found %d secret(s).', len(secrets))
 
-        # Phase 1 – filter secrets; honour dry-run.
-        matched_names = []
-        for secret_meta in secrets:
-            skrt_name = secret_meta.get('Name') or ''
-            if not skrt_name:
-                continue
-            if not self._matches_filters(
-                secret_meta, filter_name, filter_starts, filter_ends,
-                filter_contains, required_tags
-            ):
-                continue
-            if dry_run:
-                print(f'  [dry-run] would import: {skrt_name}')
-                continue
-            matched_names.append(skrt_name)
-
-        if dry_run:
-            return
-
-        # Phase 2 – fetch secret values from AWS (individual AWS API calls),
-        # then build TypedRecord objects and serialise to protobuf without
-        # touching the Keeper API yet.
-        skipped = 0
-        pending = []   # type: List[Tuple[vault.TypedRecord, record_pb2.RecordAdd]]
-
-        for skrt_name in matched_names:
-            try:
-                secret_string = self._get_secret_value(skrt_name, region)
-            except Exception as exc:
-                logging.warning('aws-secrets-import: skipping "%s" – could not retrieve value: %s',
-                                skrt_name, exc)
-                skipped += 1
-                continue
-
-            fields = self._parse_secret_string(secret_string)
-            record = self._build_record(skrt_name, fields, record_type)
-            pb = record_management.add_record_to_folder(params, record, folder_uid, pb_only=True)
-            if pb is not None:
-                pending.append((record, pb))
-
-        if not pending:
-            print(f'aws-secrets-import: 0 record(s) created, {skipped} skipped.')
-            return
-
-        # Phase 3 – batch-send to Keeper (up to BATCH_SIZE records per request).
-        created = 0
-
-        for batch_start in range(0, len(pending), BATCH_SIZE):
-            batch = pending[batch_start:batch_start + BATCH_SIZE]
-            batch_num = batch_start // BATCH_SIZE + 1
-            logging.info('aws-secrets-import: sending batch %d (%d record(s))', batch_num, len(batch))
-
-            rq = api.get_records_add_request(params)
-            for _, pb in batch:
-                rq.records.append(pb)
-
-            try:
-                rs = api.communicate_rest(
-                    params, rq, 'vault/records_add',
-                    rs_type=record_pb2.RecordsModifyResponse
-                )
-            except Exception as exc:
-                logging.warning('aws-secrets-import: batch %d failed: %s', batch_num, exc)
-                skipped += len(batch)
-                continue
-
-            rs_by_uid = {utils.base64_url_encode(r.record_uid): r for r in rs.records}
-            for record, _ in batch:
-                rs_rec = rs_by_uid.get(record.record_uid)
-                if rs_rec is None or rs_rec.status == record_pb2.RS_SUCCESS:
-                    logging.info('aws-secrets-import: created record "%s"', record.title)
-                    created += 1
-                else:
-                    logging.warning('aws-secrets-import: failed to create record "%s": status=%s',
-                                    record.title, rs_rec.status)
-                    skipped += 1
-
-        if created:
-            params.sync_data = True
-        print(f'aws-secrets-import: {created} record(s) created, {skipped} skipped.')
+        self._run_import(
+            params, secrets, folder_uid, record_type,
+            filter_name, filter_starts, filter_ends, filter_contains,
+            required_tags, dry_run, 'aws-secrets-import',
+            value_fetcher=lambda name: self._get_secret_value(name, region)
+        )

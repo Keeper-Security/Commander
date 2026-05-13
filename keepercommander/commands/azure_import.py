@@ -102,12 +102,9 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
     # Azure Key Vault helpers
     # ------------------------------------------------------------------
 
-    def _fetch_secrets(self, vault_name, credential):
-        # type: (str, Any) -> List[dict]
-        """
-        Return a list of normalised secret dicts:
-          {'name': str, 'value': str, 'tags': Dict[str, str]}
-        """
+    @staticmethod
+    def _make_client(vault_name, credential):
+        # type: (str, Any) -> Any
         try:
             from azure.keyvault.secrets import SecretClient
         except ImportError:
@@ -115,29 +112,31 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
                 'azure-secrets-import',
                 'azure-keyvault-secrets is required. Install it with: pip install keeper-commander[azure]'
             )
-
         vault_url = f'https://{vault_name}.vault.azure.net/'
-        client = SecretClient(vault_url=vault_url, credential=credential)
+        return SecretClient(vault_url=vault_url, credential=credential)
 
+    def _list_secret_metadata(self, client):
+        # type: (Any) -> List[dict]
+        """
+        Return secret metadata only — no values fetched.
+        Result: [{'name': str, 'tags': Dict[str, str]}]
+
+        Disabled secrets are excluded.  Value fetching is deferred until
+        after filtering so that --dry-run does not trigger cloud API calls.
+        """
         results = []
         for prop in client.list_properties_of_secrets():
             if not prop.enabled:
                 logging.debug('azure-secrets-import: skipping disabled secret "%s"', prop.name)
                 continue
-
-            try:
-                secret = client.get_secret(prop.name)
-            except Exception as exc:
-                logging.warning('azure-secrets-import: could not retrieve "%s": %s', prop.name, exc)
-                continue
-
-            results.append({
-                'name': prop.name,
-                'value': secret.value or '',
-                'tags': dict(prop.tags or {}),
-            })
-
+            results.append({'name': prop.name, 'tags': dict(prop.tags or {})})
         return results
+
+    def _get_secret_value(self, client, name):
+        # type: (Any, str) -> str
+        """Fetch and return the value of a single secret."""
+        secret = client.get_secret(name)
+        return secret.value or ''
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -167,10 +166,11 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
         self._validate_folder(params, folder_uid, 'azure-secrets-import')
 
         credential = self._get_credential(tenant_id, client_id, client_secret)
+        client = self._make_client(vault_name, credential)
 
         logging.info('azure-secrets-import: listing secrets from vault "%s"…', vault_name)
         try:
-            secrets = self._fetch_secrets(vault_name, credential)
+            secrets = self._list_secret_metadata(client)
         except CommandError:
             raise
         except Exception as exc:
@@ -185,5 +185,6 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
         self._run_import(
             params, secrets, folder_uid, record_type,
             filter_name, filter_starts, filter_ends, filter_contains,
-            required_tags, dry_run, 'azure-secrets-import'
+            required_tags, dry_run, 'azure-secrets-import',
+            value_fetcher=lambda name: self._get_secret_value(client, name)
         )
