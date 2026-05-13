@@ -44,12 +44,12 @@ class SsoCloudLogCommand(EnterpriseCommand, SsoCloudMixin):
             params, rq, 'sso/config/sso_cloud_log_saml_get',
             rs_type=ssocloud.SsoCloudSAMLLogResponse)
 
-        if not rs.entry:
-            logging.info('No SAML log entries found for SP "%s".', svc.get('name', target))
-            return
-
         fmt = kwargs.get('format')
         verbose = kwargs.get('verbose', False)
+
+        if not rs.entry and fmt != 'json':
+            logging.info('No SAML log entries found for SP "%s".', svc.get('name', target))
+            return
 
         if fmt == 'json':
             entries = []
