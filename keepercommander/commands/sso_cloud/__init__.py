@@ -5,23 +5,9 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Copyright 2026 Keeper Security Inc.
+# Contact: commander@keepersecurity.com
 #
-
-"""sso_cloud package – CLI surface for SSO Cloud Connect configuration.
-
-Package layout
---------------
-constants.py         – IdP enum mappings, setup guidance, setting groups
-parsers.py           – All argparse parser definitions
-mixin.py             – SsoCloudMixin (shared SP/config resolution and display helpers)
-sp_commands.py       – List, ConfigList, Create, Delete (SP lifecycle)
-config_commands.py   – Get, Set, Validate, Guide (configuration inspection/modification)
-metadata_commands.py – Upload, Download (SAML metadata exchange)
-log_commands.py      – Log, LogClear (SAML diagnostics)
-__init__.py          – SsoCloudCommand router, register_commands / register_command_info
-"""
 
 from ..base import GroupCommand
 
