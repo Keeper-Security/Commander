@@ -2,7 +2,7 @@
 
 The `gcp-secrets-import` command reads every accessible secret from Google Cloud Secret Manager and creates a corresponding Keeper record in a specified shared folder. Each secret's name becomes the record title; the secret's value is parsed into named fields on the record.
 
-- **Alias:** `gcpsi`
+- **Alias:** `gcsi`
 - **Requires:** `google-cloud-secret-manager` — install with `pip install keeper-commander[gcp]`
 
 ---
@@ -101,23 +101,23 @@ Name filters operate on the short secret name (the last segment of the full GCP 
 
 ```bash
 # Exact name match
-gcpsi xAbCdEfGhIjK --project-id my-project --name database-primary-password
+gcsi xAbCdEfGhIjK --project-id my-project --name database-primary-password
 
 # All secrets whose name starts with "prod-"
-gcpsi xAbCdEfGhIjK --project-id my-project --name-starts-with prod-
+gcsi xAbCdEfGhIjK --project-id my-project --name-starts-with prod-
 
 # Secrets whose name ends with "-creds"
-gcpsi xAbCdEfGhIjK --project-id my-project --name-ends-with -creds
+gcsi xAbCdEfGhIjK --project-id my-project --name-ends-with -creds
 
 # Secrets whose name contains "postgres"
-gcpsi xAbCdEfGhIjK --project-id my-project --name-contains postgres
+gcsi xAbCdEfGhIjK --project-id my-project --name-contains postgres
 ```
 
 Multiple name filters can be combined. Each one adds an additional requirement:
 
 ```bash
 # Must start with "prod-" AND contain "database"
-gcpsi xAbCdEfGhIjK --project-id my-project \
+gcsi xAbCdEfGhIjK --project-id my-project \
   --name-starts-with prod- --name-contains database
 ```
 
@@ -127,10 +127,10 @@ GCP Secret Manager secrets support arbitrary key/value *labels*. The `--tags` fl
 
 ```bash
 # Single label requirement
-gcpsi xAbCdEfGhIjK --project-id my-project --tags env=prod
+gcsi xAbCdEfGhIjK --project-id my-project --tags env=prod
 
 # Multiple label requirements (both must match)
-gcpsi xAbCdEfGhIjK --project-id my-project --tags env=prod,team=payments
+gcsi xAbCdEfGhIjK --project-id my-project --tags env=prod,team=payments
 ```
 
 > GCP label keys and values are lowercase by convention and are case-sensitive. Ensure the values you provide match the casing stored in GCP.
@@ -140,7 +140,7 @@ gcpsi xAbCdEfGhIjK --project-id my-project --tags env=prod,team=payments
 All filter types can be used together in one command:
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-project \
+gcsi xAbCdEfGhIjK --project-id my-project \
   --name-starts-with prod- \
   --name-ends-with -creds \
   --tags env=prod,owner=platform
@@ -220,7 +220,7 @@ Fields whose type matches a known Keeper typed field (`login`, `password`, `url`
 ### Import all secrets using Application Default Credentials
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project
+gcsi xAbCdEfGhIjK --project-id my-gcp-project
 ```
 
 Uses the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, `gcloud` credentials, or the attached service account automatically.
@@ -228,7 +228,7 @@ Uses the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, `gcloud` credent
 ### Authenticate with a service account key file
 
 ```bash
-gcpsi xAbCdEfGhIjK \
+gcsi xAbCdEfGhIjK \
   --project-id my-gcp-project \
   --service-account-file /path/to/service-account-key.json
 ```
@@ -236,7 +236,7 @@ gcpsi xAbCdEfGhIjK \
 ### Preview what would be imported (dry run)
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project --dry-run
+gcsi xAbCdEfGhIjK --project-id my-gcp-project --dry-run
 ```
 
 Prints the name of each secret that passes all filters without creating any records.
@@ -244,20 +244,20 @@ Prints the name of each secret that passes all filters without creating any reco
 ### Import only production secrets owned by the payments team
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project \
+gcsi xAbCdEfGhIjK --project-id my-gcp-project \
   --name-starts-with prod- --tags team=payments
 ```
 
 ### Import a single known secret
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project --name prod-stripe-api-key
+gcsi xAbCdEfGhIjK --project-id my-gcp-project --name prod-stripe-api-key
 ```
 
 ### Import all database secrets in staging stored as `serverCredentials` records
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project \
+gcsi xAbCdEfGhIjK --project-id my-gcp-project \
   --name-contains database \
   --tags env=staging \
   --record-type serverCredentials
@@ -266,7 +266,7 @@ gcpsi xAbCdEfGhIjK --project-id my-gcp-project \
 ### Dry-run a complex filter before committing
 
 ```bash
-gcpsi xAbCdEfGhIjK --project-id my-gcp-project \
+gcsi xAbCdEfGhIjK --project-id my-gcp-project \
   --name-starts-with prod- \
   --name-ends-with -creds \
   --tags env=prod,owner=platform \
@@ -278,7 +278,7 @@ gcpsi xAbCdEfGhIjK --project-id my-gcp-project \
 ```bash
 # Decode the key from a CI environment variable and import
 echo "$GCP_SA_KEY" > /tmp/sa-key.json
-gcpsi xAbCdEfGhIjK \
+gcsi xAbCdEfGhIjK \
   --project-id my-gcp-project \
   --service-account-file /tmp/sa-key.json \
   --tags env=prod

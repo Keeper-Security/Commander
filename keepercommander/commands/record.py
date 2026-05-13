@@ -105,9 +105,9 @@ def register_command_info(aliases, command_info):
     aliases['ua'] = 'upload-attachment'
 
     from . import aws_import, azure_import, gcp_import
-    aliases['asi'] = 'aws-secrets-import'
+    aliases['amsi'] = 'aws-secrets-import'
     aliases['azsi'] = 'azure-secrets-import'
-    aliases['gcpsi'] = 'gcp-secrets-import'
+    aliases['gcsi'] = 'gcp-secrets-import'
     command_info[aws_import.aws_secrets_import_parser.prog] = aws_import.aws_secrets_import_parser.description
     command_info[azure_import.azure_secrets_import_parser.prog] = azure_import.azure_secrets_import_parser.description
     command_info[gcp_import.gcp_secrets_import_parser.prog] = gcp_import.gcp_secrets_import_parser.description

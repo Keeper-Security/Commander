@@ -2,7 +2,7 @@
 
 The `aws-secrets-import` command reads every secret from AWS Secrets Manager and creates a corresponding Keeper record in a specified shared folder. Each secret's name becomes the record title; the secret's value is parsed into named fields on the record.
 
-- **Alias:** `asi`
+- **Alias:** `amsi`
 - **Requires:** `boto3` — install with `pip install keeper-commander[aws]`
 
 > **See also:** [`azure-secrets-import`](azure-secrets-import.md) for Azure Key Vault and [`gcp-secrets-import`](gcp-secrets-import.md) for Google Cloud Secret Manager. All three commands share the same secret value parsing rules, field-mapping logic, and filter flags.
@@ -96,23 +96,23 @@ Name filters operate on the full secret name as stored in AWS.
 
 ```bash
 # Exact name match
-asi xAbCdEfGhIjK --name prod/database/primary
+amsi xAbCdEfGhIjK --name prod/database/primary
 
 # All secrets under the prod/ path
-asi xAbCdEfGhIjK --name-starts-with prod/
+amsi xAbCdEfGhIjK --name-starts-with prod/
 
 # Secrets whose name ends with /credentials
-asi xAbCdEfGhIjK --name-ends-with /credentials
+amsi xAbCdEfGhIjK --name-ends-with /credentials
 
 # Secrets whose name contains "rds"
-asi xAbCdEfGhIjK --name-contains rds
+amsi xAbCdEfGhIjK --name-contains rds
 ```
 
 Multiple name filters can be combined. Each one adds an additional requirement:
 
 ```bash
 # Must start with "prod/" AND contain "database"
-asi xAbCdEfGhIjK --name-starts-with prod/ --name-contains database
+amsi xAbCdEfGhIjK --name-starts-with prod/ --name-contains database
 ```
 
 ### Tag filter
@@ -121,10 +121,10 @@ The `--tags` flag accepts a comma-separated list of `KEY=VALUE` pairs. A secret 
 
 ```bash
 # Single tag requirement
-asi xAbCdEfGhIjK --tags Env=prod
+amsi xAbCdEfGhIjK --tags Env=prod
 
 # Multiple tag requirements (both must match)
-asi xAbCdEfGhIjK --tags Env=prod,Team=payments
+amsi xAbCdEfGhIjK --tags Env=prod,Team=payments
 ```
 
 Tag keys and values are case-sensitive and must match the values stored in AWS exactly. Azure Key Vault also uses the term *tags*; GCP Secret Manager uses the term *labels* — the `--tags` flag works the same way for all three providers.
@@ -134,7 +134,7 @@ Tag keys and values are case-sensitive and must match the values stored in AWS e
 All filter types can be used together in one command:
 
 ```bash
-asi xAbCdEfGhIjK \
+amsi xAbCdEfGhIjK \
   --name-starts-with prod/ \
   --name-ends-with /creds \
   --tags Env=prod,Owner=platform
@@ -216,7 +216,7 @@ Fields whose type matches a known Keeper typed field (`login`, `password`, `url`
 ### Import all secrets using ambient AWS credentials
 
 ```bash
-asi xAbCdEfGhIjK
+amsi xAbCdEfGhIjK
 ```
 
 Uses `~/.aws` credentials or the attached EC2/ECS instance role automatically.
@@ -224,7 +224,7 @@ Uses `~/.aws` credentials or the attached EC2/ECS instance role automatically.
 ### Specify credentials and region explicitly
 
 ```bash
-asi xAbCdEfGhIjK \
+amsi xAbCdEfGhIjK \
   --access-key AKIAIOSFODNN7EXAMPLE \
   --secret-key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
   --region us-west-2
@@ -233,7 +233,7 @@ asi xAbCdEfGhIjK \
 ### Preview what would be imported (dry run)
 
 ```bash
-asi xAbCdEfGhIjK --dry-run
+amsi xAbCdEfGhIjK --dry-run
 ```
 
 Prints the name of each secret that passes all filters without creating any records.
@@ -241,19 +241,19 @@ Prints the name of each secret that passes all filters without creating any reco
 ### Import only production secrets owned by the payments team
 
 ```bash
-asi xAbCdEfGhIjK --name-starts-with prod/ --tags Team=payments
+amsi xAbCdEfGhIjK --name-starts-with prod/ --tags Team=payments
 ```
 
 ### Import a single known secret
 
 ```bash
-asi xAbCdEfGhIjK --name prod/payments/stripe-api-key
+amsi xAbCdEfGhIjK --name prod/payments/stripe-api-key
 ```
 
 ### Import all RDS secrets in staging and store as `serverCredentials` records
 
 ```bash
-asi xAbCdEfGhIjK \
+amsi xAbCdEfGhIjK \
   --name-contains rds \
   --tags Env=staging \
   --record-type serverCredentials
@@ -262,7 +262,7 @@ asi xAbCdEfGhIjK \
 ### Dry-run a complex filter before committing
 
 ```bash
-asi xAbCdEfGhIjK \
+amsi xAbCdEfGhIjK \
   --name-starts-with prod/ \
   --name-ends-with /creds \
   --tags Env=prod,Owner=platform \
