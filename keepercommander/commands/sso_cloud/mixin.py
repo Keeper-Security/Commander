@@ -11,6 +11,7 @@
 
 import json
 import logging
+import os
 
 from typing import Optional, Dict
 
@@ -195,7 +196,7 @@ class SsoCloudMixin(object):
             'idp_login_endpoint': sp.get('sso_idp_initiated_login_endpoint', ''),
             'slo_endpoint': sp.get('sso_sp_slo_endpoint', ''),
             'auth0_json': AUTH0_SAML_JSON_TEMPLATE.format(
-                entity_id=sp.get('sso_sp_entity_id', '<ENTITY_ID>')),
+                entity_id=sp.get('sso_sp_entity_id') or '<ENTITY_ID>'),
         }
 
         BAR = '\u2500' * 60
@@ -263,10 +264,11 @@ class SsoCloudMixin(object):
                 'settings': settings_list
             }, indent=2)
             if filename:
+                expanded_path = os.path.expanduser(filename)
                 try:
-                    with open(filename, 'w') as f:
+                    with open(expanded_path, 'w') as f:
                         f.write(output)
-                    logging.info('Output written to %s', filename)
+                    logging.info('Output written to %s', expanded_path)
                 except IOError as e:
                     raise CommandError('sso-cloud', f'Failed to write output file "{filename}": {e}')
             else:
