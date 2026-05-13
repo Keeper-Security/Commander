@@ -165,6 +165,10 @@ def register_commands(commands, aliases, command_info):
     service_commands(commands)
     service_command_info(aliases, command_info)
 
+    from .keeper_tenant_migrate import register_commands as ktm_commands, register_command_info as ktm_command_info
+    ktm_commands(commands)
+    ktm_command_info(aliases, command_info)
+
     toggle_pam_legacy_commands(legacy=False)
 
 
