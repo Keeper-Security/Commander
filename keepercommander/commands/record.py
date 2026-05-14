@@ -139,7 +139,7 @@ search_parser.add_argument('pattern', nargs='*', type=str, action='store', help=
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
-                                '"s" = shared folders, "t" = teams')
+                                '"s" = shared folders, "t" = teams, "d" = KeeperDrive folders')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
                            help='treat pattern as a regular expression instead of space-separated search terms')
 search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
@@ -1301,10 +1301,12 @@ class SearchCommand(Command):
             else:
                 pattern = ''  # Empty pattern matches all in token mode
 
-        categories = (kwargs.get('categories') or 'rst').lower()
+        categories = (kwargs.get('categories') or 'rstd').lower()
         verbose = kwargs.get('verbose') is True
         skip_details = not verbose
         fmt = kwargs.get('format', 'table')
+
+        kd_records_map = getattr(params, 'keeper_drive_records', {}) or {}
 
         all_results = []
 
@@ -1314,21 +1316,24 @@ class SearchCommand(Command):
             if records:
                 if fmt == 'json':
                     for record in records:
+                        is_kd = record.record_uid in kd_records_map
                         result_item = {
                             'type': 'record',
                             'record_uid': record.record_uid,
                             'record_type': record.record_type,
                             'title': record.title,
-                            'description': vault_extensions.get_record_description(record)
+                            'description': vault_extensions.get_record_description(record),
+                            'record_category': 'KeeperDrive' if is_kd else 'Classic',
                         }
                         all_results.append(result_item)
                 else:
                     logging.info('')
                     table = []
-                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    headers = ['Record UID', 'Type', 'Title', 'Description', 'Record Category']
                     for record in records:
+                        record_category = 'KeeperDrive' if record.record_uid in kd_records_map else 'Classic'
                         row = [record.record_uid, record.record_type, record.title,
-                               vault_extensions.get_record_description(record)]
+                               vault_extensions.get_record_description(record), record_category]
                         table.append(row)
                     table.sort(key=lambda x: (x[2] or '').lower())
 
@@ -1375,6 +1380,38 @@ class SearchCommand(Command):
                     logging.info('')
                     display.formatted_teams(results, params=params, skip_details=skip_details)
 
+
+        if 'd' in categories:
+            kd_folder_results = self._search_keeper_drive_folders(params, pattern, use_regex=use_regex)
+            if kd_folder_results:
+                if fmt == 'json':
+                    for folder_uid, fobj in kd_folder_results:
+                        result_item = {
+                            'type': 'keeper_drive_folder',
+                            'folder_uid': folder_uid,
+                            'name': fobj.get('name', ''),
+                            'parent_uid': self._display_parent_uid(fobj.get('parent_uid', '')),
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    rows_with_parent = [
+                        (folder_uid, fobj.get('name', ''),
+                         self._display_parent_uid(fobj.get('parent_uid', '')))
+                        for folder_uid, fobj in kd_folder_results
+                    ]
+                    any_non_root = any(parent for _, _, parent in rows_with_parent)
+                    if any_non_root:
+                        headers = ['KeeperDrive Folder UID', 'Name', 'Parent UID']
+                        table = [[fuid, name, parent]
+                                 for fuid, name, parent in rows_with_parent]
+                    else:
+                        headers = ['KeeperDrive Folder UID', 'Name']
+                        table = [[fuid, name] for fuid, name, _ in rows_with_parent]
+                    table.sort(key=lambda x: (x[1] or '').lower())
+                    base.dump_report_data(table, headers, row_number=True,
+                                          column_width=None if verbose else 40)
+
         if fmt == 'json':
             if all_results:
                 table = []
@@ -1383,18 +1420,64 @@ class SearchCommand(Command):
                 for item in all_results:
                     if item['type'] == 'record':
                         row = [item['type'], item['record_uid'], item['title'], 
-                               f"Type: {item['record_type']}, Description: {item['description']}"]
+                               f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'Classic')}"]
                     elif item['type'] == 'shared_folder':
                         row = [item['type'], item['shared_folder_uid'], item['name'],
                                f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
                                f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
+                    elif item['type'] == 'keeper_drive_folder':
+                        details = (f"Parent UID: {item['parent_uid']}"
+                                   if item.get('parent_uid') else '')
+                        row = [item['type'], item['folder_uid'], item['name'], details]
                     table.append(row)
                 
                 return base.dump_report_data(table, headers, fmt='json')
             else:
                 return base.dump_report_data([], ['type', 'uid', 'name', 'details'], fmt='json')
+
+    @staticmethod
+    def _display_parent_uid(parent_uid):
+        """Render a KeeperDrive ``parent_uid`` for display.
+        """
+        if not parent_uid or parent_uid == 'root':
+            return ''
+        if parent_uid.startswith('AAAAAAAAAA'):
+            return ''
+        return parent_uid
+
+    @staticmethod
+    def _search_keeper_drive_folders(params, search_str, use_regex=False):
+        """Search KeeperDrive folders by name.
+        """
+        kd_folders = getattr(params, 'keeper_drive_folders', {}) or {}
+        if not kd_folders:
+            return []
+
+        if not search_str:
+            match_func = lambda target: True
+        elif use_regex:
+            try:
+                pat = re.compile(search_str, re.IGNORECASE)
+            except re.error:
+                return []
+            match_func = lambda target: bool(pat.search(target))
+        else:
+            tokens = [t.lower() for t in search_str.split() if t.strip()]
+            if not tokens:
+                match_func = lambda target: True
+            else:
+                match_func = lambda target: all(token in target for token in tokens)
+
+        results = []
+        for folder_uid, fobj in kd_folders.items():
+            name = (fobj.get('name') or '')
+            
+            haystack = f"{name.lower()} {folder_uid.lower()}"
+            if match_func(haystack):
+                results.append((folder_uid, fobj))
+        return results
 
 
 class RecordListCommand(Command):
@@ -1444,11 +1527,11 @@ class RecordListCommand(Command):
                 headers = [base.field_to_title(x) for x in headers]
             table = []
             for record in records:
-                # Determine if record is from Keeper Drive or Legacy
+                # Determine if record is from Keeper Drive or Classic
                 is_keeper_drive = hasattr(params, 'keeper_drive_records') and record.record_uid in params.keeper_drive_records
-                source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
+                record_category = 'KeeperDrive' if is_keeper_drive else 'Classic'
                 row = [record.record_uid, record.record_type, record.title,
-                       vault_extensions.get_record_description(record), record.shared, source]
+                       vault_extensions.get_record_description(record), record.shared, record_category]
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
             if fmt != 'json':
