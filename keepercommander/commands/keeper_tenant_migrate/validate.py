@@ -16,7 +16,7 @@ Architecture:
 from enum import Enum
 
 from .helpers.node_paths import leaf_of
-from .structure import LOCKOUT_RISK_ENFORCEMENTS
+from .structure import LOCKOUT_RISK_ENFORCEMENTS, _CROSS_TENANT_ID_ENFORCEMENTS
 
 
 # Bug 81 — roles that target tenants on MSP edition auto-provision
@@ -938,22 +938,45 @@ def phase_roles(ctx):
         # (Migrated)'). Verify iterates source roles, so query the skip
         # maps by `target_name` first, with `name` as fallback for the
         # common case where source and target names match.
-        enf_skipped = sum(1 for k in src_enfs_dict
-                          if (target_name, k) in skip_map
-                          or (name, k) in skip_map)
+        skipped_keys = {k for k in src_enfs_dict
+                        if (target_name, k) in skip_map
+                        or (name, k) in skip_map}
         # Bug 76.1 + Bug 84 — canonical-absent: `false` boolean and
         # empty-string source values are no-ops at write time and
         # legitimately absent on target.
-        enf_canonical_absent = sum(
-            1 for k, v in src_enfs_dict.items()
+        canonical_absent_keys = {
+            k for k, v in src_enfs_dict.items()
             if (v is False or _normalize_bool(v) == 'false'
                 or v == ''
                 or (isinstance(v, str) and not v.strip()))
-            and k not in tgt_enfs_dict)
+            and k not in tgt_enfs_dict}
+        # Bug NEW (rehearsal-17 Tier 6 surfaced this) — cross-tenant-ID
+        # enforcements: keys whose value references a server-assigned ID
+        # (e.g. `require_account_share` carries a role_id that always
+        # differs between source and target tenants). Plugin-side
+        # classify_enforcement at structure-time correctly skips these
+        # when self-referencing (Bug 47) or cross-referencing without a
+        # remap (Upstream-1 / Upstream-3). The skip is intentional and
+        # legitimate; the count diff is expected behaviour. When target
+        # doesn't have the key (the most common legitimate skip path),
+        # adjust the src count the same way canonical-absent does, so
+        # verify doesn't flag the intentional skip as a FAIL.
+        cross_tenant_id_keys = {
+            k for k in src_enfs_dict
+            if k in _CROSS_TENANT_ID_ENFORCEMENTS
+            and k not in tgt_enfs_dict}
         priv_skipped = (priv_skipped_map.get(target_name)
                         or priv_skipped_map.get(name, 0))
+        # Union the three adjustment-contributing sets so the same key
+        # appearing in multiple categories doesn't get double-subtracted.
+        # (Pre-fix, `enf_skipped + enf_canonical_absent` could
+        # double-count a key that was both structure-time-skipped AND
+        # canonically absent on target.)
+        adjustment_keys = (skipped_keys
+                           | canonical_absent_keys
+                           | cross_tenant_id_keys)
         adjustments = {
-            'enforcements': enf_skipped + enf_canonical_absent,
+            'enforcements': len(adjustment_keys),
             'privileges': priv_skipped,
             'managed_nodes': 0,
             'teams': 0,

@@ -1028,6 +1028,63 @@ class Bug79CountAggregatorAdjustmentTests(unittest.TestCase):
                        and 'enforcements count' in c.message]
         self.assertEqual(count_fails, [])
 
+    def test_enforcement_count_pass_when_cross_tenant_id_absent(self):
+        """rehearsal-17 Tier 6 case: MIGTEST-Role-Admin source has 9
+        enforcements including `require_account_share` whose value is
+        the SOURCE role's own server-assigned ID (self-reference per
+        Bug 47 / Upstream-1). Plugin-side classify_enforcement skips
+        the write; structure_results.csv may or may not record the
+        skip depending on the code path. Either way, target has 8
+        enforcements (missing `require_account_share`). Verify must
+        recognise that cross-tenant-ID enforcements absent from target
+        are an EXPECTED count-diff (the value couldn't survive the
+        cross-tenant remap by design) and not flag the count as FAIL.
+        This is the verify-emit precision improvement that closes the
+        Tier 6 verify FAIL without depending on structure_results.csv
+        having the right skip row."""
+        src = {'name': 'MIGTEST-Role-Admin', 'enforcements': {
+            f'key{i}': True for i in range(8)
+        }}
+        src['enforcements']['require_account_share'] = '12058/51788715655757'
+        # Target is missing require_account_share entirely (the
+        # rehearsal-17 ground truth from c3po:/tmp/rehearsal-17-tier6-real/).
+        tgt = {'name': 'MIGTEST-Role-Admin', 'enforcements': {
+            f'key{i}': True for i in range(8)
+        }}
+        # Critically: skip_map is EMPTY — the rehearsal didn't have
+        # the structure_results.csv skip row, but cross-tenant-ID
+        # detection should kick in regardless.
+        checks = list(phase_roles(self._ctx(src, tgt, skip_map={})))
+        count_fails = [c for c in checks if c.severity == Severity.FAIL
+                       and 'enforcements count' in c.message]
+        self.assertEqual(count_fails, [],
+                         f'expected no count FAIL; got {[c.message for c in count_fails]}')
+
+    def test_cross_tenant_id_filter_no_double_count_with_skip_map(self):
+        """Defensive: when a cross-tenant-ID key is ALSO in
+        structure_skipped_enforcements (the canonical path), the
+        union-based adjustment must NOT double-subtract."""
+        src = {'name': 'R', 'enforcements': {
+            'key1': True, 'key2': True,
+            'require_account_share': '12058/51788715655757',
+        }}
+        # Source has 3 enforcements; require_account_share is in BOTH
+        # skip_map AND _CROSS_TENANT_ID_ENFORCEMENTS. Target has 2.
+        # Union adjustment = {require_account_share} → adj=1 →
+        # effective_src = 3 - 1 = 2 → matches target. If the previous
+        # `enf_skipped + enf_canonical_absent + cross_tenant_id` sum
+        # had been kept, adj would be 1+0+1=2, effective_src=1, target=2,
+        # 1 != 2 → spurious FAIL.
+        tgt = {'name': 'R', 'enforcements': {'key1': True, 'key2': True}}
+        skip_map = {('R', 'require_account_share'):
+                    'self-reference (Bug 47)'}
+        checks = list(phase_roles(self._ctx(src, tgt, skip_map=skip_map)))
+        count_fails = [c for c in checks if c.severity == Severity.FAIL
+                       and 'enforcements count' in c.message]
+        self.assertEqual(count_fails, [],
+                         f'union-adjustment should not double-count; '
+                         f'got {[c.message for c in count_fails]}')
+
     def test_privilege_count_pass_when_target_edition_skipped(self):
         """Elevation approval case: source has 2 privileges, structure
         SKIPped 1 as `'invalid privilege: privilege_access'` (target-
