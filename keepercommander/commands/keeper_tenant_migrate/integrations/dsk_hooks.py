@@ -1,5 +1,11 @@
 """Stable Python API for downstream consumers of tenant-migration run-dirs.
 
+Authored by Joao Lima as part of `keeper_tenant_migrate`. First
+declared downstream consumer: the declarative SDK at
+`msawczynk/dsk`, which adopted this API. Future consumers (SIEM
+ingestors, compliance dashboards, drift watchers, declarative SDKs,
+etc.) get the same surface.
+
 This module exposes typed access to the canonical artifacts produced by
 `keepercommander.commands.keeper_tenant_migrate` — inventory, manifest, audit chain, transition
 state, vault sharing, compliance evidence. Any consumer (compliance
