@@ -40,13 +40,18 @@ Run-machinery workflows orthogonal to the lifecycle scenarios:
 
 Full workflow narratives in `OPERATOR_PLAYBOOK.md`.
 
-> **Reading path**: `RUNBOOK.md` (canonical run-through) →
-> `OPERATOR_PLAYBOOK.md` (six workflows step-by-step) →
-> `SECURITY_MODEL.md` (4-layer interlock, audit chain integrity,
+> **Reading path** (operator side): `RUNBOOK.md` (canonical
+> run-through) → `OPERATOR_PLAYBOOK.md` (six workflows step-by-step)
+> → `SECURITY_MODEL.md` (4-layer interlock, audit chain integrity,
 > 0o600 plaintext handling) → `OUTPUT_CONTRACT.md` (run-dir schema
 > for downstream consumers) → `DEPENDENCY_SCHEMATIC.md` (5-diagram
-> architecture organigram) → `migration_scripts/ci/REHEARSAL_GUIDE.md`
-> (live-test harness, Tiers 1-7 + scale Tier 8 + cycled Tier 9).
+> architecture organigram).
+>
+> **Reading path** (customer-admin side, BEFORE engagement):
+> `CUSTOMER_REQUIREMENTS.md` — prerequisites, the records-and-SFs →
+> migrating-admin's-vault strategy, communication template for source
+> users, and scenario-specific (Absorption / Divestiture)
+> considerations.
 
 ## What the tool does
 
