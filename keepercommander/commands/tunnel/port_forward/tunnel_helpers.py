@@ -638,8 +638,6 @@ def find_open_port(tried_ports: list, start_port=49152, end_port=65535, preferre
 def is_port_open(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            # Enable SO_REUSEADDR to allow binding to ports in TIME_WAIT state
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
             return True
         except OSError:
