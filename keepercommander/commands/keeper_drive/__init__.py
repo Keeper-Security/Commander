@@ -87,7 +87,7 @@ def register_command_info(aliases, command_info):
     command_info['kd-rndir']                     = 'Rename a KeeperDrive folder'
     command_info['kd-list']                      = 'List Keeper Drive folders and records'
     command_info['kd-share-folder']              = 'Grant/update/revoke folder access'
-    command_info['kd-record-details']            = 'Get record metadata (title, color'
+    command_info['kd-record-details']            = 'Get record metadata'
     command_info['kd-share-record']              = 'Grant/update/revoke record sharing'
     command_info['kd-record-permission']         = 'Modify sharing permissions of records in a folder'
     command_info['kd-transfer-record']           = 'Transfer record ownership to another user'

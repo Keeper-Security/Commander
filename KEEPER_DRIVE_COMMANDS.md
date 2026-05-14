@@ -24,7 +24,7 @@ To get help on a particular command, run:
 | `[kd-share-record]`      | Grant, update, or revoke a user's access to a record                |
 | `[kd-record-permission]` | Bulk-update sharing permissions across records in a folder          |
 | `[kd-transfer-record]`   | Transfer record ownership to another user                           |
-| `[kd-record-details]`    | Get metadata for one or more records                                |
+| `[kd-record-details]`    | Get metadata for records                                |
 | `[kd-get]`               | Show full details for a record or folder                            |
 
 
