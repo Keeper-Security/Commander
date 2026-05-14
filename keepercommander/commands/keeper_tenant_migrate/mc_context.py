@@ -115,6 +115,13 @@ class MCContext:
         self.mc = mc_name_or_id
         self._entered = False
 
+    @property
+    def is_in_mc(self) -> bool:
+        """True after __enter__ when switch-to-mc succeeded. Use this
+        from caller code to detect whether `.params` is currently
+        scoped to the MC (vs. fell back to the input MSP params)."""
+        return self._entered
+
     def __enter__(self):
         if not self.mc:
             return self

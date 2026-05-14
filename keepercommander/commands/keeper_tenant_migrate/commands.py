@@ -2034,6 +2034,41 @@ class StructureCommand(Command):
         from .mc_context import MCContext
 
         with MCContext(params, kwargs.get('mc', '')) as ctx:
+            # When --mc switched us to a Managed Company, the MC-scoped
+            # params object is fresh (no prior sync_down) — its
+            # `.enterprise` dict is sparse until the structure command's
+            # own sync_down at line 2064 below. But `_run()` resolves
+            # `target_root` BEFORE that sync, so `_detect_target_root()`
+            # returns empty and target_root falls back to the literal
+            # 'Root' — which doesn't match the MC's actual top-level
+            # node name. The scope-root-remap in
+            # `structure.topological_node_order()` then can't relocate
+            # children whose parent equals the source scope-node name,
+            # so `create_node` is invoked with `parent='<source_scope_node>'`
+            # which doesn't exist in MC enterprise data → silent
+            # fall-back to 'root' or skip-with-warning, and downstream
+            # `create_team` / `create_role` queue against the missing
+            # parent and fail with "Node not found".
+            #
+            # Fix: when MC switch succeeded, eagerly sync the MC params
+            # here and resolve target_root explicitly, so `_run()` sees
+            # a correct target_root via kwargs (which takes precedence
+            # over `_detect_target_root()`). Bypasses the ambiguity for
+            # the MC path entirely.
+            if ctx.is_in_mc and not kwargs.get('target_root'):
+                sync_down(ctx.params)
+                mc_root = _detect_target_root(ctx.params)
+                if mc_root:
+                    kwargs = dict(kwargs, target_root=mc_root)
+                    logging.info(
+                        'structure --mc: resolved target_root=%r '
+                        'from MC enterprise data', mc_root)
+                else:
+                    logging.warning(
+                        'structure --mc: could not auto-detect MC root '
+                        'node name after sync; falling back to '
+                        '_detect_target_root() inside _run() — children '
+                        'may not remap correctly')
             return self._run(ctx.params, kwargs)
 
     def _run(self, params, kwargs):
