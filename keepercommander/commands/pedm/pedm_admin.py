@@ -1381,11 +1381,6 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         policy_uid = utils.generate_uid()
         controls = PedmPolicyMixin.get_policy_controls(policy_type, **kwargs)
 
-        arg_status = kwargs.get('status')
-        effective_status = arg_status if isinstance(arg_status, str) else 'enforce'
-        if policy_type != 'LeastPrivilege' and effective_status == 'enforce' and not controls:
-            raise base.CommandError(f'At least one --control is required for {policy_type} policy type when status is enforce')
-
         policy_data: Dict[str, Any] = {
             'PolicyName': kwargs.get('policy_name') or '',
             'PolicyType': policy_type,
@@ -1442,8 +1437,14 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         if policy_filter:
             policy_data.update(policy_filter)
 
-        for filter_name, default in (('UserCheck', ['*']), ('MachineCheck', ['*']), ('ApplicationCheck', ['*']),
-                                      ('DateCheck', []), ('TimeCheck', []), ('DayCheck', [])):
+        collection_defaults = {
+            'PrivilegeElevation': {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': ['*']},
+            'FileAccess':         {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': ['*']},
+            'CommandLine':        {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': []},
+            'LeastPrivilege':     {'UserCheck': [],    'MachineCheck': ['*'], 'ApplicationCheck': []},
+        }
+        for filter_name, default in {**collection_defaults.get(policy_type, {}),
+                                      **{'DateCheck': [], 'TimeCheck': [], 'DayCheck': []}}.items():
             if policy_data.get(filter_name) is None:
                 policy_data[filter_name] = default
 
