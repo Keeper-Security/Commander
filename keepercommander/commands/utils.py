@@ -1724,7 +1724,9 @@ class LoginCommand(Command):
         # (called inside api.login) honours the user's explicit preference.
         # Mirrors KSM CLI's use_config_file / use_keyring logic in Profile.init().
         import platform as _platform
-        from ..config_storage.loader import CONFIG_STORAGE_URL, OS_KEYCHAIN_URL, is_os_keychain_available
+        from ..config_storage.loader import (
+            CONFIG_STORAGE_URL, OS_KEYCHAIN_URL, is_os_keychain_available, _is_os_keychain_url
+        )
 
         use_config_file = (
             kwargs.get('config_file') is True
@@ -1748,7 +1750,13 @@ class LoginCommand(Command):
 
             # Warn if keychain is unavailable (headless/CI environments),
             # mirroring KSM CLI's fallback warning in Profile.init().
-            if CONFIG_STORAGE_URL not in params.config and not is_os_keychain_available():
+            # Also fires when a previously stored keychain URL is in config.json
+            # but the keychain is no longer reachable (e.g. SSH into a desktop box).
+            current_backend = params.config.get(CONFIG_STORAGE_URL)
+            keychain_was_or_would_be_selected = (
+                not current_backend or _is_os_keychain_url(current_backend)
+            )
+            if keychain_was_or_would_be_selected and not is_os_keychain_available():
                 logging.warning(
                     '%sWarning: OS keychain not available. Config will be stored in config.json '
                     '(use --config-file to suppress this message).%s',

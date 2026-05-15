@@ -418,6 +418,14 @@ def main(from_package=False):
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
+            # Pre-queue any sub-command passed after 'shell'
+            # e.g. `keeper shell login --config-file` → runs `login --config-file`
+            # as the first interactive command, then the shell stays open.
+            if original_args_after_command:
+                sub_cmd = ' '.join([shlex.quote(x) for x in original_args_after_command])
+                if original_args_after_command[0] == 'login' and opts.new_login:
+                    sub_cmd = 'login --new-login ' + sub_cmd[len('login'):].strip()
+                params.commands.insert(0, sub_cmd)
         elif opts.command and os.path.isfile(opts.command):
             with open(opts.command, 'r') as f:
                 lines = f.readlines()

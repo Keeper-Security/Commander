@@ -10,6 +10,7 @@
 #
 
 import abc
+import hashlib
 import importlib
 import json
 import logging
@@ -30,8 +31,33 @@ BOOL_PROPERTIES = ['debug', 'batch_mode', 'unmask_all']
 INT_PROPERTIES = ['timedelay', 'logout_timer']
 ENCRYPTED_DATA = 'encrypted_data'
 
-# URL used when Commander auto-selects the OS-native keychain backend.
+# Scheme used for the OS-native keychain backend.
+_OS_KEYCHAIN_SCHEME = 'os-keychain'
+
+# Fallback URL used when no config filename is available.
 OS_KEYCHAIN_URL = 'os-keychain://default'
+
+
+def _make_os_keychain_url(config_filename=None):  # type: (Optional[str]) -> str
+    """Return a config-file-specific os-keychain URL.
+
+    The netloc is an 8-character SHA-256 prefix of the absolute config path,
+    so each Commander config file maps to a distinct keychain account and
+    multiple profiles can coexist without overwriting each other.
+    """
+    if config_filename:
+        path_hash = hashlib.sha256(
+            os.path.abspath(config_filename).encode()
+        ).hexdigest()[:8]
+        return f'{_OS_KEYCHAIN_SCHEME}://{path_hash}'
+    return OS_KEYCHAIN_URL
+
+
+def _is_os_keychain_url(url):  # type: (Optional[str]) -> bool
+    """Return True if *url* refers to the OS-native keychain backend."""
+    if not url:
+        return False
+    return urlparse(url).scheme == _OS_KEYCHAIN_SCHEME
 
 
 def is_os_keychain_available():  # type: () -> bool
@@ -120,23 +146,39 @@ def split_name(name):   # type: (Union[str, Tuple[str, str]]) -> Tuple[str, str]
 
 
 _KEYCHAIN_SERVICE = 'KeeperCommander'
-_KEYCHAIN_CONFIG_KEY = 'config'
 
 
-def _clear_os_keychain_if_present():
-    """Delete Commander's keychain entry if it exists.
+def _keychain_account_from_url(url):  # type: (Optional[str]) -> str
+    """Return the keyring account key for *url*.
 
-    Called when switching to file-based storage so that stale credentials
-    are not left orphaned in the OS keychain.  Silently ignored if the
-    keyring package is not installed or no entry exists.
+    Uses the netloc of the URL (e.g. the path hash written by
+    _make_os_keychain_url) so that each config file maps to its own
+    keychain account.  Falls back to 'config' for legacy entries that
+    were written with the old hardcoded key.
     """
+    if url:
+        netloc = urlparse(url).netloc
+        if netloc:
+            return netloc
+    return 'config'
+
+
+def _clear_os_keychain_if_present(url=None):  # type: (Optional[str]) -> None
+    """Delete Commander's keychain entry for *url* if it exists.
+
+    Called after a successful file write when switching to file-based
+    storage, so that stale credentials are not left orphaned in the OS
+    keychain.  Silently ignored if keyring is not installed or the entry
+    does not exist.
+    """
+    account_key = _keychain_account_from_url(url)
     try:
         import keyring
         try:
-            if keyring.get_password(_KEYCHAIN_SERVICE, _KEYCHAIN_CONFIG_KEY) is not None:
-                keyring.delete_password(_KEYCHAIN_SERVICE, _KEYCHAIN_CONFIG_KEY)
+            if keyring.get_password(_KEYCHAIN_SERVICE, account_key) is not None:
+                keyring.delete_password(_KEYCHAIN_SERVICE, account_key)
                 logging.debug('Deleted keychain entry: service=%s account=%s',
-                              _KEYCHAIN_SERVICE, _KEYCHAIN_CONFIG_KEY)
+                              _KEYCHAIN_SERVICE, account_key)
         except keyring.errors.PasswordDeleteError:
             pass  # Entry didn't exist — nothing to do.
     except Exception as exc:
@@ -182,18 +224,19 @@ def store_config_properties(params):
         or os.getenv('KEEPER_CONFIG_STORAGE', '').lower() == 'file'
     )
 
+    # Capture the previously stored keychain URL before it is overwritten,
+    # so we can delete the right keychain account after a successful file write.
+    previous_keychain_url = (
+        config_json.get(CONFIG_STORAGE_URL)
+        if _is_os_keychain_url(config_json.get(CONFIG_STORAGE_URL))
+        else None
+    )
+
     if explicitly_use_file:
-        # User opted into file storage.  Remove any existing keychain URL so
-        # the plugin dispatch block below is skipped entirely, and keep the
-        # 'file' sentinel in the written JSON so the choice survives restarts.
+        # User opted into file storage.  Keep the 'file' sentinel in the
+        # written JSON so the choice survives restarts.
         logging.debug('File-based config storage selected (--config-file or KEEPER_CONFIG_STORAGE=file).')
         config_json[CONFIG_STORAGE_URL] = 'file'
-
-        # Clear any stale keychain entry so orphaned credentials don't linger
-        # in the OS keychain after the user switches to file-based storage.
-        # Mirrors the principle that only one storage backend is authoritative
-        # at a time (consistent with KSM CLI behaviour).
-        _clear_os_keychain_if_present()
 
     elif CONFIG_STORAGE_URL not in config_json:
         # No explicit choice and no previously persisted backend.
@@ -202,8 +245,9 @@ def store_config_properties(params):
         # Skipped when running in headless/CI environments (keychain unavailable).
         if is_os_keychain_available():
             logging.debug('Auto-selecting OS keychain backend for config storage.')
-            params.config[CONFIG_STORAGE_URL] = OS_KEYCHAIN_URL
-            config_json[CONFIG_STORAGE_URL] = OS_KEYCHAIN_URL
+            keychain_url = _make_os_keychain_url(params.config_filename)
+            params.config[CONFIG_STORAGE_URL] = keychain_url
+            config_json[CONFIG_STORAGE_URL] = keychain_url
 
     if CONFIG_STORAGE_URL in config_json and config_json[CONFIG_STORAGE_URL] != 'file':
         url = config_json[CONFIG_STORAGE_URL]
@@ -239,7 +283,7 @@ def store_config_properties(params):
             )
             # Undo the auto-selected backend so the file write includes the
             # protected fields in plaintext (with chmod 600 as before).
-            if config_json.get(CONFIG_STORAGE_URL) == OS_KEYCHAIN_URL:
+            if _is_os_keychain_url(config_json.get(CONFIG_STORAGE_URL)):
                 del config_json[CONFIG_STORAGE_URL]
                 params.config.pop(CONFIG_STORAGE_URL, None)
 
@@ -249,6 +293,12 @@ def store_config_properties(params):
                 json.dump(config_json, fd, ensure_ascii=False, indent=2)
             # Set secure file permissions (600) for configuration files containing sensitive data
             utils.set_file_permissions(params.config_filename)
+            # File write succeeded — now safe to remove any stale keychain entry.
+            # Doing this after the write mirrors the commit-after-success pattern
+            # used for the keychain store above, ensuring credentials are never
+            # lost from both backends simultaneously.
+            if explicitly_use_file and previous_keychain_url:
+                _clear_os_keychain_if_present(previous_keychain_url)
         except Exception as error:
             logging.debug(error, exc_info=True)
             logging.error(f'Failed to write configuration to {params.config_filename}. '

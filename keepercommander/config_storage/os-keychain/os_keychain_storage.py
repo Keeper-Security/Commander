@@ -20,11 +20,18 @@ consistent with KeyringConfigStorage.is_available() in the KSM CLI.
 
 Storage layout in the OS keychain:
   service / application : KeeperCommander
-  account / key         : config  →  JSON blob of all protected fields
+  account / key         : <url netloc>  →  JSON blob of all protected fields
+
+The account key is derived from the netloc of the storage URL (e.g. the 8-char
+SHA-256 prefix of the config file path written by _make_os_keychain_url).  This
+allows multiple Commander config files on the same OS user to coexist without
+overwriting each other's keychain entry.  Legacy entries written with the old
+hardcoded key 'config' are handled by _keychain_account_from_url in loader.py.
 """
 
 import json
 import logging
+from urllib.parse import urlparse
 from typing import Optional
 
 from ..loader import SecureStorageBase, SecureStorageException
@@ -32,9 +39,6 @@ from ..loader import SecureStorageBase, SecureStorageException
 # Top-level service / application name visible in the OS keychain UI.
 # On macOS this appears in Keychain Access; on Windows in Credential Manager.
 KEYRING_SERVICE = 'KeeperCommander'
-
-# Keyring account name used to store the config blob.
-KEYRING_CONFIG_KEY = 'config'
 
 
 class SecureStorage(SecureStorageBase):
@@ -53,6 +57,18 @@ class SecureStorage(SecureStorageBase):
     ``config_storage`` key that points to this backend.
     """
 
+    @staticmethod
+    def _account_key(url: str) -> str:
+        """Derive the keyring account key from the storage URL netloc.
+
+        Each config file gets a unique netloc (an 8-char path hash) via
+        _make_os_keychain_url in loader.py, so multiple profiles on the
+        same OS user do not overwrite each other.  Falls back to 'config'
+        for legacy entries written before per-profile keys were introduced.
+        """
+        netloc = urlparse(url).netloc if url else ''
+        return netloc if netloc else 'config'
+
     def load_configuration(self, url: str, encrypted_data: Optional[bytes] = None) -> dict:
         """Retrieve protected fields from the OS keychain.
 
@@ -67,7 +83,8 @@ class SecureStorage(SecureStorageBase):
             )
 
         try:
-            raw = keyring.get_password(KEYRING_SERVICE, KEYRING_CONFIG_KEY)
+            account_key = self._account_key(url)
+            raw = keyring.get_password(KEYRING_SERVICE, account_key)
             if not raw:
                 return {}
 
@@ -78,7 +95,8 @@ class SecureStorage(SecureStorageBase):
                 )
 
             logging.debug(
-                'Loaded %d field(s) from OS keychain (%s).', len(config), KEYRING_SERVICE
+                'Loaded %d field(s) from OS keychain (%s / %s).',
+                len(config), KEYRING_SERVICE, account_key
             )
             return config
 
@@ -103,11 +121,13 @@ class SecureStorage(SecureStorageBase):
             )
 
         try:
+            account_key = self._account_key(url)
             config_json = json.dumps(configuration, indent=4, sort_keys=True)
-            keyring.set_password(KEYRING_SERVICE, KEYRING_CONFIG_KEY, config_json)
+            keyring.set_password(KEYRING_SERVICE, account_key, config_json)
 
             logging.debug(
-                'Stored %d field(s) in OS keychain (%s).', len(configuration), KEYRING_SERVICE
+                'Stored %d field(s) in OS keychain (%s / %s).',
+                len(configuration), KEYRING_SERVICE, account_key
             )
             return None
 
