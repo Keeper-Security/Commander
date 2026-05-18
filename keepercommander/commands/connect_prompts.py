@@ -194,9 +194,9 @@ def _emit_record_source(record: Any) -> None:
 def _emit_warning(lines: List[str]) -> None:
     if not lines:
         return
-    sys.stderr.write(f'\n  {_bold_red("  WARNING")}\n')
+    sys.stderr.write(f'\n  {_bold_red("WARNING")}\n')
     for line in lines:
-        sys.stderr.write(f'     {_red(line)}\n')
+        sys.stderr.write(f'    {_red(line)}\n')
 
 
 def _emit_section(label: str, body: List[str]) -> None:
@@ -235,14 +235,20 @@ def confirm_argv(stage: str, argv: List[str], record: Any = None) -> bool:
     """Prompt before running a subprocess. Default-deny."""
     _emit_header(stage)
     _emit_record_source(record)
+    warning_lines = [
+        'Runs an external program with your user privileges.',
+        'Can modify files, settings, or reach the network.',
+    ]
     if argv and _is_interpreter(argv[0]):
-        _emit_warning([
-            'argv[0] is a shell or scripting interpreter.',
-            'This command can run arbitrary code on your machine.',
-        ])
+        warning_lines.append(
+            'argv[0] is a shell/scripting interpreter - it can run any code.'
+        )
+    _emit_warning(warning_lines)
     _emit_section('Command to execute:', _argv_block(argv))
     sys.stderr.write('\n')
-    return read_yes_no()
+    return read_yes_no(
+        f'{_bold("Run this external command? [y/n]")}{_dim(" (default: n): ")}'
+    )
 
 
 def confirm_env(stage: str, name: str, value: str, record: Any = None) -> bool:
