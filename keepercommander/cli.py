@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -248,7 +249,15 @@ def command_and_args_from_cmd(command_line):
     return cmd, args
 
 
+_DISALLOWED_COMMAND_CHARS = ('\r', '\n', '\x00')
+
+
 def do_command(params, command_line):
+    # Block control characters to prevent newline-injection at the shell boundary.
+    if isinstance(command_line, str) and any(ch in command_line for ch in _DISALLOWED_COMMAND_CHARS):
+        logging.error('Invalid command: control characters are not allowed in command input.')
+        return
+
     def is_msp(params_local):
         if params_local.enterprise:
             if 'licenses' in params_local.enterprise:
@@ -301,20 +310,43 @@ def do_command(params, command_line):
         return
 
     if command_line.startswith('ksm'):
-        try:
-            subprocess.check_call([OS_WHICH_CMD, 'ksm'], stdout=subprocess.DEVNULL)
-        except subprocess.CalledProcessError:
+        # Exclude cwd from PATH on Windows so a local `ksm.bat` can't hijack
+        # the `ksm` prefix via CreateProcess's implicit cwd search.
+        search_path = os.environ.get('PATH', os.defpath)
+        if sys.platform.startswith('win'):
+            try:
+                cwd_abs = os.path.abspath(os.getcwd())
+            except OSError:
+                cwd_abs = None
+            if cwd_abs:
+                search_path = os.pathsep.join(
+                    p for p in search_path.split(os.pathsep)
+                    if p and os.path.abspath(p) != cwd_abs
+                )
+
+        ksm_path = shutil.which('ksm', path=search_path)
+        if not ksm_path:
             logging.error(
                 'Please install the ksm application to run ksm commands.\n'
                 'See https://docs.keeper.io/secrets-manager/secrets-manager'
                 '/secrets-manager-command-line-interface'
                 '#secrets-manager-cli-installation'
             )
-        else:
-            if sys.platform.startswith('win'):
-                subprocess.check_call(command_line)
-            else:
-                subprocess.check_call(shlex.split(command_line))
+            return
+
+        try:
+            ksm_args = shlex.split(command_line, posix=not sys.platform.startswith('win'))
+        except ValueError as e:
+            logging.error('Invalid ksm command: %s', e)
+            return
+
+        if not ksm_args or ksm_args[0].lower() != 'ksm':
+            logging.error('Invalid ksm command.')
+            return
+
+        # Invoke via argv list with shell=False so arguments aren't re-parsed.
+        ksm_args[0] = ksm_path
+        subprocess.check_call(ksm_args, shell=False)
         return
     elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):

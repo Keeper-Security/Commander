@@ -55,8 +55,8 @@ class TestServiceApiRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get('X-API-Legacy'), 'true')
         self.assertEqual(response.get_json(), {"status": "success", "data": {"command": "ls"}})
-        mock_submit.assert_called_once_with('ls', [])
-        mock_wait.assert_called_once_with('req-1')
+        mock_submit.assert_called_once_with('ls', [], owner_key=None)
+        mock_wait.assert_called_once_with('req-1', owner_key=None)
 
     def test_v1_direct_route_keeps_legacy_execution_path(self):
         app = Flask(__name__)

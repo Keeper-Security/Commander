@@ -9,6 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+import hashlib
+import hmac
 import queue
 import threading
 import time
@@ -20,6 +22,13 @@ from dataclasses import dataclass, asdict
 
 from ..util.command_util import CommandExecutor
 from ..decorators.logging import logger, debug_decorator
+
+
+def derive_owner_key(api_key: Optional[str]) -> Optional[str]:
+    """Return a SHA-256 hash of the api-key, or None if none provided."""
+    if not api_key:
+        return None
+    return hashlib.sha256(api_key.strip().encode('utf-8')).hexdigest()
 
 
 # Queue configuration constants
@@ -51,10 +60,13 @@ class QueuedRequest:
     status_code: Optional[int] = None  # HTTP status code from command execution
     error_message: Optional[str] = None
     temp_files: list = None  # List of temporary file paths to clean up
-    
+    # Hashed api-key of the submitter; used to scope queue reads per caller.
+    owner_key: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert request to dictionary for JSON serialization."""
         data = asdict(self)
+        data.pop("owner_key", None)
         # Convert datetime objects to ISO strings and handle bytes objects
         for key, value in data.items():
             if isinstance(value, datetime):
@@ -121,26 +133,17 @@ class RequestQueueManager:
         logger.info("Request queue worker stopped")
     
     @debug_decorator
-    def submit_request(self, command: str, temp_files: list = None) -> str:
-        """Submit a new command request to the queue.
-        
-        Args:
-            command: The command string to execute
-            temp_files: List of temporary file paths to clean up after execution
-            
-        Returns:
-            str: Unique request ID
-            
-        Raises:
-            queue.Full: If the queue is at capacity
-        """
+    def submit_request(self, command: str, temp_files: list = None,
+                       owner_key: Optional[str] = None) -> str:
+        """Submit a request; ``owner_key`` scopes who can read it back."""
         request_id = str(uuid.uuid4())
         request = QueuedRequest(
             request_id=request_id,
             command=command,
             status=RequestStatus.QUEUED,
             created_at=datetime.now(),
-            temp_files=temp_files or []
+            temp_files=temp_files or [],
+            owner_key=owner_key,
         )
         
         try:
@@ -153,71 +156,57 @@ class RequestQueueManager:
             logger.error("Error: Request queue is full")
             raise
     
+    @staticmethod
+    def _is_owner(request: QueuedRequest, owner_key: Optional[str]) -> bool:
+        # Anonymous matches anonymous; otherwise require an exact owner match.
+        if request.owner_key is None and owner_key is None:
+            return True
+        if request.owner_key is None or owner_key is None:
+            return False
+        return hmac.compare_digest(request.owner_key, owner_key)
+
     @debug_decorator
-    def get_request_status(self, request_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of a specific request.
-        
-        Args:
-            request_id: The unique request identifier
-            
-        Returns:
-            Dict containing request status and metadata, or None if not found
-        """
+    def get_request_status(self, request_id: str,
+                           owner_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return status for ``request_id`` only if owned by ``owner_key``."""
         with self.data_lock:
-            # Check active requests
-            if request_id in self.active_requests:
-                return self.active_requests[request_id].to_dict()
-                
-            # Check completed requests
-            if request_id in self.completed_requests:
-                return self.completed_requests[request_id].to_dict()
-                
-            return None
-    
+            request = self.active_requests.get(request_id) \
+                or self.completed_requests.get(request_id)
+            if request is None or not self._is_owner(request, owner_key):
+                return None
+            return request.to_dict()
+
     @debug_decorator
-    def get_request_result(self, request_id: str) -> Optional[Tuple[Any, int]]:
-        """Get the result of a completed request.
-        
-        Args:
-            request_id: The unique request identifier
-            
-        Returns:
-            Tuple of (result, status_code) or None if not found/not completed
-        """
+    def get_request_result(self, request_id: str,
+                           owner_key: Optional[str] = None) -> Optional[Tuple[Any, int]]:
+        """Return result for ``request_id`` only if owned by ``owner_key``."""
         with self.data_lock:
-            if request_id in self.completed_requests:
-                request = self.completed_requests[request_id]
-                if request.status == RequestStatus.COMPLETED:
-                    status_code = request.status_code if request.status_code is not None else 200
-                    return request.result, status_code
-                elif request.status == RequestStatus.FAILED:
-                    return {"error": request.error_message}, 500
-                elif request.status == RequestStatus.EXPIRED:
-                    return {
-                        "error": request.error_message or "Error: Request expired before execution"
-                    }, 504
+            request = self.completed_requests.get(request_id)
+            if request is None or not self._is_owner(request, owner_key):
+                return None
+            if request.status == RequestStatus.COMPLETED:
+                status_code = request.status_code if request.status_code is not None else 200
+                return request.result, status_code
+            elif request.status == RequestStatus.FAILED:
+                return {"error": request.error_message}, 500
+            elif request.status == RequestStatus.EXPIRED:
+                return {
+                    "error": request.error_message or "Error: Request expired before execution"
+                }, 504
             return None
 
     @debug_decorator
-    def wait_for_result(self, request_id: str, timeout: Optional[float] = None) -> Optional[Tuple[Any, int]]:
-        """Wait synchronously for a queued request result.
-
-        Args:
-            request_id: The unique request identifier
-            timeout: Maximum seconds to wait while the request remains queued.
-                Once processing starts, continue waiting for completion.
-
-        Returns:
-            Tuple of (result, status_code), or None if the request vanished unexpectedly.
-        """
+    def wait_for_result(self, request_id: str, timeout: Optional[float] = None,
+                        owner_key: Optional[str] = None) -> Optional[Tuple[Any, int]]:
+        """Block until the request completes; only returns to its owner."""
         deadline = time.monotonic() + (timeout if timeout is not None else self.request_timeout)
 
         while True:
-            result_data = self.get_request_result(request_id)
+            result_data = self.get_request_result(request_id, owner_key=owner_key)
             if result_data is not None:
                 return result_data
 
-            status_info = self.get_request_status(request_id)
+            status_info = self.get_request_status(request_id, owner_key=owner_key)
             if status_info is None:
                 return None
 
@@ -268,18 +257,30 @@ class RequestQueueManager:
         return True
     
     @debug_decorator
-    def get_queue_status(self) -> Dict[str, Any]:
-        """Get overall queue status information.
-        
-        Returns:
-            Dict containing queue statistics
-        """
+    def get_queue_status(self, owner_key: Optional[str] = None) -> Dict[str, Any]:
+        """Return queue status scoped to ``owner_key``."""
         with self.data_lock:
+            active_for_caller = sum(
+                1 for r in self.active_requests.values()
+                if self._is_owner(r, owner_key)
+            )
+            completed_for_caller = sum(
+                1 for r in self.completed_requests.values()
+                if self._is_owner(r, owner_key)
+            )
+
+            current_id = self.current_request_id
+            if current_id is not None:
+                current_request = self.active_requests.get(current_id) \
+                    or self.completed_requests.get(current_id)
+                if current_request is None or not self._is_owner(current_request, owner_key):
+                    current_id = None
+
             return {
                 "queue_size": self.request_queue.qsize(),
-                "active_requests": len(self.active_requests),
-                "completed_requests": len(self.completed_requests),
-                "currently_processing": self.current_request_id,
+                "active_requests": active_for_caller,
+                "completed_requests": completed_for_caller,
+                "currently_processing": current_id,
                 "worker_running": self.is_running and self.worker_thread and self.worker_thread.is_alive()
             }
     
