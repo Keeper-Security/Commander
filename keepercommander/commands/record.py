@@ -359,6 +359,10 @@ class RecordGetUidCommand(Command):
                         else f.uid
                 if f.parent_uid:
                     fo['parent_folder_uid'] = f.parent_uid
+                if f.type == BaseFolderNode.UserFolderType:
+                    fo['path'] = get_folder_path(params, f.uid)
+                    record_uids = params.subfolder_record_cache.get(f.uid, set())
+                    fo['records'] = [{'record_uid': r} for r in record_uids]
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
