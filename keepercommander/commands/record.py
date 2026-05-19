@@ -23,10 +23,16 @@ from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
 
 from colorama import Fore, Back, Style
 
+import requests
+
 from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
+from .ksm import KSMCommand
+from .pam import gateway_helper
+from .pam.router_helper import router_get_connected_gateways
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, record_types
 from ..breachwatch import BreachWatch
+from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2, folder_pb2, enterprise_pb2
@@ -142,6 +148,10 @@ search_parser.add_argument('-c', '--categories', dest='categories', action='stor
                                 '"s" = shared folders, "t" = teams, "d" = KeeperDrive folders')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
                            help='treat pattern as a regular expression instead of space-separated search terms')
+search_parser.add_argument('--device', dest='device', action='store_true',
+                           help='treat pattern as a PAM Gateway UID (exact) or controllerName (case-insensitive '
+                                'substring). Prints full Gateway info and PAM Configs bound to it. '
+                                'Incompatible with --regex and --categories.')
 search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                            default='table', help='output format')
 
@@ -1284,6 +1294,131 @@ class RecordGetUidCommand(Command):
             print(f'  Error: Could not retrieve rotation info')
 
 
+def _resolve_gateways_by_pattern(params, pattern):
+    """Resolve a `--device` pattern to a list of Gateway controller objects.
+
+    Matches both: exact controllerUid AND case-insensitive substring on
+    controllerName (vault parity). `*` matches all Gateways. Returns
+    (matched_controllers, connected_by_uid_bytes, is_router_down).
+    """
+    is_router_down = False
+    enterprise_controllers_connected = None
+    try:
+        enterprise_controllers_connected = router_get_connected_gateways(params)
+    except requests.exceptions.ConnectionError:
+        is_router_down = True
+    except Exception as e:
+        logging.debug(f'router_get_connected_gateways failed: {e}')
+
+    connected_by_uid = {}
+    if enterprise_controllers_connected:
+        for ctrl in list(enterprise_controllers_connected.controllers):
+            connected_by_uid.setdefault(ctrl.controllerUid, []).append(ctrl)
+
+    all_gateways = list(gateway_helper.get_all_gateways(params) or [])
+    is_wildcard = pattern == '*'
+    pattern_lower = pattern.lower()
+
+    matched = []
+    seen = set()
+    for g in all_gateways:
+        uid_str = utils.base64_url_encode(g.controllerUid)
+        name = g.controllerName or ''
+        if is_wildcard:
+            hit = True
+        else:
+            hit = (uid_str == pattern) or (pattern_lower and pattern_lower in name.lower())
+        if hit and uid_str not in seen:
+            matched.append(g)
+            seen.add(uid_str)
+    return matched, connected_by_uid, is_router_down
+
+
+def _find_pam_configs_for_gateway(params, gateway_uid_str):
+    """Return list of PAM Config record summaries bound to the given Gateway UID.
+
+    PAM Configurations are record version 6 (pamAws/Azure/Gcp/Domain/Network/Oci
+    Configuration types). The Gateway link lives in the `pamResources` typed
+    field's `controllerUid` value (vault parity).
+    """
+    configs = []
+    for kr in vault_extensions.find_records(params, record_version=6):
+        if not isinstance(kr, vault.TypedRecord):
+            continue
+        try:
+            field = kr.get_typed_field('pamResources')
+            value = field.get_default_value(dict) if field else None
+            if not value:
+                continue
+            if value.get('controllerUid', '') == gateway_uid_str:
+                configs.append({
+                    'record_uid': kr.record_uid,
+                    'title': kr.title or '',
+                    'record_type': kr.record_type,
+                    'description': vault_extensions.get_record_description(kr) or '',
+                })
+        except Exception as e:
+            logging.debug(f'Skipping record {kr.record_uid} while scanning for PAM Configs: {e}')
+            continue
+    configs.sort(key=lambda c: (c['title'] or '').lower())
+    return configs
+
+
+def _build_gateway_info(c, connected_instances, params, is_router_down, is_verbose):
+    """Build a dict describing one Gateway, suitable for table or JSON rendering."""
+    gateway_uid_str = utils.base64_url_encode(c.controllerUid)
+    ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
+    ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
+    ksm_app_name = None
+    ksm_app_accessible = False
+    if ksm_app:
+        try:
+            ksm_app_data = json.loads(ksm_app.get('data_unencrypted'))
+            ksm_app_name = ksm_app_data.get('title')
+            ksm_app_accessible = True
+        except Exception:
+            pass
+
+    is_pool = len(connected_instances) > 1
+    if is_router_down:
+        status = 'UNKNOWN'
+    elif connected_instances:
+        status = f'ONLINE ({len(connected_instances)} instances)' if is_pool else 'ONLINE'
+    else:
+        status = 'OFFLINE'
+
+    version_parts = []
+    version = ''
+    if connected_instances:
+        first = connected_instances[0]
+        if getattr(first, 'version', ''):
+            version_parts = first.version.split(';')
+            version = version_parts[0] if version_parts else first.version
+
+    info = {
+        'gateway_name': c.controllerName,
+        'gateway_uid': gateway_uid_str,
+        'status': status,
+        'gateway_version': version,
+        'ksm_app_name': ksm_app_name,
+        'ksm_app_uid': ksm_app_uid_str,
+        'ksm_app_accessible': ksm_app_accessible,
+    }
+    if is_verbose:
+        info.update({
+            'device_name': c.deviceName,
+            'device_token': c.deviceToken,
+            'created_on': datetime.datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'last_modified': datetime.datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'node_id': c.nodeId,
+            'os': version_parts[1] if len(version_parts) > 1 else '',
+            'os_release': version_parts[2] if len(version_parts) > 2 else '',
+            'machine_type': version_parts[3] if len(version_parts) > 3 else '',
+            'os_version': version_parts[4] if len(version_parts) > 4 else '',
+        })
+    return info
+
+
 class SearchCommand(Command):
     def get_parser(self):
         return search_parser
@@ -1293,6 +1428,18 @@ class SearchCommand(Command):
         # Join multiple words into a single pattern string
         pattern = ' '.join(pattern_args) if isinstance(pattern_args, list) else (pattern_args or '')
         use_regex = kwargs.get('regex', False)
+        device_mode = kwargs.get('device', False)
+        fmt = kwargs.get('format', 'table')
+        verbose = kwargs.get('verbose') is True
+
+        if device_mode:
+            if use_regex:
+                raise CommandError('search', '--regex is not supported with --device (pattern is UID or controllerName)')
+            if kwargs.get('categories'):
+                raise CommandError('search', '--categories is not supported with --device (only PAM Configs apply)')
+            if not pattern:
+                raise CommandError('search', '--device requires a pattern: gateway UID or controllerName substring (use "*" for all)')
+            return self._execute_device_search(params, pattern, verbose, fmt)
 
         # Handle wildcard: '*' means match all
         if pattern == '*':
@@ -1302,9 +1449,7 @@ class SearchCommand(Command):
                 pattern = ''  # Empty pattern matches all in token mode
 
         categories = (kwargs.get('categories') or 'rstd').lower()
-        verbose = kwargs.get('verbose') is True
         skip_details = not verbose
-        fmt = kwargs.get('format', 'table')
 
         kd_records_map = getattr(params, 'keeper_drive_records', {}) or {}
 
@@ -1436,6 +1581,73 @@ class SearchCommand(Command):
                 return base.dump_report_data(table, headers, fmt='json')
             else:
                 return base.dump_report_data([], ['type', 'uid', 'name', 'details'], fmt='json')
+
+    @staticmethod
+    def _execute_device_search(params, pattern, is_verbose, fmt):
+        """Handle `search <pattern> --device`: resolve Gateway(s), print info + bound PAM Configs."""
+        matched, connected_by_uid, is_router_down = _resolve_gateways_by_pattern(params, pattern)
+
+        if not matched:
+            msg = f'No gateways match "{pattern}"'
+            if fmt == 'json':
+                return base.dump_report_data([], ['gateway_uid', 'gateway_name', 'status', 'pam_config_count'],
+                                             fmt='json')
+            logging.info(msg)
+            return None
+
+        if len(matched) >= 2:
+            logging.warning(f'{len(matched)} gateways matched "{pattern}"')
+
+        gateways_payload = []
+        for g in matched:
+            info = _build_gateway_info(g, connected_by_uid.get(g.controllerUid, []),
+                                       params, is_router_down, is_verbose)
+            pam_configs = _find_pam_configs_for_gateway(params, info['gateway_uid'])
+            info['pam_config_count'] = len(pam_configs)
+            info['pam_configs'] = pam_configs
+            gateways_payload.append(info)
+
+        if fmt == 'json':
+            return json.dumps({'gateways': gateways_payload}, indent=2, default=base.json_serialized)
+
+        # Table output
+        for info in gateways_payload:
+            status_color = bcolors.OKGREEN if info['status'].startswith('ONLINE') else \
+                           (bcolors.WARNING if info['status'] == 'UNKNOWN' else bcolors.FAIL)
+            logging.info('')
+            logging.info(f'=== Gateway: {bcolors.BOLD}{info["gateway_name"]}{bcolors.ENDC} '
+                         f'({info["gateway_uid"]}) ===')
+            logging.info(f'  Status:        {status_color}{info["status"]}{bcolors.ENDC}')
+            logging.info(f'  Version:       {info["gateway_version"] or "-"}')
+            ksm_label = (f'{info["ksm_app_name"]} ({info["ksm_app_uid"]})'
+                         if info['ksm_app_accessible']
+                         else f'[APP NOT ACCESSIBLE OR DELETED] ({info["ksm_app_uid"]})')
+            logging.info(f'  KSM App:       {ksm_label}')
+            logging.info(f'  PAM Configs:   {info["pam_config_count"]}')
+            if is_verbose:
+                logging.info(f'  Device Name:   {info.get("device_name", "")}')
+                logging.info(f'  Device Token:  {info.get("device_token", "")}')
+                logging.info(f'  Node ID:       {info.get("node_id", "")}')
+                logging.info(f'  Created:       {info.get("created_on", "")}')
+                logging.info(f'  Last modified: {info.get("last_modified", "")}')
+                if info.get('os'):
+                    logging.info(f'  OS:            {info["os"]} {info.get("os_release", "")} '
+                                 f'({info.get("machine_type", "")}) {info.get("os_version", "")}'.rstrip())
+
+            if info['pam_configs']:
+                if is_verbose:
+                    rows = [[c['record_uid'], c['record_type'], c['title'], c['description']]
+                            for c in info['pam_configs']]
+                    base.dump_report_data(rows,
+                                          ['Record UID', 'Type', 'Title', 'Description'],
+                                          row_number=True,
+                                          column_width=None)
+                else:
+                    for idx, c in enumerate(info['pam_configs'], 1):
+                        logging.info(f'    PamConfig{idx}:  {c["record_uid"]}  {c["title"]}')
+            else:
+                logging.info('  (no PAM Configs bound to this gateway)')
+        return None
 
     @staticmethod
     def _display_parent_uid(parent_uid):
