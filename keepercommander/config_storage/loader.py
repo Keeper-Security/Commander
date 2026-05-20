@@ -233,8 +233,9 @@ def store_config_properties(params):
     )
 
     if explicitly_use_file:
-        # User opted into file storage.  Keep the 'file' sentinel in the
-        # written JSON so the choice survives restarts.
+        # User opted into file storage.  Remove any existing keychain URL so
+        # the plugin dispatch block below is skipped entirely, and keep the
+        # 'file' sentinel in the written JSON so the choice survives restarts.
         logging.debug('File-based config storage selected (--config-file or KEEPER_CONFIG_STORAGE=file).')
         config_json[CONFIG_STORAGE_URL] = 'file'
 
@@ -243,6 +244,9 @@ def store_config_properties(params):
         # Auto-activate the OS-native keychain, matching KSM CLI's default
         # behaviour of using the keychain whenever it is available.
         # Skipped when running in headless/CI environments (keychain unavailable).
+        # Pre-keychain installs are handled in load_config_properties, which sets
+        # the 'file' sentinel before login populates params.config with credentials,
+        # so this branch is only reached on a genuinely fresh login (no prior config).
         if is_os_keychain_available():
             logging.debug('Auto-selecting OS keychain backend for config storage.')
             keychain_url = _make_os_keychain_url(params.config_filename)
@@ -274,18 +278,22 @@ def store_config_properties(params):
                 config_json[ENCRYPTED_DATA] = utils.base64_url_encode(encrypted_data)
 
         except SecureStorageException as sse:
-            # If the OS keychain fails (e.g. permission denied on macOS), fall
-            # back to file-based storage rather than silently losing config data.
-            # config_json is still unmodified here, so all fields are preserved.
+            if not _is_os_keychain_url(url):
+                # For explicitly configured non-OS backends (e.g. aws-kms://, aws-sm://),
+                # a store failure must not silently downgrade secrets to a plaintext
+                # config.json — that would expose credentials without the user's knowledge.
+                raise
+            # OS keychain failed (e.g. permission denied, no daemon) — fall back to
+            # file-based storage.  config_json is still unmodified here so all fields
+            # are preserved for the file write below.
             logging.warning(
                 'OS keychain store failed (%s). '
                 'Falling back to file-based config storage.', sse
             )
             # Undo the auto-selected backend so the file write includes the
             # protected fields in plaintext (with chmod 600 as before).
-            if _is_os_keychain_url(config_json.get(CONFIG_STORAGE_URL)):
-                del config_json[CONFIG_STORAGE_URL]
-                params.config.pop(CONFIG_STORAGE_URL, None)
+            del config_json[CONFIG_STORAGE_URL]
+            params.config.pop(CONFIG_STORAGE_URL, None)
 
     if params.config_filename:
         try:
@@ -330,6 +338,18 @@ def load_config_properties(params):
             conf = storage.load_configuration(url, encrypted_data)
             if isinstance(conf, dict):
                 params.config.update(conf)
+    else:
+        # No storage backend recorded. If the config already contains credentials
+        # (device_token or private_key), this is a pre-keychain Commander install.
+        # Mark it as file-based storage NOW — before login has a chance to add more
+        # credentials to params.config — so store_config_properties does not
+        # silently migrate the user to the OS keychain on next save.
+        if params.config.get('device_token') or params.config.get('private_key'):
+            params.config[CONFIG_STORAGE_URL] = 'file'
+            logging.debug(
+                'Detected pre-keychain config.json — marking storage as file-based '
+                'to prevent silent migration to OS keychain.'
+            )
 
     for name in PROTECTED_PROPERTIES + PROTECTED_CONNECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
         config_name, params_name = split_name(name)

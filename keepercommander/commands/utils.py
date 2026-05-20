@@ -1731,6 +1731,9 @@ class LoginCommand(Command):
         use_config_file = (
             kwargs.get('config_file') is True
             or os.environ.get('KEEPER_CONFIG_STORAGE', '').lower() == 'file'
+            # Also respect a sentinel set programmatically before login
+            # (e.g. `keeper shell --config-file` sets it in __main__.py).
+            or params.config.get(CONFIG_STORAGE_URL) == 'file'
         )
 
         if not isinstance(params.config, dict):

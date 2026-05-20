@@ -182,8 +182,10 @@ class ConfigFormatHandler:
 
         if not private_key:
             raise ValidationError(
-                "Field 'private_key' not found. The config may be stored in the OS "
-                "keychain but could not be loaded. Ensure you are logged in."
+                "Field 'private_key' could not be resolved from config. Possible causes: "
+                "the OS keychain is unavailable or access was denied, the configured "
+                "storage backend failed, the config_storage value is invalid, or the "
+                "configuration is corrupted. Enable debug logging for details."
             )
         return private_key
 

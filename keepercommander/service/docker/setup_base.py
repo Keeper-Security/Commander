@@ -224,9 +224,12 @@ class DockerSetupBase:
             return config_path
 
         config_storage = config_data.get('config_storage', '')
-        if config_storage and config_storage != 'file':
-            # Keychain mode: credentials live in the OS keychain, not in the file.
+        from ...config_storage.loader import _is_os_keychain_url
+        if _is_os_keychain_url(config_storage):
+            # OS-keychain mode: credentials live in the keychain, not in the file.
             # Build the essential-keys dict from the already-loaded params object.
+            # Other backends (aws-kms://, aws-sm://, etc.) manage their own upload
+            # semantics and should not be rewritten here.
             essential_config = {}
             for file_key, params_attr in [
                 ('server', 'server'),
