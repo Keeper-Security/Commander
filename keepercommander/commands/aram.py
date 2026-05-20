@@ -2421,7 +2421,7 @@ class ActionReportCommand(EnterpriseCommand):
             logging.warning(f'Invalid target_user_status \'{target_status}\': value must be one of {valid_targets}')
             return
 
-        target_users = args[0]
+        target_users = get_no_action_users(*args)
         usernames = {user['username'] for user in target_users}
 
         columns_arg = kwargs.get('columns')
