@@ -76,7 +76,7 @@ class CreateService(Command):
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
-        parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
+        parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='Commander Service Mode Docker Config record UID to update with service metadata (Docker mode)')
         parser.add_argument('-rl', '--ratelimit', type=str, help='rate limit (e.g., 10/minute, 100/hour)')
         parser.add_argument('-ek', '--encryption_key', type=str, help='encryption key for response encryption (32 alphanumeric characters)')
         parser.add_argument('-te', '--token_expiration', type=str, help='API token expiration (e.g., 30m, 24h, 7d)')
@@ -92,24 +92,30 @@ class CreateService(Command):
             from ..core.globals import init_globals
             init_globals(params)
 
-            config_data = self.service_config.create_default_config()
-
             filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption', 'encryption_key', 'token_expiration']}
             args = StreamlineArgs(**filtered_kwargs)
+
+            from .integrations.vault_metadata import get_existing_api_key, write_service_metadata
+            existing_api_key = (
+                get_existing_api_key(params, args.update_vault_record)
+                if args.update_vault_record else None
+            )
+
+            config_data = self.service_config.create_default_config()
             self._handle_configuration(config_data, params, args)
-            api_key = self._create_and_save_record(config_data, params, args)
-            
+            api_key = self._create_and_save_record(config_data, params, args, existing_api_key=existing_api_key)
+
             if args.update_vault_record and api_key:
                 actual_service_url = self._get_service_url(config_data)
-                self._update_vault_record_with_metadata(params, args.update_vault_record, actual_service_url, api_key)
-            
+                write_service_metadata(params, args.update_vault_record, actual_service_url, api_key)
+
             self._upload_and_start_service(params)
 
         except ValidationError as e:
             print(f"Validation Error: {str(e)}")
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
-    
+
     @debug_decorator
     def _handle_configuration(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:       
         if args.port is not None:
@@ -120,11 +126,18 @@ class CreateService(Command):
             self.config_handler.handle_interactive_config(config_data, params)
             self.security_handler.configure_security(config_data)
     
-    def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> Optional[str]:
+    def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs, existing_api_key: Optional[str] = None) -> Optional[str]:
         if args.port is None:
             self.config_handler._configure_run_mode(config_data)
         
-        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands, args.token_expiration, args.update_vault_record)
+        record = self.service_config.create_record(
+            config_data["is_advanced_security_enabled"],
+            params,
+            args.commands,
+            args.token_expiration,
+            args.update_vault_record,
+            existing_api_key=existing_api_key,
+        )
         config_data["records"] = [record]
         if config_data.get("fileformat"):
             format_type = config_data["fileformat"]
@@ -162,40 +175,3 @@ class CreateService(Command):
             base_url = f"{protocol}://localhost:{port}"
         
         return f"{base_url}{api_path}"
-    
-    def _update_vault_record_with_metadata(self, params: KeeperParams, record_uid: str, service_url: str, api_key: str) -> None:
-        """Update CSMD Config vault record with service URL and API key as custom fields (Docker mode only)"""
-        try:
-            from ... import vault, record_management, api
-            
-            logger.debug(f"Updating vault record {record_uid} with service metadata...")
-            
-            # Load the CSMD Config record
-            record = vault.KeeperRecord.load(params, record_uid)
-            
-            # Add custom fields for service URL and API key
-            # service_url as URL field, api_key as secret field (hidden)
-            custom_fields = [
-                vault.TypedField.new_field('url', service_url, 'service_url'),
-                vault.TypedField.new_field('secret', api_key, 'api_key'),
-            ]
-            
-            # Preserve existing custom fields if any
-            if hasattr(record, 'custom') and record.custom:
-                # Remove old service_url and api_key fields if they exist
-                existing_fields = [f for f in record.custom if f.label not in ['service_url', 'api_key']]
-                record.custom = existing_fields + custom_fields
-            else:
-                record.custom = custom_fields
-            
-            # Update the record
-            record_management.update_record(params, record)
-            params.sync_data = True
-            api.sync_down(params)
-            
-            logger.debug(f"Successfully updated vault record with service metadata")
-            
-        except Exception as e:
-            logger.error(f"Failed to update vault record with service metadata: {e}")
-            # Don't fail the whole service-create if vault update fails
-            logger.warning(f"Could not update vault record with service metadata: {e}")

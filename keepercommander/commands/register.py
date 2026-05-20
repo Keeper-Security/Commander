@@ -87,6 +87,10 @@ expiration.add_argument('--expire-at', dest='expire_at', action='store',
 expiration.add_argument('--expire-in', dest='expire_in', action='store',
                         metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears]',
                         help='share expiration: never or period')
+share_record_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
+                                 help='rotate the password when the share access expires. '
+                                      'Requires --action=grant, a positive --expire-at/--expire-in '
+                                      '(not "never"), and a pamUser record.')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
@@ -663,6 +667,16 @@ class ShareRecordCommand(Command):
         if action == 'grant':
             share_expiration = get_share_expiration(kwargs.get('expire_at'), kwargs.get('expire_in'))
 
+        rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
+        if rotate_on_expiration:
+            if action != 'grant':
+                raise CommandError('share-record',
+                                   '--rotate-on-expiration is only valid with --action=grant')
+            if not isinstance(share_expiration, int) or share_expiration <= 0:
+                raise CommandError('share-record',
+                                   '--rotate-on-expiration requires a positive --expire-at / --expire-in '
+                                   '(cannot be "never").')
+
         record_uid = None
         folder_uid = None
         shared_folder_uid = None
@@ -748,6 +762,17 @@ class ShareRecordCommand(Command):
         if len(record_uids) == 0:
             raise CommandError('share-record', 'There are no records to share selected')
 
+        if rotate_on_expiration:
+            non_pam_user_uids = [
+                ruid for ruid in record_uids
+                if getattr(vault.KeeperRecord.load(params, ruid), 'record_type', None) != 'pamUser'
+            ]
+            if non_pam_user_uids:
+                raise CommandError(
+                    'share-record',
+                    '--rotate-on-expiration is only supported for pamUser records. '
+                    'Not pamUser: ' + ', '.join(sorted(non_pam_user_uids)))
+
         if action == 'owner' and len(emails) > 1:
             raise CommandError('share-record', 'You can transfer ownership to a single account only')
 
@@ -786,6 +811,17 @@ class ShareRecordCommand(Command):
                 record_uid = x.get('record_uid')
                 if record_uid:
                     not_owned_records[record_uid] = x
+
+        def apply_share_expiration(ro):   # type: (record_pb2.SharedRecord) -> None
+            if not isinstance(share_expiration, int):
+                return
+            if share_expiration > 0:
+                ro.expiration = share_expiration * 1000
+                ro.timerNotificationType = record_pb2.NOTIFY_OWNER
+                if rotate_on_expiration:
+                    ro.rotateOnExpiration = True
+            elif share_expiration < 0:
+                ro.expiration = -1
 
         rq = record_pb2.RecordShareUpdateRequest()
         existing_shares = {}
@@ -857,12 +893,7 @@ class ShareRecordCommand(Command):
                         else:
                             ro.editable = can_edit
                             ro.shareable = can_share
-                            if isinstance(share_expiration, int):
-                                if share_expiration > 0:
-                                    ro.expiration = share_expiration * 1000
-                                    ro.timerNotificationType = record_pb2.NOTIFY_OWNER
-                                elif share_expiration < 0:
-                                    ro.expiration = -1
+                            apply_share_expiration(ro)
                     elif email in existing_shares:
                         current = existing_shares[email]
                         if action == 'owner':
@@ -871,6 +902,7 @@ class ShareRecordCommand(Command):
                         else:
                             ro.editable = True if can_edit else current.get('editable')
                             ro.shareable = True if can_share else current.get('shareable')
+                            apply_share_expiration(ro)
                     rq.updateSharedRecord.append(ro) if email in existing_shares else rq.addSharedRecord.append(ro)
                 else:
                     if can_share or can_edit:
@@ -882,7 +914,7 @@ class ShareRecordCommand(Command):
                     else:
                         rq.removeSharedRecord.append(ro)
         if dry_run:
-            headers = ['Username', 'Record UID', 'Title', 'Share Action', 'Expiration']
+            headers = ['Username', 'Record UID', 'Title', 'Share Action', 'Expiration', 'Rotate on Expiration']
             table = []
             for attr in ['addSharedRecord', 'updateSharedRecord', 'removeSharedRecord']:
                 if hasattr(rq, attr):
@@ -909,6 +941,7 @@ class ShareRecordCommand(Command):
                             row.append(str(dt))
                         else:
                             row.append(None)
+                        row.append('Yes' if obj.rotateOnExpiration else None)
                         table.append(row)
             dump_report_data(table, headers, row_number=True, group_by=0)
         return rq

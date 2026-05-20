@@ -72,7 +72,8 @@ class TestCreateService(unittest.TestCase):
                 self.params,
                 args.commands,
                 args.token_expiration,
-                None  # record_uid (update_vault_record is None)
+                None,  # record_uid (update_vault_record is None)
+                existing_api_key=None,
             )
             if(args.fileformat):
                 config_data["fileformat"]= args.fileformat
