@@ -11,7 +11,7 @@
 
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from .cli_handler import CommandHandler
 from .config_validation import ConfigValidator
 from ..decorators.logging import logger, debug_decorator
@@ -41,26 +41,23 @@ class RecordHandler:
         return True
 
     @debug_decorator
-    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: str = None, record_uid: str = None) -> Dict[str, Any]:
+    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: Optional[str] = None, record_uid: Optional[str] = None, existing_api_key: Optional[str] = None) -> Dict[str, Any]:
         """Create a new configuration record."""
-        api_key = generate_api_key()
+        api_key = existing_api_key or generate_api_key()
         record = self._create_base_record(api_key, commands)
-        
-        # Handle token expiration - either from CLI arg (streamlined) or interactive prompt
+
         if token_expiration:
-            # Streamlined mode - use provided expiration
             self._set_expiration_from_string(record, token_expiration)
         elif is_advanced_security_enabled == "y":
-            # Interactive mode - prompt for expiration
             logger.debug("Adding expiration to record (advanced security enabled)")
             self._add_expiration_to_record(record)
-            
-        # Docker mode: redact API key and show vault record UID
+
+        verb = 'Reusing' if existing_api_key else 'Generated'
         if record_uid:
             redacted_key = f"****{api_key[-4:]}" if len(api_key) >= 4 else "****"
-            print(f'Generated API key: {redacted_key} (stored in vault record: {record_uid})')
+            print(f'{verb} API key: {redacted_key} (stored in vault record: {record_uid})')
         else:
-            print(f'Generated API key: {api_key}')
+            print(f'{verb} API key: {api_key}')
         return record
 
     def update_or_add_record(self, params: KeeperParams, title: str, config_path: Path) -> None:
