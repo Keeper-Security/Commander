@@ -88,8 +88,9 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store',
                         metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears]',
                         help='share expiration: never or period')
 share_record_parser.add_argument('--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
-                                 help='rotate the credential when the share access expires '
-                                      '(only valid with --expire-at/--expire-in and pamUser records)')
+                                 help='rotate the password when the share access expires. '
+                                      'Requires --action=grant, a positive --expire-at/--expire-in '
+                                      '(not "never"), and a pamUser record.')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
