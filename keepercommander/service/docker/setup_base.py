@@ -138,16 +138,20 @@ class DockerSetupBase:
 
         # Create new folder
         try:
-            folder_cmd = FolderMakeCommand()
-            folder_uid = folder_cmd.execute(
-                params,
-                folder=folder_name,
-                shared_folder=True,
-                manage_users=True,
-                manage_records=True,
-                can_edit=True,
-                can_share=True
-            )
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                folder_uid = FolderMakeCommand().execute(
+                    params,
+                    folder=folder_name,
+                    shared_folder=True,
+                    manage_users=True,
+                    manage_records=True,
+                    can_edit=True,
+                    can_share=True
+                )
+            finally:
+                sys.stdout = old_stdout
             api.sync_down(params)
             DockerSetupPrinter.print_success(f"Shared folder created successfully (UID: {folder_uid})")
             return folder_uid
