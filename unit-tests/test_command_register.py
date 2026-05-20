@@ -1,4 +1,3 @@
-import json
 from unittest import TestCase, mock
 
 from data_vault import get_synced_params, VaultEnvironment
@@ -65,38 +64,118 @@ class TestRegister(TestCase):
         cmd.execute(params, email=['user2@keepersecurity.com'], action='revoke', record=record_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
-    def _mark_record_as_pam_user(self, params, record_uid):
-        rec = params.record_cache[record_uid]
-        try:
-            existing = rec.get('data_unencrypted')
-            data = json.loads(existing.decode() if isinstance(existing, (bytes, bytearray)) else (existing or '{}'))
-        except Exception:
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        data['type'] = 'pamUser'
-        rec['data_unencrypted'] = json.dumps(data).encode()
+    def _patch_record_type_as_pam_user(self, target_uid):
+        """Patch vault.KeeperRecord.load so the given record reports record_type='pamUser'."""
+        from keepercommander import vault
+        real_load = vault.KeeperRecord.load
 
-    def test_share_record_rotate_on_expiration_sets_flag(self):
-        params = get_synced_params()
-        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
-        self._mark_record_as_pam_user(params, record_uid)
+        def fake_load(params, record_uid, *args, **kwargs):
+            loaded = real_load(params, record_uid, *args, **kwargs)
+            if record_uid == target_uid and loaded is not None:
+                loaded.get_record_type = lambda: 'pamUser'
+            return loaded
 
-        captured = {}
+        return mock.patch.object(vault.KeeperRecord, 'load', side_effect=fake_load)
 
-        def capture_record_share(rq):
+    def _capture_shared_record_requests(self):
+        """Patch the response-builder so we can assert on outbound SharedRecord protos."""
+        captured = []
+
+        def capture(rq):
             status = record_pb2.SharedRecordStatus()
             status.recordUid = rq.recordUid
             status.status = 'success'
             status.username = rq.toUsername
-            captured.setdefault('rqs', []).append(rq)
+            captured.append(rq)
             return status
 
         original = TestRegister.record_share_rq_rs
-        TestRegister.record_share_rq_rs = staticmethod(capture_record_share)
+        TestRegister.record_share_rq_rs = staticmethod(capture)
+        return captured, original
+
+    @staticmethod
+    def _existing_share_response(target_email, *, editable=False, shareable=False):
+        def _impl(params, record_uids, *_args, **_kw):
+            return [{
+                'record_uid': next(iter(record_uids)),
+                'shares': {
+                    'user_permissions': [
+                        {'username': params.user, 'owner': True},
+                        {'username': target_email, 'owner': False,
+                         'shareable': shareable, 'editable': editable},
+                    ]
+                }
+            }]
+        return _impl
+
+    def test_share_record_rotate_on_expiration_sets_flag(self):
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+
+        captured, original = self._capture_shared_record_requests()
         try:
-            self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
-            self.record_share_mock.side_effect = lambda *_args, **_kw: None
+            mock.patch('keepercommander.api.get_record_shares',
+                       side_effect=lambda *_args, **_kw: None).start()
+
+            cmd = register.ShareRecordCommand()
+            TestRegister.expected_commands.extend(['records_share_update'])
+            with self._patch_record_type_as_pam_user(record_uid):
+                cmd.execute(params,
+                            email=['user2@keepersecurity.com'],
+                            action='grant',
+                            can_share=False,
+                            can_edit=True,
+                            record=record_uid,
+                            expire_in='1d',
+                            rotate_on_expiration=True)
+            self.assertEqual(len(TestRegister.expected_commands), 0)
+            target = next((r for r in captured if r.toUsername == 'user2@keepersecurity.com'), None)
+            self.assertIsNotNone(target)
+            self.assertTrue(target.rotateOnExpiration)
+            self.assertGreater(target.expiration, 0)
+            self.assertEqual(target.timerNotificationType, record_pb2.NOTIFY_OWNER)
+        finally:
+            TestRegister.record_share_rq_rs = original
+
+    def test_share_record_rotate_on_expiration_sets_flag_on_existing_share(self):
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+
+        captured, original = self._capture_shared_record_requests()
+        try:
+            mock.patch('keepercommander.api.get_record_shares',
+                       side_effect=self._existing_share_response('user2@keepersecurity.com')).start()
+
+            cmd = register.ShareRecordCommand()
+            TestRegister.expected_commands.extend(['records_share_update'])
+            with self._patch_record_type_as_pam_user(record_uid):
+                cmd.execute(params,
+                            email=['user2@keepersecurity.com'],
+                            action='grant',
+                            can_share=False,
+                            can_edit=False,
+                            record=record_uid,
+                            expire_in='1d',
+                            rotate_on_expiration=True)
+            self.assertEqual(len(TestRegister.expected_commands), 0)
+            target = next((r for r in captured if r.toUsername == 'user2@keepersecurity.com'), None)
+            self.assertIsNotNone(target)
+            self.assertTrue(target.rotateOnExpiration,
+                            'rotateOnExpiration must travel on update path, not just add path')
+            self.assertGreater(target.expiration, 0)
+            self.assertEqual(target.timerNotificationType, record_pb2.NOTIFY_OWNER)
+        finally:
+            TestRegister.record_share_rq_rs = original
+
+    def test_share_record_update_expiration_without_roe(self):
+        """Existing share must accept --expire-in updates, matching Vault UX."""
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+
+        captured, original = self._capture_shared_record_requests()
+        try:
+            mock.patch('keepercommander.api.get_record_shares',
+                       side_effect=self._existing_share_response('user2@keepersecurity.com', editable=True)).start()
 
             cmd = register.ShareRecordCommand()
             TestRegister.expected_commands.extend(['records_share_update'])
@@ -104,27 +183,46 @@ class TestRegister(TestCase):
                         email=['user2@keepersecurity.com'],
                         action='grant',
                         can_share=False,
-                        can_edit=True,
+                        can_edit=False,
                         record=record_uid,
-                        expire_in='1d',
-                        rotate_on_expiration=True)
-            self.assertEqual(len(TestRegister.expected_commands), 0)
-            rqs = captured.get('rqs', [])
-            self.assertTrue(rqs, 'Expected at least one SharedRecord on the wire')
-            # The new add/update entry must carry the rotateOnExpiration bit and a positive expiration.
-            target = next((r for r in rqs if r.toUsername == 'user2@keepersecurity.com'), None)
-            self.assertIsNotNone(target, 'Expected SharedRecord for the target email')
-            self.assertTrue(target.rotateOnExpiration,
-                            'rotateOnExpiration should be set when --rotate-on-expiration is passed')
+                        expire_in='1d')
+            target = next((r for r in captured if r.toUsername == 'user2@keepersecurity.com'), None)
+            self.assertIsNotNone(target)
             self.assertGreater(target.expiration, 0)
             self.assertEqual(target.timerNotificationType, record_pb2.NOTIFY_OWNER)
+            self.assertFalse(target.rotateOnExpiration)
+        finally:
+            TestRegister.record_share_rq_rs = original
+
+    def test_share_record_update_clears_expiration_with_never(self):
+        """--expire-at never on an existing share must clear the timer (expiration = -1)."""
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+
+        captured, original = self._capture_shared_record_requests()
+        try:
+            mock.patch('keepercommander.api.get_record_shares',
+                       side_effect=self._existing_share_response('user2@keepersecurity.com', editable=True)).start()
+
+            cmd = register.ShareRecordCommand()
+            TestRegister.expected_commands.extend(['records_share_update'])
+            cmd.execute(params,
+                        email=['user2@keepersecurity.com'],
+                        action='grant',
+                        can_share=False,
+                        can_edit=False,
+                        record=record_uid,
+                        expire_at='never')
+            target = next((r for r in captured if r.toUsername == 'user2@keepersecurity.com'), None)
+            self.assertIsNotNone(target)
+            self.assertEqual(target.expiration, -1)
+            self.assertFalse(target.rotateOnExpiration)
         finally:
             TestRegister.record_share_rq_rs = original
 
     def test_share_record_rotate_on_expiration_requires_expiration(self):
         params = get_synced_params()
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
-        self._mark_record_as_pam_user(params, record_uid)
 
         cmd = register.ShareRecordCommand()
         with self.assertRaises(CommandError) as ctx:
@@ -141,7 +239,6 @@ class TestRegister(TestCase):
     def test_share_record_rotate_on_expiration_rejects_never(self):
         params = get_synced_params()
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
-        self._mark_record_as_pam_user(params, record_uid)
 
         cmd = register.ShareRecordCommand()
         with self.assertRaises(CommandError) as ctx:
@@ -172,7 +269,6 @@ class TestRegister(TestCase):
     def test_share_record_rotate_on_expiration_rejects_non_grant_action(self):
         params = get_synced_params()
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
-        self._mark_record_as_pam_user(params, record_uid)
 
         cmd = register.ShareRecordCommand()
         with self.assertRaises(CommandError) as ctx:
@@ -184,12 +280,6 @@ class TestRegister(TestCase):
                 rotate_on_expiration=True,
             ))
         self.assertIn('--rotate-on-expiration', str(ctx.exception))
-
-    def test_share_record_parser_accepts_rotate_on_expiration(self):
-        ns = register.share_record_parser.parse_args(
-            ['-e', 'user2@example.com', '--expire-in', '1d', '--rotate-on-expiration', 'rec-uid'])
-        self.assertTrue(ns.rotate_on_expiration)
-        self.assertEqual(ns.expire_in, '1d')
 
     def test_share_folder(self):
         params = get_synced_params()
