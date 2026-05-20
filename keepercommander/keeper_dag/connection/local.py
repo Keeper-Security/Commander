@@ -3,7 +3,7 @@ from ..struct.protobuf import DataStruct as PbDataStruct
 from ..proto import GraphSync_pb2 as gs_pb2
 from ..types import DataPayload, EdgeType, SyncQuery, Ref, RefType, DAGData, SyncDataItem, SyncData
 from ..crypto import bytes_to_urlsafe_str, str_to_bytes, urlsafe_str_to_bytes, bytes_to_str
-from ..utils import value_to_boolean
+from ..utils import set_file_permissions, value_to_boolean
 import json
 import os
 import logging
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                 )
                 connection.commit()
 
-        os.chmod(self.db_file, 0o777)
+        set_file_permissions(self.db_file)
         return None
 
     @staticmethod
