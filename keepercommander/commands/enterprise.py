@@ -33,7 +33,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from ..attachment import FileUploadTask
 
-from . import aram, audit_alerts, security_audit
+from . import aram, audit_alerts, security_audit, nhi_report
 from . import compliance
 from . import domain_management
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
@@ -68,6 +68,7 @@ def register_commands(commands):
     commands['user-report'] = UserReportCommand()
     commands['action-report'] = ActionReportCommand()
     commands['audit-alert'] = audit_alerts.AuditAlerts()
+    commands['nhi-report'] = nhi_report.NhiReportCommand()
 
     compliance.register_commands(commands)
     security_audit.register_commands(commands)
@@ -84,13 +85,14 @@ def register_command_info(aliases, command_info):
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
     aliases['esr'] = 'external-shares-report'
+    aliases['nr'] = 'nhi-report'
     aliases['tu'] = 'transfer-user'
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              user_report_parser]:
+              user_report_parser, nhi_report.nhi_report_parser]:
         command_info[p.prog] = p.description
 
     command_info['audit-alert'] = 'Manage audit alerts and notifications'
