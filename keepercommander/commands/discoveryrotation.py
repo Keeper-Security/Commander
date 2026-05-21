@@ -89,6 +89,7 @@ from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
 from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
+from .pam.cnapp_commands import PAMCnappCommand
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -196,6 +197,8 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('workflow', PAMWorkflowCommand(), 'Manage PAM Workflows', 'w')
         self.register_command('access', PAMPrivilegedAccessCommand(),
                               'Manage privileged cloud access operations', 'ac')
+        self.register_command('cnapp', PAMCnappCommand(),
+                              'Manage Cloud-Native Application Protection Platform integration', 'cn')
 
 
 class PAMGatewayCommand(GroupCommand):
