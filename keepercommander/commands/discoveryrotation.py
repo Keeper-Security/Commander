@@ -95,6 +95,7 @@ from .universalsecretsync import (
     PAMUniversalSyncConfigCommand,
     PAMUniversalSyncRunCommand
 )
+from .pam.cnapp_commands import PAMCnappCommand
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -206,6 +207,8 @@ class PAMControllerCommand(GroupCommand):
                               'Manage Cloud-Native Application Protection Platform integration', 'cn')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Manage Universal Sync Configurations', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
+        self.register_command('cnapp', PAMCnappCommand(),
+                              'Manage Cloud-Native Application Protection Platform integration', 'cn')
 
 
 class PAMGatewayCommand(GroupCommand):
