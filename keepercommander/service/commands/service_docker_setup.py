@@ -69,6 +69,8 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
 
     def execute(self, params, **kwargs):
         """Main execution flow for standalone command"""
+        self._require_file_based_config(params, 'service-docker-setup')
+
         # Parse arguments
         config_path = self._get_config_path(kwargs.get('config_path'))
         
