@@ -10,7 +10,7 @@
 #
 
 """
-KeeperDrive — folder management commands.
+Nested Share Folder — folder management commands.
 
 Single Responsibility: every class in this module deals with *folder*
 operations only (create, rename, remove, list, share, access).
@@ -20,62 +20,62 @@ import logging
 
 from ..base import Command
 from ...error import CommandError
-from ... import keeper_drive as _kd
+from ... import nested_share_folder as _nsf
 from .helpers import (
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
     command_error_handler, check_result,
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
-    ensure_keeper_drive_folder,
+    ensure_nested_share_folder,
 )
 from .parsers import (
-    keeper_drive_mkdir_parser,
-    keeper_drive_update_folder_parser,
-    keeper_drive_list_parser,
-    keeper_drive_share_folder_parser,
-    kd_rmdir_parser,
+    nested_share_folder_mkdir_parser,
+    nested_share_folder_update_parser,
+    nested_share_folder_list_parser,
+    nested_share_folder_share_parser,
+    nested_share_folder_rmdir_parser,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-mkdir
+# nsf-mkdir
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveMkdirCommand(Command):
-    """Create a KeeperDrive folder using the v3 API."""
+class NestedShareFolderMkdirCommand(Command):
+    """Create a Nested Share Folder using the v3 API."""
 
     def get_parser(self):
-        return keeper_drive_mkdir_parser
+        return nested_share_folder_mkdir_parser
 
     def execute(self, params, **kwargs):
         folder_path = (kwargs.get('folder') or '').strip()
         if not folder_path:
-            raise CommandError('kd-mkdir', 'Folder name is required')
+            raise CommandError('nsf-mkdir', 'Folder name is required')
 
         color = kwargs.get('color')
         inherit_permissions = not kwargs.get('no_inherit_permissions', False)
 
         base_folder_uid = None
         current = getattr(params, 'current_folder', None)
-        if current and current in getattr(params, 'keeper_drive_folders', {}):
+        if current and current in getattr(params, 'nested_share_folders', {}):
             base_folder_uid = current
 
         folder_name = self._parse_path(folder_path)
 
         existing_uid = self._find_existing_child(params, folder_name, base_folder_uid)
         if existing_uid:
-            logging.warning('kd-mkdir: Folder "%s" already exists', folder_name)
+            logging.warning('nsf-mkdir: Folder "%s" already exists', folder_name)
             return existing_uid
 
-        with command_error_handler('kd-mkdir'):
-            result = _kd.create_folder_v3(
+        with command_error_handler('nsf-mkdir'):
+            result = _nsf.create_folder_v3(
                 params=params, folder_name=folder_name,
                 parent_uid=base_folder_uid,
                 color=color,
                 inherit_permissions=inherit_permissions,
             )
-            check_result(result, 'kd-mkdir')
+            check_result(result, 'nsf-mkdir')
 
         params.sync_data = True
         return result['folder_uid']
@@ -83,23 +83,23 @@ class KeeperDriveMkdirCommand(Command):
     @staticmethod
     def _parse_path(folder_path):
         # Collapse escaped slashes (//) to a sentinel so we can detect any
-        # stray path separator and refuse it — kd-mkdir creates a single
+        # stray path separator and refuse it — nsf-mkdir creates a single
         # folder, not a nested hierarchy.
         collapsed = folder_path.replace('//', '\x00')
         if '/' in collapsed:
-            raise CommandError('kd-mkdir',
+            raise CommandError('nsf-mkdir',
                                'Character "/" is reserved. Use "//" inside folder name')
         name = collapsed.replace('\x00', '/').strip()
         if not name:
-            raise CommandError('kd-mkdir', 'Invalid folder name')
+            raise CommandError('nsf-mkdir', 'Invalid folder name')
         return name
 
     @staticmethod
     def _find_existing_child(params, folder_name, parent_uid):
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
         name_lower = folder_name.lower()
         expected_parent = parent_uid or ''
-        for fuid, fobj in kd_folders.items():
+        for fuid, fobj in nsf_folders.items():
             if fobj.get('name', '').lower() != name_lower:
                 continue
             existing_parent = normalize_parent_uid(fobj.get('parent_uid', ''))
@@ -111,19 +111,19 @@ class KeeperDriveMkdirCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-rndir
+# nsf-rndir
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveUpdateFolderCommand(Command):
-    """Rename or recolor a KeeperDrive folder."""
+class NestedShareFolderUpdateCommand(Command):
+    """Rename or recolor a Nested Share Folder."""
 
     def get_parser(self):
-        return keeper_drive_update_folder_parser
+        return nested_share_folder_update_parser
 
     def execute(self, params, **kwargs):
         folder_arg = kwargs.get('folder')
         if not folder_arg:
-            raise CommandError('kd-rndir', 'Enter the path or UID of existing folder.')
+            raise CommandError('nsf-rndir', 'Enter the path or UID of existing folder.')
 
         new_name = kwargs.get('folder_name')
         color = kwargs.get('color')
@@ -131,28 +131,28 @@ class KeeperDriveUpdateFolderCommand(Command):
         if new_name is not None:
             new_name = new_name.strip()
             if not new_name:
-                raise CommandError('kd-rndir', 'Folder name cannot be empty')
+                raise CommandError('nsf-rndir', 'Folder name cannot be empty')
 
         if new_name is None and color is None:
-            raise CommandError('kd-rndir', 'New folder name and/or color parameters are required.')
+            raise CommandError('nsf-rndir', 'New folder name and/or color parameters are required.')
 
         folder_uid = resolve_folder_uid(params, folder_arg)
         if folder_uid:
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-rndir',
+            ensure_nested_share_folder(params, folder_uid, 'nsf-rndir',
                                        identifier=folder_arg)
-            check_folder_edit_permission(params, folder_uid, 'kd-rndir')
+            check_folder_edit_permission(params, folder_uid, 'nsf-rndir')
 
-        with command_error_handler('kd-rndir'):
-            result = _kd.update_folder_v3(
+        with command_error_handler('nsf-rndir'):
+            result = _nsf.update_folder_v3(
                 params=params, folder_uid=folder_arg, folder_name=new_name,
                 color=color,
             )
-            check_result(result, 'kd-rndir')
+            check_result(result, 'nsf-rndir')
             params.sync_data = True
             if not kwargs.get('quiet'):
-                kd_folders = getattr(params, 'keeper_drive_folders', {})
+                nsf_folders = getattr(params, 'nested_share_folders', {})
                 resolved_uid = result.get('folder_uid', folder_arg)
-                folder_display_name = kd_folders.get(resolved_uid, {}).get('name', folder_arg)
+                folder_display_name = nsf_folders.get(resolved_uid, {}).get('name', folder_arg)
                 if new_name:
                     logging.info('Folder "%s" has been renamed to "%s"', folder_display_name, new_name)
                 elif color:
@@ -162,14 +162,14 @@ class KeeperDriveUpdateFolderCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-list
+# nsf-list
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveListCommand(Command):
-    """List Keeper Drive folders and records."""
+class NestedShareFolderListCommand(Command):
+    """List Nested Share Folder folders and records."""
 
     def get_parser(self):
-        return keeper_drive_list_parser
+        return nested_share_folder_list_parser
 
     def execute(self, params, **kwargs):
         from keepercommander.commands import base
@@ -206,9 +206,9 @@ class KeeperDriveListCommand(Command):
 
     @staticmethod
     def _collect_folders(params):
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
         rows = []
-        for folder_uid, fobj in kd_folders.items():
+        for folder_uid, fobj in nsf_folders.items():
             title = fobj.get('name', 'Unnamed')
             parent_uid = normalize_parent_uid(fobj.get('parent_uid', ''))
             rows.append(['Folder', folder_uid, title, '', '', parent_uid])
@@ -216,16 +216,16 @@ class KeeperDriveListCommand(Command):
 
     @staticmethod
     def _collect_records(params):
-        kd_records = getattr(params, 'keeper_drive_records', {})
-        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
-        kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_records = getattr(params, 'nested_share_records', {})
+        nsf_record_data = getattr(params, 'nested_share_record_data', {})
+        nsf_folder_records = getattr(params, 'nested_share_folder_records', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
 
         rows = []
-        for record_uid in kd_records:
+        for record_uid in nsf_records:
             title, rec_type, description = 'Unknown', 'Unknown', ''
-            if record_uid in kd_record_data and 'data_json' in kd_record_data[record_uid]:
-                dj = kd_record_data[record_uid]['data_json']
+            if record_uid in nsf_record_data and 'data_json' in nsf_record_data[record_uid]:
+                dj = nsf_record_data[record_uid]['data_json']
                 title = dj.get('title', 'Unknown')
                 rec_type = dj.get('type', 'Unknown')
                 for field in dj.get('fields', []):
@@ -236,10 +236,10 @@ class KeeperDriveListCommand(Command):
                             break
 
             folder_location = ''
-            for fuid, rec_set in kd_folder_records.items():
+            for fuid, rec_set in nsf_folder_records.items():
                 if record_uid in rec_set:
                     folder_location = ('root' if fuid == ROOT_FOLDER_UID
-                                       else kd_folders.get(fuid, {}).get('name', fuid))
+                                       else nsf_folders.get(fuid, {}).get('name', fuid))
                     break
             rows.append(['Record', record_uid, title, rec_type, description,
                          folder_location or 'root'])
@@ -248,25 +248,25 @@ class KeeperDriveListCommand(Command):
     @staticmethod
     def _print_empty_summary(params, show_folders, show_records):
         if show_folders and show_records:
-            logging.info("No Keeper Drive folders or records found in cache.")
+            logging.info("No Nested Share Folder folders or records found in cache.")
         elif show_folders:
-            logging.info("No Keeper Drive folders found in cache.")
+            logging.info("No Nested Share Folder folders found in cache.")
         else:
-            logging.info("No Keeper Drive records found in cache.")
+            logging.info("No Nested Share Folder records found in cache.")
         logging.info("\nSummary:")
-        logging.info("  Keeper Drive folders: %d", len(getattr(params, 'keeper_drive_folders', {})))
-        logging.info("  Keeper Drive records: %d", len(getattr(params, 'keeper_drive_records', {})))
+        logging.info("  Nested Share Folder folders: %d", len(getattr(params, 'nested_share_folders', {})))
+        logging.info("  Nested Share Folder records: %d", len(getattr(params, 'nested_share_records', {})))
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-share-folder   (Strategy pattern — grant / remove)
+# nsf-share-folder   (Strategy pattern — grant / remove)
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveShareFolderCommand(Command):
-    """Change the sharing permissions of a KeeperDrive folder."""
+class NestedShareFolderShareCommand(Command):
+    """Change the sharing permissions of a Nested Share Folder."""
 
     def get_parser(self):
-        return keeper_drive_share_folder_parser
+        return nested_share_folder_share_parser
 
     # Strategy dispatch table: action → (api_function, success_verb)
     _ACTIONS = {
@@ -281,23 +281,23 @@ class KeeperDriveShareFolderCommand(Command):
         role = kwargs.get('role') or 'viewer'
 
         if not folder_args:
-            raise CommandError('kd-share-folder', 'Folder path or UID is required')
+            raise CommandError('nsf-share-folder', 'Folder path or UID is required')
         if not recipients:
             raise CommandError(
-                'kd-share-folder',
+                'nsf-share-folder',
                 'Recipient is required (use -e/--email; accepts an email, '
                 'team name, team UID, or @existing)')
 
         expiration = parse_expiration(
-            kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-folder')
+            kwargs.get('expire_at'), kwargs.get('expire_in'), 'nsf-share-folder')
 
         for folder_arg in folder_args:
             folder_uid = resolve_folder_uid(params, folder_arg)
             if not folder_uid:
-                raise CommandError('kd-share-folder', f'No such folder: {folder_arg!r}')
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-share-folder',
+                raise CommandError('nsf-share-folder', f'No such folder: {folder_arg!r}')
+            ensure_nested_share_folder(params, folder_uid, 'nsf-share-folder',
                                        identifier=folder_arg)
-            check_folder_share_permission(params, folder_uid, 'kd-share-folder')
+            check_folder_share_permission(params, folder_uid, 'nsf-share-folder')
 
             targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
             for recipient, is_team in targets:
@@ -348,7 +348,7 @@ class KeeperDriveShareFolderCommand(Command):
         (``shared_folder_cache[...]['users']`` + ``['teams']`` union).
         """
         from keepercommander.proto import folder_pb2
-        accesses = (getattr(params, 'keeper_drive_folder_accesses', {})
+        accesses = (getattr(params, 'nested_share_folder_accesses', {})
                     .get(folder_uid, []))
         at_user = int(folder_pb2.AT_USER)
         at_team = int(folder_pb2.AT_TEAM)
@@ -374,7 +374,7 @@ class KeeperDriveShareFolderCommand(Command):
     def _apply(cls, params, action, folder_uid, recipient, role, expiration,
                 as_team=False):
         api_name, verb = cls._ACTIONS[action]
-        api_func = getattr(_kd, api_name)
+        api_func = getattr(_nsf, api_name)
         kw = dict(params=params, folder_uid=folder_uid, user_uid=recipient,
                   as_team=as_team)
         if action != 'remove':
@@ -395,18 +395,18 @@ class KeeperDriveShareFolderCommand(Command):
         except ValueError as e:
             logging.warning("%s '%s': %s", kind, recipient, e)
         except Exception as e:
-            raise CommandError('kd-share-folder', str(e))
+            raise CommandError('nsf-share-folder', str(e))
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-rmdir
+# nsf-rmdir
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveRemoveFolderCommand(Command):
-    """Remove one or more KeeperDrive folders."""
+class NestedShareFolderRemoveCommand(Command):
+    """Remove one or more Nested Share Folders."""
 
     def get_parser(self):
-        return kd_rmdir_parser
+        return nested_share_folder_rmdir_parser
 
     def execute(self, params, **kwargs):
         folder_args = kwargs.get('folders') or []
@@ -416,20 +416,20 @@ class KeeperDriveRemoveFolderCommand(Command):
         quiet       = kwargs.get('quiet', False)
 
         if not folder_args:
-            raise CommandError('kd-rmdir', 'Enter the name or UID of at least one folder.')
+            raise CommandError('nsf-rmdir', 'Enter the name or UID of at least one folder.')
 
         removals = []
         for identifier in folder_args:
-            folder_uid = _kd.resolve_kd_folder_uid(params, identifier)
+            folder_uid = _nsf.resolve_nested_share_folder_uid(params, identifier)
             if not folder_uid:
-                raise CommandError('kd-rmdir', f"Folder '{identifier}' not found")
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-rmdir',
+                raise CommandError('nsf-rmdir', f"Folder '{identifier}' not found")
+            ensure_nested_share_folder(params, folder_uid, 'nsf-rmdir',
                                        identifier=identifier)
-            check_folder_delete_permission(params, folder_uid, 'kd-rmdir')
+            check_folder_delete_permission(params, folder_uid, 'nsf-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
         if len(removals) > 100:
-            raise CommandError('kd-rmdir', 'Maximum 100 folders per invocation')
+            raise CommandError('nsf-rmdir', 'Maximum 100 folders per invocation')
 
         if operation == 'delete-permanent' and not force and not dry_run:
             print(
@@ -437,11 +437,11 @@ class KeeperDriveRemoveFolderCommand(Command):
                 '  --operation delete-permanent is IRREVERSIBLE.\n'
                 '  All sub-folders and records inside will be permanently destroyed.\n')
 
-        with command_error_handler('kd-rmdir'):
+        with command_error_handler('nsf-rmdir'):
             self._preview_and_confirm(params, removals, operation, force, dry_run, quiet)
 
     def _preview_and_confirm(self, params, removals, operation, force, dry_run, quiet):
-        result = _kd.remove_folder_v3(params, removals, dry_run=True)
+        result = _nsf.remove_folder_v3(params, removals, dry_run=True)
         any_error = False
         error_lines = []
         summary_lines = []
@@ -483,7 +483,7 @@ class KeeperDriveRemoveFolderCommand(Command):
             if user_choice(prompt, 'yn', default='n').lower() != 'y':
                 return
 
-        confirm_result = _kd.remove_folder_v3(params, removals, dry_run=False)
+        confirm_result = _nsf.remove_folder_v3(params, removals, dry_run=False)
         if confirm_result['confirmed']:
             params.sync_data = True
         else:
@@ -491,8 +491,8 @@ class KeeperDriveRemoveFolderCommand(Command):
 
     @staticmethod
     def _folder_name(params, folder_uid):
-        kd = getattr(params, 'keeper_drive_folders', {})
-        f = kd.get(folder_uid) or getattr(params, 'subfolder_cache', {}).get(folder_uid, {})
+        nsf = getattr(params, 'nested_share_folders', {})
+        f = nsf.get(folder_uid) or getattr(params, 'subfolder_cache', {}).get(folder_uid, {})
         return f.get('name') or folder_uid
 
     @staticmethod

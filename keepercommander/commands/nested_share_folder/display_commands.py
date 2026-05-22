@@ -10,7 +10,7 @@
 #
 
 """
-KeeperDrive — display / inspection commands.
+Nested Share Folder — display / inspection commands.
 
 Single Responsibility: every class here is read-only — it queries data and
 presents it; no mutations.
@@ -21,46 +21,46 @@ import logging
 
 from ..base import Command
 from ...error import CommandError
-from ... import keeper_drive as _kd
+from ... import nested_share_folder as _nsf
 from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
     get_access_role_label, format_role_display,
     format_timestamp, load_record_metadata, command_error_handler,
-    ensure_keeper_drive_record,
+    ensure_nested_share_record,
 )
 from .parsers import (
-    keeper_drive_get_record_details_parser,
-    kd_get_parser,
+    nested_share_record_get_details_parser,
+    nested_share_get_parser,
 )
 logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-record-details
+# nsf-record-details
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveGetRecordDetailsCommand(Command):
+class NestedShareRecordGetDetailsCommand(Command):
     """Get record metadata details."""
 
     def get_parser(self):
-        return keeper_drive_get_record_details_parser
+        return nested_share_record_get_details_parser
 
     def execute(self, params, **kwargs):
         identifiers = kwargs.get('record_uids', [])
         output_format = kwargs.get('format', 'table')
 
         if not identifiers:
-            raise CommandError('kd-record-details', 'At least one record UID or title is required')
+            raise CommandError('nsf-record-details', 'At least one record UID or title is required')
 
         record_uids = []
         for ident in identifiers:
-            uid = _kd.resolve_kd_record_uid(params, ident) or ident
-            ensure_keeper_drive_record(params, uid, 'kd-record-details',
+            uid = _nsf.resolve_nested_share_record_uid(params, ident) or ident
+            ensure_nested_share_record(params, uid, 'nsf-record-details',
                                        identifier=ident)
             record_uids.append(uid)
 
-        with command_error_handler('kd-record-details'):
-            result = _kd.get_record_details_v3(params, record_uids)
+        with command_error_handler('nsf-record-details'):
+            result = _nsf.get_record_details_v3(params, record_uids)
             if output_format == 'json':
                 print(json.dumps(result, indent=2))
             else:
@@ -79,16 +79,16 @@ class KeeperDriveGetRecordDetailsCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-get  (composite — inspects both records and folders)
+# nsf-get  (composite — inspects both records and folders)
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveGetCommand(Command):
-    """Show details of a KeeperDrive record or folder."""
+class NestedShareGetCommand(Command):
+    """Show details of a Nested Share Record or folder."""
 
     _MASKED_TYPES = frozenset({'password', 'secret', 'pinCode', 'pin_code'})
 
     def get_parser(self):
-        return kd_get_parser
+        return nested_share_get_parser
 
     def execute(self, params, **kwargs):
         uid     = (kwargs.get('uid') or '').strip()
@@ -97,7 +97,7 @@ class KeeperDriveGetCommand(Command):
         unmask  = kwargs.get('unmask', False)
 
         if not uid:
-            raise CommandError('kd-get', 'UID parameter is required')
+            raise CommandError('nsf-get', 'UID parameter is required')
 
         resolved = self._resolve_as_folder(params, uid)
         if resolved:
@@ -111,7 +111,7 @@ class KeeperDriveGetCommand(Command):
             # they don't flow through Python's logging handlers / log files.
             if unmask:
                 logger.warning(
-                    "kd-get: --unmask was requested for record %s; "
+                    "nsf-get: --unmask was requested for record %s; "
                     "sensitive field values will be displayed on stdout only.",
                     resolved,
                 )
@@ -119,37 +119,37 @@ class KeeperDriveGetCommand(Command):
                 params, resolved, verbose, unmask)
             return
 
-        raise CommandError('kd-get', f'Cannot find any KeeperDrive object with UID or title: {uid}')
+        raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
 
     # ── Resolution ────────────────────────────────────────────────────
 
     @staticmethod
     def _resolve_as_folder(params, uid):
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
-        if uid in kd_folders:
+        nsf_folders = getattr(params, 'nested_share_folders', {})
+        if uid in nsf_folders:
             return uid
         lower = uid.lower()
-        matches = [f for f, o in kd_folders.items() if o.get('name', '').lower() == lower]
+        matches = [f for f, o in nsf_folders.items() if o.get('name', '').lower() == lower]
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
             from keepercommander.display import dump_report_data
-            rows = [[f, kd_folders[f].get('name', '')] for f in matches]
+            rows = [[f, nsf_folders[f].get('name', '')] for f in matches]
             dump_report_data(rows, ['Folder UID', 'Name'],
                              title='Multiple folders match the name', row_number=True)
         return None
 
     @staticmethod
     def _resolve_as_record(params, uid):
-        kd_records = getattr(params, 'keeper_drive_records', {})
-        if uid in kd_records:
+        nsf_records = getattr(params, 'nested_share_records', {})
+        if uid in nsf_records:
             return uid
         lower = uid.lower()
-        kd_data = getattr(params, 'keeper_drive_record_data', {})
+        nsf_data = getattr(params, 'nested_share_record_data', {})
         matches = []
-        for ruid in kd_records:
-            if ruid in kd_data and 'data_json' in kd_data[ruid]:
-                title = kd_data[ruid]['data_json'].get('title', '')
+        for ruid in nsf_records:
+            if ruid in nsf_data and 'data_json' in nsf_data[ruid]:
+                title = nsf_data[ruid]['data_json'].get('title', '')
                 if title and lower in title.lower():
                     matches.append((ruid, title))
         if len(matches) == 1:
@@ -246,7 +246,7 @@ class KeeperDriveGetCommand(Command):
             ro['notes'] = meta['notes']
 
         try:
-            accesses = _kd.get_record_accesses_v3(
+            accesses = _nsf.get_record_accesses_v3(
                 params, [record_uid]).get('record_accesses', [])
             if accesses:
                 user_perms = []
@@ -283,7 +283,7 @@ class KeeperDriveGetCommand(Command):
     def _print_record_permissions(params, record_uid, verbose):
         """Display record permissions in a format similar to the legacy get command."""
         try:
-            accesses = _kd.get_record_accesses_v3(
+            accesses = _nsf.get_record_accesses_v3(
                 params, [record_uid]).get('record_accesses', [])
             if not accesses:
                 return
@@ -347,10 +347,10 @@ class KeeperDriveGetCommand(Command):
 
     @staticmethod
     def _folder_permission_summary(accessor):
-        """Return the KeeperDrive role label for a folder accessor.
+        """Return the Nested Share Folder role label for a folder accessor.
 
         Uses the server-supplied ``role`` (an ``AccessRoleType`` enum name) and
-        renders it as a canonical KeeperDrive role label (e.g. ``full-manager``,
+        renders it as a canonical Nested Share Folder role label (e.g. ``full-manager``,
         ``share-manager``, ``viewer``). Falls back to permission-flag based
         inference for legacy access rows that omit ``role``.
         """
@@ -375,28 +375,28 @@ class KeeperDriveGetCommand(Command):
 
     @staticmethod
     def _folder_detail(params, folder_uid, verbose):
-        fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {})
+        fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid, {})
         name = fobj.get('name', folder_uid)
 
         print('')
-        print('{0:>25s}: {1:<20s}'.format('KeeperDrive Folder UID', folder_uid))
+        print('{0:>25s}: {1:<20s}'.format('Nested Share Folder UID', folder_uid))
         print('{0:>25s}: {1}'.format('Name', name))
 
-        KeeperDriveGetCommand._print_folder_permissions(params, folder_uid, verbose)
+        NestedShareGetCommand._print_folder_permissions(params, folder_uid, verbose)
 
     @staticmethod
     def _folder_json(params, folder_uid, verbose):
-        fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {})
+        fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid, {})
         name = fobj.get('name', folder_uid)
         owner_username = fobj.get('owner_username')
         owner_account_uid = fobj.get('owner_account_uid')
 
-        fo = {'keeper_drive_folder_uid': folder_uid, 'name': name}
+        fo = {'nested_share_folder_uid': folder_uid, 'name': name}
         if owner_username:
             fo['owner'] = owner_username
 
         try:
-            result = _kd.get_folder_access_v3(params, folder_uids=[folder_uid])
+            result = _nsf.get_folder_access_v3(params, folder_uids=[folder_uid])
             for fr in result.get('results', []):
                 if not fr.get('success'):
                     continue
@@ -410,9 +410,9 @@ class KeeperDriveGetCommand(Command):
                     accessor = a.get('username') or a.get('accessor_uid', '')
                     at = a.get('access_type', '')
                     perms = a.get('permissions', {})
-                    is_owner = KeeperDriveGetCommand._is_folder_owner(a, owner_username, owner_account_uid)
+                    is_owner = NestedShareGetCommand._is_folder_owner(a, owner_username, owner_account_uid)
                     role_label_display = ('owner' if is_owner
-                                          else KeeperDriveGetCommand._folder_permission_summary(a))
+                                          else NestedShareGetCommand._folder_permission_summary(a))
                     entry = {
                         'accessor':    accessor,
                         'access_type': at,
@@ -457,11 +457,11 @@ class KeeperDriveGetCommand(Command):
     def _print_folder_permissions(params, folder_uid, verbose):
         """Display folder permissions in a format similar to the legacy get command."""
         try:
-            fobj = getattr(params, 'keeper_drive_folders', {}).get(folder_uid, {}) or {}
+            fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid, {}) or {}
             owner_username = fobj.get('owner_username')
             owner_account_uid = fobj.get('owner_account_uid')
 
-            result = _kd.get_folder_access_v3(params, folder_uids=[folder_uid])
+            result = _nsf.get_folder_access_v3(params, folder_uids=[folder_uid])
             for fr in result.get('results', []):
                 if not fr.get('success'):
                     err = fr.get('error', {})
@@ -491,10 +491,10 @@ class KeeperDriveGetCommand(Command):
                     for a in users:
                         label = a.get('username') or a.get('accessor_uid', '')
                         perms = a.get('permissions', {})
-                        if KeeperDriveGetCommand._is_folder_owner(a, owner_username, owner_account_uid):
+                        if NestedShareGetCommand._is_folder_owner(a, owner_username, owner_account_uid):
                             role_str = 'owner'
                         else:
-                            role_str = KeeperDriveGetCommand._folder_permission_summary(a)
+                            role_str = NestedShareGetCommand._folder_permission_summary(a)
                         print('{0:>25s}: {1}'.format(label, role_str))
                         if verbose:
                             if a.get('date_created'):
@@ -514,7 +514,7 @@ class KeeperDriveGetCommand(Command):
                     for a in teams:
                         label = a.get('username') or a.get('accessor_uid', '')
                         perms = a.get('permissions', {})
-                        role_str = KeeperDriveGetCommand._folder_permission_summary(a)
+                        role_str = NestedShareGetCommand._folder_permission_summary(a)
                         print('{0:>25s}: {1}'.format(label, role_str))
                         if verbose and perms:
                             print('{0:>25s}  {1:<26}  {2}'.format('', 'Permission', 'Value'))
@@ -527,7 +527,7 @@ class KeeperDriveGetCommand(Command):
                     print('')
                     print('{0:>25s}:'.format('Share Administrators'))
                     for admin_name, admin_accessor in share_admins:
-                        if KeeperDriveGetCommand._is_folder_owner(admin_accessor, owner_username, owner_account_uid):
+                        if NestedShareGetCommand._is_folder_owner(admin_accessor, owner_username, owner_account_uid):
                             admin_role = 'owner'
                         else:
                             admin_role = 'full-manager'

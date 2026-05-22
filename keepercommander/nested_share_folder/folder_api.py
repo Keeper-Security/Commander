@@ -1,5 +1,5 @@
 """
-KeeperDrive — folder CRUD, access/sharing, and retrieval.
+Nested Share Folder — folder CRUD, access/sharing, and retrieval.
 
 Every folder-related API call lives here; shared primitives come from
 ``common`` and ``permissions``.
@@ -143,14 +143,14 @@ def folder_access_update_v3(params, folder_access_adds=None,
 # ══════════════════════════════════════════════════════════════════════════
 
 def resolve_folder_identifier(params, folder_identifier):
-    if folder_identifier in getattr(params, 'keeper_drive_folders', {}):
+    if folder_identifier in getattr(params, 'nested_share_folders', {}):
         return folder_identifier
     if folder_identifier in getattr(params, 'subfolder_cache', {}):
         return folder_identifier
     if folder_identifier in getattr(params, 'folder_cache', {}):
         return folder_identifier
 
-    matching = [uid for uid, obj in getattr(params, 'keeper_drive_folders', {}).items()
+    matching = [uid for uid, obj in getattr(params, 'nested_share_folders', {}).items()
                 if obj.get('name', '').lower() == folder_identifier.lower()]
     if len(matching) == 1:
         return matching[0]
@@ -221,7 +221,7 @@ def _build_update_data(params, folder_uid, folder_name, color, inherit_permissio
     fd = folder_pb2.FolderData()
     fd.folderUid = utils.base64_url_decode(folder_uid)
 
-    obj = (getattr(params, 'keeper_drive_folders', {}).get(folder_uid) or
+    obj = (getattr(params, 'nested_share_folders', {}).get(folder_uid) or
            getattr(params, 'subfolder_cache', {}).get(folder_uid) or {})
     dd = {}
     dd['name'] = folder_name if folder_name is not None else obj.get('name', '')
@@ -308,7 +308,7 @@ def _resolve_accessor(params, accessor_uid, as_team):
 def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
                            share_folder_key=True, expiration_timestamp=None,
                            as_team=False):
-    """Grant a user *or team* access to a KeeperDrive folder.
+    """Grant a user *or team* access to a Nested Share Folder.
     """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:

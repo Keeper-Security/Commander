@@ -1,5 +1,5 @@
 """
-KeeperDrive — record and folder removal (preview/confirm pattern).
+Nested Share Folder — record and folder removal (preview/confirm pattern).
 
 The preview → confirm two-step is shared via ``_execute_removal``.
 """
@@ -83,29 +83,29 @@ def _build_preview_results(preview_rs, uid_field='item_uid'):
 # Resolution helpers
 # ══════════════════════════════════════════════════════════════════════════
 
-def find_kd_folders_for_record(params, record_uid):
-    """Return KeeperDrive folder UIDs that contain *record_uid*."""
+def find_nested_share_folders_for_record(params, record_uid):
+    """Return Nested Share Folder UIDs that contain *record_uid*."""
     folders = []
-    kd_fr = getattr(params, 'keeper_drive_folder_records', {})
-    for fuid, rec_set in kd_fr.items():
+    nsf_fr = getattr(params, 'nested_share_folder_records', {})
+    for fuid, rec_set in nsf_fr.items():
         if record_uid in rec_set:
             folders.append(fuid)
     return folders
 
 
-def resolve_kd_record_uid(params, identifier):
+def resolve_nested_share_record_uid(params, identifier):
     """Resolve a record identifier (UID, title, or name) to a record UID.
 
     Lookup order:
-      1. Direct UID match in keeper_drive_records
+      1. Direct UID match in nested_share_records
       2. Direct UID match in record_cache (vault records)
-      3. Title match from decrypted keeper_drive_record_data
+      3. Title match from decrypted nested_share_record_data
       4. Title match from record_cache (data_unencrypted)
     """
     import json
 
-    kd = getattr(params, 'keeper_drive_records', {})
-    if identifier in kd:
+    nsf = getattr(params, 'nested_share_records', {})
+    if identifier in nsf:
         return identifier
 
     rc = getattr(params, 'record_cache', {})
@@ -114,9 +114,9 @@ def resolve_kd_record_uid(params, identifier):
 
     lower = identifier.casefold()
 
-    kd_data = getattr(params, 'keeper_drive_record_data', {})
-    for uid in kd:
-        rd = kd_data.get(uid, {})
+    nsf_data = getattr(params, 'nested_share_record_data', {})
+    for uid in nsf:
+        rd = nsf_data.get(uid, {})
         dj = rd.get('data_json', {})
         if isinstance(dj, dict):
             t = dj.get('title', '')
@@ -124,7 +124,7 @@ def resolve_kd_record_uid(params, identifier):
                 return uid
 
     for uid, rec in rc.items():
-        if uid in kd:
+        if uid in nsf:
             continue
         data = rec.get('data_unencrypted')
         if data:
@@ -139,16 +139,16 @@ def resolve_kd_record_uid(params, identifier):
     return None
 
 
-def resolve_kd_folder_uid(params, identifier):
-    """Resolve a folder identifier (UID or name) to a KeeperDrive folder UID."""
-    kd = getattr(params, 'keeper_drive_folders', {})
-    if identifier in kd:
+def resolve_nested_share_folder_uid(params, identifier):
+    """Resolve a folder identifier (UID or name) to a Nested Share Folder UID."""
+    nsf = getattr(params, 'nested_share_folders', {})
+    if identifier in nsf:
         return identifier
     fc = getattr(params, 'folder_cache', {})
     if identifier in fc:
         return identifier
     lower = identifier.casefold()
-    for uid, f in kd.items():
+    for uid, f in nsf.items():
         name = f.get('name', '')
         if isinstance(name, str) and name.casefold() == lower:
             return uid

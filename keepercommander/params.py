@@ -220,19 +220,19 @@ class KeeperParams:
         self.breach_watch_security_data = {}
         self.security_score_data = {}
         self.sso_login_info = None
-        # Keeper Drive caches for atomic sync objects
-        self.keeper_drive_folders = {}                  # folder_uid -> FolderData
-        self.keeper_drive_folder_keys = {}              # folder_uid -> list of FolderKey
-        self.keeper_drive_folder_accesses = {}          # folder_uid -> list of FolderAccessData
-        self.keeper_drive_records = {}                  # record_uid -> DriveRecord
-        self.keeper_drive_record_data = {}              # record_uid -> RecordData
-        self.keeper_drive_record_keys = {}              # record_uid -> list of RecordKey
-        self.keeper_drive_record_accesses = {}          # record_uid -> list of RecordAccessData
-        self.keeper_drive_folder_records = {}           # folder_uid -> set of record_uids
-        self.keeper_drive_folder_sharing_states = {}    # folder_uid -> {shared, count}
-        self.keeper_drive_record_sharing_states = {}    # record_uid -> sharing state dict
-        self.keeper_drive_record_links = {}             # record_uid -> list of record link dicts
-        self.keeper_drive_raw_dag_data = []             # list of raw DAG entry dicts
+        # Nested Share Folder caches for atomic sync objects
+        self.nested_share_folders = {}                  # folder_uid -> FolderData
+        self.nested_share_folder_keys = {}              # folder_uid -> list of FolderKey
+        self.nested_share_folder_accesses = {}          # folder_uid -> list of FolderAccessData
+        self.nested_share_records = {}                  # record_uid -> DriveRecord
+        self.nested_share_record_data = {}              # record_uid -> RecordData
+        self.nested_share_record_keys = {}              # record_uid -> list of RecordKey
+        self.nested_share_record_accesses = {}          # record_uid -> list of RecordAccessData
+        self.nested_share_folder_records = {}           # folder_uid -> set of record_uids
+        self.nested_share_folder_sharing_states = {}    # folder_uid -> {shared, count}
+        self.nested_share_record_sharing_states = {}    # record_uid -> sharing state dict
+        self.nested_share_record_links = {}             # record_uid -> list of record link dicts
+        self.nested_share_raw_dag_data = []             # list of raw DAG entry dicts
         self.__proxy = None
         self.ssh_agent = None
         self.unmask_all = False
@@ -306,19 +306,19 @@ class KeeperParams:
         self.breach_watch_security_data = {}
         self.security_score_data.clear()
         self.sso_login_info = None
-        # Clear Keeper Drive caches
-        self.keeper_drive_folders = {}
-        self.keeper_drive_folder_keys = {}
-        self.keeper_drive_folder_accesses = {}
-        self.keeper_drive_records = {}
-        self.keeper_drive_record_data = {}
-        self.keeper_drive_record_keys = {}
-        self.keeper_drive_record_accesses = {}
-        self.keeper_drive_folder_records = {}
-        self.keeper_drive_folder_sharing_states = {}
-        self.keeper_drive_record_sharing_states = {}
-        self.keeper_drive_record_links = {}
-        self.keeper_drive_raw_dag_data = []
+        # Clear Nested Share Folder caches
+        self.nested_share_folders = {}
+        self.nested_share_folder_keys = {}
+        self.nested_share_folder_accesses = {}
+        self.nested_share_records = {}
+        self.nested_share_record_data = {}
+        self.nested_share_record_keys = {}
+        self.nested_share_record_accesses = {}
+        self.nested_share_folder_records = {}
+        self.nested_share_folder_sharing_states = {}
+        self.nested_share_record_sharing_states = {}
+        self.nested_share_record_links = {}
+        self.nested_share_raw_dag_data = []
         self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()
