@@ -1,5 +1,5 @@
 """
-KeeperDrive — shared utilities used across all API modules.
+Nested Share Folder — shared utilities used across all API modules.
 
 DRY: centralises every repeated lookup pattern so no other module
 in this package ever needs to inline key/user/response logic.
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_folder_key(params, folder_uid: str, raise_on_missing: bool = True) -> Optional[bytes]:
-    """Retrieve the unencrypted folder key from keeper_drive_folders or subfolder_cache."""
-    for cache in (getattr(params, 'keeper_drive_folders', {}),
+    """Retrieve the unencrypted folder key from nested_share_folders or subfolder_cache."""
+    for cache in (getattr(params, 'nested_share_folders', {}),
                   getattr(params, 'subfolder_cache', {})):
         obj = cache.get(folder_uid)
         if obj and 'folder_key_unencrypted' in obj:
@@ -34,8 +34,8 @@ def get_folder_key(params, folder_uid: str, raise_on_missing: bool = True) -> Op
 
 
 def get_record_key(params, record_uid: str, raise_on_missing: bool = True) -> Optional[bytes]:
-    """Retrieve the unencrypted record key from keeper_drive_records or record_cache."""
-    for cache in (getattr(params, 'keeper_drive_records', {}),
+    """Retrieve the unencrypted record key from nested_share_records or record_cache."""
+    for cache in (getattr(params, 'nested_share_records', {}),
                   getattr(params, 'record_cache', {})):
         obj = cache.get(record_uid)
         if obj and 'record_key_unencrypted' in obj:
@@ -48,8 +48,8 @@ def get_record_key(params, record_uid: str, raise_on_missing: bool = True) -> Op
 
 
 def get_record_from_cache(params, record_uid: str) -> Optional[dict]:
-    """Get a record dict from keeper_drive_records or record_cache."""
-    for attr in ('keeper_drive_records', 'record_cache'):
+    """Get a record dict from nested_share_records or record_cache."""
+    for attr in ('nested_share_records', 'record_cache'):
         cache = getattr(params, attr, {})
         if record_uid in cache:
             return cache[record_uid]

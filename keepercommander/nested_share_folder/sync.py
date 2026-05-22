@@ -9,34 +9,34 @@ from ..params import RecordOwner
 from ..proto import folder_pb2, record_pb2
 
 
-def _ensure_keeper_drive_attrs(params):
-    """Ensure Keeper Drive caches exist on params, even for older sessions."""
+def _ensure_nested_share_folder_attrs(params):
+    """Ensure Nested Share Folder caches exist on params, even for older sessions."""
     if params is None:
         return
-    if not hasattr(params, 'keeper_drive_folders'):
-        params.keeper_drive_folders = {}
-    if not hasattr(params, 'keeper_drive_folder_keys'):
-        params.keeper_drive_folder_keys = {}
-    if not hasattr(params, 'keeper_drive_folder_accesses'):
-        params.keeper_drive_folder_accesses = {}
-    if not hasattr(params, 'keeper_drive_records'):
-        params.keeper_drive_records = {}
-    if not hasattr(params, 'keeper_drive_record_data'):
-        params.keeper_drive_record_data = {}
-    if not hasattr(params, 'keeper_drive_record_keys'):
-        params.keeper_drive_record_keys = {}
-    if not hasattr(params, 'keeper_drive_record_accesses'):
-        params.keeper_drive_record_accesses = {}
-    if not hasattr(params, 'keeper_drive_folder_records'):
-        params.keeper_drive_folder_records = {}
-    if not hasattr(params, 'keeper_drive_folder_sharing_states'):
-        params.keeper_drive_folder_sharing_states = {}
-    if not hasattr(params, 'keeper_drive_record_sharing_states'):
-        params.keeper_drive_record_sharing_states = {}
-    if not hasattr(params, 'keeper_drive_record_links'):
-        params.keeper_drive_record_links = {}
-    if not hasattr(params, 'keeper_drive_raw_dag_data'):
-        params.keeper_drive_raw_dag_data = []
+    if not hasattr(params, 'nested_share_folders'):
+        params.nested_share_folders = {}
+    if not hasattr(params, 'nested_share_folder_keys'):
+        params.nested_share_folder_keys = {}
+    if not hasattr(params, 'nested_share_folder_accesses'):
+        params.nested_share_folder_accesses = {}
+    if not hasattr(params, 'nested_share_records'):
+        params.nested_share_records = {}
+    if not hasattr(params, 'nested_share_record_data'):
+        params.nested_share_record_data = {}
+    if not hasattr(params, 'nested_share_record_keys'):
+        params.nested_share_record_keys = {}
+    if not hasattr(params, 'nested_share_record_accesses'):
+        params.nested_share_record_accesses = {}
+    if not hasattr(params, 'nested_share_folder_records'):
+        params.nested_share_folder_records = {}
+    if not hasattr(params, 'nested_share_folder_sharing_states'):
+        params.nested_share_folder_sharing_states = {}
+    if not hasattr(params, 'nested_share_record_sharing_states'):
+        params.nested_share_record_sharing_states = {}
+    if not hasattr(params, 'nested_share_record_links'):
+        params.nested_share_record_links = {}
+    if not hasattr(params, 'nested_share_raw_dag_data'):
+        params.nested_share_raw_dag_data = []
 
 
 def create_accumulator():
@@ -65,20 +65,20 @@ def create_accumulator():
 
 
 def clear_caches(params):
-    _ensure_keeper_drive_attrs(params)
-    params.keeper_drive_folders.clear()
-    params.keeper_drive_folder_keys.clear()
-    params.keeper_drive_folder_accesses.clear()
-    params.keeper_drive_records.clear()
-    params.keeper_drive_record_data.clear()
-    params.keeper_drive_record_keys.clear()
-    params.keeper_drive_record_accesses.clear()
-    params.keeper_drive_folder_records.clear()
-    params.keeper_drive_folder_sharing_states.clear()
-    params.keeper_drive_record_sharing_states.clear()
-    params.keeper_drive_record_links.clear()
-    params.keeper_drive_raw_dag_data.clear()
-    # keeper_drive_trashed_folders is intentionally NOT cleared here.
+    _ensure_nested_share_folder_attrs(params)
+    params.nested_share_folders.clear()
+    params.nested_share_folder_keys.clear()
+    params.nested_share_folder_accesses.clear()
+    params.nested_share_records.clear()
+    params.nested_share_record_data.clear()
+    params.nested_share_record_keys.clear()
+    params.nested_share_record_accesses.clear()
+    params.nested_share_folder_records.clear()
+    params.nested_share_folder_sharing_states.clear()
+    params.nested_share_record_sharing_states.clear()
+    params.nested_share_record_links.clear()
+    params.nested_share_raw_dag_data.clear()
+    # nested_share_folder_trashed_folders is intentionally NOT cleared here.
     # The server keeps sending trashed folders in every sync_down response
     # (including full/CLEAR syncs), so the trashed-UID filter must survive
     # cache clears. The set is persisted to disk and reloaded on session start.
@@ -87,68 +87,68 @@ def clear_caches(params):
 def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items):
     if not response.HasField('keeperDriveData'):
         return
-    kd_data = response.keeperDriveData
-    if len(kd_data.folders) > 0:
-        acc['folders'].extend(kd_data.folders)
-    if len(kd_data.folderKeys) > 0:
-        acc['folder_keys'].extend(kd_data.folderKeys)
-    if len(kd_data.folderAccesses) > 0:
-        acc['folder_accesses'].extend(kd_data.folderAccesses)
-    if len(kd_data.revokedFolderAccesses) > 0:
-        acc['revoked_folder_accesses'].extend(kd_data.revokedFolderAccesses)
-    dfa_attr = getattr(kd_data, 'deniedFolderAccesses', None)
+    nsf_data = response.keeperDriveData
+    if len(nsf_data.folders) > 0:
+        acc['folders'].extend(nsf_data.folders)
+    if len(nsf_data.folderKeys) > 0:
+        acc['folder_keys'].extend(nsf_data.folderKeys)
+    if len(nsf_data.folderAccesses) > 0:
+        acc['folder_accesses'].extend(nsf_data.folderAccesses)
+    if len(nsf_data.revokedFolderAccesses) > 0:
+        acc['revoked_folder_accesses'].extend(nsf_data.revokedFolderAccesses)
+    dfa_attr = getattr(nsf_data, 'deniedFolderAccesses', None)
     if dfa_attr:
         acc['denied_folder_accesses'].extend(dfa_attr)
-    if len(kd_data.recordData) > 0:
-        acc['record_data'].extend(kd_data.recordData)
-    # recordKeys does not exist as a top-level field in KeeperDriveData;
+    if len(nsf_data.recordData) > 0:
+        acc['record_data'].extend(nsf_data.recordData)
+    # recordKeys does not exist as a top-level field in Nested Share FolderData;
     # record keys are embedded in folderRecords[].recordMetadata.encryptedRecordKey
-    # and are extracted during _process_keeper_drive_sync. Use getattr defensively
+    # and are extracted during _process_nested_share_folder_sync. Use getattr defensively
     # so that if the field is ever added to the proto it is collected automatically.
-    rk_attr = getattr(kd_data, 'recordKeys', None)
+    rk_attr = getattr(nsf_data, 'recordKeys', None)
     if rk_attr:
         acc['record_keys'].extend(rk_attr)
-    if len(kd_data.recordAccesses) > 0:
-        acc['record_accesses'].extend(kd_data.recordAccesses)
-    if len(kd_data.revokedRecordAccesses) > 0:
-        acc['revoked_record_accesses'].extend(kd_data.revokedRecordAccesses)
-    if len(kd_data.records) > 0:
-        acc['records'].extend(kd_data.records)
-    if len(kd_data.folderRecords) > 0:
-        acc['folder_records'].extend(kd_data.folderRecords)
-    if len(kd_data.removedFolders) > 0:
-        acc['removed_folders'].extend(kd_data.removedFolders)
-    if len(kd_data.removedFolderRecords) > 0:
-        acc['removed_folder_records'].extend(kd_data.removedFolderRecords)
+    if len(nsf_data.recordAccesses) > 0:
+        acc['record_accesses'].extend(nsf_data.recordAccesses)
+    if len(nsf_data.revokedRecordAccesses) > 0:
+        acc['revoked_record_accesses'].extend(nsf_data.revokedRecordAccesses)
+    if len(nsf_data.records) > 0:
+        acc['records'].extend(nsf_data.records)
+    if len(nsf_data.folderRecords) > 0:
+        acc['folder_records'].extend(nsf_data.folderRecords)
+    if len(nsf_data.removedFolders) > 0:
+        acc['removed_folders'].extend(nsf_data.removedFolders)
+    if len(nsf_data.removedFolderRecords) > 0:
+        acc['removed_folder_records'].extend(nsf_data.removedFolderRecords)
 
-    users_attr = getattr(kd_data, 'users', None)
+    users_attr = getattr(nsf_data, 'users', None)
     if users_attr:
         acc['users'].extend(users_attr)
-    fss_attr = getattr(kd_data, 'folderSharingState', None)
+    fss_attr = getattr(nsf_data, 'folderSharingState', None)
     if fss_attr:
         acc['folder_sharing_states'].extend(fss_attr)
-    rss_attr = getattr(kd_data, 'recordSharingStates', None)
+    rss_attr = getattr(nsf_data, 'recordSharingStates', None)
     if rss_attr:
         acc['record_sharing_states'].extend(rss_attr)
-    rl_attr = getattr(kd_data, 'recordLinks', None)
+    rl_attr = getattr(nsf_data, 'recordLinks', None)
     if rl_attr:
         acc['record_links'].extend(rl_attr)
-    rrl_attr = getattr(kd_data, 'removedRecordLinks', None)
+    rrl_attr = getattr(nsf_data, 'removedRecordLinks', None)
     if rrl_attr:
         acc['removed_record_links'].extend(rrl_attr)
-    rrd_attr = getattr(kd_data, 'recordRotationData', None)
+    rrd_attr = getattr(nsf_data, 'recordRotationData', None)
     if rrd_attr:
         acc['record_rotations'].extend(rrd_attr)
-    dag_attr = getattr(kd_data, 'rawDagData', None)
+    dag_attr = getattr(nsf_data, 'rawDagData', None)
     if dag_attr:
         acc['raw_dag_data'].extend(dag_attr)
-    bw_attr = getattr(kd_data, 'breachWatchRecords', None)
+    bw_attr = getattr(nsf_data, 'breachWatchRecords', None)
     if bw_attr:
         resp_bw_recs.extend(bw_attr)
-    bws_attr = getattr(kd_data, 'breachWatchSecurityData', None)
+    bws_attr = getattr(nsf_data, 'breachWatchSecurityData', None)
     if bws_attr:
         resp_sec_data_recs.extend(bws_attr)
-    ssd_attr = getattr(kd_data, 'securityScoreData', None)
+    ssd_attr = getattr(nsf_data, 'securityScoreData', None)
     if ssd_attr:
         resp_sec_scores.extend(ssd_attr)
     if acc['record_rotations']:
@@ -162,13 +162,13 @@ def has_data(acc):
 def process(params, acc):
     if not has_data(acc):
         return
-    _ensure_keeper_drive_attrs(params)
+    _ensure_nested_share_folder_attrs(params)
 
-    _process_keeper_drive_sync(params, acc)
+    _process_nested_share_folder_sync(params, acc)
 
 
-def _process_keeper_drive_sync(params, acc):
-    """Process Keeper Drive atomic sync objects and store in caches.
+def _process_nested_share_folder_sync(params, acc):
+    """Process Nested Share Folder atomic sync objects and store in caches.
     """
     folders = acc.get('folders') or []
     folder_keys = acc.get('folder_keys') or []
@@ -215,13 +215,13 @@ def _process_keeper_drive_sync(params, acc):
     _purge_orphaned_records(params)
     _process_raw_dag_data(params, raw_dag_data)
 
-    _decrypt_keeper_drive_keys(params)
-    _reconstruct_keeper_drive_entities(params)
+    _decrypt_nested_share_folder_keys(params)
+    _reconstruct_nested_share_folder_entities(params)
 
 
 
 def _process_users(params, users):
-    """Populate ``params.user_cache`` from KeeperDrive ``Users`` records."""
+    """Populate ``params.user_cache`` from Nested Share Folder ``Users`` records."""
     for user in users:
         account_uid = utils.base64_url_encode(user.accountUid)
         params.user_cache[account_uid] = user.username
@@ -247,16 +247,16 @@ def _process_folders(params, folders):
         if folder_data.HasField('ownerInfo'):
             folder_obj['owner_account_uid'] = utils.base64_url_encode(folder_data.ownerInfo.accountUid)
             folder_obj['owner_username'] = folder_data.ownerInfo.username
-        params.keeper_drive_folders[folder_uid] = folder_obj
+        params.nested_share_folders[folder_uid] = folder_obj
 
 
 def _process_folder_keys(params, folder_keys):
     """Store encrypted folder keys grouped by folder UID."""
     for fk in folder_keys:
         folder_uid = utils.base64_url_encode(fk.folderUid)
-        if folder_uid not in params.keeper_drive_folder_keys:
-            params.keeper_drive_folder_keys[folder_uid] = []
-        params.keeper_drive_folder_keys[folder_uid].append({
+        if folder_uid not in params.nested_share_folder_keys:
+            params.nested_share_folder_keys[folder_uid] = []
+        params.nested_share_folder_keys[folder_uid].append({
             'folder_uid': folder_uid,
             'parent_uid': utils.base64_url_encode(fk.parentUid) if fk.parentUid else None,
             'encrypted_key': fk.folderKey,
@@ -268,8 +268,8 @@ def _process_folder_accesses(params, folder_accesses):
     """Store folder access entries grouped by folder UID."""
     for fa in folder_accesses:
         folder_uid = utils.base64_url_encode(fa.folderUid)
-        if folder_uid not in params.keeper_drive_folder_accesses:
-            params.keeper_drive_folder_accesses[folder_uid] = []
+        if folder_uid not in params.nested_share_folder_accesses:
+            params.nested_share_folder_accesses[folder_uid] = []
         access_uid = utils.base64_url_encode(fa.accessTypeUid)
         username = params.user_cache.get(access_uid) if hasattr(params, 'user_cache') else None
         fa_obj = {
@@ -310,7 +310,7 @@ def _process_folder_accesses(params, folder_accesses):
                 'can_list_records':     p.canListRecords,
                 'can_list_folders':     p.canListFolders,
             }
-        params.keeper_drive_folder_accesses[folder_uid].append(fa_obj)
+        params.nested_share_folder_accesses[folder_uid].append(fa_obj)
 
 
 def _process_folder_sharing_states(params, folder_sharing_states):
@@ -327,7 +327,7 @@ def _process_folder_sharing_states(params, folder_sharing_states):
             folder_uid = utils.base64_url_encode(fss.folderUid)
         except Exception:
             continue
-        params.keeper_drive_folder_sharing_states[folder_uid] = {
+        params.nested_share_folder_sharing_states[folder_uid] = {
             'shared': bool(fss.shared),
             'count': int(fss.count) if fss.count else 0,
         }
@@ -338,9 +338,9 @@ def _process_revoked_folder_accesses(params, revoked_folder_accesses):
     for rfa in revoked_folder_accesses:
         folder_uid = utils.base64_url_encode(rfa.folderUid)
         actor_uid = utils.base64_url_encode(rfa.actorUid)
-        if folder_uid in params.keeper_drive_folder_accesses:
-            params.keeper_drive_folder_accesses[folder_uid] = [
-                fa for fa in params.keeper_drive_folder_accesses[folder_uid]
+        if folder_uid in params.nested_share_folder_accesses:
+            params.nested_share_folder_accesses[folder_uid] = [
+                fa for fa in params.nested_share_folder_accesses[folder_uid]
                 if fa['access_type_uid'] != actor_uid
             ]
 
@@ -351,13 +351,13 @@ def _process_denied_folder_accesses(params, denied_folder_accesses):
         try:
             folder_uid = utils.base64_url_encode(dfa.folderUid)
             actor_uid = utils.base64_url_encode(dfa.actorUid)
-            if folder_uid in params.keeper_drive_folder_accesses:
-                params.keeper_drive_folder_accesses[folder_uid] = [
-                    fa for fa in params.keeper_drive_folder_accesses[folder_uid]
+            if folder_uid in params.nested_share_folder_accesses:
+                params.nested_share_folder_accesses[folder_uid] = [
+                    fa for fa in params.nested_share_folder_accesses[folder_uid]
                     if fa['access_type_uid'] != actor_uid
                 ]
-            if folder_uid in params.keeper_drive_folders:
-                folder_obj = params.keeper_drive_folders[folder_uid]
+            if folder_uid in params.nested_share_folders:
+                folder_obj = params.nested_share_folders[folder_uid]
                 folder_obj.pop('folder_key_unencrypted', None)
                 folder_obj['denied'] = True
                 logging.debug('Folder %s access denied for actor %s', folder_uid, actor_uid)
@@ -380,7 +380,7 @@ def _process_records(params, records):
             record_obj['file_size'] = record.fileSize
         if record.thumbnailSize:
             record_obj['thumbnail_size'] = record.thumbnailSize
-        params.keeper_drive_records[record_uid] = record_obj
+        params.nested_share_records[record_uid] = record_obj
 
 
 def _process_record_data(params, record_data_list):
@@ -394,16 +394,16 @@ def _process_record_data(params, record_data_list):
         if rd.HasField('user'):
             rd_obj['user_account_uid'] = utils.base64_url_encode(rd.user.accountUid)
             rd_obj['user_username'] = rd.user.username
-        params.keeper_drive_record_data[record_uid] = rd_obj
+        params.nested_share_record_data[record_uid] = rd_obj
 
 
 def _process_record_keys(params, record_keys):
     """Store standalone encrypted record keys grouped by record UID."""
     for rk in record_keys:
         record_uid = utils.base64_url_encode(rk.record_uid)
-        if record_uid not in params.keeper_drive_record_keys:
-            params.keeper_drive_record_keys[record_uid] = []
-        params.keeper_drive_record_keys[record_uid].append({
+        if record_uid not in params.nested_share_record_keys:
+            params.nested_share_record_keys[record_uid] = []
+        params.nested_share_record_keys[record_uid].append({
             'record_uid': record_uid,
             'user_uid': utils.base64_url_encode(rk.user_uid),
             'record_key': rk.record_key,
@@ -415,8 +415,8 @@ def _process_record_accesses(params, record_accesses):
     """Store record access entries grouped by record UID."""
     for ra in record_accesses:
         record_uid = utils.base64_url_encode(ra.recordUid)
-        if record_uid not in params.keeper_drive_record_accesses:
-            params.keeper_drive_record_accesses[record_uid] = []
+        if record_uid not in params.nested_share_record_accesses:
+            params.nested_share_record_accesses[record_uid] = []
         access_uid = utils.base64_url_encode(ra.accessTypeUid)
         username = params.user_cache.get(access_uid) if hasattr(params, 'user_cache') else None
         ra_obj = {
@@ -446,7 +446,7 @@ def _process_record_accesses(params, record_accesses):
             ra_obj['tla_properties'] = google.protobuf.json_format.MessageToDict(
                 ra.tlaProperties, preserving_proto_field_name=True
             )
-        params.keeper_drive_record_accesses[record_uid].append(ra_obj)
+        params.nested_share_record_accesses[record_uid].append(ra_obj)
 
 
 def _process_revoked_record_accesses(params, revoked_record_accesses):
@@ -454,9 +454,9 @@ def _process_revoked_record_accesses(params, revoked_record_accesses):
     for rra in revoked_record_accesses:
         record_uid = utils.base64_url_encode(rra.recordUid)
         actor_uid = utils.base64_url_encode(rra.actorUid)
-        if record_uid in params.keeper_drive_record_accesses:
-            params.keeper_drive_record_accesses[record_uid] = [
-                ra for ra in params.keeper_drive_record_accesses[record_uid]
+        if record_uid in params.nested_share_record_accesses:
+            params.nested_share_record_accesses[record_uid] = [
+                ra for ra in params.nested_share_record_accesses[record_uid]
                 if ra['access_uid'] != actor_uid
             ]
 
@@ -471,9 +471,9 @@ def _process_record_sharing_states(params, record_sharing_states):
             'is_indirectly_shared': rss.isIndirectlyShared,
             'is_shared': rss.isShared,
         }
-        params.keeper_drive_record_sharing_states[record_uid] = state_obj
-        if record_uid in params.keeper_drive_records:
-            record_obj = params.keeper_drive_records[record_uid]
+        params.nested_share_record_sharing_states[record_uid] = state_obj
+        if record_uid in params.nested_share_records:
+            record_obj = params.nested_share_records[record_uid]
             record_obj['shared'] = record_obj.get('shared', False) or state_obj['is_shared']
 
 
@@ -489,18 +489,18 @@ def _process_record_links(params, record_links):
             'parent_uid': parent_uid,
             'record_key': rl.recordKey,
         }
-        if child_uid not in params.keeper_drive_record_links:
-            params.keeper_drive_record_links[child_uid] = []
-        existing_keys = [lk.get('record_key') for lk in params.keeper_drive_record_links[child_uid]]
+        if child_uid not in params.nested_share_record_links:
+            params.nested_share_record_links[child_uid] = []
+        existing_keys = [lk.get('record_key') for lk in params.nested_share_record_links[child_uid]]
         if rl.recordKey not in existing_keys:
-            params.keeper_drive_record_links[child_uid].append(link_obj)
+            params.nested_share_record_links[child_uid].append(link_obj)
 
         # Record links carry encrypted record keys — feed them into record_keys
         # so the decrypt pass can pick them up.
         if rl.recordKey:
-            if child_uid not in params.keeper_drive_record_keys:
-                params.keeper_drive_record_keys[child_uid] = []
-            params.keeper_drive_record_keys[child_uid].append({
+            if child_uid not in params.nested_share_record_keys:
+                params.nested_share_record_keys[child_uid] = []
+            params.nested_share_record_keys[child_uid].append({
                 'record_uid': child_uid,
                 'parent_uid': parent_uid,
                 'record_key': rl.recordKey,
@@ -515,14 +515,14 @@ def _process_removed_record_links(params, removed_record_links):
         child_uid = utils.base64_url_encode(rrl.childRecordUid) if rrl.childRecordUid else None
         if not child_uid:
             continue
-        if child_uid in params.keeper_drive_record_links:
+        if child_uid in params.nested_share_record_links:
             if rrl.recordKey:
-                params.keeper_drive_record_links[child_uid] = [
-                    lk for lk in params.keeper_drive_record_links[child_uid]
+                params.nested_share_record_links[child_uid] = [
+                    lk for lk in params.nested_share_record_links[child_uid]
                     if lk.get('record_key') != rrl.recordKey
                 ]
             else:
-                del params.keeper_drive_record_links[child_uid]
+                del params.nested_share_record_links[child_uid]
 
 
 def _process_folder_records(params, folder_records):
@@ -530,17 +530,17 @@ def _process_folder_records(params, folder_records):
     for fr in folder_records:
         folder_uid = utils.base64_url_encode(fr.folderUid)
         record_uid = utils.base64_url_encode(fr.recordMetadata.recordUid)
-        if folder_uid not in params.keeper_drive_folder_records:
-            params.keeper_drive_folder_records[folder_uid] = set()
-        params.keeper_drive_folder_records[folder_uid].add(record_uid)
+        if folder_uid not in params.nested_share_folder_records:
+            params.nested_share_folder_records[folder_uid] = set()
+        params.nested_share_folder_records[folder_uid].add(record_uid)
 
         has_key = (hasattr(fr.recordMetadata, 'encryptedRecordKey')
                    and fr.recordMetadata.encryptedRecordKey)
         if not has_key:
             continue
 
-        if record_uid not in params.keeper_drive_record_keys:
-            params.keeper_drive_record_keys[record_uid] = []
+        if record_uid not in params.nested_share_record_keys:
+            params.nested_share_record_keys[record_uid] = []
         rk_obj = {
             'record_uid': record_uid,
             'folder_uid': folder_uid,
@@ -554,7 +554,7 @@ def _process_folder_records(params, folder_records):
             rk_obj['tla_properties'] = google.protobuf.json_format.MessageToDict(
                 fr.recordMetadata.tlaProperties, preserving_proto_field_name=True
             )
-        params.keeper_drive_record_keys[record_uid].append(rk_obj)
+        params.nested_share_record_keys[record_uid].append(rk_obj)
 
 
 def _process_removed_folder_records(params, removed_folder_records):
@@ -562,8 +562,8 @@ def _process_removed_folder_records(params, removed_folder_records):
     for rfr in removed_folder_records:
         folder_uid = utils.base64_url_encode(rfr.folder_uid)
         record_uid = utils.base64_url_encode(rfr.record_uid)
-        if folder_uid in params.keeper_drive_folder_records:
-            params.keeper_drive_folder_records[folder_uid].discard(record_uid)
+        if folder_uid in params.nested_share_folder_records:
+            params.nested_share_folder_records[folder_uid].discard(record_uid)
 
 
 def _process_removed_folders(params, removed_folders):
@@ -573,13 +573,13 @@ def _process_removed_folders(params, removed_folders):
     """
     for rf in removed_folders:
         folder_uid = utils.base64_url_encode(rf.folder_uid)
-        logging.debug('Removing KeeperDrive folder from cache: %s', folder_uid)
+        logging.debug('Removing Nested Share Folder from cache: %s', folder_uid)
 
-        params.keeper_drive_folders.pop(folder_uid, None)
-        params.keeper_drive_folder_keys.pop(folder_uid, None)
-        params.keeper_drive_folder_accesses.pop(folder_uid, None)
-        params.keeper_drive_folder_sharing_states.pop(folder_uid, None)
-        params.keeper_drive_folder_records.pop(folder_uid, None)
+        params.nested_share_folders.pop(folder_uid, None)
+        params.nested_share_folder_keys.pop(folder_uid, None)
+        params.nested_share_folder_accesses.pop(folder_uid, None)
+        params.nested_share_folder_sharing_states.pop(folder_uid, None)
+        params.nested_share_folder_records.pop(folder_uid, None)
         params.subfolder_cache.pop(folder_uid, None)
         params.subfolder_record_cache.pop(folder_uid, None)
 
@@ -592,22 +592,22 @@ def _purge_orphaned_records(params):
     """
     all_folder_record_uids = {
         uid
-        for rec_set in params.keeper_drive_folder_records.values()
+        for rec_set in params.nested_share_folder_records.values()
         for uid in rec_set
     }
-    orphaned = [uid for uid in list(params.keeper_drive_records)
+    orphaned = [uid for uid in list(params.nested_share_records)
                 if uid not in all_folder_record_uids]
     for uid in orphaned:
-        params.keeper_drive_records.pop(uid, None)
-        params.keeper_drive_record_data.pop(uid, None)
-        params.keeper_drive_record_keys.pop(uid, None)
-        params.keeper_drive_record_accesses.pop(uid, None)
-        params.keeper_drive_record_sharing_states.pop(uid, None)
-        params.keeper_drive_record_links.pop(uid, None)
+        params.nested_share_records.pop(uid, None)
+        params.nested_share_record_data.pop(uid, None)
+        params.nested_share_record_keys.pop(uid, None)
+        params.nested_share_record_accesses.pop(uid, None)
+        params.nested_share_record_sharing_states.pop(uid, None)
+        params.nested_share_record_links.pop(uid, None)
         params.record_cache.pop(uid, None)
         params.meta_data_cache.pop(uid, None)
         params.record_owner_cache.pop(uid, None)
-        logging.debug('Purged orphaned KeeperDrive record from cache: %s', uid)
+        logging.debug('Purged orphaned Nested Share Record from cache: %s', uid)
 
 
 def _process_raw_dag_data(params, raw_dag_data):
@@ -620,9 +620,9 @@ def _process_raw_dag_data(params, raw_dag_data):
                 dag_entry, preserving_proto_field_name=True
             )
         except Exception as e:
-            logging.debug(f"Failed to parse Keeper Drive DAG data: {e}")
+            logging.debug(f"Failed to parse Nested Share Folder DAG data: {e}")
             dag_dict = {'error': str(e)}
-        params.keeper_drive_raw_dag_data.append(dag_dict)
+        params.nested_share_raw_dag_data.append(dag_dict)
 
 
 def _try_decrypt_symmetric(enc_key, sym_key):
@@ -659,21 +659,21 @@ def _try_decrypt_with_user_keys(enc_key, params):
     return None
 
 
-def _decrypt_keeper_drive_keys(params):
-    """Decrypt Keeper Drive folder and record keys."""
+def _decrypt_nested_share_folder_keys(params):
+    """Decrypt Nested Share Folder folder and record keys."""
     newly_decrypted = True
     
     while newly_decrypted:
         newly_decrypted = False
         
-        for folder_uid, folder_obj in params.keeper_drive_folders.items():
+        for folder_uid, folder_obj in params.nested_share_folders.items():
             if 'folder_key_unencrypted' in folder_obj:
                 continue
 
             folder_key = None
 
-            if folder_uid in params.keeper_drive_folder_keys:
-                for fk in params.keeper_drive_folder_keys[folder_uid]:
+            if folder_uid in params.nested_share_folder_keys:
+                for fk in params.nested_share_folder_keys[folder_uid]:
                     enc_key = fk['encrypted_key']
                     try:
                         if fk['key_type'] == folder_pb2.ENCRYPTED_BY_USER_KEY:
@@ -688,8 +688,8 @@ def _decrypt_keeper_drive_keys(params):
                                 break
                         elif fk['key_type'] == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
                             parent_uid = folder_obj.get('parent_uid')
-                            if parent_uid and parent_uid in params.keeper_drive_folders:
-                                parent_folder = params.keeper_drive_folders[parent_uid]
+                            if parent_uid and parent_uid in params.nested_share_folders:
+                                parent_folder = params.nested_share_folders[parent_uid]
                                 if 'folder_key_unencrypted' in parent_folder:
                                     parent_key = parent_folder['folder_key_unencrypted']
                                     folder_key = _try_decrypt_symmetric(enc_key, parent_key)
@@ -699,8 +699,8 @@ def _decrypt_keeper_drive_keys(params):
                         logging.debug(f"Failed to decrypt folder key for {folder_uid}: {e}")
 
             # Fallback: try from folder access data (EncryptedDataKey — has explicit algorithm)
-            if not folder_key and folder_uid in params.keeper_drive_folder_accesses:
-                for fa in params.keeper_drive_folder_accesses[folder_uid]:
+            if not folder_key and folder_uid in params.nested_share_folder_accesses:
+                for fa in params.nested_share_folder_accesses[folder_uid]:
                     if 'folder_key' not in fa:
                         continue
 
@@ -741,7 +741,7 @@ def _decrypt_keeper_drive_keys(params):
                     except Exception as e:
                         logging.debug(f"Failed to decrypt folder data for {folder_uid}: {e}")
 
-    _decrypt_keeper_drive_record_keys(params)
+    _decrypt_nested_share_record_keys(params)
 
 
 def _try_decrypt_record_key(rk, params):
@@ -770,8 +770,8 @@ def _try_decrypt_record_key(rk, params):
 
     # 2. For record-link keys, try parent record key then data key
     if rk.get('source') == 'record_link' and parent_uid:
-        if parent_uid in params.keeper_drive_records:
-            parent_obj = params.keeper_drive_records[parent_uid]
+        if parent_uid in params.nested_share_records:
+            parent_obj = params.nested_share_records[parent_uid]
             if 'record_key_unencrypted' in parent_obj:
                 try:
                     return crypto.decrypt_aes_v2(encrypted_key, parent_obj['record_key_unencrypted'])
@@ -788,8 +788,8 @@ def _try_decrypt_record_key(rk, params):
     #   ENCRYPTED_BY_PARENT_KEY (1) → folder key should come first (default / unknown)
     fket = rk.get('folder_key_encryption_type')
     folder_key_val = None
-    if folder_uid and folder_uid in params.keeper_drive_folders:
-        folder_obj = params.keeper_drive_folders[folder_uid]
+    if folder_uid and folder_uid in params.nested_share_folders:
+        folder_obj = params.nested_share_folders[folder_uid]
         if 'folder_key_unencrypted' in folder_obj:
             folder_key_val = folder_obj['folder_key_unencrypted']
 
@@ -832,9 +832,9 @@ def _try_decrypt_record_key(rk, params):
 
 def _decrypt_record_data(record_uid, record_key, params):
     """Decrypt record data using the record key and store data_json."""
-    if record_uid not in params.keeper_drive_record_data:
+    if record_uid not in params.nested_share_record_data:
         return
-    rd_obj = params.keeper_drive_record_data[record_uid]
+    rd_obj = params.nested_share_record_data[record_uid]
     if 'data_json' in rd_obj:
         return
     if 'data' not in rd_obj or not rd_obj['data']:
@@ -850,13 +850,13 @@ def _decrypt_record_data(record_uid, record_key, params):
         logging.warning(f"Failed to decrypt record data for {record_uid}: {e}")
 
 
-def _decrypt_keeper_drive_record_keys(params):
-    """Decrypt all Keeper Drive record keys, trying multiple sources."""
+def _decrypt_nested_share_record_keys(params):
+    """Decrypt all Nested Share Folder record keys, trying multiple sources."""
 
     # Pass 0: check if record keys were already decrypted by the regular vault
     # sync (via recordMetaData or record_cache in SyncDownResponse). This is
     # the primary path for records shared with the current user.
-    for record_uid, record_obj in params.keeper_drive_records.items():
+    for record_uid, record_obj in params.nested_share_records.items():
         if 'record_key_unencrypted' in record_obj:
             continue
         # Check meta_data_cache (decrypted record metadata from regular sync)
@@ -875,11 +875,11 @@ def _decrypt_keeper_drive_record_keys(params):
                 _decrypt_record_data(record_uid, cached['record_key_unencrypted'], params)
                 logging.debug(f"Record {record_uid}: key obtained from record_cache")
 
-    # Pass 1: decrypt from keeper_drive_record_keys entries
-    for record_uid, record_keys_list in params.keeper_drive_record_keys.items():
-        if record_uid not in params.keeper_drive_records:
+    # Pass 1: decrypt from nested_share_record_keys entries
+    for record_uid, record_keys_list in params.nested_share_record_keys.items():
+        if record_uid not in params.nested_share_records:
             continue
-        record_obj = params.keeper_drive_records[record_uid]
+        record_obj = params.nested_share_records[record_uid]
         if 'record_key_unencrypted' in record_obj:
             continue
 
@@ -897,28 +897,28 @@ def _decrypt_keeper_drive_record_keys(params):
     # against the record data directly. This catches records whose keys weren't
     # delivered through the expected folderRecords/recordKeys channels.
     undecrypted = [
-        uid for uid, obj in params.keeper_drive_records.items()
+        uid for uid, obj in params.nested_share_records.items()
         if 'record_key_unencrypted' not in obj
-        and uid in params.keeper_drive_record_data
-        and params.keeper_drive_record_data[uid].get('data')
+        and uid in params.nested_share_record_data
+        and params.nested_share_record_data[uid].get('data')
     ]
     if undecrypted:
         logging.debug(f"Pass 2: {len(undecrypted)} record(s) still need decryption")
 
     for record_uid in undecrypted:
-        record_obj = params.keeper_drive_records[record_uid]
-        rd_obj = params.keeper_drive_record_data[record_uid]
+        record_obj = params.nested_share_records[record_uid]
+        rd_obj = params.nested_share_record_data[record_uid]
         record_key = None
 
         # Try record link keys with parent record key, then data key
-        if record_uid in params.keeper_drive_record_links:
-            for link in params.keeper_drive_record_links[record_uid]:
+        if record_uid in params.nested_share_record_links:
+            for link in params.nested_share_record_links[record_uid]:
                 enc_key = link.get('record_key')
                 if not enc_key:
                     continue
                 parent = link.get('parent_uid')
-                if parent and parent in params.keeper_drive_records:
-                    parent_obj = params.keeper_drive_records[parent]
+                if parent and parent in params.nested_share_records:
+                    parent_obj = params.nested_share_records[parent]
                     if 'record_key_unencrypted' in parent_obj:
                         try:
                             record_key = crypto.decrypt_aes_v2(enc_key, parent_obj['record_key_unencrypted'])
@@ -953,9 +953,9 @@ def _decrypt_keeper_drive_record_keys(params):
         # this will succeed and we use the folder key as the effective record key.
         if not record_key:
             candidate_folder_keys = set()
-            for folder_uid, rec_set in params.keeper_drive_folder_records.items():
-                if record_uid in rec_set and folder_uid in params.keeper_drive_folders:
-                    fobj = params.keeper_drive_folders[folder_uid]
+            for folder_uid, rec_set in params.nested_share_folder_records.items():
+                if record_uid in rec_set and folder_uid in params.nested_share_folders:
+                    fobj = params.nested_share_folders[folder_uid]
                     if 'folder_key_unencrypted' in fobj:
                         candidate_folder_keys.add(id(fobj['folder_key_unencrypted']))
                         try:
@@ -975,19 +975,19 @@ def _decrypt_keeper_drive_record_keys(params):
 
     # Log remaining undecrypted records
     still_undecrypted = [
-        uid for uid, obj in params.keeper_drive_records.items()
+        uid for uid, obj in params.nested_share_records.items()
         if 'record_key_unencrypted' not in obj
     ]
     if still_undecrypted:
         logging.debug(
-            f"KeeperDrive: {len(still_undecrypted)} record(s) could not be decrypted: "
+            f"Nested Share Folder: {len(still_undecrypted)} record(s) could not be decrypted: "
             f"{still_undecrypted[:5]}{'...' if len(still_undecrypted) > 5 else ''}"
         )
 
 
-def _reconstruct_keeper_drive_entities(params):
-    """Reconstruct complete Keeper Drive entities from atomic objects."""
-    for folder_uid, folder_obj in params.keeper_drive_folders.items():
+def _reconstruct_nested_share_folder_entities(params):
+    """Reconstruct complete Nested Share Folder entities from atomic objects."""
+    for folder_uid, folder_obj in params.nested_share_folders.items():
         if 'folder_key_unencrypted' not in folder_obj:
             continue
 
@@ -996,7 +996,7 @@ def _reconstruct_keeper_drive_entities(params):
             'type': 'user_folder',
             'name': folder_obj.get('name', 'Unnamed Folder'),
             'folder_key_unencrypted': folder_obj['folder_key_unencrypted'],
-            'source': 'keeper_drive',
+            'source': 'nested_share_folder',
         }
 
         if 'parent_uid' in folder_obj and folder_obj['parent_uid']:
@@ -1007,19 +1007,19 @@ def _reconstruct_keeper_drive_entities(params):
 
         params.subfolder_cache[folder_uid] = user_folder
 
-    for folder_uid, record_uids in params.keeper_drive_folder_records.items():
+    for folder_uid, record_uids in params.nested_share_folder_records.items():
         # Replace (not additive) so that records removed from a folder are
         # evicted from the subfolder_record_cache on the very next sync.
         params.subfolder_record_cache[folder_uid] = set(record_uids)
 
-    for record_uid, record_obj in params.keeper_drive_records.items():
+    for record_uid, record_obj in params.nested_share_records.items():
         if 'record_key_unencrypted' not in record_obj:
             continue
 
-        if record_uid not in params.keeper_drive_record_data:
+        if record_uid not in params.nested_share_record_data:
             continue
 
-        rd_obj = params.keeper_drive_record_data[record_uid]
+        rd_obj = params.nested_share_record_data[record_uid]
         if 'data_json' not in rd_obj:
             continue
 
@@ -1032,7 +1032,7 @@ def _reconstruct_keeper_drive_entities(params):
             'data_unencrypted': json.dumps(rd_obj['data_json']).encode('utf-8'),
             'extra_unencrypted': None,
             'udata': {},
-            'source': 'keeper_drive',
+            'source': 'nested_share_folder',
         }
 
         params.record_cache[record_uid] = record_entry

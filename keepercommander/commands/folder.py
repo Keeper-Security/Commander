@@ -264,17 +264,17 @@ class FolderListCommand(Command, RecordMixin):
                     
                     if len(folders) > 0:
                         for f in folders:
-                            # Check if folder is from Keeper Drive
-                            is_keeper_drive = hasattr(params, 'keeper_drive_folders') and f.uid in params.keeper_drive_folders
-                            source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
+                            # Check if folder is from Nested Share Folder
+                            is_nested_share = hasattr(params, 'nested_share_folders') and f.uid in params.nested_share_folders
+                            source = 'Nested Share Folder' if is_nested_share else 'Legacy'
                             row = ['folder', f.uid, f.name, f'Flags: {folder_flags(f)}, Parent: {f.parent_uid or "/"}', source]
                             combined_table.append(row)
                     
                     if len(records) > 0:
                         for record in records:
-                            # Check if record is from Keeper Drive
-                            is_keeper_drive = hasattr(params, 'keeper_drive_records') and record.record_uid in params.keeper_drive_records
-                            source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
+                            # Check if record is from Nested Share Folder
+                            is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
+                            source = 'Nested' if is_nested_share else 'Legacy'
                             row = ['record', record.record_uid, record.title, 
                                    f'Type: {record.record_type}, Description: {vault_extensions.get_record_description(record)}', source]
                             combined_table.append(row)
@@ -290,9 +290,9 @@ class FolderListCommand(Command, RecordMixin):
                         for f in folders:
                             if f.color:
                                 colors[f.name] = f.color
-                            # Check if folder is from Keeper Drive
-                            is_keeper_drive = hasattr(params, 'keeper_drive_folders') and f.uid in params.keeper_drive_folders
-                            source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
+                            # Check if folder is from Nested Share Folder
+                            is_nested_share = hasattr(params, 'nested_share_folders') and f.uid in params.nested_share_folders
+                            source = 'Nested Share Folder' if is_nested_share else 'Legacy'
                             row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/', source]
                             table.append(row)
                         table.sort(key=lambda x: (x[1] or '').lower())
@@ -308,9 +308,9 @@ class FolderListCommand(Command, RecordMixin):
                         table = []
                         headers = ['record_uid', 'type', 'title', 'description', 'source']
                         for record in records:
-                            # Check if record is from Keeper Drive
-                            is_keeper_drive = hasattr(params, 'keeper_drive_records') and record.record_uid in params.keeper_drive_records
-                            source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
+                            # Check if record is from Nested Share Folder
+                            is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
+                            source = 'Nested' if is_nested_share else 'Legacy'
                             row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record), source]
                             table.append(row)
                         table.sort(key=lambda x: (x[2] or '').lower())
@@ -360,7 +360,7 @@ class FolderCdCommand(Command):
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else ''
         if folder_name:
-            if folder_name in params.folder_cache or folder_name in params.keeper_drive_folders:
+            if folder_name in params.folder_cache or folder_name in params.nested_share_folders:
                 params.current_folder = folder_name
             else:
                 rs = try_resolve_path(params, folder_name)
@@ -856,12 +856,12 @@ class FolderMoveCommand(Command):
                 if src_folder.type == BaseFolderNode.RootFolderType:
                     raise CommandError('mv', 'Root folder cannot be a source folder')
 
-                if src_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                if src_folder.type == BaseFolderNode.NestedShareFolderType:
                     if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                         raise CommandError('mv', 'Drive folders cannot be moved inside a Shared folder.')
                     raise CommandError('mv', 'Moving drive folders is currently not supported.')
 
-                if dst_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                if dst_folder.type == BaseFolderNode.NestedShareFolderType:
                     if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                         raise CommandError('mv', 'Shared folders cannot be moved inside a drive folder.')
                     raise CommandError('mv', 'Folders cannot be moved inside a drive folder.')
@@ -907,20 +907,20 @@ class FolderMoveCommand(Command):
                         FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
 
             else:
-                if src_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                if src_folder.type == BaseFolderNode.NestedShareFolderType:
                     raise CommandError('mv', 'Moving drive records is currently not supported.')
 
-                if record_uid in getattr(params, 'keeper_drive_records', {}) \
-                        and dst_folder.type != BaseFolderNode.KeeperDriveFolderType:
+                if record_uid in getattr(params, 'nested_share_records', {}) \
+                        and dst_folder.type != BaseFolderNode.NestedShareFolderType:
                     raise CommandError(
                         'mv',
-                        'KeeperDrive records cannot be linked or moved into legacy folders.'
+                        'Nested Share Records cannot be linked or moved into legacy folders.'
                     )
 
-                if dst_folder.type == BaseFolderNode.KeeperDriveFolderType:
+                if dst_folder.type == BaseFolderNode.NestedShareFolderType:
                     raise CommandError(
                         'mv',
-                        'Legacy records cannot be linked or moved into a KeeperDrive folder.'
+                        'Legacy records cannot be linked or moved into a Nested Share Folder.'
                     )
 
                 move = {
@@ -1796,31 +1796,31 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         node_uid = node.record_uid if isinstance(node, Record) else (node.uid if hasattr(node, 'uid') else '')
         node_name = node.title if isinstance(node, Record) else (node.name if hasattr(node, 'name') else 'Unknown')
         
-        # Check if it's a KeeperDrive item and get proper name
-        is_keeper_drive = False
+        # Check if it's a Nested Share Folder item and get proper name
+        is_nested_share = False
         if isinstance(node, Record):
-            is_keeper_drive = hasattr(params, 'keeper_drive_records') and node.record_uid in params.keeper_drive_records
-        elif hasattr(node, 'type') and node.type == 'keeper_drive_folder':
-            is_keeper_drive = True
+            is_nested_share = hasattr(params, 'nested_share_records') and node.record_uid in params.nested_share_records
+        elif hasattr(node, 'type') and node.type == 'nested_share_folder':
+            is_nested_share = True
         elif isinstance(node, BaseFolderNode) and not isinstance(node, Record):
-            is_keeper_drive = hasattr(params, 'keeper_drive_folders') and node_uid in params.keeper_drive_folders
-            # Get folder name from keeper_drive_folders if available
-            if is_keeper_drive and node_uid in params.keeper_drive_folders:
-                kd_folder_name = params.keeper_drive_folders[node_uid].get('name', node_name)
-                if kd_folder_name:
-                    node_name = kd_folder_name
+            is_nested_share = hasattr(params, 'nested_share_folders') and node_uid in params.nested_share_folders
+            # Get folder name from nested_share_folders if available
+            if is_nested_share and node_uid in params.nested_share_folders:
+                nsf_folder_name = params.nested_share_folders[node_uid].get('name', node_name)
+                if nsf_folder_name:
+                    node_name = nsf_folder_name
         
         node_name = f'{node_name} ({node_uid})' if verbose else node_name
         share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
         
         # Format node name based on type
         if isinstance(node, Record):
-            kd_label = ' [KD Record]' if is_keeper_drive else ' [Record]'
-            node_name = f'{Style.DIM}{node_name}{kd_label}{Style.NORMAL}'
+            nsf_label = ' [Nested Record]' if is_nested_share else ' [Record]'
+            node_name = f'{Style.DIM}{node_name}{nsf_label}{Style.NORMAL}'
         elif isinstance(node, SharedFolderNode):
             node_name = f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}'
-        elif is_keeper_drive:
-            node_name = f'{node_name}{Style.BRIGHT} [KD Folder]{Style.NORMAL}'
+        elif is_nested_share:
+            node_name = f'{node_name}{Style.BRIGHT} [Nested Share Folder]{Style.NORMAL}'
 
         dir_nodes = []
         if not isinstance(node, Record):
@@ -1828,47 +1828,47 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             if hasattr(node, 'subfolders'):
                 dir_nodes = [params.folder_cache.get(fuid) for fuid in node.subfolders if params.folder_cache.get(fuid)]
         
-        # Check if this is root folder and add KeeperDrive root-level folders
+        # Check if this is root folder and add Nested Share Folder root-level folders
         is_root = (isinstance(node, BaseFolderNode) and (node.type == '/' or node_uid == '')) or \
-                  (hasattr(node, 'type') and node.type == 'keeper_drive_folder' and not node_uid)
+                  (hasattr(node, 'type') and node.type == 'nested_share_folder' and not node_uid)
         
-        if is_root and hasattr(params, 'keeper_drive_folders') and params.keeper_drive_folders:
-            # Add all KeeperDrive folders that are at root level
-            for kd_uid, kd_folder in params.keeper_drive_folders.items():
-                parent_uid = kd_folder.get('parent_uid')
+        if is_root and hasattr(params, 'nested_share_folders') and params.nested_share_folders:
+            # Add all Nested Share Folders that are at root level
+            for nsf_uid, nsf_folder in params.nested_share_folders.items():
+                parent_uid = nsf_folder.get('parent_uid')
                 # Check if this folder is at root:
                 # - parent_uid is None, empty string, 'root', or the special root UID
-                # - Also check if parent doesn't exist in keeper_drive_folders (orphan = root level)
+                # - Also check if parent doesn't exist in nested_share_folders (orphan = root level)
                 is_root_folder = (
                     parent_uid is None or 
                     parent_uid == '' or 
                     parent_uid == 'root' or 
                     parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA' or
-                    (parent_uid and parent_uid not in params.keeper_drive_folders)
+                    (parent_uid and parent_uid not in params.nested_share_folders)
                 )
                 if is_root_folder:
                     # Check if already in dir_nodes
-                    already_added = any(hasattr(n, 'uid') and n.uid == kd_uid for n in dir_nodes if n)
+                    already_added = any(hasattr(n, 'uid') and n.uid == nsf_uid for n in dir_nodes if n)
                     if not already_added:
                         # Check if in folder_cache first
-                        if kd_uid in params.folder_cache:
-                            kd_node = params.folder_cache.get(kd_uid)
-                            if kd_node:
-                                dir_nodes.append(kd_node)
+                        if nsf_uid in params.folder_cache:
+                            nsf_node = params.folder_cache.get(nsf_uid)
+                            if nsf_node:
+                                dir_nodes.append(nsf_node)
                         else:
-                            # Create a temporary folder node for KeeperDrive folders not in folder_cache
+                            # Create a temporary folder node for Nested Share Folders not in folder_cache
                             temp_node = type('FolderNode', (), {
-                                'uid': kd_uid,
-                                'name': kd_folder.get('name', 'Unnamed'),
-                                'type': 'keeper_drive_folder',
+                                'uid': nsf_uid,
+                                'name': nsf_folder.get('name', 'Unnamed'),
+                                'type': 'nested_share_folder',
                                 'subfolders': []
                             })()
                             dir_nodes.append(temp_node)
         
-        # Add KeeperDrive subfolders if this is a KeeperDrive folder
-        elif not isinstance(node, Record) and hasattr(params, 'keeper_drive_folders') and node_uid:
-            # Find child folders for this KeeperDrive folder
-            for child_uid, child_folder in params.keeper_drive_folders.items():
+        # Add Nested Share Folder subfolders if this is a Nested Share Folder
+        elif not isinstance(node, Record) and hasattr(params, 'nested_share_folders') and node_uid:
+            # Find child folders for this Nested Share Folder
+            for child_uid, child_folder in params.nested_share_folders.items():
                 parent_uid = child_folder.get('parent_uid', '')
                 if parent_uid == node_uid:
                     # Check if already in dir_nodes
@@ -1883,7 +1883,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                             temp_node = type('FolderNode', (), {
                                 'uid': child_uid,
                                 'name': child_folder.get('name', 'Unnamed'),
-                                'type': 'keeper_drive_folder',
+                                'type': 'nested_share_folder',
                                 'subfolders': []
                             })()
                             dir_nodes.append(temp_node)
@@ -1898,37 +1898,37 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             records = [r for r in records if isinstance(r, Record)]
             rec_nodes.extend(records)
             
-            # Add KeeperDrive records for this folder
-            if hasattr(params, 'keeper_drive_folder_records'):
-                # For root folder, collect KD records that are not inside any known KD sub-folder
+            # Add Nested Share Records for this folder
+            if hasattr(params, 'nested_share_folder_records'):
+                # For root folder, collect Nested Share Folder records that are not inside any known NSF sub-folder
                 if is_root:
-                    kd_folders = getattr(params, 'keeper_drive_folders', {})
+                    nsf_folders = getattr(params, 'nested_share_folders', {})
                     shown_rec_uids = set(rec_uids)
-                    # Records associated with container UIDs that are NOT real KD sub-folders
-                    # (includes the KD root UID and any other non-folder containers)
-                    for folder_uid, kd_rec_uids in params.keeper_drive_folder_records.items():
-                        if folder_uid not in kd_folders:
-                            for rec_uid in kd_rec_uids:
+                    # Records associated with container UIDs that are NOT real NSF sub-folders
+                    # (includes the NSF root UID and any other non-folder containers)
+                    for folder_uid, nsf_rec_uids in params.nested_share_folder_records.items():
+                        if folder_uid not in nsf_folders:
+                            for rec_uid in nsf_rec_uids:
                                 if rec_uid not in shown_rec_uids:
                                     rec = api.get_record(params, rec_uid)
                                     if isinstance(rec, Record):
                                         rec_nodes.append(rec)
                                         shown_rec_uids.add(rec_uid)
-                    # Also show KD records that have NO folder association at all
-                    if hasattr(params, 'keeper_drive_records'):
+                    # Also show Nested Share Folder records that have NO folder association at all
+                    if hasattr(params, 'nested_share_records'):
                         all_filed = set()
-                        for uids in params.keeper_drive_folder_records.values():
+                        for uids in params.nested_share_folder_records.values():
                             all_filed.update(uids)
-                        for rec_uid in params.keeper_drive_records:
+                        for rec_uid in params.nested_share_records:
                             if rec_uid not in all_filed and rec_uid not in shown_rec_uids:
                                 rec = api.get_record(params, rec_uid)
                                 if isinstance(rec, Record):
                                     rec_nodes.append(rec)
                                     shown_rec_uids.add(rec_uid)
                 # For specific folders
-                elif node_uid_for_recs in params.keeper_drive_folder_records:
-                    kd_rec_uids = params.keeper_drive_folder_records[node_uid_for_recs]
-                    for rec_uid in kd_rec_uids:
+                elif node_uid_for_recs in params.nested_share_folder_records:
+                    nsf_rec_uids = params.nested_share_folder_records[node_uid_for_recs]
+                    for rec_uid in nsf_rec_uids:
                         if rec_uid not in rec_uids:
                             rec = api.get_record(params, rec_uid)
                             if isinstance(rec, Record):

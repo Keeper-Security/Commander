@@ -1,5 +1,5 @@
 """
-KeeperDrive — role matrices, permission helpers, enum wrappers.
+Nested Share Folder — role matrices, permission helpers, enum wrappers.
 
 Open/Closed: new roles can be added to the matrices without changing
 any consumer code.

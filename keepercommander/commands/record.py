@@ -145,7 +145,7 @@ search_parser.add_argument('pattern', nargs='*', type=str, action='store', help=
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
-                                '"s" = shared folders, "t" = teams, "d" = KeeperDrive folders')
+                                '"s" = shared folders, "t" = teams, "d" = Nested Share Folders')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
                            help='treat pattern as a regular expression instead of space-separated search terms')
 search_parser.add_argument('--device', dest='device', action='store_true',
@@ -376,13 +376,13 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
-                if f.type == BaseFolderNode.KeeperDriveFolderType:
+                if f.type == BaseFolderNode.NestedShareFolderType:
                     try:
-                        from .keeper_drive.display_commands import KeeperDriveGetCommand
-                        KeeperDriveGetCommand._print_folder_permissions(
+                        from .nested_share_folder.display_commands import NestedShareGetCommand
+                        NestedShareGetCommand._print_folder_permissions(
                             params, f.uid, kwargs.get('verbose', False))
                     except Exception as e:
-                        logging.debug('KeeperDrive permission display skipped: %s', e)
+                        logging.debug('Nested Share Folder permission display skipped: %s', e)
             direct_match = True
             return
 
@@ -487,30 +487,30 @@ class RecordGetUidCommand(Command):
                         if 'shared_folder_permissions' in rec['shares']:
                             ro['shared_folder_permissions'] = rec['shares']['shared_folder_permissions'].copy()
 
-                    # For KeeperDrive records, replace the user_permissions
-                    # block with role-aware entries fetched from the KD
+                    # For Nested Share Records, replace the user_permissions
+                    # block with role-aware entries fetched from the Nested Share Folder
                     # access graph (matches ``nsf-get --format json``).
-                    if (hasattr(params, 'keeper_drive_records')
-                            and uid in getattr(params, 'keeper_drive_records', {})):
+                    if (hasattr(params, 'nested_share_records')
+                            and uid in getattr(params, 'nested_share_records', {})):
                         try:
-                            from .. import keeper_drive as _kd
-                            from .keeper_drive.helpers import get_access_role_label
-                            kd_accesses = (_kd.get_record_accesses_v3(params, [uid])
+                            from .. import nested_share_folder as _nsf
+                            from .nested_share_folder.helpers import get_access_role_label
+                            nsf_accesses = (_nsf.get_record_accesses_v3(params, [uid])
                                            .get('record_accesses', []))
-                            if kd_accesses:
-                                kd_perms = []
-                                for a in kd_accesses:
+                            if nsf_accesses:
+                                nsf_perms = []
+                                for a in nsf_accesses:
                                     accessor = a.get('accessor_name') or a.get('access_type_uid', '')
-                                    kd_perms.append({
+                                    nsf_perms.append({
                                         'username':  accessor,
                                         'owner':     a.get('owner', False),
                                         'shareable': a.get('can_approve_access', False) or a.get('can_update_access', False),
                                         'editable':  a.get('can_edit', False),
                                         'role':      get_access_role_label(a),
                                     })
-                                ro['user_permissions'] = kd_perms
+                                ro['user_permissions'] = nsf_perms
                         except Exception as e:
-                            logging.debug('Could not enrich KD user_permissions for %s: %s', uid, e)
+                            logging.debug('Could not enrich Nested Share Folder user_permissions for %s: %s', uid, e)
 
                     if admins:
                         ro['share_admins'] = admins
@@ -593,22 +593,22 @@ class RecordGetUidCommand(Command):
                     unmask = kwargs.get('unmask') is True
                     r.display(unmask=unmask)
 
-                    # KeeperDrive records carry their permissions on the KD
+                    # Nested Share Records carry their permissions on the Nested Share Folder
                     # access graph, not in ``rec['shares']['user_permissions']``.
-                    # Render the KD-style "User Permissions" block (with Role)
-                    # so ``get`` matches ``nsf-get`` for KD records.
-                    is_kd_record = (
-                        hasattr(params, 'keeper_drive_records')
-                        and uid in getattr(params, 'keeper_drive_records', {})
+                    # Render the Nested-Share-Folder-style "User Permissions" block (with Role)
+                    # so ``get`` matches ``nsf-get`` for Nested Share Records.
+                    is_nsf_record = (
+                        hasattr(params, 'nested_share_records')
+                        and uid in getattr(params, 'nested_share_records', {})
                     )
-                    kd_user_perms_rendered = False
-                    if is_kd_record:
+                    nsf_user_perms_rendered = False
+                    if is_nsf_record:
                         try:
-                            from .. import keeper_drive as _kd
-                            accesses = (_kd.get_record_accesses_v3(params, [uid])
+                            from .. import nested_share_folder as _nsf
+                            accesses = (_nsf.get_record_accesses_v3(params, [uid])
                                         .get('record_accesses', []))
                             if accesses:
-                                from .keeper_drive.helpers import (
+                                from .nested_share_folder.helpers import (
                                     get_access_role_label,
                                     RECORD_PERM_LABELS,
                                 )
@@ -630,12 +630,12 @@ class RecordGetUidCommand(Command):
                                         print('  Role: ' + role)
                                     print('  Shareable: ' + ('Yes' if can_share else 'No'))
                                     print('  Read-Only: ' + ('Yes' if not can_edit else 'No'))
-                                kd_user_perms_rendered = True
+                                nsf_user_perms_rendered = True
                         except Exception as e:
-                            logging.debug('Could not render KD permissions for %s: %s', uid, e)
+                            logging.debug('Could not render Nested Share Folder permissions for %s: %s', uid, e)
 
                     if rec.get('shares'):
-                        if (not kd_user_perms_rendered
+                        if (not nsf_user_perms_rendered
                                 and 'user_permissions' in rec['shares']
                                 and rec['shares']['user_permissions']):
                             print('')
@@ -1455,7 +1455,7 @@ class SearchCommand(Command):
         categories = (kwargs.get('categories') or 'rstd').lower()
         skip_details = not verbose
 
-        kd_records_map = getattr(params, 'keeper_drive_records', {}) or {}
+        nsf_records_map = getattr(params, 'nested_share_records', {}) or {}
 
         all_results = []
 
@@ -1465,14 +1465,14 @@ class SearchCommand(Command):
             if records:
                 if fmt == 'json':
                     for record in records:
-                        is_kd = record.record_uid in kd_records_map
+                        is_nsf = record.record_uid in nsf_records_map
                         result_item = {
                             'type': 'record',
                             'record_uid': record.record_uid,
                             'record_type': record.record_type,
                             'title': record.title,
                             'description': vault_extensions.get_record_description(record),
-                            'record_category': 'KeeperDrive' if is_kd else 'Classic',
+                            'record_category': 'Nested' if is_nsf else 'Classic',
                         }
                         all_results.append(result_item)
                 else:
@@ -1480,7 +1480,7 @@ class SearchCommand(Command):
                     table = []
                     headers = ['Record UID', 'Type', 'Title', 'Description', 'Record Category']
                     for record in records:
-                        record_category = 'KeeperDrive' if record.record_uid in kd_records_map else 'Classic'
+                        record_category = 'Nested' if record.record_uid in nsf_records_map else 'Classic'
                         row = [record.record_uid, record.record_type, record.title,
                                vault_extensions.get_record_description(record), record_category]
                         table.append(row)
@@ -1531,12 +1531,12 @@ class SearchCommand(Command):
 
 
         if 'd' in categories:
-            kd_folder_results = self._search_keeper_drive_folders(params, pattern, use_regex=use_regex)
-            if kd_folder_results:
+            nsf_folder_results = self._search_nested_share_folders(params, pattern, use_regex=use_regex)
+            if nsf_folder_results:
                 if fmt == 'json':
-                    for folder_uid, fobj in kd_folder_results:
+                    for folder_uid, fobj in nsf_folder_results:
                         result_item = {
-                            'type': 'keeper_drive_folder',
+                            'type': 'nested_share_folder',
                             'folder_uid': folder_uid,
                             'name': fobj.get('name', ''),
                             'parent_uid': self._display_parent_uid(fobj.get('parent_uid', '')),
@@ -1547,15 +1547,15 @@ class SearchCommand(Command):
                     rows_with_parent = [
                         (folder_uid, fobj.get('name', ''),
                          self._display_parent_uid(fobj.get('parent_uid', '')))
-                        for folder_uid, fobj in kd_folder_results
+                        for folder_uid, fobj in nsf_folder_results
                     ]
                     any_non_root = any(parent for _, _, parent in rows_with_parent)
                     if any_non_root:
-                        headers = ['KeeperDrive Folder UID', 'Name', 'Parent UID']
+                        headers = ['Nested Share Folder UID', 'Name', 'Parent UID']
                         table = [[fuid, name, parent]
                                  for fuid, name, parent in rows_with_parent]
                     else:
-                        headers = ['KeeperDrive Folder UID', 'Name']
+                        headers = ['Nested Share Folder UID', 'Name']
                         table = [[fuid, name] for fuid, name, _ in rows_with_parent]
                     table.sort(key=lambda x: (x[1] or '').lower())
                     base.dump_report_data(table, headers, row_number=True,
@@ -1576,7 +1576,7 @@ class SearchCommand(Command):
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
                                f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
-                    elif item['type'] == 'keeper_drive_folder':
+                    elif item['type'] == 'nested_share_folder':
                         details = (f"Parent UID: {item['parent_uid']}"
                                    if item.get('parent_uid') else '')
                         row = [item['type'], item['folder_uid'], item['name'], details]
@@ -1655,7 +1655,7 @@ class SearchCommand(Command):
 
     @staticmethod
     def _display_parent_uid(parent_uid):
-        """Render a KeeperDrive ``parent_uid`` for display.
+        """Render a Nested Share Folder ``parent_uid`` for display.
         """
         if not parent_uid or parent_uid == 'root':
             return ''
@@ -1664,11 +1664,11 @@ class SearchCommand(Command):
         return parent_uid
 
     @staticmethod
-    def _search_keeper_drive_folders(params, search_str, use_regex=False):
-        """Search KeeperDrive folders by name.
+    def _search_nested_share_folders(params, search_str, use_regex=False):
+        """Search Nested Share Folders by name.
         """
-        kd_folders = getattr(params, 'keeper_drive_folders', {}) or {}
-        if not kd_folders:
+        nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+        if not nsf_folders:
             return []
 
         if not search_str:
@@ -1687,7 +1687,7 @@ class SearchCommand(Command):
                 match_func = lambda target: all(token in target for token in tokens)
 
         results = []
-        for folder_uid, fobj in kd_folders.items():
+        for folder_uid, fobj in nsf_folders.items():
             name = (fobj.get('name') or '')
             
             haystack = f"{name.lower()} {folder_uid.lower()}"
@@ -1743,9 +1743,9 @@ class RecordListCommand(Command):
                 headers = [base.field_to_title(x) for x in headers]
             table = []
             for record in records:
-                # Determine if record is from Keeper Drive or Classic
-                is_keeper_drive = hasattr(params, 'keeper_drive_records') and record.record_uid in params.keeper_drive_records
-                record_category = 'KeeperDrive' if is_keeper_drive else 'Classic'
+                # Determine if record is from Nested Share Folder or Classic
+                is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
+                record_category = 'Nested' if is_nested_share else 'Classic'
                 row = [record.record_uid, record.record_type, record.title,
                        vault_extensions.get_record_description(record), record.shared, record_category]
                 table.append(row)

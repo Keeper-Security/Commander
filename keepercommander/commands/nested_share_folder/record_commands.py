@@ -10,7 +10,7 @@
 #
 
 """
-KeeperDrive — record CRUD, linking, and removal commands.
+Nested Share Folder — record CRUD, linking, and removal commands.
 
 Single Responsibility: every class here deals with record lifecycle
 (create, update, link/unlink, shortcut management, delete).
@@ -22,20 +22,20 @@ from typing import List
 from ..base import Command, GroupCommand
 from ..record_edit import RecordEditMixin, record_fields_description, ParsedFieldValue
 from ...error import CommandError
-from ... import keeper_drive as _kd, vault
+from ... import nested_share_folder as _nsf, vault
 from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
-    ensure_keeper_drive_record, ensure_keeper_drive_folder,
+    ensure_nested_share_record, ensure_nested_share_folder,
     ROOT_FOLDER_UID,
 )
 from .parsers import (
-    keeper_drive_add_record_parser,
-    keeper_drive_update_record_parser,
-    keeper_drive_ln_parser,
-    kd_shortcut_list_parser,
-    kd_shortcut_keep_parser,
-    kd_rm_parser,
+    nested_share_record_add_parser,
+    nested_share_record_update_parser,
+    nested_share_record_ln_parser,
+    nested_share_record_shortcut_list_parser,
+    nested_share_record_shortcut_keep_parser,
+    nested_share_record_rm_parser,
 )
 
 
@@ -43,14 +43,14 @@ from .parsers import (
 # nsf-record-add
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
-    """Create a KeeperDrive record, matching ``record-add`` behaviour."""
+class NestedShareRecordAddCommand(Command, RecordEditMixin):
+    """Create a Nested Share Record, matching ``record-add`` behaviour."""
 
     def __init__(self):
         super().__init__()
 
     def get_parser(self):
-        return keeper_drive_add_record_parser
+        return nested_share_record_add_parser
 
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
@@ -84,7 +84,7 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
                 return
 
         with command_error_handler('nsf-record-add'):
-            result = _kd.create_record_v3(params=params, folder_uid=folder_uid, record_data=data)
+            result = _nsf.create_record_v3(params=params, folder_uid=folder_uid, record_data=data)
             check_result(result, 'nsf-record-add')
             params.sync_data = True
             return result['record_uid']
@@ -105,7 +105,7 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
         uid = resolve_folder_uid(params, folder_input)
         if uid is None:
             raise CommandError('nsf-record-add', f'No such folder: {folder_input}')
-        ensure_keeper_drive_folder(params, uid, 'nsf-record-add', identifier=folder_input)
+        ensure_nested_share_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
     def _build_record_data(self, params, record_type, title, notes, record_fields):
@@ -170,14 +170,14 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
 # nsf-record-update
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
-    """Update a KeeperDrive record."""
+class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
+    """Update a Nested Share Record."""
 
     def __init__(self):
         super().__init__()
 
     def get_parser(self):
-        return keeper_drive_update_record_parser
+        return nested_share_record_update_parser
 
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
@@ -209,14 +209,14 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
 
         with command_error_handler('nsf-record-update'):
             for identifier in record_uids:
-                record_uid = _kd.resolve_kd_record_uid(params, identifier)
+                record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
                 if not record_uid:
                     raise CommandError('nsf-record-update',
                                        f"Record '{identifier}' not found")
-                ensure_keeper_drive_record(params, record_uid, 'nsf-record-update',
+                ensure_nested_share_record(params, record_uid, 'nsf-record-update',
                                            identifier=identifier)
                 check_record_edit_permission(params, record_uid, 'nsf-record-update')
-                result = _kd.update_record_v3(
+                result = _nsf.update_record_v3(
                     params=params, record_uid=record_uid,
                     title=kwargs.get('title'), record_type=record_type,
                     fields=fields or None, notes=kwargs.get('notes'),
@@ -229,27 +229,27 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
 # nsf-ln
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveLnCommand(Command):
-    """Create a link between a record and a KeeperDrive folder (positional: RECORD FOLDER)."""
+class NestedShareRecordLnCommand(Command):
+    """Create a link between a record and a Nested Share Folder (positional: RECORD FOLDER)."""
 
     def get_parser(self):
-        return keeper_drive_ln_parser
+        return nested_share_record_ln_parser
 
     def execute(self, params, **kwargs):
         src, dst = kwargs.get('src'), kwargs.get('dst')
         if not src or not dst:
             self.get_parser().print_help()
             return
-        record_uid = _kd.resolve_kd_record_uid(params, src)
+        record_uid = _nsf.resolve_nested_share_record_uid(params, src)
         if not record_uid:
             raise CommandError('nsf-ln', f"Record '{src}' not found")
         folder_uid = resolve_folder_uid(params, dst)
         if not folder_uid:
             raise CommandError('nsf-ln', f"Folder '{dst}' not found")
-        ensure_keeper_drive_record(params, record_uid, 'nsf-ln', identifier=src)
-        ensure_keeper_drive_folder(params, folder_uid, 'nsf-ln', identifier=dst)
+        ensure_nested_share_record(params, record_uid, 'nsf-ln', identifier=src)
+        ensure_nested_share_folder(params, folder_uid, 'nsf-ln', identifier=dst)
         with command_error_handler('nsf-ln'):
-            result = _kd.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
+            result = _nsf.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
             check_result(result, 'nsf-ln')
             params.sync_data = True
 
@@ -258,13 +258,13 @@ class KeeperDriveLnCommand(Command):
 # nsf-shortcut
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveShortcutCommand(GroupCommand):
-    """Manage KeeperDrive record shortcuts (records linked to multiple folders)."""
+class NestedShareRecordShortcutCommand(GroupCommand):
+    """Manage Nested Share Record shortcuts (records linked to multiple folders)."""
 
     def __init__(self):
         super().__init__()
-        self.register_command('list', KeeperDriveShortcutListCommand(), 'List multi-folder records')
-        self.register_command('keep', KeeperDriveShortcutKeepCommand(),
+        self.register_command('list', NestedShareRecordShortcutListCommand(), 'List multi-folder records')
+        self.register_command('keep', NestedShareRecordShortcutKeepCommand(),
                               'Keep record in one folder, remove from others')
         self.default_verb = 'list'
 
@@ -272,51 +272,51 @@ class KeeperDriveShortcutCommand(GroupCommand):
     def get_record_shortcuts(params):
         """Return ``{record_uid: set(folder_uids)}`` for records in 2+ folders.
 
-        ``keeper_drive_folder_records`` can carry server-side virtual folder
+        ``nested_share_folder_records`` can carry server-side virtual folder
         UIDs (e.g. shared-with-me containers) that have no real folder entry
-        in ``keeper_drive_folders``. These cannot be resolved or modified, so
+        in ``nested_share_folders``. These cannot be resolved or modified, so
         they are filtered out — counting them would inflate shortcut totals
         and break ``nsf-shortcut keep`` removals downstream.
         """
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
         records = {}
-        for folder_uid, rec_set in getattr(params, 'keeper_drive_folder_records', {}).items():
-            if folder_uid != ROOT_FOLDER_UID and folder_uid not in kd_folders:
+        for folder_uid, rec_set in getattr(params, 'nested_share_folder_records', {}).items():
+            if folder_uid != ROOT_FOLDER_UID and folder_uid not in nsf_folders:
                 continue
             for record_uid in rec_set:
                 records.setdefault(record_uid, set()).add(folder_uid)
         return {k: v for k, v in records.items() if len(v) > 1}
 
 
-class KeeperDriveShortcutListCommand(Command):
-    """List KeeperDrive records that appear in more than one folder."""
+class NestedShareRecordShortcutListCommand(Command):
+    """List Nested Share Records that appear in more than one folder."""
 
     def get_parser(self):
-        return kd_shortcut_list_parser
+        return nested_share_record_shortcut_list_parser
 
     def execute(self, params, **kwargs):
-        records = KeeperDriveShortcutCommand.get_record_shortcuts(params)
+        records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
         target = kwargs.get('target')
 
-        kd_records = getattr(params, 'keeper_drive_records', {})
-        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_records = getattr(params, 'nested_share_records', {})
+        nsf_record_data = getattr(params, 'nested_share_record_data', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
 
-        to_show = self._resolve_target(params, target, records, kd_records,
-                                       kd_record_data, kd_folders) \
+        to_show = self._resolve_target(params, target, records, nsf_records,
+                                       nsf_record_data, nsf_folders) \
             if target else set(records.keys())
 
         if not to_show:
-            logging.info('No KeeperDrive shortcut records found')
+            logging.info('No Nested Share Folder shortcut records found')
             return
 
         fmt = kwargs.get('format') or 'table'
         table = []
         for record_uid in sorted(to_show):
-            title = self._record_title(record_uid, kd_record_data)
+            title = self._record_title(record_uid, nsf_record_data)
             folder_names = []
             for fuid in sorted(records[record_uid]):
-                fname = self._folder_name(fuid, kd_folders)
+                fname = self._folder_name(fuid, nsf_folders)
                 folder_names.append({'folder_uid': fuid, 'name': fname} if fmt == 'json'
                                     else f'{fname} ({fuid})')
             table.append([record_uid, title, folder_names])
@@ -326,39 +326,39 @@ class KeeperDriveShortcutListCommand(Command):
         from ..base import dump_report_data
         return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
-    # Record titles live in ``keeper_drive_record_data[uid]['data_json']``
-    # (the decrypted record payload). ``keeper_drive_records`` only stores
+    # Record titles live in ``nested_share_record_data[uid]['data_json']``
+    # (the decrypted record payload). ``nested_share_records`` only stores
     # metadata (revision/version/shared/etc.) and has no ``title`` key, so
     # the previous lookup always fell back to the raw UID.
     @staticmethod
-    def _record_title(record_uid, kd_record_data):
-        rd = kd_record_data.get(record_uid) or {}
+    def _record_title(record_uid, nsf_record_data):
+        rd = nsf_record_data.get(record_uid) or {}
         dj = rd.get('data_json') or {}
         title = dj.get('title')
         return title if title else record_uid
 
     @staticmethod
-    def _folder_name(folder_uid, kd_folders):
+    def _folder_name(folder_uid, nsf_folders):
         if folder_uid == ROOT_FOLDER_UID:
             return 'root'
-        return kd_folders.get(folder_uid, {}).get('name', folder_uid)
+        return nsf_folders.get(folder_uid, {}).get('name', folder_uid)
 
     @classmethod
-    def _resolve_target(cls, params, target, records, kd_records,
-                        kd_record_data, kd_folders):
-        if target in kd_records:
+    def _resolve_target(cls, params, target, records, nsf_records,
+                        nsf_record_data, nsf_folders):
+        if target in nsf_records:
             if target not in records:
                 raise CommandError('nsf-shortcut list', f'Record UID {target} does not have shortcuts')
             return {target}
 
         lower = target.casefold()
-        for uid in kd_records:
-            if cls._record_title(uid, kd_record_data).casefold() == lower:
+        for uid in nsf_records:
+            if cls._record_title(uid, nsf_record_data).casefold() == lower:
                 if uid not in records:
                     raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
                 return {uid}
 
-        resolved_folder = _kd.resolve_folder_identifier(params, target)
+        resolved_folder = _nsf.resolve_folder_identifier(params, target)
         if resolved_folder:
             return {r for r in records if resolved_folder in records[r]}
 
@@ -366,11 +366,11 @@ class KeeperDriveShortcutListCommand(Command):
                            f'Target "{target}" is not a known record UID, title, or folder path')
 
 
-class KeeperDriveShortcutKeepCommand(Command):
-    """Keep a KeeperDrive record in exactly one folder, removing it from all others."""
+class NestedShareRecordShortcutKeepCommand(Command):
+    """Keep a Nested Share Record in exactly one folder, removing it from all others."""
 
     def get_parser(self):
-        return kd_shortcut_keep_parser
+        return nested_share_record_shortcut_keep_parser
 
     def execute(self, params, **kwargs):
         target = kwargs.get('target')
@@ -379,19 +379,19 @@ class KeeperDriveShortcutKeepCommand(Command):
             return
 
         force = kwargs.get('force', False)
-        kd_records = getattr(params, 'keeper_drive_records', {})
-        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        nsf_records = getattr(params, 'nested_share_records', {})
+        nsf_folders = getattr(params, 'nested_share_folders', {})
 
-        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
-        record_uid = self._resolve_record(target, kd_records, kd_record_data)
-        keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), kd_folders)
+        nsf_record_data = getattr(params, 'nested_share_record_data', {})
+        record_uid = self._resolve_record(target, nsf_records, nsf_record_data)
+        keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), nsf_folders)
 
-        records = KeeperDriveShortcutCommand.get_record_shortcuts(params)
+        records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
         if record_uid not in records:
             raise CommandError('nsf-shortcut keep',
                                f'Record "{target}" does not appear in multiple folders')
         if keep_folder_uid not in records[record_uid]:
-            fname = kd_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
+            fname = nsf_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
             raise CommandError('nsf-shortcut keep', f'Record "{target}" is not in folder "{fname}"')
 
         folders_to_remove = [f for f in records[record_uid] if f != keep_folder_uid]
@@ -402,8 +402,8 @@ class KeeperDriveShortcutKeepCommand(Command):
         if not force:
             lines = [f'  Will remove record "{target}" ({record_uid}) from:']
             for fuid in folders_to_remove:
-                lines.append(f'    - {kd_folders.get(fuid, {}).get("name", fuid)} ({fuid})')
-            keep_name = kd_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
+                lines.append(f'    - {nsf_folders.get(fuid, {}).get("name", fuid)} ({fuid})')
+            keep_name = nsf_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
             lines.append(f'  Keeping in: {keep_name} ({keep_folder_uid})')
             print('\n'.join(lines))
             from ..base import user_choice
@@ -413,7 +413,7 @@ class KeeperDriveShortcutKeepCommand(Command):
         errors = []
         for fuid in folders_to_remove:
             try:
-                result = _kd.remove_record_from_folder_v3(params, fuid, record_uid)
+                result = _nsf.remove_record_from_folder_v3(params, fuid, record_uid)
                 if not result.get('success'):
                     errors.append(f'{fuid}: {result.get("message", "unknown error")}')
             except Exception as exc:
@@ -423,52 +423,52 @@ class KeeperDriveShortcutKeepCommand(Command):
             raise CommandError('nsf-shortcut keep', 'Some removals failed:\n' + '\n'.join(errors))
 
         params.sync_data = True
-        keep_name = kd_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
+        keep_name = nsf_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
         logging.info('Record "%s" kept in "%s" and removed from %d other folder(s).',
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(target, kd_records, kd_record_data=None):
-        if target in kd_records:
+    def _resolve_record(target, nsf_records, nsf_record_data=None):
+        if target in nsf_records:
             return target
         lower = target.casefold()
-        if kd_record_data:
-            for uid in kd_records:
-                rd = kd_record_data.get(uid) or {}
+        if nsf_record_data:
+            for uid in nsf_records:
+                rd = nsf_record_data.get(uid) or {}
                 dj = rd.get('data_json') or {}
                 if (dj.get('title') or '').casefold() == lower:
                     return uid
 
-        for uid, rec in kd_records.items():
+        for uid, rec in nsf_records.items():
             if rec.get('title', '').casefold() == lower:
                 return uid
-        raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in KeeperDrive')
+        raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in Nested Share Folder')
 
     @staticmethod
-    def _resolve_keep_folder(params, folder_arg, kd_folders):
+    def _resolve_keep_folder(params, folder_arg, nsf_folders):
         if folder_arg:
-            uid = _kd.resolve_folder_identifier(params, folder_arg)
+            uid = _nsf.resolve_folder_identifier(params, folder_arg)
             if not uid:
                 raise CommandError('nsf-shortcut keep', f'Folder "{folder_arg}" not found')
-            ensure_keeper_drive_folder(params, uid, 'nsf-shortcut keep',
+            ensure_nested_share_folder(params, uid, 'nsf-shortcut keep',
                                        identifier=folder_arg)
             return uid
         current = getattr(params, 'current_folder', None)
-        if current and current in kd_folders:
+        if current and current in nsf_folders:
             return current
         raise CommandError('nsf-shortcut keep',
-                           'No folder specified and current folder is not a KeeperDrive folder.')
+                           'No folder specified and current folder is not a Nested Share Folder.')
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # nsf-rm
 # ══════════════════════════════════════════════════════════════════════════
 
-class KeeperDriveRemoveRecordCommand(Command):
-    """Remove (delete/unlink) one or more KeeperDrive records."""
+class NestedShareRecordRemoveCommand(Command):
+    """Remove (delete/unlink) one or more Nested Share Records."""
 
     def get_parser(self):
-        return kd_rm_parser
+        return nested_share_record_rm_parser
 
     def execute(self, params, **kwargs):
         record_args = kwargs.get('records') or []
@@ -484,10 +484,10 @@ class KeeperDriveRemoveRecordCommand(Command):
 
         folder_uid = None
         if folder_arg:
-            folder_uid = _kd.resolve_folder_identifier(params, folder_arg)
+            folder_uid = _nsf.resolve_folder_identifier(params, folder_arg)
             if not folder_uid:
                 raise CommandError('nsf-rm', f"Folder '{folder_arg}' not found")
-            ensure_keeper_drive_folder(params, folder_uid, 'nsf-rm',
+            ensure_nested_share_folder(params, folder_uid, 'nsf-rm',
                                        identifier=folder_arg)
 
         removals = self._build_removals(params, record_args, folder_uid, operation)
@@ -500,15 +500,15 @@ class KeeperDriveRemoveRecordCommand(Command):
     def _build_removals(self, params, record_args, folder_uid, operation):
         removals = []
         for identifier in record_args:
-            record_uid = _kd.resolve_kd_record_uid(params, identifier)
+            record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
             if not record_uid:
                 raise CommandError('nsf-rm', f"Record '{identifier}' not found")
-            ensure_keeper_drive_record(params, record_uid, 'nsf-rm',
+            ensure_nested_share_record(params, record_uid, 'nsf-rm',
                                        identifier=identifier)
             check_record_delete_permission(params, record_uid, 'nsf-rm')
             ctx_folder = folder_uid
             if not ctx_folder:
-                folders = _kd.find_kd_folders_for_record(params, record_uid)
+                folders = _nsf.find_nested_share_folders_for_record(params, record_uid)
                 if not folders and operation != 'owner-trash':
                     raise CommandError('nsf-rm',
                                        f"No folder context for record '{identifier}'. "
@@ -522,7 +522,7 @@ class KeeperDriveRemoveRecordCommand(Command):
         return removals
 
     def _preview_and_confirm(self, params, removals, operation, force, dry_run):
-        result = _kd.remove_record_v3(params, removals, dry_run=True)
+        result = _nsf.remove_record_v3(params, removals, dry_run=True)
         any_error = False
         summary_lines = []
 
@@ -554,7 +554,7 @@ class KeeperDriveRemoveRecordCommand(Command):
             if user_choice('Do you want to proceed with deletion?', 'yn', default='n').lower() != 'y':
                 return
 
-        confirm_result = _kd.remove_record_v3(params, removals, dry_run=False)
+        confirm_result = _nsf.remove_record_v3(params, removals, dry_run=False)
         if confirm_result['confirmed']:
             params.sync_data = True
         else:
@@ -562,7 +562,7 @@ class KeeperDriveRemoveRecordCommand(Command):
 
     @staticmethod
     def _record_title(params, record_uid):
-        return getattr(params, 'keeper_drive_records', {}).get(
+        return getattr(params, 'nested_share_records', {}).get(
             record_uid, {}).get('title') or record_uid
 
     @staticmethod

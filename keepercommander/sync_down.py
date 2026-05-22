@@ -16,11 +16,11 @@ from typing import Any, List, Dict, Optional
 import google
 
 from . import api, utils, crypto, convert_keys
-from .keeper_drive import sync as keeper_drive_sync
+from .nested_share_folder import sync as nested_share_folder_sync
 from .display import bcolors, Spinner
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2, folder_pb2
-from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, KeeperDriveFolderNode
+from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, NestedShareFolderNode
 from .vault import KeeperRecord
 
 
@@ -76,8 +76,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     resp_sec_data_recs = []      # type: List[SyncDown_pb2.BreachWatchSecurityData]
     resp_sec_scores = []         # type: List[SyncDown_pb2.SecurityScoreData]
     record_rotation_items = []   # type: List[record_pb2.RecordRotation]
-    kd_enabled = not params.is_feature_disallowed('keeper_drive')
-    kd_acc = keeper_drive_sync.create_accumulator() if kd_enabled else None
+    nsf_enabled = not params.is_feature_disallowed('keeper_drive')
+    nsf_acc = nested_share_folder_sync.create_accumulator() if nsf_enabled else None
     
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
@@ -104,8 +104,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
             params.security_score_data.clear()
-            if kd_enabled:
-                keeper_drive_sync.clear_caches(params)
+            if nsf_enabled:
+                nested_share_folder_sync.clear_caches(params)
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
@@ -569,9 +569,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if len(response.securityScoreData) > 0:
             resp_sec_scores.extend(response.securityScoreData)
 
-        if kd_enabled:
-            keeper_drive_sync.collect_from_response(
-                kd_acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items
+        if nsf_enabled:
+            nested_share_folder_sync.collect_from_response(
+                nsf_acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items
             )
 
         if len(response.removedUsers) > 0:
@@ -611,8 +611,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.revision = revision
 
-    if kd_enabled:
-        keeper_drive_sync.process(params, kd_acc)
+    if nsf_enabled:
+        nested_share_folder_sync.process(params, nsf_acc)
 
     for sf in params.shared_folder_cache.values():
         owner = sf.get('owner_username')
@@ -1090,8 +1090,8 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
         folder_uid = None
         if sf['type'] == 'user_folder':
             folder_uid = sf['folder_uid']
-            if sf.get('source') == 'keeper_drive':
-                uf = KeeperDriveFolderNode()
+            if sf.get('source') == 'nested_share_folder':
+                uf = NestedShareFolderNode()
             else:
                 uf = UserFolderNode()
             uf.uid = folder_uid
@@ -1132,8 +1132,8 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
         parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder
         if parent_folder:
             parent_folder.subfolders.append(f.uid)
-        elif f.parent_uid and hasattr(params, 'keeper_drive_folders') and f.uid in params.keeper_drive_folders:
-            # KD root-level folders have a parent UID pointing to the KD vault root,
+        elif f.parent_uid and hasattr(params, 'nested_share_folders') and f.uid in params.nested_share_folders:
+            # Nested Share Folder root-level folders have a parent UID pointing to the NSF vault root,
             # which is not a real vault folder. Clear parent_uid so that navigation
             # and ls treat them as direct children of the vault root.
             f.parent_uid = None

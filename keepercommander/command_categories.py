@@ -109,8 +109,8 @@ COMMAND_CATEGORIES = {
         'epm'
     },
 
-    # KeeperDrive Commands
-    'KeeperDrive Commands': {
+    # Nested Share Folder Commands
+    'Nested Share Folder Commands': {
         'nsf-mkdir', 'nsf-record-add', 'nsf-record-update', 'nsf-rndir', 'nsf-list',
         'nsf-share-folder', 'nsf-record-details', 'nsf-share-record',
         'nsf-record-permission', 'nsf-transfer-record',
@@ -153,6 +153,6 @@ def get_category_order():
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'EPM Commands',
-        'KeeperDrive Commands',
+        'Nested Share Folder Commands',
         'Legacy Commands'
     ]

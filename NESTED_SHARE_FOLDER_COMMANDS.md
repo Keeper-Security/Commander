@@ -1,8 +1,8 @@
-# KeeperDrive Commands
+# Nested Share Folder Commands
 
 ## Commands
 
-KeeperDrive commands manage folders, records, sharing, and permissions using the Keeper v3 API. All commands are prefixed with `nsf-` and require authentication and a synced vault.
+Nested Share Folder commands manage folders, records, sharing, and permissions using the Keeper v3 API. All commands are prefixed with `nsf-` and require authentication and a synced vault.
 
 To get help on a particular command, run:
 
@@ -11,15 +11,15 @@ To get help on a particular command, run:
 
 | Command                  | Description                                                         |
 | ------------------------ | ------------------------------------------------------------------- |
-| `[nsf-mkdir]`             | Create a new KeeperDrive folder                                     |
+| `[nsf-mkdir]`             | Create a new Nested Share Folder                                     |
 | `[nsf-rndir]`             | Rename a folder or change its color                                 |
-| `[nsf-list]`              | List KeeperDrive folders and records                                |
-| `[nsf-rmdir]`             | Remove one or more KeeperDrive folders                              |
+| `[nsf-list]`              | List Nested Share Folders and Nested Share Records                                |
+| `[nsf-rmdir]`             | Remove one or more Nested Share Folders                              |
 | `[nsf-share-folder]`      | Grant or remove a user's access to a folder                         |
-| `[nsf-record-add]`        | Create a new KeeperDrive record                                     |
-| `[nsf-record-update]`     | Update an existing KeeperDrive record                               |
-| `[nsf-rm]`                | Remove (trash or unlink) one or more KeeperDrive records            |
-| `[nsf-ln]`                | Link a record into a KeeperDrive folder                             |
+| `[nsf-record-add]`        | Create a new Nested Share Record                                     |
+| `[nsf-record-update]`     | Update an existing Nested Share Record                               |
+| `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records            |
+| `[nsf-ln]`                | Link a record into a Nested Share Folder                             |
 | `[nsf-shortcut]`          | Manage records that appear in more than one folder                  |
 | `[nsf-share-record]`      | Grant, update, or revoke a user's access to a record                |
 | `[nsf-record-permission]` | Bulk-update sharing permissions across records in a folder          |
@@ -46,7 +46,7 @@ To get help on a particular command, run:
 
 **Command:** `nsf-mkdir`
 
-**Detail:** Create a single KeeperDrive folder. `/` is a reserved character; use `//` to embed a literal slash in a folder name.
+**Detail:** Create a single Nested Share Folder. `/` is a reserved character; use `//` to embed a literal slash in a folder name.
 
 **Parameters:**
 
@@ -112,7 +112,7 @@ nsf-rndir abc123 --name "Finance" -q
 
 **Command:** `nsf-list`
 
-**Detail:** List KeeperDrive folders and records from the local cache. If neither `--folders` nor `--records` is specified, both are shown. Each row reports whether the item is shared (and to how many non-owner accessors).
+**Detail:** List Nested Share Folders and Nested Share Records from the local cache. If neither `--folders` nor `--records` is specified, both are shown. Each row reports whether the item is shared (and to how many non-owner accessors).
 
 **Switches:**
 
@@ -132,7 +132,7 @@ nsf-list --records --format json --output records.json
 nsf-list --format csv --output export.csv
 ```
 
-1. List all KeeperDrive folders and records
+1. List all Nested Share Folders and Nested Share Records
 2. List only folders with detailed parent/location information
 3. List only records and export to a JSON file
 4. Export full listing to a CSV file
@@ -143,7 +143,7 @@ nsf-list --format csv --output export.csv
 
 **Command:** `nsf-rmdir`
 
-**Detail:** Remove one or more KeeperDrive folders. Always shows a preview of the impact before asking for confirmation.
+**Detail:** Remove one or more Nested Share Folders. Always shows a preview of the impact before asking for confirmation.
 
 **Parameters:**
 
@@ -181,7 +181,7 @@ nsf-rmdir "Archive" --quiet
 
 **Command:** `nsf-share-folder`
 
-**Detail:** Grant or remove a user's access to one or more KeeperDrive folders. The action is controlled by `--action` (default: `grant`).
+**Detail:** Grant or remove a user's access to one or more Nested Share Folders. The action is controlled by `--action` (default: `grant`).
 
 **Parameters:**
 
@@ -223,7 +223,7 @@ nsf-share-folder "Team Folder" -e @existing -a remove
 
 **Command:** `nsf-record-add`
 
-**Detail:** Create a new KeeperDrive record. Fields are specified using `type=value` or `type.label=value` dot notation. See `--syntax-help` for full field notation details.
+**Detail:** Create a new Nested Share Record. Fields are specified using `type=value` or `type.label=value` dot notation. See `--syntax-help` for full field notation details.
 
 **Switches:**
 
@@ -259,7 +259,7 @@ nsf-record-add --syntax-help
 
 **Command:** `nsf-record-update`
 
-**Detail:** Update an existing KeeperDrive record's title, type, notes, or field values. One or more record UIDs or titles must be specified with `-r`.
+**Detail:** Update an existing Nested Share Record's title, type, notes, or field values. One or more record UIDs or titles must be specified with `-r`.
 
 **Switches:**
 
@@ -295,7 +295,7 @@ nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 
 **Command:** `nsf-rm`
 
-**Detail:** Remove (trash or unlink) one or more KeeperDrive records. Always shows a preview before executing.
+**Detail:** Remove (trash or unlink) one or more Nested Share Records. Always shows a preview before executing.
 
 **Parameters:**
 
@@ -343,7 +343,7 @@ nsf-rm rec123abc --operation folder-trash --folder "Archive"
 
 **Command:** `nsf-ln`
 
-**Detail:** Link a record into a KeeperDrive folder using short positional syntax. This adds the record to the folder without removing it from its current location.
+**Detail:** Link a record into a Nested Share Folder using short positional syntax. This adds the record to the folder without removing it from its current location.
 
 **Parameters:**
 
@@ -367,7 +367,7 @@ nsf-ln rec123abc abc123folder
 
 **Command:** `nsf-shortcut`
 
-**Detail:** Manage KeeperDrive records that appear in more than one folder. Supports two sub-commands: `list` and `keep`.
+**Detail:** Manage Nested Share Records that appear in more than one folder. Supports two sub-commands: `list` and `keep`.
 
 #### nsf-shortcut list
 
@@ -573,7 +573,7 @@ nsf-record-details rec123abc --format json
 
 **Command:** `nsf-get`
 
-**Detail:** Show full details for a KeeperDrive record or folder by UID or title — including fields, notes, and access list.
+**Detail:** Show full details for a Nested Share Record or folder by UID or title — including fields, notes, and access list.
 
 **Parameters:**
 

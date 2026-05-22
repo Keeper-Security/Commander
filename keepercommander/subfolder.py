@@ -93,7 +93,7 @@ def contained_folders(params, folders, component):
     if component in ('.', ''):
         result = folders
     elif component == '..':
-        # Handle parent navigation, accounting for KD folders with invalid parent_uid
+        # Handle parent navigation, accounting for Nested Share Folders with invalid parent_uid
         result = []
         for f in folders:
             if f.parent_uid:
@@ -233,7 +233,7 @@ class BaseFolderNode:
     UserFolderType = 'user_folder'
     SharedFolderType = 'shared_folder'
     SharedFolderFolderType = 'shared_folder_folder'
-    KeeperDriveFolderType = 'keeper_drive_folder'
+    NestedShareFolderType = 'nested_share_folder'
 
     """ Folder Common Fields"""
     def __init__(self, type):
@@ -253,8 +253,8 @@ class BaseFolderNode:
             return 'Shared Folder'
         elif self.type == BaseFolderNode.SharedFolderFolderType:
             return 'Subfolder in Shared Folder'
-        elif self.type == BaseFolderNode.KeeperDriveFolderType:
-            return 'KeeperDrive Folder'
+        elif self.type == BaseFolderNode.NestedShareFolderType:
+            return 'Nested Share Folder Folder'
         return ''
 
     def __repr__(self):
@@ -268,8 +268,8 @@ class BaseFolderNode:
 
     def display(self):
         print('')
-        if self.type == BaseFolderNode.KeeperDriveFolderType:
-            uid_label = 'KeeperDrive Folder UID'
+        if self.type == BaseFolderNode.NestedShareFolderType:
+            uid_label = 'Nested Share Folder UID'
         else:
             uid_label = 'Folder UID'
         print('{0:>25s}: {1:<20s}'.format(uid_label, self.uid))
@@ -286,9 +286,9 @@ class UserFolderNode(BaseFolderNode):
         BaseFolderNode.__init__(self, BaseFolderNode.UserFolderType)
 
 
-class KeeperDriveFolderNode(BaseFolderNode):
+class NestedShareFolderNode(BaseFolderNode):
     def __init__(self):
-        BaseFolderNode.__init__(self, BaseFolderNode.KeeperDriveFolderType)
+        BaseFolderNode.__init__(self, BaseFolderNode.NestedShareFolderType)
 
 
 class SharedFolderFolderNode(BaseFolderNode):
