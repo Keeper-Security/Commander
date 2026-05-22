@@ -154,29 +154,67 @@ class ConfigFormatHandler:
             raise ValidationError(f"Failed to decrypt configuration file: {str(e)}")
 
     @staticmethod
-    def encrypted_content(plaintext, config_path: Path, config_dir ) -> bytes:
-        """Encrypt the content of the configuration file."""
-        from hashlib import sha256
-        from ...crypto import encrypt_aes_v2
+    def _resolve_private_key(config_dir: Path) -> str:
+        """Return the device private_key regardless of storage backend.
+
+        When OS-native keychain storage is active, ``private_key`` is not
+        present in config.json.  This helper loads it via
+        ``load_config_properties`` so both encrypt and decrypt work
+        transparently in keychain mode.
+        """
         config_json = config_dir / "config.json"
         if not config_json.exists():
             raise FileNotFoundError(f"Config.json file not found: {config_json}")
+
+        with open(config_json, 'r') as json_file:
+            config_json_data = json.load(json_file)
+
+        private_key = config_json_data.get("private_key")
+        if private_key:
+            return private_key
+
+        # config.json has no private_key — credentials are in the OS keychain.
+        # Avoid get_params_from_config: it calls sys.exit(1) on SecureStorageException
+        # and input() on JSON errors, both of which break daemon/Docker contexts.
+        # Instead load via KeeperParams + load_config_properties directly.
+        try:
+            from ...params import KeeperParams
+            from ...config_storage.loader import load_config_properties
+            tmp_params = KeeperParams()
+            tmp_params.config_filename = str(config_json)
+            tmp_params.config = dict(config_json_data)
+            load_config_properties(tmp_params)
+            private_key = getattr(tmp_params, 'device_private_key', None)
+        except Exception:
+            private_key = None
+
+        if not private_key:
+            raise ValidationError(
+                "Field 'private_key' could not be resolved from config. Possible causes: "
+                "the OS keychain is unavailable or access was denied, the configured "
+                "storage backend failed, the config_storage value is invalid, or the "
+                "configuration is corrupted. Enable debug logging for details."
+            )
+        return private_key
+
+    @staticmethod
+    def encrypted_content(plaintext, config_path: Path, config_dir) -> bytes:
+        """Encrypt the content of the configuration file."""
+        from hashlib import sha256
+        from ...crypto import encrypt_aes_v2
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         try:
-            with open(config_json, 'r') as json_file:
-                config_json_data = json.load(json_file)
-            private_key = config_json_data.get("private_key")
-            if not private_key:
-                raise ValidationError("Field 'private_key' not found in the configuration file.")
+            private_key = ConfigFormatHandler._resolve_private_key(config_dir)
             hashed_key = sha256(private_key.encode('utf-8')).digest()
             if isinstance(plaintext, dict):
                 plaintext = json.dumps(plaintext)
-            encrypted_content = encrypt_aes_v2(plaintext.encode('utf-8'), hashed_key)
-            return encrypted_content
+            return encrypt_aes_v2(plaintext.encode('utf-8'), hashed_key)
+        except (FileNotFoundError, ValidationError):
+            raise
         except Exception as e:
             raise ValidationError(f"Failed to encrypt configuration file: {str(e)}")
-            
+
     @staticmethod
     def encrypt_config_file(config_path: Path, config_dir: Path) -> None:
         """Encrypt the content of the configuration file and save it back."""
@@ -184,23 +222,17 @@ class ConfigFormatHandler:
         with open(config_path, 'wb') as encrypted_file:
             encrypted_file.write(encrypted_content)
         logger.debug(f" {config_path} File encryption success. ")
-        
-        
+
     @staticmethod
     def decrypt_config_file(encrypted_content: bytes, config_dir: Path) -> str:
         """Decrypt the content of the configuration file and return it as a string."""
         from hashlib import sha256
         from ...crypto import decrypt_aes_v2
-        config_json = config_dir / "config.json"
-        if not config_json.exists():
-            raise FileNotFoundError(f"Config.json file not found: {config_json}")
         try:
-            with open(config_json, 'r') as json_file:
-                config_json_data = json.load(json_file)
-            private_key = config_json_data.get("private_key")
-            if not private_key:
-                raise ValidationError("Field 'private_key' not found in the configuration file.")
+            private_key = ConfigFormatHandler._resolve_private_key(config_dir)
             hashed_key = sha256(private_key.encode('utf-8')).digest()
             return decrypt_aes_v2(encrypted_content, hashed_key).decode('utf-8')
+        except (FileNotFoundError, ValidationError):
+            raise
         except Exception as e:
             raise ValidationError(f"Failed to decrypt configuration file: {str(e)}")
