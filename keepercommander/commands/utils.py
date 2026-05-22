@@ -2075,7 +2075,7 @@ class HelpCommand(Command):
             display_command_help(
                 params.enterprise_ec_key,
                 show_legacy=show_legacy,
-                show_keeper_drive=not params.is_feature_disallowed('keeper_drive')
+                show_nested_share_folder=not params.is_feature_disallowed('keeper_drive')
             )
             return
 

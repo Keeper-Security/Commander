@@ -427,7 +427,7 @@ class SuperShellApp(App):
         # Build record to folder mapping using subfolder_record_cache.
         # Records in root folder have folder_uid = '' (empty string).
         real_folder_uids = set(getattr(self.params, 'folder_cache', {}).keys())
-        real_folder_uids.update(getattr(self.params, 'keeper_drive_folders', {}).keys())
+        real_folder_uids.update(getattr(self.params, 'nested_share_folders', {}).keys())
 
         self.record_to_folder = {}  # Maps record_uid -> folder_uid
         self.records_in_subfolders = set()  # Records that are in actual subfolders (not root)
@@ -978,8 +978,8 @@ class SuperShellApp(App):
           - Legacy Personal Folder  (user_folder)           → 🔒
           - Legacy Shared Folder    (shared_folder)          → 📦
           - Subfolder in Shared     (shared_folder_folder)   → 📦
-          - Drive Shared Folder     (keeper_drive_folder, shared) → 👥
-          - Drive NonShared Folder  (keeper_drive_folder, not shared) → 📁
+          - Drive Shared Folder     (nested_share_folder, shared) → 👥
+          - Drive NonShared Folder  (nested_share_folder, not shared) → 📁
         """
         from ...subfolder import BaseFolderNode
         if folder_node is None:
@@ -989,15 +989,15 @@ class SuperShellApp(App):
             return "🔒"
         if ft in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
             return "📦"
-        if ft == BaseFolderNode.KeeperDriveFolderType:
+        if ft == BaseFolderNode.NestedShareFolderType:
             try:
                 from ...proto import folder_pb2
-                from ..keeper_drive.helpers import (
+                from ..nested_share_folder.helpers import (
                     _current_user_account_uid,
                     _is_current_user_access,
                 )
 
-                folder_obj = (getattr(self.params, 'keeper_drive_folders', {}) or {}).get(
+                folder_obj = (getattr(self.params, 'nested_share_folders', {}) or {}).get(
                     folder_node.uid, {}
                 ) or {}
                 owner_username = folder_obj.get('owner_username') or ''
@@ -1019,12 +1019,12 @@ class SuperShellApp(App):
                     return "👥"
 
                 sharing_state = (
-                    getattr(self.params, 'keeper_drive_folder_sharing_states', {}) or {}
+                    getattr(self.params, 'nested_share_folder_sharing_states', {}) or {}
                 ).get(folder_node.uid)
                 if sharing_state and sharing_state.get('shared'):
                     return "👥"
 
-                accesses = (getattr(self.params, 'keeper_drive_folder_accesses', {}) or {}).get(
+                accesses = (getattr(self.params, 'nested_share_folder_accesses', {}) or {}).get(
                     folder_node.uid, []
                 ) or []
                 at_user = int(folder_pb2.AT_USER)
