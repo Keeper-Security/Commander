@@ -88,9 +88,9 @@ def command_error_handler(cmd_name):
 
     Usage::
 
-        with command_error_handler('kd-mkdir'):
+        with command_error_handler('nsf-mkdir'):
             result = api_call(...)
-            check_result(result, 'kd-mkdir')
+            check_result(result, 'nsf-mkdir')
     """
     try:
         yield

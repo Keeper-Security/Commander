@@ -39,7 +39,7 @@ from .parsers import (
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-mkdir
+# nsf-mkdir
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveMkdirCommand(Command):
@@ -51,7 +51,7 @@ class KeeperDriveMkdirCommand(Command):
     def execute(self, params, **kwargs):
         folder_path = (kwargs.get('folder') or '').strip()
         if not folder_path:
-            raise CommandError('kd-mkdir', 'Folder name is required')
+            raise CommandError('nsf-mkdir', 'Folder name is required')
 
         color = kwargs.get('color')
         inherit_permissions = not kwargs.get('no_inherit_permissions', False)
@@ -65,17 +65,17 @@ class KeeperDriveMkdirCommand(Command):
 
         existing_uid = self._find_existing_child(params, folder_name, base_folder_uid)
         if existing_uid:
-            logging.warning('kd-mkdir: Folder "%s" already exists', folder_name)
+            logging.warning('nsf-mkdir: Folder "%s" already exists', folder_name)
             return existing_uid
 
-        with command_error_handler('kd-mkdir'):
+        with command_error_handler('nsf-mkdir'):
             result = _kd.create_folder_v3(
                 params=params, folder_name=folder_name,
                 parent_uid=base_folder_uid,
                 color=color,
                 inherit_permissions=inherit_permissions,
             )
-            check_result(result, 'kd-mkdir')
+            check_result(result, 'nsf-mkdir')
 
         params.sync_data = True
         return result['folder_uid']
@@ -83,15 +83,15 @@ class KeeperDriveMkdirCommand(Command):
     @staticmethod
     def _parse_path(folder_path):
         # Collapse escaped slashes (//) to a sentinel so we can detect any
-        # stray path separator and refuse it — kd-mkdir creates a single
+        # stray path separator and refuse it — nsf-mkdir creates a single
         # folder, not a nested hierarchy.
         collapsed = folder_path.replace('//', '\x00')
         if '/' in collapsed:
-            raise CommandError('kd-mkdir',
+            raise CommandError('nsf-mkdir',
                                'Character "/" is reserved. Use "//" inside folder name')
         name = collapsed.replace('\x00', '/').strip()
         if not name:
-            raise CommandError('kd-mkdir', 'Invalid folder name')
+            raise CommandError('nsf-mkdir', 'Invalid folder name')
         return name
 
     @staticmethod
@@ -111,7 +111,7 @@ class KeeperDriveMkdirCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-rndir
+# nsf-rndir
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveUpdateFolderCommand(Command):
@@ -123,7 +123,7 @@ class KeeperDriveUpdateFolderCommand(Command):
     def execute(self, params, **kwargs):
         folder_arg = kwargs.get('folder')
         if not folder_arg:
-            raise CommandError('kd-rndir', 'Enter the path or UID of existing folder.')
+            raise CommandError('nsf-rndir', 'Enter the path or UID of existing folder.')
 
         new_name = kwargs.get('folder_name')
         color = kwargs.get('color')
@@ -131,23 +131,23 @@ class KeeperDriveUpdateFolderCommand(Command):
         if new_name is not None:
             new_name = new_name.strip()
             if not new_name:
-                raise CommandError('kd-rndir', 'Folder name cannot be empty')
+                raise CommandError('nsf-rndir', 'Folder name cannot be empty')
 
         if new_name is None and color is None:
-            raise CommandError('kd-rndir', 'New folder name and/or color parameters are required.')
+            raise CommandError('nsf-rndir', 'New folder name and/or color parameters are required.')
 
         folder_uid = resolve_folder_uid(params, folder_arg)
         if folder_uid:
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-rndir',
+            ensure_keeper_drive_folder(params, folder_uid, 'nsf-rndir',
                                        identifier=folder_arg)
-            check_folder_edit_permission(params, folder_uid, 'kd-rndir')
+            check_folder_edit_permission(params, folder_uid, 'nsf-rndir')
 
-        with command_error_handler('kd-rndir'):
+        with command_error_handler('nsf-rndir'):
             result = _kd.update_folder_v3(
                 params=params, folder_uid=folder_arg, folder_name=new_name,
                 color=color,
             )
-            check_result(result, 'kd-rndir')
+            check_result(result, 'nsf-rndir')
             params.sync_data = True
             if not kwargs.get('quiet'):
                 kd_folders = getattr(params, 'keeper_drive_folders', {})
@@ -162,7 +162,7 @@ class KeeperDriveUpdateFolderCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-list
+# nsf-list
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveListCommand(Command):
@@ -259,7 +259,7 @@ class KeeperDriveListCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-share-folder   (Strategy pattern — grant / remove)
+# nsf-share-folder   (Strategy pattern — grant / remove)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveShareFolderCommand(Command):
@@ -281,23 +281,23 @@ class KeeperDriveShareFolderCommand(Command):
         role = kwargs.get('role') or 'viewer'
 
         if not folder_args:
-            raise CommandError('kd-share-folder', 'Folder path or UID is required')
+            raise CommandError('nsf-share-folder', 'Folder path or UID is required')
         if not recipients:
             raise CommandError(
-                'kd-share-folder',
+                'nsf-share-folder',
                 'Recipient is required (use -e/--email; accepts an email, '
                 'team name, team UID, or @existing)')
 
         expiration = parse_expiration(
-            kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-folder')
+            kwargs.get('expire_at'), kwargs.get('expire_in'), 'nsf-share-folder')
 
         for folder_arg in folder_args:
             folder_uid = resolve_folder_uid(params, folder_arg)
             if not folder_uid:
-                raise CommandError('kd-share-folder', f'No such folder: {folder_arg!r}')
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-share-folder',
+                raise CommandError('nsf-share-folder', f'No such folder: {folder_arg!r}')
+            ensure_keeper_drive_folder(params, folder_uid, 'nsf-share-folder',
                                        identifier=folder_arg)
-            check_folder_share_permission(params, folder_uid, 'kd-share-folder')
+            check_folder_share_permission(params, folder_uid, 'nsf-share-folder')
 
             targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
             for recipient, is_team in targets:
@@ -395,11 +395,11 @@ class KeeperDriveShareFolderCommand(Command):
         except ValueError as e:
             logging.warning("%s '%s': %s", kind, recipient, e)
         except Exception as e:
-            raise CommandError('kd-share-folder', str(e))
+            raise CommandError('nsf-share-folder', str(e))
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-rmdir
+# nsf-rmdir
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveRemoveFolderCommand(Command):
@@ -416,20 +416,20 @@ class KeeperDriveRemoveFolderCommand(Command):
         quiet       = kwargs.get('quiet', False)
 
         if not folder_args:
-            raise CommandError('kd-rmdir', 'Enter the name or UID of at least one folder.')
+            raise CommandError('nsf-rmdir', 'Enter the name or UID of at least one folder.')
 
         removals = []
         for identifier in folder_args:
             folder_uid = _kd.resolve_kd_folder_uid(params, identifier)
             if not folder_uid:
-                raise CommandError('kd-rmdir', f"Folder '{identifier}' not found")
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-rmdir',
+                raise CommandError('nsf-rmdir', f"Folder '{identifier}' not found")
+            ensure_keeper_drive_folder(params, folder_uid, 'nsf-rmdir',
                                        identifier=identifier)
-            check_folder_delete_permission(params, folder_uid, 'kd-rmdir')
+            check_folder_delete_permission(params, folder_uid, 'nsf-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
         if len(removals) > 100:
-            raise CommandError('kd-rmdir', 'Maximum 100 folders per invocation')
+            raise CommandError('nsf-rmdir', 'Maximum 100 folders per invocation')
 
         if operation == 'delete-permanent' and not force and not dry_run:
             print(
@@ -437,7 +437,7 @@ class KeeperDriveRemoveFolderCommand(Command):
                 '  --operation delete-permanent is IRREVERSIBLE.\n'
                 '  All sub-folders and records inside will be permanently destroyed.\n')
 
-        with command_error_handler('kd-rmdir'):
+        with command_error_handler('nsf-rmdir'):
             self._preview_and_confirm(params, removals, operation, force, dry_run, quiet)
 
     def _preview_and_confirm(self, params, removals, operation, force, dry_run, quiet):

@@ -2,7 +2,7 @@
 
 ## Commands
 
-KeeperDrive commands manage folders, records, sharing, and permissions using the Keeper v3 API. All commands are prefixed with `kd-` and require authentication and a synced vault.
+KeeperDrive commands manage folders, records, sharing, and permissions using the Keeper v3 API. All commands are prefixed with `nsf-` and require authentication and a synced vault.
 
 To get help on a particular command, run:
 
@@ -11,21 +11,21 @@ To get help on a particular command, run:
 
 | Command                  | Description                                                         |
 | ------------------------ | ------------------------------------------------------------------- |
-| `[kd-mkdir]`             | Create a new KeeperDrive folder                                     |
-| `[kd-rndir]`             | Rename a folder or change its color                                 |
-| `[kd-list]`              | List KeeperDrive folders and records                                |
-| `[kd-rmdir]`             | Remove one or more KeeperDrive folders                              |
-| `[kd-share-folder]`      | Grant or remove a user's access to a folder                         |
-| `[kd-record-add]`        | Create a new KeeperDrive record                                     |
-| `[kd-record-update]`     | Update an existing KeeperDrive record                               |
-| `[kd-rm]`                | Remove (trash or unlink) one or more KeeperDrive records            |
-| `[kd-ln]`                | Link a record into a KeeperDrive folder                             |
-| `[kd-shortcut]`          | Manage records that appear in more than one folder                  |
-| `[kd-share-record]`      | Grant, update, or revoke a user's access to a record                |
-| `[kd-record-permission]` | Bulk-update sharing permissions across records in a folder          |
-| `[kd-transfer-record]`   | Transfer record ownership to another user                           |
-| `[kd-record-details]`    | Get metadata for records                                |
-| `[kd-get]`               | Show full details for a record or folder                            |
+| `[nsf-mkdir]`             | Create a new KeeperDrive folder                                     |
+| `[nsf-rndir]`             | Rename a folder or change its color                                 |
+| `[nsf-list]`              | List KeeperDrive folders and records                                |
+| `[nsf-rmdir]`             | Remove one or more KeeperDrive folders                              |
+| `[nsf-share-folder]`      | Grant or remove a user's access to a folder                         |
+| `[nsf-record-add]`        | Create a new KeeperDrive record                                     |
+| `[nsf-record-update]`     | Update an existing KeeperDrive record                               |
+| `[nsf-rm]`                | Remove (trash or unlink) one or more KeeperDrive records            |
+| `[nsf-ln]`                | Link a record into a KeeperDrive folder                             |
+| `[nsf-shortcut]`          | Manage records that appear in more than one folder                  |
+| `[nsf-share-record]`      | Grant, update, or revoke a user's access to a record                |
+| `[nsf-record-permission]` | Bulk-update sharing permissions across records in a folder          |
+| `[nsf-transfer-record]`   | Transfer record ownership to another user                           |
+| `[nsf-record-details]`    | Get metadata for records                                |
+| `[nsf-get]`               | Show full details for a record or folder                            |
 
 
 **Permission roles** (used across folder and record sharing commands):
@@ -42,9 +42,9 @@ To get help on a particular command, run:
 
 ---
 
-### kd-mkdir command:
+### nsf-mkdir command:
 
-**Command:** `kd-mkdir`
+**Command:** `nsf-mkdir`
 
 **Detail:** Create a single KeeperDrive folder. `/` is a reserved character; use `//` to embed a literal slash in a folder name.
 
@@ -61,9 +61,9 @@ Folder name (nested paths are not supported — create one folder at a time)
 **Examples:**
 
 ```
-kd-mkdir "My Projects"
-kd-mkdir "Sensitive" --color red --no-inherit
-kd-mkdir "Reports//2026"
+nsf-mkdir "My Projects"
+nsf-mkdir "Sensitive" --color red --no-inherit
+nsf-mkdir "Reports//2026"
 ```
 
 1. Create a single folder at the vault root (or under the current folder when navigated into one)
@@ -72,9 +72,9 @@ kd-mkdir "Reports//2026"
 
 ---
 
-### kd-rndir command:
+### nsf-rndir command:
 
-**Command:** `kd-rndir`
+**Command:** `nsf-rndir`
 
 **Detail:** Rename a folder or change its color. At least one of `--name` or `--color` is required.
 
@@ -95,10 +95,10 @@ Folder UID, name, or path
 **Examples:**
 
 ```
-kd-rndir "Old Name" --name "New Name"
-kd-rndir abc123 --color blue
-kd-rndir abc123 --name "Archive Q4" --color gray
-kd-rndir abc123 --name "Finance" -q
+nsf-rndir "Old Name" --name "New Name"
+nsf-rndir abc123 --color blue
+nsf-rndir abc123 --name "Archive Q4" --color gray
+nsf-rndir abc123 --name "Finance" -q
 ```
 
 1. Rename a folder by its current name
@@ -108,9 +108,9 @@ kd-rndir abc123 --name "Finance" -q
 
 ---
 
-### kd-list command:
+### nsf-list command:
 
-**Command:** `kd-list`
+**Command:** `nsf-list`
 
 **Detail:** List KeeperDrive folders and records from the local cache. If neither `--folders` nor `--records` is specified, both are shown. Each row reports whether the item is shared (and to how many non-owner accessors).
 
@@ -127,9 +127,9 @@ kd-rndir abc123 --name "Finance" -q
 **Examples:**
 
 ```
-kd-list
-kd-list --records --format json --output records.json
-kd-list --format csv --output export.csv
+nsf-list
+nsf-list --records --format json --output records.json
+nsf-list --format csv --output export.csv
 ```
 
 1. List all KeeperDrive folders and records
@@ -139,9 +139,9 @@ kd-list --format csv --output export.csv
 
 ---
 
-### kd-rmdir command:
+### nsf-rmdir command:
 
-**Command:** `kd-rmdir`
+**Command:** `nsf-rmdir`
 
 **Detail:** Remove one or more KeeperDrive folders. Always shows a preview of the impact before asking for confirmation.
 
@@ -162,10 +162,10 @@ Folder UID(s) or name(s) to remove (max 100 per invocation)
 **Examples:**
 
 ```
-kd-rmdir "Old Projects"
-kd-rmdir abc123 --dry-run
-kd-rmdir abc123 def456 --operation delete-permanent --force
-kd-rmdir "Archive" --quiet
+nsf-rmdir "Old Projects"
+nsf-rmdir abc123 --dry-run
+nsf-rmdir abc123 def456 --operation delete-permanent --force
+nsf-rmdir "Archive" --quiet
 ```
 
 1. k
@@ -177,9 +177,9 @@ kd-rmdir "Archive" --quiet
 
 ---
 
-### kd-share-folder command:
+### nsf-share-folder command:
 
-**Command:** `kd-share-folder`
+**Command:** `nsf-share-folder`
 
 **Detail:** Grant or remove a user's access to one or more KeeperDrive folders. The action is controlled by `--action` (default: `grant`).
 
@@ -202,12 +202,12 @@ Folder UID(s), name(s), or path(s)
 **Examples:**
 
 ```
-kd-share-folder "My Projects" -e colleague@example.com
-kd-share-folder abc123 -e manager@example.com -r full-manager
-kd-share-folder abc123 -e temp@example.com -r viewer --expire-in 7d
-kd-share-folder abc123 -e user@example.com -a remove
-kd-share-folder abc123 def456 -e user1@example.com -e user2@example.com -r viewer
-kd-share-folder "Team Folder" -e @existing -a remove
+nsf-share-folder "My Projects" -e colleague@example.com
+nsf-share-folder abc123 -e manager@example.com -r full-manager
+nsf-share-folder abc123 -e temp@example.com -r viewer --expire-in 7d
+nsf-share-folder abc123 -e user@example.com -a remove
+nsf-share-folder abc123 def456 -e user1@example.com -e user2@example.com -r viewer
+nsf-share-folder "Team Folder" -e @existing -a remove
 ```
 
 1. Grant default viewer access to a folder
@@ -219,9 +219,9 @@ kd-share-folder "Team Folder" -e @existing -a remove
 
 ---
 
-### kd-record-add command:
+### nsf-record-add command:
 
-**Command:** `kd-record-add`
+**Command:** `nsf-record-add`
 
 **Detail:** Create a new KeeperDrive record. Fields are specified using `type=value` or `type.label=value` dot notation. See `--syntax-help` for full field notation details.
 
@@ -242,10 +242,10 @@ kd-share-folder "Team Folder" -e @existing -a remove
 **Examples:**
 
 ```
-kd-record-add -t "Gmail" -rt login login=user@gmail.com password=Secret123
-kd-record-add -t "Dev Server" -rt login --folder "Infrastructure" login=root password=Pass123 url=ssh://dev.example.com
-kd-record-add -t "API Key" -rt general --folder "Secrets" "License ID"=9ACB123
-kd-record-add --syntax-help
+nsf-record-add -t "Gmail" -rt login login=user@gmail.com password=Secret123
+nsf-record-add -t "Dev Server" -rt login --folder "Infrastructure" login=root password=Pass123 url=ssh://dev.example.com
+nsf-record-add -t "API Key" -rt general --folder "Secrets" "License ID"=9ACB123
+nsf-record-add --syntax-help
 ```
 
 1. Create a login record at the vault root
@@ -255,9 +255,9 @@ kd-record-add --syntax-help
 
 ---
 
-### kd-record-update command:
+### nsf-record-update command:
 
-**Command:** `kd-record-update`
+**Command:** `nsf-record-update`
 
 **Detail:** Update an existing KeeperDrive record's title, type, notes, or field values. One or more record UIDs or titles must be specified with `-r`.
 
@@ -278,10 +278,10 @@ kd-record-add --syntax-help
 **Examples:**
 
 ```
-kd-record-update -r rec123 -t "Updated Title"
-kd-record-update -r rec123 password=NewPass123
-kd-record-update -r rec123 -t "Production DB" -n "Rotated 2025-03-01" password=NewPass
-kd-record-update -r rec123 -r rec456 -t "Shared Title"
+nsf-record-update -r rec123 -t "Updated Title"
+nsf-record-update -r rec123 password=NewPass123
+nsf-record-update -r rec123 -t "Production DB" -n "Rotated 2025-03-01" password=NewPass
+nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 ```
 
 1. Update only the title of a record
@@ -291,9 +291,9 @@ kd-record-update -r rec123 -r rec456 -t "Shared Title"
 
 ---
 
-### kd-rm command:
+### nsf-rm command:
 
-**Command:** `kd-rm`
+**Command:** `nsf-rm`
 
 **Detail:** Remove (trash or unlink) one or more KeeperDrive records. Always shows a preview before executing.
 
@@ -324,11 +324,11 @@ Record UID(s) or title(s) to remove (max 500 per invocation)
 **Examples:**
 
 ```
-kd-rm rec123abc
-kd-rm rec123abc --folder "Projects" --operation unlink
-kd-rm rec123abc rec456def --dry-run
-kd-rm rec123abc rec456def --force
-kd-rm rec123abc --operation folder-trash --folder "Archive"
+nsf-rm rec123abc
+nsf-rm rec123abc --folder "Projects" --operation unlink
+nsf-rm rec123abc rec456def --dry-run
+nsf-rm rec123abc rec456def --force
+nsf-rm rec123abc --operation folder-trash --folder "Archive"
 ```
 
 1. Trash a record (shows preview, then prompts for confirmation)
@@ -339,9 +339,9 @@ kd-rm rec123abc --operation folder-trash --folder "Archive"
 
 ---
 
-### kd-ln command:
+### nsf-ln command:
 
-**Command:** `kd-ln`
+**Command:** `nsf-ln`
 
 **Detail:** Link a record into a KeeperDrive folder using short positional syntax. This adds the record to the folder without removing it from its current location.
 
@@ -354,8 +354,8 @@ kd-rm rec123abc --operation folder-trash --folder "Archive"
 **Examples:**
 
 ```
-kd-ln rec123abc "My Projects"
-kd-ln rec123abc abc123folder
+nsf-ln rec123abc "My Projects"
+nsf-ln rec123abc abc123folder
 ```
 
 1. Link a record by title into a folder by name
@@ -363,13 +363,13 @@ kd-ln rec123abc abc123folder
 
 ---
 
-### kd-shortcut command:
+### nsf-shortcut command:
 
-**Command:** `kd-shortcut`
+**Command:** `nsf-shortcut`
 
 **Detail:** Manage KeeperDrive records that appear in more than one folder. Supports two sub-commands: `list` and `keep`.
 
-#### kd-shortcut list
+#### nsf-shortcut list
 
 List all records linked to more than one folder.
 
@@ -386,10 +386,10 @@ List all records linked to more than one folder.
 **Examples:**
 
 ```
-kd-shortcut list
-kd-shortcut list "My Record"
-kd-shortcut list "Projects" --format json
-kd-shortcut list --format csv --output shortcuts.csv
+nsf-shortcut list
+nsf-shortcut list "My Record"
+nsf-shortcut list "Projects" --format json
+nsf-shortcut list --format csv --output shortcuts.csv
 ```
 
 1. List all records that appear in more than one folder
@@ -397,7 +397,7 @@ kd-shortcut list --format csv --output shortcuts.csv
 3. List shortcuts for records in a specific folder in JSON format
 4. Export the full shortcuts list to a CSV file
 
-#### kd-shortcut keep
+#### nsf-shortcut keep
 
 Keep a record in exactly one folder, removing it from all others.
 
@@ -414,8 +414,8 @@ Keep a record in exactly one folder, removing it from all others.
 **Examples:**
 
 ```
-kd-shortcut keep rec123abc "My Projects"
-kd-shortcut keep "My Record" "Preferred Folder" --force
+nsf-shortcut keep rec123abc "My Projects"
+nsf-shortcut keep "My Record" "Preferred Folder" --force
 ```
 
 1. Keep a record only in `My Projects`, removing it from all other folders (prompts for confirmation)
@@ -423,9 +423,9 @@ kd-shortcut keep "My Record" "Preferred Folder" --force
 
 ---
 
-### kd-share-record command:
+### nsf-share-record command:
 
-**Command:** `kd-share-record`
+**Command:** `nsf-share-record`
 
 **Detail:** Grant, update, or revoke a user's access to a record. All three actions are handled by one command via `--action` (default: `grant`).
 
@@ -456,13 +456,13 @@ Record UID or folder UID (use with `-R` for bulk sharing across all records in a
 **Examples:**
 
 ```
-kd-share-record rec123abc -e colleague@example.com -r viewer
-kd-share-record rec123abc -e user1@example.com -e user2@example.com -r viewer
-kd-share-record rec123abc -e colleague@example.com -a revoke
-kd-share-record rec123abc -e temp@example.com -r viewer --expire-in 30d
-kd-share-record folderabc -e team@example.com -r viewer -R
-kd-share-record rec123abc -e newowner@example.com -a owner
-kd-share-record rec123abc -e user@example.com -r full-manager --dry-run
+nsf-share-record rec123abc -e colleague@example.com -r viewer
+nsf-share-record rec123abc -e user1@example.com -e user2@example.com -r viewer
+nsf-share-record rec123abc -e colleague@example.com -a revoke
+nsf-share-record rec123abc -e temp@example.com -r viewer --expire-in 30d
+nsf-share-record folderabc -e team@example.com -r viewer -R
+nsf-share-record rec123abc -e newowner@example.com -a owner
+nsf-share-record rec123abc -e user@example.com -r full-manager --dry-run
 ```
 
 1. Grant viewer access to a record
@@ -477,9 +477,9 @@ kd-share-record rec123abc -e user@example.com -r full-manager --dry-run
 
 ---
 
-### kd-record-permission command:
+### nsf-record-permission command:
 
-**Command:** `kd-record-permission`
+**Command:** `nsf-record-permission`
 
 **Detail:** Bulk-update sharing permissions across all records in a folder and optionally its sub-folders. Always shows a change plan before executing.
 
@@ -502,10 +502,10 @@ kd-share-record rec123abc -e user@example.com -r full-manager --dry-run
 **Examples:**
 
 ```
-kd-record-permission -a grant -r viewer "My Projects" --dry-run
-kd-record-permission -a revoke -r viewer "Archive" -R --force
-kd-record-permission -a grant -r viewer
-kd-record-permission -a revoke "Old Folder" --dry-run
+nsf-record-permission -a grant -r viewer "My Projects" --dry-run
+nsf-record-permission -a revoke -r viewer "Archive" -R --force
+nsf-record-permission -a grant -r viewer
+nsf-record-permission -a revoke "Old Folder" --dry-run
 ```
 
 1. Preview: grant viewer permission to all records in `My Projects`
@@ -515,9 +515,9 @@ kd-record-permission -a revoke "Old Folder" --dry-run
 
 ---
 
-### kd-transfer-record command:
+### nsf-transfer-record command:
 
-**Command:** `kd-transfer-record`
+**Command:** `nsf-transfer-record`
 
 **Detail:** Transfer record ownership to another user. After transfer you permanently lose access to the record. This cannot be easily reversed.
 
@@ -530,8 +530,8 @@ kd-record-permission -a revoke "Old Folder" --dry-run
 **Examples:**
 
 ```
-kd-transfer-record rec123abc newowner@example.com
-kd-transfer-record rec123abc rec456def newowner@example.com
+nsf-transfer-record rec123abc newowner@example.com
+nsf-transfer-record rec123abc rec456def newowner@example.com
 ```
 
 1. Transfer ownership of a single record to another user
@@ -541,9 +541,9 @@ kd-transfer-record rec123abc rec456def newowner@example.com
 
 ---
 
-### kd-record-details command:
+### nsf-record-details command:
 
-**Command:** `kd-record-details`
+**Command:** `nsf-record-details`
 
 **Detail:** Get metadata (title, type, version, revision) for one or more records.
 
@@ -558,9 +558,9 @@ One or more record UIDs or titles
 **Examples:**
 
 ```
-kd-record-details rec123abc
-kd-record-details rec123abc rec456def rec789ghi
-kd-record-details rec123abc --format json
+nsf-record-details rec123abc
+nsf-record-details rec123abc rec456def rec789ghi
+nsf-record-details rec123abc --format json
 ```
 
 1. Show metadata for a single record
@@ -569,9 +569,9 @@ kd-record-details rec123abc --format json
 
 ---
 
-### kd-get command:
+### nsf-get command:
 
-**Command:** `kd-get`
+**Command:** `nsf-get`
 
 **Detail:** Show full details for a KeeperDrive record or folder by UID or title — including fields, notes, and access list.
 
@@ -590,11 +590,11 @@ Record UID, folder UID, or title/name
 **Examples:**
 
 ```
-kd-get rec123abc
-kd-get "Gmail Account" --unmask
-kd-get abc123folder --verbose
-kd-get rec123abc --format json
-kd-get rec123abc --format json --verbose
+nsf-get rec123abc
+nsf-get "Gmail Account" --unmask
+nsf-get abc123folder --verbose
+nsf-get rec123abc --format json
+nsf-get rec123abc --format json --verbose
 ```
 
 1. Show the details of a specific record
@@ -612,11 +612,11 @@ kd-get rec123abc --format json --verbose
 
 | Command           | Short description             |
 | ----------------- | ----------------------------- |
-| `kd-mkdir`        | Create a folder               |
-| `kd-rndir`        | Rename / recolor a folder     |
-| `kd-list`         | List folders and records      |
-| `kd-rmdir`        | Remove folder(s)              |
-| `kd-share-folder` | Grant or remove folder access |
+| `nsf-mkdir`        | Create a folder               |
+| `nsf-rndir`        | Rename / recolor a folder     |
+| `nsf-list`         | List folders and records      |
+| `nsf-rmdir`        | Remove folder(s)              |
+| `nsf-share-folder` | Grant or remove folder access |
 
 
 ### Record commands
@@ -624,12 +624,12 @@ kd-get rec123abc --format json --verbose
 
 | Command            | Short description                               |
 | ------------------ | ----------------------------------------------- |
-| `kd-record-add`    | Create a record                                 |
-| `kd-record-update` | Update a record                                 |
-| `kd-rm`            | Remove / trash / unlink a record                |
-| `kd-ln`            | Link a record into a folder                     |
-| `kd-shortcut list` | List multi-folder records                       |
-| `kd-shortcut keep` | Keep record in one folder, unlink from the rest |
+| `nsf-record-add`    | Create a record                                 |
+| `nsf-record-update` | Update a record                                 |
+| `nsf-rm`            | Remove / trash / unlink a record                |
+| `nsf-ln`            | Link a record into a folder                     |
+| `nsf-shortcut list` | List multi-folder records                       |
+| `nsf-shortcut keep` | Keep record in one folder, unlink from the rest |
 
 
 ### Sharing commands
@@ -637,10 +637,10 @@ kd-get rec123abc --format json --verbose
 
 | Command                | Short description                               |
 | ---------------------- | ----------------------------------------------- |
-| `kd-share-record`      | Grant / revoke / transfer ownership of a record |
-| `kd-record-permission` | Bulk update sharing across a folder             |
-| `kd-transfer-record`   | Transfer record ownership                       |
-| `kd-share-folder`      | Grant or revoke folder access                   |
+| `nsf-share-record`      | Grant / revoke / transfer ownership of a record |
+| `nsf-record-permission` | Bulk update sharing across a folder             |
+| `nsf-transfer-record`   | Transfer record ownership                       |
+| `nsf-share-folder`      | Grant or revoke folder access                   |
 
 
 ### Inspection commands
@@ -648,8 +648,8 @@ kd-get rec123abc --format json --verbose
 
 | Command             | Short description                  |
 | ------------------- | ---------------------------------- |
-| `kd-get`            | Show full record or folder details |
-| `kd-record-details` | Get record metadata (batch)        |
+| `nsf-get`            | Show full record or folder details |
+| `nsf-record-details` | Get record metadata (batch)        |
 
 
 ---
@@ -660,70 +660,70 @@ kd-get rec123abc --format json --verbose
 
 ```bash
 # 1. Create folder
-kd-mkdir "Client Projects" --color blue
+nsf-mkdir "Client Projects" --color blue
 
 # 2. Add a record
-kd-record-add -t "Client Portal" -rt login --folder "Client Projects" \
+nsf-record-add -t "Client Portal" -rt login --folder "Client Projects" \
   login=admin@client.com password=Secret123 url=https://portal.client.com
 
 # 3. Share the folder with a colleague
-kd-share-folder "Client Projects" -e colleague@company.com -r content-manager
+nsf-share-folder "Client Projects" -e colleague@company.com -r content-manager
 
 # 4. Verify the listing
-kd-list --folders
+nsf-list --folders
 ```
 
 ### Share a record with time-limited access
 
 ```bash
 # Grant 30-day viewer access
-kd-share-record rec123abc -e contractor@external.com -r viewer --expire-in 30d
+nsf-share-record rec123abc -e contractor@external.com -r viewer --expire-in 30d
 
 # Preview what will change (dry-run first)
-kd-share-record rec123abc -e contractor@external.com -r full-manager --dry-run
+nsf-share-record rec123abc -e contractor@external.com -r full-manager --dry-run
 
 # Revoke when done
-kd-share-record rec123abc -e contractor@external.com -a revoke
+nsf-share-record rec123abc -e contractor@external.com -a revoke
 ```
 
 ### Clean up multi-folder shortcuts
 
 ```bash
 # Find all records in multiple folders
-kd-shortcut list
+nsf-shortcut list
 
 # Keep a record in only one folder
-kd-shortcut keep "My Record" "Preferred Folder"
+nsf-shortcut keep "My Record" "Preferred Folder"
 ```
 
 ### Safely remove a folder
 
 ```bash
 # Preview impact
-kd-rmdir "Old Archive" --dry-run
+nsf-rmdir "Old Archive" --dry-run
 
 # Trash (recoverable)
-kd-rmdir "Old Archive"
+nsf-rmdir "Old Archive"
 
 # Or permanently delete (irreversible)
-kd-rmdir "Old Archive" --operation delete-permanent --force
+nsf-rmdir "Old Archive" --operation delete-permanent --force
 ```
 
 ### Bulk-revoke permissions across a folder tree
 
 ```bash
 # Preview what will be revoked
-kd-record-permission -a revoke -r viewer "Archive" -R --dry-run
+nsf-record-permission -a revoke -r viewer "Archive" -R --dry-run
 
 # Apply without prompting
-kd-record-permission -a revoke -r viewer "Archive" -R --force
+nsf-record-permission -a revoke -r viewer "Archive" -R --force
 ```
 
 ---
 
 ## Expiration Format
 
-Both `--expire-at` and `--expire-in` are accepted by `kd-share-folder` and `kd-share-record`. They are mutually exclusive — use one or the other.
+Both `--expire-at` and `--expire-in` are accepted by `nsf-share-folder` and `nsf-share-record`. They are mutually exclusive — use one or the other.
 
 
 | Format       | Example                | Meaning             |

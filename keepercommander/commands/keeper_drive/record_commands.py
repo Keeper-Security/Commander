@@ -40,7 +40,7 @@ from .parsers import (
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-record-add
+# nsf-record-add
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
@@ -59,10 +59,10 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
 
         title = kwargs.get('title')
         if not title:
-            raise CommandError('kd-record-add', 'Title parameter is required.')
+            raise CommandError('nsf-record-add', 'Title parameter is required.')
         record_type = kwargs.get('record_type')
         if not record_type:
-            raise CommandError('kd-record-add', 'Record type parameter is required.')
+            raise CommandError('nsf-record-add', 'Record type parameter is required.')
 
         notes = kwargs.get('notes')
         record_fields, add_attachments = self._parse_fields(kwargs.get('fields', []))
@@ -78,14 +78,14 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
                 return
 
         if add_attachments:
-            logging.warning('File attachments are not yet supported in kd-record-add. '
+            logging.warning('File attachments are not yet supported in nsf-record-add. '
                             'Use record-add for attachment support.')
             if not kwargs.get('force'):
                 return
 
-        with command_error_handler('kd-record-add'):
+        with command_error_handler('nsf-record-add'):
             result = _kd.create_record_v3(params=params, folder_uid=folder_uid, record_data=data)
-            check_result(result, 'kd-record-add')
+            check_result(result, 'nsf-record-add')
             params.sync_data = True
             return result['record_uid']
 
@@ -104,8 +104,8 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
             return None
         uid = resolve_folder_uid(params, folder_input)
         if uid is None:
-            raise CommandError('kd-record-add', f'No such folder: {folder_input}')
-        ensure_keeper_drive_folder(params, uid, 'kd-record-add', identifier=folder_input)
+            raise CommandError('nsf-record-add', f'No such folder: {folder_input}')
+        ensure_keeper_drive_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
     def _build_record_data(self, params, record_type, title, notes, record_fields):
@@ -118,7 +118,7 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
 
         rt_fields = self.get_record_type_fields(params, record_type)
         if not rt_fields:
-            raise CommandError('kd-record-add', f'Record type "{record_type}" cannot be found.')
+            raise CommandError('nsf-record-add', f'Record type "{record_type}" cannot be found.')
         record = vault.TypedRecord()
         record.type_name = record_type
         for rf in rt_fields:
@@ -167,7 +167,7 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-record-update
+# nsf-record-update
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
@@ -186,13 +186,13 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
 
         record_uids = kwargs.get('record_uids') or []
         if not record_uids:
-            raise CommandError('kd-record-update', 'Record UID is required (use -r or --record)')
+            raise CommandError('nsf-record-update', 'Record UID is required (use -r or --record)')
 
         record_type = kwargs.get('record_type')
         if record_type and record_type not in ('legacy', 'general'):
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
-                raise CommandError('kd-record-update', f'Record type "{record_type}" cannot be found.')
+                raise CommandError('nsf-record-update', f'Record type "{record_type}" cannot be found.')
 
         fields = {}
         for spec in [f.strip() for f in kwargs.get('fields', []) if f.strip()]:
@@ -205,28 +205,28 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
                 else:
                     fields[parsed.type] = parsed.value
             except ValueError as e:
-                raise CommandError('kd-record-update', f'Invalid field specification: {e}')
+                raise CommandError('nsf-record-update', f'Invalid field specification: {e}')
 
-        with command_error_handler('kd-record-update'):
+        with command_error_handler('nsf-record-update'):
             for identifier in record_uids:
                 record_uid = _kd.resolve_kd_record_uid(params, identifier)
                 if not record_uid:
-                    raise CommandError('kd-record-update',
+                    raise CommandError('nsf-record-update',
                                        f"Record '{identifier}' not found")
-                ensure_keeper_drive_record(params, record_uid, 'kd-record-update',
+                ensure_keeper_drive_record(params, record_uid, 'nsf-record-update',
                                            identifier=identifier)
-                check_record_edit_permission(params, record_uid, 'kd-record-update')
+                check_record_edit_permission(params, record_uid, 'nsf-record-update')
                 result = _kd.update_record_v3(
                     params=params, record_uid=record_uid,
                     title=kwargs.get('title'), record_type=record_type,
                     fields=fields or None, notes=kwargs.get('notes'),
                 )
-                check_result(result, 'kd-record-update')
+                check_result(result, 'nsf-record-update')
             params.sync_data = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-ln
+# nsf-ln
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveLnCommand(Command):
@@ -242,20 +242,20 @@ class KeeperDriveLnCommand(Command):
             return
         record_uid = _kd.resolve_kd_record_uid(params, src)
         if not record_uid:
-            raise CommandError('kd-ln', f"Record '{src}' not found")
+            raise CommandError('nsf-ln', f"Record '{src}' not found")
         folder_uid = resolve_folder_uid(params, dst)
         if not folder_uid:
-            raise CommandError('kd-ln', f"Folder '{dst}' not found")
-        ensure_keeper_drive_record(params, record_uid, 'kd-ln', identifier=src)
-        ensure_keeper_drive_folder(params, folder_uid, 'kd-ln', identifier=dst)
-        with command_error_handler('kd-ln'):
+            raise CommandError('nsf-ln', f"Folder '{dst}' not found")
+        ensure_keeper_drive_record(params, record_uid, 'nsf-ln', identifier=src)
+        ensure_keeper_drive_folder(params, folder_uid, 'nsf-ln', identifier=dst)
+        with command_error_handler('nsf-ln'):
             result = _kd.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
-            check_result(result, 'kd-ln')
+            check_result(result, 'nsf-ln')
             params.sync_data = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-shortcut
+# nsf-shortcut
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveShortcutCommand(GroupCommand):
@@ -276,7 +276,7 @@ class KeeperDriveShortcutCommand(GroupCommand):
         UIDs (e.g. shared-with-me containers) that have no real folder entry
         in ``keeper_drive_folders``. These cannot be resolved or modified, so
         they are filtered out — counting them would inflate shortcut totals
-        and break ``kd-shortcut keep`` removals downstream.
+        and break ``nsf-shortcut keep`` removals downstream.
         """
         kd_folders = getattr(params, 'keeper_drive_folders', {})
         records = {}
@@ -348,21 +348,21 @@ class KeeperDriveShortcutListCommand(Command):
                         kd_record_data, kd_folders):
         if target in kd_records:
             if target not in records:
-                raise CommandError('kd-shortcut list', f'Record UID {target} does not have shortcuts')
+                raise CommandError('nsf-shortcut list', f'Record UID {target} does not have shortcuts')
             return {target}
 
         lower = target.casefold()
         for uid in kd_records:
             if cls._record_title(uid, kd_record_data).casefold() == lower:
                 if uid not in records:
-                    raise CommandError('kd-shortcut list', f'Record "{target}" does not have shortcuts')
+                    raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
                 return {uid}
 
         resolved_folder = _kd.resolve_folder_identifier(params, target)
         if resolved_folder:
             return {r for r in records if resolved_folder in records[r]}
 
-        raise CommandError('kd-shortcut list',
+        raise CommandError('nsf-shortcut list',
                            f'Target "{target}" is not a known record UID, title, or folder path')
 
 
@@ -388,11 +388,11 @@ class KeeperDriveShortcutKeepCommand(Command):
 
         records = KeeperDriveShortcutCommand.get_record_shortcuts(params)
         if record_uid not in records:
-            raise CommandError('kd-shortcut keep',
+            raise CommandError('nsf-shortcut keep',
                                f'Record "{target}" does not appear in multiple folders')
         if keep_folder_uid not in records[record_uid]:
             fname = kd_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
-            raise CommandError('kd-shortcut keep', f'Record "{target}" is not in folder "{fname}"')
+            raise CommandError('nsf-shortcut keep', f'Record "{target}" is not in folder "{fname}"')
 
         folders_to_remove = [f for f in records[record_uid] if f != keep_folder_uid]
         if not folders_to_remove:
@@ -420,7 +420,7 @@ class KeeperDriveShortcutKeepCommand(Command):
                 errors.append(f'{fuid}: {exc}')
 
         if errors:
-            raise CommandError('kd-shortcut keep', 'Some removals failed:\n' + '\n'.join(errors))
+            raise CommandError('nsf-shortcut keep', 'Some removals failed:\n' + '\n'.join(errors))
 
         params.sync_data = True
         keep_name = kd_folders.get(keep_folder_uid, {}).get('name', keep_folder_uid)
@@ -442,26 +442,26 @@ class KeeperDriveShortcutKeepCommand(Command):
         for uid, rec in kd_records.items():
             if rec.get('title', '').casefold() == lower:
                 return uid
-        raise CommandError('kd-shortcut keep', f'Record "{target}" not found in KeeperDrive')
+        raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in KeeperDrive')
 
     @staticmethod
     def _resolve_keep_folder(params, folder_arg, kd_folders):
         if folder_arg:
             uid = _kd.resolve_folder_identifier(params, folder_arg)
             if not uid:
-                raise CommandError('kd-shortcut keep', f'Folder "{folder_arg}" not found')
-            ensure_keeper_drive_folder(params, uid, 'kd-shortcut keep',
+                raise CommandError('nsf-shortcut keep', f'Folder "{folder_arg}" not found')
+            ensure_keeper_drive_folder(params, uid, 'nsf-shortcut keep',
                                        identifier=folder_arg)
             return uid
         current = getattr(params, 'current_folder', None)
         if current and current in kd_folders:
             return current
-        raise CommandError('kd-shortcut keep',
+        raise CommandError('nsf-shortcut keep',
                            'No folder specified and current folder is not a KeeperDrive folder.')
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-rm
+# nsf-rm
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveRemoveRecordCommand(Command):
@@ -478,23 +478,23 @@ class KeeperDriveRemoveRecordCommand(Command):
         dry_run = kwargs.get('dry_run', False)
 
         if not record_args:
-            raise CommandError('kd-rm', 'At least one record UID or title is required')
+            raise CommandError('nsf-rm', 'At least one record UID or title is required')
         if operation == 'unlink' and not folder_arg:
-            raise CommandError('kd-rm', '--folder is required when --operation is "unlink"')
+            raise CommandError('nsf-rm', '--folder is required when --operation is "unlink"')
 
         folder_uid = None
         if folder_arg:
             folder_uid = _kd.resolve_folder_identifier(params, folder_arg)
             if not folder_uid:
-                raise CommandError('kd-rm', f"Folder '{folder_arg}' not found")
-            ensure_keeper_drive_folder(params, folder_uid, 'kd-rm',
+                raise CommandError('nsf-rm', f"Folder '{folder_arg}' not found")
+            ensure_keeper_drive_folder(params, folder_uid, 'nsf-rm',
                                        identifier=folder_arg)
 
         removals = self._build_removals(params, record_args, folder_uid, operation)
         if len(removals) > 500:
-            raise CommandError('kd-rm', 'Maximum 500 records per invocation')
+            raise CommandError('nsf-rm', 'Maximum 500 records per invocation')
 
-        with command_error_handler('kd-rm'):
+        with command_error_handler('nsf-rm'):
             self._preview_and_confirm(params, removals, operation, force, dry_run)
 
     def _build_removals(self, params, record_args, folder_uid, operation):
@@ -502,15 +502,15 @@ class KeeperDriveRemoveRecordCommand(Command):
         for identifier in record_args:
             record_uid = _kd.resolve_kd_record_uid(params, identifier)
             if not record_uid:
-                raise CommandError('kd-rm', f"Record '{identifier}' not found")
-            ensure_keeper_drive_record(params, record_uid, 'kd-rm',
+                raise CommandError('nsf-rm', f"Record '{identifier}' not found")
+            ensure_keeper_drive_record(params, record_uid, 'nsf-rm',
                                        identifier=identifier)
-            check_record_delete_permission(params, record_uid, 'kd-rm')
+            check_record_delete_permission(params, record_uid, 'nsf-rm')
             ctx_folder = folder_uid
             if not ctx_folder:
                 folders = _kd.find_kd_folders_for_record(params, record_uid)
                 if not folders and operation != 'owner-trash':
-                    raise CommandError('kd-rm',
+                    raise CommandError('nsf-rm',
                                        f"No folder context for record '{identifier}'. "
                                        f"Use --folder or --operation owner-trash.")
                 ctx_folder = folders[0] if folders else None

@@ -326,7 +326,7 @@ class TestCrossTypeGuards(TestCase):
 
     @patch('keepercommander.keeper_drive.folder_record_api.add_record_to_folder_v3')
     def test_kd_ln_rejects_legacy_record(self, mock_link):
-        """kd-ln must refuse a legacy record even when the dest folder is KD."""
+        """nsf-ln must refuse a legacy record even when the dest folder is KD."""
         from keepercommander.commands.keeper_drive import KeeperDriveLnCommand
         kd_fuid, kd_fobj = _make_folder()
         legacy_ruid = utils.generate_uid()
@@ -342,7 +342,7 @@ class TestCrossTypeGuards(TestCase):
 
     @patch('keepercommander.keeper_drive.folder_record_api.add_record_to_folder_v3')
     def test_kd_ln_rejects_legacy_folder(self, mock_link):
-        """kd-ln must refuse a legacy folder even when the source is a KD record."""
+        """nsf-ln must refuse a legacy folder even when the source is a KD record."""
         from keepercommander.commands.keeper_drive import KeeperDriveLnCommand
         kd_ruid, kd_robj = _make_record()
         legacy_fuid = utils.generate_uid()
@@ -608,10 +608,10 @@ class TestCommandRegistration(TestCase):
         commands = {}
         register_commands(commands)
         expected = [
-            'kd-mkdir', 'kd-record-add', 'kd-record-update', 'kd-rndir',
-            'kd-list', 'kd-share-folder', 'kd-record-details',
-            'kd-share-record', 'kd-record-permission', 'kd-transfer-record',
-            'kd-ln', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get',
+            'nsf-mkdir', 'nsf-record-add', 'nsf-record-update', 'nsf-rndir',
+            'nsf-list', 'nsf-share-folder', 'nsf-record-details',
+            'nsf-share-record', 'nsf-record-permission', 'nsf-transfer-record',
+            'nsf-ln', 'nsf-rm', 'nsf-rmdir', 'nsf-shortcut', 'nsf-get',
         ]
         for name in expected:
             self.assertIn(name, commands)

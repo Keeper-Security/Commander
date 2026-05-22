@@ -62,37 +62,37 @@ from .display_commands import (                          # noqa: F401
 
 def register_commands(commands):
     """Register KeeperDrive commands with the command framework."""
-    commands['kd-mkdir']                     = KeeperDriveMkdirCommand()
-    commands['kd-record-add']                = KeeperDriveAddRecordCommand()
-    commands['kd-record-update']             = KeeperDriveUpdateRecordCommand()
-    commands['kd-rndir']                     = KeeperDriveUpdateFolderCommand()
-    commands['kd-list']                      = KeeperDriveListCommand()
-    commands['kd-share-folder']              = KeeperDriveShareFolderCommand()
-    commands['kd-record-details']            = KeeperDriveGetRecordDetailsCommand()
-    commands['kd-share-record']              = KeeperDriveShareRecordCommand()
-    commands['kd-record-permission']         = KeeperDriveRecordPermissionCommand()
-    commands['kd-transfer-record']           = KeeperDriveTransferRecordCommand()
-    commands['kd-ln']                        = KeeperDriveLnCommand()
-    commands['kd-rm']                        = KeeperDriveRemoveRecordCommand()
-    commands['kd-rmdir']                     = KeeperDriveRemoveFolderCommand()
-    commands['kd-shortcut']                  = KeeperDriveShortcutCommand()
-    commands['kd-get']                       = KeeperDriveGetCommand()
+    commands['nsf-mkdir']                     = KeeperDriveMkdirCommand()
+    commands['nsf-record-add']                = KeeperDriveAddRecordCommand()
+    commands['nsf-record-update']             = KeeperDriveUpdateRecordCommand()
+    commands['nsf-rndir']                     = KeeperDriveUpdateFolderCommand()
+    commands['nsf-list']                      = KeeperDriveListCommand()
+    commands['nsf-share-folder']              = KeeperDriveShareFolderCommand()
+    commands['nsf-record-details']            = KeeperDriveGetRecordDetailsCommand()
+    commands['nsf-share-record']              = KeeperDriveShareRecordCommand()
+    commands['nsf-record-permission']         = KeeperDriveRecordPermissionCommand()
+    commands['nsf-transfer-record']           = KeeperDriveTransferRecordCommand()
+    commands['nsf-ln']                        = KeeperDriveLnCommand()
+    commands['nsf-rm']                        = KeeperDriveRemoveRecordCommand()
+    commands['nsf-rmdir']                     = KeeperDriveRemoveFolderCommand()
+    commands['nsf-shortcut']                  = KeeperDriveShortcutCommand()
+    commands['nsf-get']                       = KeeperDriveGetCommand()
 
 
 def register_command_info(aliases, command_info):
     """Register command help descriptions."""
-    command_info['kd-mkdir']                     = 'Create a KeeperDrive folder'
-    command_info['kd-record-add']                = 'Create a KeeperDrive record'
-    command_info['kd-record-update']             = 'Update a KeeperDrive record'
-    command_info['kd-rndir']                     = 'Rename a KeeperDrive folder'
-    command_info['kd-list']                      = 'List Keeper Drive folders and records'
-    command_info['kd-share-folder']              = 'Grant/update/revoke folder access'
-    command_info['kd-record-details']            = 'Get record metadata'
-    command_info['kd-share-record']              = 'Grant/update/revoke record sharing'
-    command_info['kd-record-permission']         = 'Modify sharing permissions of records in a folder'
-    command_info['kd-transfer-record']           = 'Transfer record ownership to another user'
-    command_info['kd-ln']                        = 'Link a record into a KeeperDrive folder'
-    command_info['kd-rm']                        = 'Remove (delete/unlink) a KeeperDrive record'
-    command_info['kd-rmdir']                     = 'Remove a KeeperDrive folder and its contents'
-    command_info['kd-shortcut']                  = 'Manage KeeperDrive record shortcuts'
-    command_info['kd-get']                       = 'Get details of a KeeperDrive record or folder'
+    command_info['nsf-mkdir']                     = 'Create a KeeperDrive folder'
+    command_info['nsf-record-add']                = 'Create a KeeperDrive record'
+    command_info['nsf-record-update']             = 'Update a KeeperDrive record'
+    command_info['nsf-rndir']                     = 'Rename a KeeperDrive folder'
+    command_info['nsf-list']                      = 'List Keeper Drive folders and records'
+    command_info['nsf-share-folder']              = 'Grant/update/revoke folder access'
+    command_info['nsf-record-details']            = 'Get record metadata'
+    command_info['nsf-share-record']              = 'Grant/update/revoke record sharing'
+    command_info['nsf-record-permission']         = 'Modify sharing permissions of records in a folder'
+    command_info['nsf-transfer-record']           = 'Transfer record ownership to another user'
+    command_info['nsf-ln']                        = 'Link a record into a KeeperDrive folder'
+    command_info['nsf-rm']                        = 'Remove (delete/unlink) a KeeperDrive record'
+    command_info['nsf-rmdir']                     = 'Remove a KeeperDrive folder and its contents'
+    command_info['nsf-shortcut']                  = 'Manage KeeperDrive record shortcuts'
+    command_info['nsf-get']                       = 'Get details of a KeeperDrive record or folder'

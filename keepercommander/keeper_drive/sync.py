@@ -588,7 +588,7 @@ def _purge_orphaned_records(params):
     """Drop records that no longer belong to any folder.
 
     Without this pass, records removed via folder deletion would still appear
-    in ``kd-list`` after a successful removal + sync_down.
+    in ``nsf-list`` after a successful removal + sync_down.
     """
     all_folder_record_uids = {
         uid

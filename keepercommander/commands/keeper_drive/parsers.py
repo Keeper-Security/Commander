@@ -33,7 +33,7 @@ def _make_parser(prog, description):
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_mkdir_parser = _make_parser(
-    'kd-mkdir', 'Create a new KeeperDrive folder using v3 API')
+    'nsf-mkdir', 'Create a new KeeperDrive folder using v3 API')
 keeper_drive_mkdir_parser.add_argument(
     'folder', type=str,
     help='Folder name to create (use "//" to embed a literal "/" in the name)')
@@ -47,7 +47,7 @@ keeper_drive_mkdir_parser.add_argument(
 
 
 keeper_drive_update_folder_parser = _make_parser(
-    'kd-rndir', 'Rename a KeeperDrive folder.')
+    'nsf-rndir', 'Rename a KeeperDrive folder.')
 keeper_drive_update_folder_parser.add_argument(
     '-n', '--name', dest='folder_name', action='store', metavar='NAME',
     help='folder new name')
@@ -63,7 +63,7 @@ keeper_drive_update_folder_parser.add_argument(
 
 
 keeper_drive_list_parser = _make_parser(
-    'kd-list', 'List Keeper Drive folders and records')
+    'nsf-list', 'List Keeper Drive folders and records')
 keeper_drive_list_parser.add_argument(
     '--folders', action='store_true', help='Show only folders')
 keeper_drive_list_parser.add_argument(
@@ -77,7 +77,7 @@ keeper_drive_list_parser.add_argument(
 
 
 keeper_drive_share_folder_parser = _make_parser(
-    'kd-share-folder', 'Change the sharing permissions of a KeeperDrive folder')
+    'nsf-share-folder', 'Change the sharing permissions of a KeeperDrive folder')
 keeper_drive_share_folder_parser.add_argument(
     '-a', '--action', dest='action',
     choices=['grant', 'remove'], default='grant', action='store',
@@ -106,7 +106,7 @@ keeper_drive_share_folder_parser.add_argument(
 
 
 kd_rmdir_parser = _make_parser(
-    'kd-rmdir',
+    'nsf-rmdir',
     'Remove a KeeperDrive folder and its entire contents. '
     'Always runs a preview first showing the impact before asking for confirmation.')
 kd_rmdir_parser.add_argument(
@@ -134,7 +134,7 @@ kd_rmdir_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_add_record_parser = _make_parser(
-    'kd-record-add', 'Add a record to folder.')
+    'nsf-record-add', 'Add a record to folder.')
 keeper_drive_add_record_parser.add_argument(
     '--syntax-help', dest='syntax_help', action='store_true',
     help='Display help on field parameters.')
@@ -155,7 +155,7 @@ keeper_drive_add_record_parser.add_argument(
 
 
 keeper_drive_update_record_parser = _make_parser(
-    'kd-record-update', 'Update a record.')
+    'nsf-record-update', 'Update a record.')
 keeper_drive_update_record_parser.add_argument(
     '--syntax-help', dest='syntax_help', action='store_true',
     help='Display help on field parameters.')
@@ -176,7 +176,7 @@ keeper_drive_update_record_parser.add_argument(
 
 
 keeper_drive_ln_parser = _make_parser(
-    'kd-ln', 'Link a record into a KeeperDrive folder (positional: RECORD FOLDER).')
+    'nsf-ln', 'Link a record into a KeeperDrive folder (positional: RECORD FOLDER).')
 keeper_drive_ln_parser.add_argument(
     'src', nargs='?', type=str, help='record UID, title, or path')
 keeper_drive_ln_parser.add_argument(
@@ -188,7 +188,7 @@ keeper_drive_ln_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_share_record_parser = _make_parser(
-    'kd-share-record', 'Change the sharing permissions of an individual record')
+    'nsf-share-record', 'Change the sharing permissions of an individual record')
 keeper_drive_share_record_parser.add_argument(
     'record', nargs='?', type=str, help='record path or UID')
 keeper_drive_share_record_parser.add_argument(
@@ -227,7 +227,7 @@ _sr_expire.add_argument(
 
 
 keeper_drive_record_permission_parser = _make_parser(
-    'kd-record-permission', 'Modify the permissions of a record')
+    'nsf-record-permission', 'Modify the permissions of a record')
 keeper_drive_record_permission_parser.add_argument(
     '--dry-run', dest='dry_run', action='store_true',
     help='Display the permissions changes without committing them')
@@ -252,7 +252,7 @@ keeper_drive_record_permission_parser.add_argument(
 
 
 keeper_drive_transfer_record_parser = _make_parser(
-    'kd-transfer-record', 'Transfer record ownership to another user')
+    'nsf-transfer-record', 'Transfer record ownership to another user')
 keeper_drive_transfer_record_parser.add_argument(
     'record_uids', nargs='+', type=str, help='Record UID(s) to transfer')
 keeper_drive_transfer_record_parser.add_argument(
@@ -264,7 +264,7 @@ keeper_drive_transfer_record_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_get_record_details_parser = _make_parser(
-    'kd-get-record-details',
+    'nsf-get-record-details',
     'Get record metadata (title, color, etc.) using v3 API')
 keeper_drive_get_record_details_parser.add_argument(
     'record_uids', nargs='+', type=str, help='Record UIDs to get details for')
@@ -278,7 +278,7 @@ keeper_drive_get_record_details_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 kd_shortcut_list_parser = _make_parser(
-    'kd-shortcut list',
+    'nsf-shortcut list',
     'List KeeperDrive records that appear in more than one folder.')
 kd_shortcut_list_parser.add_argument(
     'target', nargs='?', type=str,
@@ -292,7 +292,7 @@ kd_shortcut_list_parser.add_argument(
 
 
 kd_shortcut_keep_parser = _make_parser(
-    'kd-shortcut keep',
+    'nsf-shortcut keep',
     'Keep a record only in one KeeperDrive folder, removing it from all others.')
 kd_shortcut_keep_parser.add_argument(
     'target', nargs='?', type=str, help='Record UID or title')
@@ -309,7 +309,7 @@ kd_shortcut_keep_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 kd_rm_parser = _make_parser(
-    'kd-rm',
+    'nsf-rm',
     'Remove a KeeperDrive record. Supports owner-trash, folder-trash, or unlink.')
 kd_rm_parser.add_argument(
     'records', nargs='+', metavar='RECORD',
@@ -336,7 +336,7 @@ _kd_rm_confirm.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 kd_get_parser = _make_parser(
-    'kd-get',
+    'nsf-get',
     'Get the details of a KeeperDrive record or folder by UID or title')
 kd_get_parser.add_argument(
     'uid', type=str, help='Record UID, folder UID, or title to look up')

@@ -489,7 +489,7 @@ class RecordGetUidCommand(Command):
 
                     # For KeeperDrive records, replace the user_permissions
                     # block with role-aware entries fetched from the KD
-                    # access graph (matches ``kd-get --format json``).
+                    # access graph (matches ``nsf-get --format json``).
                     if (hasattr(params, 'keeper_drive_records')
                             and uid in getattr(params, 'keeper_drive_records', {})):
                         try:
@@ -596,7 +596,7 @@ class RecordGetUidCommand(Command):
                     # KeeperDrive records carry their permissions on the KD
                     # access graph, not in ``rec['shares']['user_permissions']``.
                     # Render the KD-style "User Permissions" block (with Role)
-                    # so ``get`` matches ``kd-get`` for KD records.
+                    # so ``get`` matches ``nsf-get`` for KD records.
                     is_kd_record = (
                         hasattr(params, 'keeper_drive_records')
                         and uid in getattr(params, 'keeper_drive_records', {})

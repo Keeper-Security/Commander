@@ -41,7 +41,7 @@ from .parsers import (
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-share-record   (Strategy pattern — grant / revoke / owner)
+# nsf-share-record   (Strategy pattern — grant / revoke / owner)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveShareRecordCommand(Command):
@@ -60,30 +60,30 @@ class KeeperDriveShareRecordCommand(Command):
         force = kwargs.get('force', False)
 
         if not record_arg:
-            raise CommandError('kd-share-record', 'Record path or UID is required')
+            raise CommandError('nsf-share-record', 'Record path or UID is required')
         if not emails:
-            raise CommandError('kd-share-record', 'Recipient email is required (use -e or --email)')
+            raise CommandError('nsf-share-record', 'Recipient email is required (use -e or --email)')
         if action == 'owner' and len(emails) > 1:
-            raise CommandError('kd-share-record', 'Ownership can only be transferred to a single account')
+            raise CommandError('nsf-share-record', 'Ownership can only be transferred to a single account')
         if action == 'grant' and not role:
-            raise CommandError('kd-share-record', 'Role is required for grant action')
+            raise CommandError('nsf-share-record', 'Role is required for grant action')
 
         if kwargs.get('contacts_only'):
             emails = [self._resolve_contact(params, e, force) for e in emails]
 
         expiration = parse_expiration(
-            kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-record')
+            kwargs.get('expire_at'), kwargs.get('expire_in'), 'nsf-share-record')
         access_role_type = _kd.resolve_role_name(role) if role else None
         record_uids = self._resolve_record_uids(params, record_arg, recursive)
 
         for uid in record_uids:
-            check_record_share_permission(params, uid, 'kd-share-record')
+            check_record_share_permission(params, uid, 'nsf-share-record')
 
         if dry_run:
             self._print_dry_run(action, record_uids, emails, role, expiration)
             return
 
-        with command_error_handler('kd-share-record'):
+        with command_error_handler('nsf-share-record'):
             for email in emails:
                 for record_uid in record_uids:
                     result, effective_action = self._dispatch(
@@ -176,13 +176,13 @@ class KeeperDriveShareRecordCommand(Command):
         get_user = lambda addr: next(iter(addr.split('@')), '').casefold()
         matches = [c for c in known_users if get_user(email) == get_user(c)]
         if len(matches) > 1:
-            raise CommandError('kd-share-record', 'More than 1 matching usernames found. Aborting')
+            raise CommandError('nsf-share-record', 'More than 1 matching usernames found. Aborting')
         match = next(iter(matches), None)
         if match:
             dump_report_data([[email, match]], ['Requested', 'Known Contact'])
             if force or user_choice('\tReplace with known matching contact?', 'yn', default='n') == 'y':
                 return match
-        raise CommandError('kd-share-record',
+        raise CommandError('nsf-share-record',
                            f'Recipient {email!r} is not a known contact')
 
     @staticmethod
@@ -204,18 +204,18 @@ class KeeperDriveShareRecordCommand(Command):
             # Reject legacy folders up-front with a friendly message rather
             # than letting them slip through as a "no records found" error.
             if folder_uid not in kd_folders:
-                ensure_keeper_drive_folder(params, folder_uid, 'kd-share-record',
+                ensure_keeper_drive_folder(params, folder_uid, 'nsf-share-record',
                                            identifier=record_arg)
             record_uids = collect_records_in_folder(params, folder_uid, recursive)
             if not record_uids:
-                raise CommandError('kd-share-record', 'No records found in the specified folder')
+                raise CommandError('nsf-share-record', 'No records found in the specified folder')
             return record_uids
 
         resolved_uid = _kd.resolve_kd_record_uid(params, record_arg)
         if not resolved_uid:
-            raise CommandError('kd-share-record',
+            raise CommandError('nsf-share-record',
                                f"Record '{record_arg}' not found")
-        ensure_keeper_drive_record(params, resolved_uid, 'kd-share-record',
+        ensure_keeper_drive_record(params, resolved_uid, 'nsf-share-record',
                                    identifier=record_arg)
         return [resolved_uid]
 
@@ -235,7 +235,7 @@ class KeeperDriveShareRecordCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-record-permission  (Template Method — resolve → collect → compute → display → execute)
+# nsf-record-permission  (Template Method — resolve → collect → compute → display → execute)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveRecordPermissionCommand(Command):
@@ -261,7 +261,7 @@ class KeeperDriveRecordPermissionCommand(Command):
         force = kwargs.get('force', False)
 
         if action == 'grant' and not role:
-            raise CommandError('kd-record-permission', 'Role is required for grant action')
+            raise CommandError('nsf-record-permission', 'Role is required for grant action')
 
         kd_folders = getattr(params, 'keeper_drive_folders', {})
         kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
@@ -282,12 +282,12 @@ class KeeperDriveRecordPermissionCommand(Command):
         # Step 2: Collect
         record_uids = self._collect_record_uids(kd_folders, kd_folder_records, folder_uid, recursive)
         if not record_uids:
-            raise CommandError('kd-record-permission', 'No records found in the specified folder')
+            raise CommandError('nsf-record-permission', 'No records found in the specified folder')
 
         try:
             accesses_result = _kd.get_record_accesses_v3(params, list(record_uids))
         except Exception as e:
-            raise CommandError('kd-record-permission', f'Failed to fetch record accesses: {e}')
+            raise CommandError('nsf-record-permission', f'Failed to fetch record accesses: {e}')
 
         # Step 3: Compute
         updates, creates, revokes, skipped = self._compute_changes(
@@ -329,7 +329,7 @@ class KeeperDriveRecordPermissionCommand(Command):
             if resolved:
                 # Resolution succeeded against legacy caches; reject with a
                 # friendly cross-type message instead of "not found".
-                ensure_keeper_drive_folder(params, resolved, 'kd-record-permission',
+                ensure_keeper_drive_folder(params, resolved, 'nsf-record-permission',
                                            identifier=folder_name)
         if folder_name in kd_folders:
             return folder_name, kd_folders[folder_name].get('name', folder_name)
@@ -337,7 +337,7 @@ class KeeperDriveRecordPermissionCommand(Command):
         for fuid, fobj in kd_folders.items():
             if fobj.get('name', '').lower() == lower:
                 return fuid, fobj.get('name', fuid)
-        raise CommandError('kd-record-permission', f'Folder "{folder_name}" not found')
+        raise CommandError('nsf-record-permission', f'Folder "{folder_name}" not found')
 
     @staticmethod
     def _collect_record_uids(kd_folders, kd_folder_records, folder_uid, recursive):
@@ -587,7 +587,7 @@ class KeeperDriveRecordPermissionCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-transfer-record
+# nsf-transfer-record
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveTransferRecordCommand(Command):
@@ -601,19 +601,19 @@ class KeeperDriveTransferRecordCommand(Command):
         new_owner_email = kwargs.get('new_owner_email')
 
         if not identifiers or not new_owner_email:
-            raise CommandError('kd-transfer-record', 'Record UID(s) and new owner email are required')
+            raise CommandError('nsf-transfer-record', 'Record UID(s) and new owner email are required')
 
-        with command_error_handler('kd-transfer-record'):
+        with command_error_handler('nsf-transfer-record'):
             for identifier in identifiers:
                 record_uid = _kd.resolve_kd_record_uid(params, identifier)
                 if not record_uid:
-                    raise CommandError('kd-transfer-record',
+                    raise CommandError('nsf-transfer-record',
                                        f"Record '{identifier}' not found")
-                ensure_keeper_drive_record(params, record_uid, 'kd-transfer-record',
+                ensure_keeper_drive_record(params, record_uid, 'nsf-transfer-record',
                                            identifier=identifier)
                 result = _kd.transfer_record_ownership_v3(
                     params=params, record_uid=record_uid, new_owner_email=new_owner_email)
-                check_result(result, 'kd-transfer-record')
+                check_result(result, 'nsf-transfer-record')
                 for res in result['results']:
                     if res['success']:
                         logging.info("Record '%s' ownership transferred to %s",

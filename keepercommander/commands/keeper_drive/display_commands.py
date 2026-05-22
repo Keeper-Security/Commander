@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-record-details
+# nsf-record-details
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveGetRecordDetailsCommand(Command):
@@ -50,16 +50,16 @@ class KeeperDriveGetRecordDetailsCommand(Command):
         output_format = kwargs.get('format', 'table')
 
         if not identifiers:
-            raise CommandError('kd-record-details', 'At least one record UID or title is required')
+            raise CommandError('nsf-record-details', 'At least one record UID or title is required')
 
         record_uids = []
         for ident in identifiers:
             uid = _kd.resolve_kd_record_uid(params, ident) or ident
-            ensure_keeper_drive_record(params, uid, 'kd-record-details',
+            ensure_keeper_drive_record(params, uid, 'nsf-record-details',
                                        identifier=ident)
             record_uids.append(uid)
 
-        with command_error_handler('kd-record-details'):
+        with command_error_handler('nsf-record-details'):
             result = _kd.get_record_details_v3(params, record_uids)
             if output_format == 'json':
                 print(json.dumps(result, indent=2))
@@ -79,7 +79,7 @@ class KeeperDriveGetRecordDetailsCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-get  (composite — inspects both records and folders)
+# nsf-get  (composite — inspects both records and folders)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveGetCommand(Command):
@@ -97,7 +97,7 @@ class KeeperDriveGetCommand(Command):
         unmask  = kwargs.get('unmask', False)
 
         if not uid:
-            raise CommandError('kd-get', 'UID parameter is required')
+            raise CommandError('nsf-get', 'UID parameter is required')
 
         resolved = self._resolve_as_folder(params, uid)
         if resolved:
@@ -111,7 +111,7 @@ class KeeperDriveGetCommand(Command):
             # they don't flow through Python's logging handlers / log files.
             if unmask:
                 logger.warning(
-                    "kd-get: --unmask was requested for record %s; "
+                    "nsf-get: --unmask was requested for record %s; "
                     "sensitive field values will be displayed on stdout only.",
                     resolved,
                 )
@@ -119,7 +119,7 @@ class KeeperDriveGetCommand(Command):
                 params, resolved, verbose, unmask)
             return
 
-        raise CommandError('kd-get', f'Cannot find any KeeperDrive object with UID or title: {uid}')
+        raise CommandError('nsf-get', f'Cannot find any KeeperDrive object with UID or title: {uid}')
 
     # ── Resolution ────────────────────────────────────────────────────
 
