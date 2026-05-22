@@ -156,6 +156,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def execute(self, params, **kwargs):
         name = self.get_integration_name()
+        self._require_file_based_config(params, f'{name.lower()}-app-setup')
 
         # Phase 1 -- Docker service mode setup
         print(f"\n{bcolors.BOLD}Phase 1: Running Docker Service Mode Setup{bcolors.ENDC}")

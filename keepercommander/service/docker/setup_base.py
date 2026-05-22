@@ -39,6 +39,31 @@ from ..config.record_handler import RecordHandler
 class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
 
+    @staticmethod
+    def _require_file_based_config(params, command_name: str) -> None:
+        """Raise CommandError if credentials are stored in the OS keychain.
+
+        Service setup commands (docker-setup, slack-app-setup, teams-app-setup)
+        need to upload config.json to the Keeper vault.  When keychain mode is
+        active, config.json only contains a storage pointer — not the actual
+        credentials — so the upload would be incomplete or incorrect.
+
+        Users must re-login with --config-file to store credentials locally
+        before running these commands.
+        """
+        from ...config_storage.loader import CONFIG_STORAGE_URL, _is_os_keychain_url
+        config_storage = params.config.get(CONFIG_STORAGE_URL, '') if isinstance(params.config, dict) else ''
+        if _is_os_keychain_url(config_storage):
+            raise CommandError(
+                command_name,
+                f'{bcolors.FAIL}{bcolors.BOLD}Error:{bcolors.ENDC} '
+                f'{bcolors.FAIL}This command requires credentials to be stored in config.json, '
+                f'but they are currently stored in the OS keychain.{bcolors.ENDC}\n\n'
+                f'{bcolors.OKBLUE}Please re-login with the --config-file flag first:{bcolors.ENDC}\n\n'
+                f'    {bcolors.OKBLUE}keeper login --config-file{bcolors.ENDC}\n\n'
+                f'Then re-run this command.'
+            )
+
     def run_setup_steps(self, params, folder_name: str, app_name: str, record_name: str,
                        config_path: str, timeout: str, skip_device_setup: bool = False) -> SetupResult:
         """
