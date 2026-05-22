@@ -10,7 +10,7 @@
 #
 
 """
-KeeperDrive — shared utilities, constants, and design-pattern helpers.
+Nested Share Folder — shared utilities, constants, and design-pattern helpers.
 
 Principles applied:
   - DRY: All repeated logic (expiration parsing, folder resolution,
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 
 ROOT_FOLDER_UID = 'AAAAAAAAAAAAAAAAAPmtNA'
-"""Sentinel UID the server uses for the KeeperDrive root folder."""
+"""Sentinel UID the server uses for the Nested Share Folder root folder."""
 
 RECORD_PERM_LABELS = [
     ('can_view_title',       'View Title'),
@@ -88,9 +88,9 @@ def command_error_handler(cmd_name):
 
     Usage::
 
-        with command_error_handler('kd-mkdir'):
+        with command_error_handler('nsf-mkdir'):
             result = api_call(...)
-            check_result(result, 'kd-mkdir')
+            check_result(result, 'nsf-mkdir')
     """
     try:
         yield
@@ -141,53 +141,53 @@ def normalize_parent_uid(uid):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def resolve_folder_uid(params, identifier):
-    """Resolve a folder name, path, or UID to a KeeperDrive folder UID.
+    """Resolve a folder name, path, or UID to a Nested Share Folder UID.
 
     Delegates to the service layer's ``resolve_folder_identifier``
     to avoid duplicating resolution logic.
     """
     if not identifier:
         return None
-    from ... import keeper_drive as _kd
-    return _kd.resolve_folder_identifier(params, identifier)
+    from ... import nested_share_folder as _nsf
+    return _nsf.resolve_folder_identifier(params, identifier)
 
 
 
 _LEGACY_TO_KD_RECORD_MSG = (
-    "Cannot use legacy record '{ident}' with a KeeperDrive command. "
+    "Cannot use legacy record '{ident}' with a Nested Share Folder command. "
 )
 _LEGACY_TO_KD_FOLDER_MSG = (
-    "Folder '{ident}' is a legacy folder. KeeperDrive commands operate "
-    "only on KeeperDrive folders."
+    "Folder '{ident}' is a legacy folder. Nested Share Folder commands operate "
+    "only on Nested Share Folders."
 )
 
 
-def is_keeper_drive_record(params, record_uid):
-    """Return True when *record_uid* is a KeeperDrive (v3) record."""
+def is_nested_share_record(params, record_uid):
+    """Return True when *record_uid* is a Nested Share Folder (v3) record."""
     return bool(record_uid) and record_uid in getattr(
-        params, 'keeper_drive_records', {})
+        params, 'nested_share_records', {})
 
 
-def is_keeper_drive_folder(params, folder_uid):
-    """Return True when *folder_uid* is a KeeperDrive folder.
+def is_nested_share_folder(params, folder_uid):
+    """Return True when *folder_uid* is a Nested Share Folder.
     """
     if not folder_uid:
         return False
     if folder_uid == ROOT_FOLDER_UID:
         return True
-    return folder_uid in getattr(params, 'keeper_drive_folders', {})
+    return folder_uid in getattr(params, 'nested_share_folders', {})
 
 
-def ensure_keeper_drive_record(params, record_uid, cmd_name, identifier=None):
-    """Raise ``CommandError`` if *record_uid* is not a KeeperDrive record."""
-    if not is_keeper_drive_record(params, record_uid):
+def ensure_nested_share_record(params, record_uid, cmd_name, identifier=None):
+    """Raise ``CommandError`` if *record_uid* is not a Nested Share Record."""
+    if not is_nested_share_record(params, record_uid):
         ident = identifier or record_uid
         raise CommandError(cmd_name, _LEGACY_TO_KD_RECORD_MSG.format(ident=ident))
 
 
-def ensure_keeper_drive_folder(params, folder_uid, cmd_name, identifier=None):
-    """Raise ``CommandError`` if *folder_uid* is not a KeeperDrive folder."""
-    if not is_keeper_drive_folder(params, folder_uid):
+def ensure_nested_share_folder(params, folder_uid, cmd_name, identifier=None):
+    """Raise ``CommandError`` if *folder_uid* is not a Nested Share Folder."""
+    if not is_nested_share_folder(params, folder_uid):
         ident = identifier or folder_uid
         raise CommandError(cmd_name, _LEGACY_TO_KD_FOLDER_MSG.format(ident=ident))
 
@@ -242,36 +242,36 @@ def classify_share_recipient(params, recipient):
 
 def find_folder_location(params, record_uid):
     """Return the display name of the first folder containing *record_uid*."""
-    kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
-    kd_folders = getattr(params, 'keeper_drive_folders', {})
-    for fuid, rec_set in kd_folder_records.items():
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', {})
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    for fuid, rec_set in nsf_folder_records.items():
         if record_uid in rec_set:
             if fuid == ROOT_FOLDER_UID:
                 return 'root'
-            if fuid in kd_folders:
-                return kd_folders[fuid].get('name', fuid)
+            if fuid in nsf_folders:
+                return nsf_folders[fuid].get('name', fuid)
             return fuid
     return ''
 
 
 def collect_records_in_folder(params, folder_uid, recursive=False):
-    """Walk Keeper Drive membership tables to collect record UIDs in *folder_uid*.
+    """Walk Nested Share Folder membership tables to collect record UIDs in *folder_uid*.
 
-    KeeperDrive does not store ``record_uids`` / ``children`` on folder objects;
-    record membership lives in ``params.keeper_drive_folder_records`` and the
-    folder hierarchy in ``params.keeper_drive_folders[*]['parent_uid']``. This
+    Nested Share Folder does not store ``record_uids`` / ``children`` on folder objects;
+    record membership lives in ``params.nested_share_folder_records`` and the
+    folder hierarchy in ``params.nested_share_folders[*]['parent_uid']``. This
     helper walks both, optionally recursing into sub-folders.
 
     Returns an ordered list of unique record UIDs (preserves first-seen order).
     """
-    kd_folders = getattr(params, 'keeper_drive_folders', {})
-    kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', {})
 
     seen = set()
     record_uids = []
 
     def add_records(fuid):
-        for rec_uid in kd_folder_records.get(fuid, set()) or ():
+        for rec_uid in nsf_folder_records.get(fuid, set()) or ():
             if rec_uid not in seen:
                 seen.add(rec_uid)
                 record_uids.append(rec_uid)
@@ -285,7 +285,7 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
         add_records(fuid)
         if not recursive:
             return
-        for child_uid, child_obj in kd_folders.items():
+        for child_uid, child_obj in nsf_folders.items():
             if child_obj.get('parent_uid') == fuid and child_uid not in visited:
                 walk(child_uid)
 
@@ -379,17 +379,17 @@ def infer_role(access):
 
 def role_label(access_role_type):
     """Convert a numeric ``access_role_type`` to a readable uppercase label."""
-    from ... import keeper_drive as _kd
+    from ... import nested_share_folder as _nsf
     if access_role_type is not None:
         return next(
-            (k.upper() for k, v in _kd.ROLE_NAME_MAP.items()
+            (k.upper() for k, v in _nsf.ROLE_NAME_MAP.items()
              if v == access_role_type and '_' not in k),
             str(access_role_type),
         )
     return ''
 
 
-# Map backend AccessRoleType enum names to KeeperDrive display labels.
+# Map backend AccessRoleType enum names to Nested Share Folder display labels.
 # Source of truth: folder_pb2.AccessRoleType (NAVIGATOR=0 ... MANAGER=6).
 _ACCESS_ROLE_DISPLAY_LABELS = {
     'NAVIGATOR':             'contributor',
@@ -404,11 +404,11 @@ _ACCESS_ROLE_DISPLAY_LABELS = {
 
 
 def format_role_display(role):
-    """Convert an ``AccessRoleType`` to a KeeperDrive display role label.
+    """Convert an ``AccessRoleType`` to a Nested Share Folder display role label.
 
     Accepts either the proto enum name (``'SHARED_MANAGER'``) or its integer
     value, and returns the canonical hyphenated lowercase label used across
-    KeeperDrive (``'share-manager'``, ``'full-manager'``, ``'viewer'`` …).
+    Nested Share Folder (``'share-manager'``, ``'full-manager'``, ``'viewer'`` …).
     Falls back to a best-effort lowercase form when the role is unknown.
     """
     if role is None or role == '':
@@ -426,11 +426,11 @@ def format_role_display(role):
 
 
 def get_access_role_label(access):
-    """Get the KeeperDrive role label for an access entry.
+    """Get the Nested Share Folder role label for an access entry.
 
     Prefers the stored ``access_role_type`` (proto enum int) when available;
     otherwise falls back to inferring the role from permission flags. The
-    returned label uses the canonical hyphenated lowercase KeeperDrive form
+    returned label uses the canonical hyphenated lowercase Nested Share Folder form
     (e.g. ``'full-manager'``, ``'share-manager'``, ``'viewer'``).
     """
     role_int = access.get('access_role_type')
@@ -532,7 +532,7 @@ def _check_folder_permission(params, folder_uid, permission_key, error_message, 
       * Otherwise, allow only when ``permissions[permission_key]`` is truthy.
     """
     from ...proto import folder_pb2
-    accesses = getattr(params, 'keeper_drive_folder_accesses', {}).get(folder_uid, [])
+    accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid, [])
     if not accesses:
         return
 
@@ -556,7 +556,7 @@ def _check_record_permission(params, record_uid, permission_key, error_message, 
 
     Same fail-closed semantics as :func:`_check_folder_permission`.
     """
-    accesses = getattr(params, 'keeper_drive_record_accesses', {}).get(record_uid, [])
+    accesses = getattr(params, 'nested_share_record_accesses', {}).get(record_uid, [])
     if not accesses:
         return
 
@@ -584,7 +584,7 @@ def load_record_metadata(params, record_uid):
         ``title``, ``type``, ``fields``, ``notes``,
         ``revision``, ``version``, ``folder_location``
     """
-    from ... import keeper_drive as _kd
+    from ... import nested_share_folder as _nsf
 
     title = record_uid
     rec_type = ''
@@ -593,9 +593,9 @@ def load_record_metadata(params, record_uid):
     revision = 0
     version = 0
 
-    kd_record_data = getattr(params, 'keeper_drive_record_data', {})
-    if record_uid in kd_record_data:
-        data_obj = kd_record_data[record_uid]
+    nsf_record_data = getattr(params, 'nested_share_record_data', {})
+    if record_uid in nsf_record_data:
+        data_obj = nsf_record_data[record_uid]
         if 'data_json' in data_obj:
             dj = data_obj['data_json']
             title    = dj.get('title', record_uid)
@@ -603,15 +603,15 @@ def load_record_metadata(params, record_uid):
             fields   = dj.get('fields', [])
             notes    = dj.get('notes', '') or ''
 
-    kd_records = getattr(params, 'keeper_drive_records', {})
-    if record_uid in kd_records:
-        rec_obj = kd_records[record_uid]
+    nsf_records = getattr(params, 'nested_share_records', {})
+    if record_uid in nsf_records:
+        rec_obj = nsf_records[record_uid]
         revision = rec_obj.get('revision', 0)
         version  = rec_obj.get('version', 0)
 
     if title == record_uid:
         try:
-            det = _kd.get_record_details_v3(params, [record_uid])
+            det = _nsf.get_record_details_v3(params, [record_uid])
             if det['data']:
                 d = det['data'][0]
                 title    = d.get('title', record_uid)

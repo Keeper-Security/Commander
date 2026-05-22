@@ -1,5 +1,5 @@
 """
-KeeperDrive — record CRUD, sharing, and ownership transfer.
+Nested Share Folder — record CRUD, sharing, and ownership transfer.
 """
 
 import json
@@ -294,11 +294,11 @@ def _try_decrypt_record_key(params, enc_rk, rk_type, uid):
     elif rk_type in (record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC, 'ENCRYPTED_BY_PUBLIC_KEY_ECC'):
         drk = crypto.decrypt_ec(enc_rk, params.ecc_key)
 
-    if not drk and uid in getattr(params, 'keeper_drive_record_keys', {}):
-        for rk_entry in params.keeper_drive_record_keys[uid]:
+    if not drk and uid in getattr(params, 'nested_share_record_keys', {}):
+        for rk_entry in params.nested_share_record_keys[uid]:
             fuid = rk_entry.get('folder_uid')
             if fuid:
-                fobj = getattr(params, 'keeper_drive_folders', {}).get(fuid, {})
+                fobj = getattr(params, 'nested_share_folders', {}).get(fuid, {})
                 fk = fobj.get('folder_key_unencrypted')
                 if fk:
                     try: drk = crypto.decrypt_aes_v2(enc_rk, fk); break

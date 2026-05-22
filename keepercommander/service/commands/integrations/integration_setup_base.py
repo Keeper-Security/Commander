@@ -97,7 +97,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return f'keeper-service-{self.get_integration_name().lower()}'
 
     def get_service_commands(self) -> str:
-        return 'search,share-record,kd-share-record,share-folder,kd-share-folder,share-report,record-add,kd-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,sync-down'
+        return 'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,sync-down'
 
     # -- Parser (auto-built from name, cached per subclass) ----------
 

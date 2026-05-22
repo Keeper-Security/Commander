@@ -1,5 +1,5 @@
 """
-KeeperDrive — folder-record linking, moving, and batch operations.
+Nested Share Folder — folder-record linking, moving, and batch operations.
 """
 
 import logging

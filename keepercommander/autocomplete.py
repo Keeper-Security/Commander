@@ -24,7 +24,7 @@ from .commands.connect import ConnectCommand
 from .command_categories import COMMAND_CATEGORIES
 from .commands import commands, enterprise_commands, msp_commands
 
-_KEEPER_DRIVE_COMMANDS = COMMAND_CATEGORIES.get('KeeperDrive Commands', set())
+_NESTED_SHARE_FOLDER_COMMANDS = COMMAND_CATEGORIES.get('Nested Share Folder Commands', set())
 from .subfolder import try_resolve_path as sf_try_resolve_path
 
 
@@ -135,9 +135,9 @@ class CommandCompleter(Completer):
             if document.is_cursor_at_the_end:
                 pos = document.text.find(' ')
                 if pos == -1:
-                    hide_kd = self.params.is_feature_disallowed('keeper_drive')
+                    hide_nsf = self.params.is_feature_disallowed('keeper_drive')
                     cmds = [x for x in commands
-                            if x.startswith(document.text) and not (hide_kd and x in _KEEPER_DRIVE_COMMANDS)]
+                            if x.startswith(document.text) and not (hide_nsf and x in _NESTED_SHARE_FOLDER_COMMANDS)]
                     if self.aliases:
                         al_cmds = [x[0] for x in self.aliases.items() if type(x[1]) == tuple and x[0].startswith(document.text)]
                         cmds.extend(al_cmds)

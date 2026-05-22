@@ -1,8 +1,8 @@
 """
-KeeperDrive API package — single public facade.
+Nested Share Folder API package — single public facade.
 
 Every symbol that the commands layer (or any external consumer) needs is
-available here via ``from keepercommander import keeper_drive as _kd``.
+available here via ``from keepercommander import nested_share_folder as _nsf``.
 
 Imports are **lazy** (using module-level ``__getattr__``) to avoid circular
 dependencies during early module loading (e.g. ``api.py`` → ``sync_down.py``
@@ -53,8 +53,8 @@ _SUBMODULE_MAP = {
     ],
     'removal_api': [
         'remove_record_v3', 'remove_folder_v3',
-        'find_kd_folders_for_record',
-        'resolve_kd_record_uid', 'resolve_kd_folder_uid',
+        'find_nested_share_folders_for_record',
+        'resolve_nested_share_record_uid', 'resolve_nested_share_folder_uid',
     ],
 }
 
