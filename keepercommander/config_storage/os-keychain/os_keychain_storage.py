@@ -9,25 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-"""
-OS-native keychain storage backend for Keeper Commander.
-
-Protected config fields are stored as a single JSON blob in one keyring entry.
-The OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service)
-handles encryption and integrity natively, so no separate integrity hash is needed.
-Backend availability is detected by inspecting the keyring backend module name,
-consistent with KeyringConfigStorage.is_available() in the KSM CLI.
-
-Storage layout in the OS keychain:
-  service / application : KeeperCommander
-  account / key         : <url netloc>  →  JSON blob of all protected fields
-
-The account key is derived from the netloc of the storage URL (e.g. the 8-char
-SHA-256 prefix of the config file path written by _make_os_keychain_url).  This
-allows multiple Commander config files on the same OS user to coexist without
-overwriting each other's keychain entry.  Legacy entries written with the old
-hardcoded key 'config' are handled by _keychain_account_from_url in loader.py.
-"""
+"""OS-native keychain storage backend for Keeper Commander (macOS Keychain, Windows Credential Manager, Linux Secret Service)."""
 
 import json
 import logging
@@ -42,30 +24,14 @@ KEYRING_SERVICE = 'KeeperCommander'
 
 
 class SecureStorage(SecureStorageBase):
-    """OS-native keychain storage backend for Commander configuration.
-
-    Delegates to the appropriate OS facility via the Python ``keyring`` library:
-      - macOS   → Keychain (Security framework)
-      - Windows → Credential Manager (DPAPI-backed)
-      - Linux desktop → SecretService API (GNOME Keyring / KWallet)
-
-    The entire set of protected configuration fields is serialised to a single
-    JSON blob and stored under one keyring entry.  The OS keychain provides
-    encryption and access control natively.
-
-    No sensitive data is written back to config.json; the file only retains the
-    ``config_storage`` key that points to this backend.
+    """Stores protected config fields as a JSON blob in the OS keychain via the keyring library.
+    Supports macOS Keychain, Windows Credential Manager, and Linux SecretService.
+    config.json retains only the config_storage pointer — no credentials on disk.
     """
 
     @staticmethod
     def _account_key(url: str) -> str:
-        """Derive the keyring account key from the storage URL netloc.
-
-        Each config file gets a unique netloc (an 8-char path hash) via
-        _make_os_keychain_url in loader.py, so multiple profiles on the
-        same OS user do not overwrite each other.  Falls back to 'config'
-        for legacy entries written before per-profile keys were introduced.
-        """
+        """Return keyring account key from URL netloc; falls back to 'config' for legacy entries."""
         netloc = urlparse(url).netloc if url else ''
         return netloc if netloc else 'config'
 
