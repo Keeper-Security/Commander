@@ -165,6 +165,9 @@ list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='s
 
 
 list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List all shared folders', parents=[base.report_output_parser])
+list_sf_parser.add_argument('--roe-eligible', dest='roe_eligible', action='store_true',
+                            help='only list shared folders eligible for --rotate-on-expiration '
+                                 '(contain at least one pamUser record with rotation configured)')
 list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
@@ -1766,6 +1769,9 @@ class RecordListSfCommand(Command):
         fmt = kwargs.get('format', 'table')
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_shared_folders(params, pattern or '')
+        if kwargs.get('roe_eligible'):
+            results = [sf for sf in results
+                       if vault_extensions.shared_folder_has_pam_user_with_rotation(params, sf.shared_folder_uid)]
         if any(results):
             table = []
             headers = ['shared_folder_uid', 'name'] if fmt == 'json' else ['Shared Folder UID', 'Name']
