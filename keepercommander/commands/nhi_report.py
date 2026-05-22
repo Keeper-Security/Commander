@@ -39,15 +39,10 @@ PAM_GATEWAY_EVENT_TYPES = {
     'pam_gateway_online',
 }
 
-KSM_DEVICE_EVENT_TYPES = {
-    'app_client_access',
-}
-
 ALL_PAM_EVENT_TYPES = PAM_USER_EVENT_TYPES | PAM_RESOURCE_EVENT_TYPES | PAM_GATEWAY_EVENT_TYPES
 
-_UID_RE = re.compile(r'[A-Za-z0-9_-]{22}$')
+_UID_RE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])')
 _GATEWAY_ONLINE_UID_RE = re.compile(r'\(UID: ([^)]+)\)')
-_KSM_DEVICE_RE = re.compile(r'^KSM device (.+?) has accessed secrets')
 
 _CREATED_LABELS = {
     'today':         'Today',
@@ -60,9 +55,15 @@ _CREATED_LABELS = {
     'last_year':     'Last Year',
 }
 
+NHI_SCOPE_NOTE = (
+    'Note: This NHI report only includes active PAM record types '
+    '(PAM Users and PAM Resources) and active Keeper Gateways. '
+    'KSM Devices are not included in this calculation.'
+)
+
 nhi_report_parser = argparse.ArgumentParser(
     prog='nhi-report',
-    description='Generate a Non-Human Identity (NHI) report listing PAM users, PAM resources, gateways, and KSM devices',
+    description='Generate a Non-Human Identity (NHI) report listing PAM users, PAM resources, and gateways',
     parents=[report_output_parser],
 )
 nhi_report_parser.add_argument(
@@ -94,38 +95,26 @@ class NhiReportCommand(Command):
             event_type=list(ALL_PAM_EVENT_TYPES),
         )
 
-        logging.info('Fetching device NHI events (created=%s)...', created)
-        device_json = AuditReportCommand().execute(
-            params,
-            report_type='raw',
-            created=created,
-            limit=-1,
-            format='json',
-            event_type=list(KSM_DEVICE_EVENT_TYPES),
-        )
-
         pam_events = json.loads(pam_json) if pam_json else []
-        device_events = json.loads(device_json) if device_json else []
 
-        pam_users, pam_resources, gateways, ksm_devices = self._collect_nhi_data(pam_events, device_events)
+        pam_users, pam_resources, gateways = self._collect_nhi_data(pam_events)
 
         logging.info(
-            'NHI summary: %d PAM users, %d PAM resources, %d gateways, %d KSM devices',
-            len(pam_users), len(pam_resources), len(gateways), len(ksm_devices),
+            'NHI summary: %d PAM users, %d PAM resources, %d gateways',
+            len(pam_users), len(pam_resources), len(gateways),
         )
 
         if fmt == 'json':
-            return self._export_json(pam_users, pam_resources, gateways, ksm_devices, output)
+            return self._export_json(pam_users, pam_resources, gateways, output)
         elif fmt == 'csv':
-            return self._export_csv(pam_users, pam_resources, gateways, ksm_devices, output)
+            return self._export_csv(pam_users, pam_resources, gateways, output)
         else:
-            self._print_summary(pam_users, pam_resources, gateways, ksm_devices, created)
+            self._print_summary(pam_users, pam_resources, gateways, created)
 
     @staticmethod
     def _collect_nhi_data(
         pam_events: list,
-        device_events: list,
-    ) -> Tuple[Set[str], Set[str], Set[str], Set[str]]:
+    ) -> Tuple[Set[str], Set[str], Set[str]]:
         pam_users: Set[str] = set()
         pam_resources: Set[str] = set()
         gateways: Set[str] = set()
@@ -146,36 +135,26 @@ class NhiReportCommand(Command):
                 if uid:
                     pam_resources.add(uid)
 
-        ksm_devices: Set[str] = set()
-
-        for event in device_events:
-            message = event.get('message', '')
-            ksm_match = _KSM_DEVICE_RE.match(message)
-            if ksm_match:
-                ksm_devices.add(ksm_match.group(1))
-
-        return pam_users, pam_resources, gateways, ksm_devices
+        return pam_users, pam_resources, gateways
 
     @staticmethod
     def _export_json(
         pam_users: Set[str],
         pam_resources: Set[str],
         gateways: Set[str],
-        ksm_devices: Set[str],
         output: Optional[str],
     ):
         all_items = (
             [{'identifier': uid, 'type': 'PAM User'} for uid in sorted(pam_users)] +
             [{'identifier': uid, 'type': 'PAM Resource'} for uid in sorted(pam_resources)] +
-            [{'identifier': name, 'type': 'Gateway'} for name in sorted(gateways)] +
-            [{'identifier': name, 'type': 'KSM Device'} for name in sorted(ksm_devices)]
+            [{'identifier': name, 'type': 'Gateway'} for name in sorted(gateways)]
         )
         report = {
+            'note': NHI_SCOPE_NOTE,
             'all': all_items,
             'pam_users': sorted(pam_users),
             'pam_resources': sorted(pam_resources),
             'gateways': sorted(gateways),
-            'ksm_devices': sorted(ksm_devices),
         }
         if output:
             _, ext = os.path.splitext(output)
@@ -192,19 +171,19 @@ class NhiReportCommand(Command):
         pam_users: Set[str],
         pam_resources: Set[str],
         gateways: Set[str],
-        ksm_devices: Set[str],
         output: Optional[str],
     ):
         rows = (
             [[uid, 'PAM User'] for uid in sorted(pam_users)] +
             [[uid, 'PAM Resource'] for uid in sorted(pam_resources)] +
-            [[name, 'Gateway'] for name in sorted(gateways)] +
-            [[name, 'KSM Device'] for name in sorted(ksm_devices)]
+            [[name, 'Gateway'] for name in sorted(gateways)]
         )
 
         import io
         buf = io.StringIO()
         writer = csv.writer(buf)
+        writer.writerow([NHI_SCOPE_NOTE])
+        writer.writerow([])
         writer.writerow(['identifier', 'type'])
         writer.writerows(rows)
         writer.writerow([])
@@ -225,18 +204,17 @@ class NhiReportCommand(Command):
         pam_users: Set[str],
         pam_resources: Set[str],
         gateways: Set[str],
-        ksm_devices: Set[str],
         created: str,
     ):
-        total = len(pam_users) + len(pam_resources) + len(gateways) + len(ksm_devices)
+        total = len(pam_users) + len(pam_resources) + len(gateways)
         rows = [
             ['PAM Users',     len(pam_users)],
             ['PAM Resources', len(pam_resources)],
             ['Gateways',      len(gateways)],
-            ['KSM Devices',   len(ksm_devices)],
             ['Total',         total],
         ]
         date_label = _CREATED_LABELS.get(created, created)
+        print(f'\n{NHI_SCOPE_NOTE}\n')
         dump_report_data(rows, ['nhi_type', 'count'], title=f'NHI Report Summary  |  Date Range: {date_label}', fmt='table')
         print('\nFor the full detailed list, export using:')
         print('  nhi-report --format=csv --output=nhi_report.csv')
@@ -244,8 +222,10 @@ class NhiReportCommand(Command):
 
 
 def _extract_uid(message: str) -> Optional[str]:
-    parts = message.split()
-    if not parts:
+    """Return the first 22-char Keeper record UID found anywhere in the
+    message, or None if no such token exists. Matches must be bounded
+    by non-UID characters so substrings of longer tokens are skipped."""
+    if not message:
         return None
-    last = parts[-1]
-    return last if _UID_RE.match(last) else None
+    m = _UID_RE.search(message)
+    return m.group(0) if m else None
