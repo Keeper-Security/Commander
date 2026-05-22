@@ -38,21 +38,24 @@ def get_logger():
 def get_default_path(override_path=None):
     """
     Get the default path for Commander's data directory.
-    
+
     Precedence order (highest to lowest):
     1. override_path parameter (e.g., from CLI --data-dir) - auto-appends .keeper if needed
     2. KEEPER_DATA_HOME environment variable - auto-appends .keeper if needed
-    3. XDG_DATA_HOME/.keeper (XDG Base Directory Specification)
-    4. HOME/.keeper (legacy default)
-    
+    3. ~/.keeper, if it already holds a non-trivial config.json (legacy backward compatibility)
+    4. $XDG_DATA_HOME/.keeper when XDG_DATA_HOME is set
+    5. ~/.local/share/.keeper (XDG Base Directory Specification default)
+
+    Steps 4 and 5 collapse to the same path on most Linux systems, so the resolved
+    location no longer depends on whether the calling process inherited XDG_DATA_HOME
+    from a shell (relevant for systemd user services, cron, etc.).
+
     Args:
         override_path (str, optional): Override path, typically from CLI argument
-        
+
     Returns:
         Path: The path to use for Commander's data directory
     """
-    import os
-    
     def ensure_keeper_suffix(path_str):
         """Helper to ensure path ends with .keeper suffix"""
         expanded_path = Path(os.path.expanduser(path_str))
@@ -60,7 +63,19 @@ def get_default_path(override_path=None):
             return expanded_path
         else:
             return expanded_path.joinpath('.keeper')
-    
+
+    def legacy_has_state(legacy_dir):
+        """True if legacy ~/.keeper/config.json exists with real content (not empty or '{}')."""
+        try:
+            config_file = legacy_dir.joinpath('config.json')
+            if not config_file.is_file():
+                return False
+            with open(config_file) as f:
+                data = json.load(f)
+            return isinstance(data, dict) and len(data) > 0
+        except Exception:
+            return False
+
     if override_path:
         default_path = ensure_keeper_suffix(override_path)
     else:
@@ -68,12 +83,16 @@ def get_default_path(override_path=None):
         if keeper_data_home:
             default_path = ensure_keeper_suffix(keeper_data_home)
         else:
-            xdg_data_home = os.getenv('XDG_DATA_HOME')
-            if xdg_data_home:
-                default_path = Path(xdg_data_home).joinpath('.keeper')
+            legacy_dir = Path.home().joinpath('.keeper')
+            if legacy_has_state(legacy_dir):
+                default_path = legacy_dir
             else:
-                default_path = Path.home().joinpath('.keeper')
-    
+                xdg_data_home = os.getenv('XDG_DATA_HOME')
+                if xdg_data_home:
+                    default_path = Path(xdg_data_home).joinpath('.keeper')
+                else:
+                    default_path = Path.home().joinpath('.local', 'share', '.keeper')
+
     default_path.mkdir(parents=True, exist_ok=True)
     return default_path
 
