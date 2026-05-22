@@ -173,10 +173,7 @@ class ConfigFormatHandler:
         if private_key:
             return private_key
 
-        # config.json has no private_key — credentials are in the OS keychain.
-        # Avoid get_params_from_config: it calls sys.exit(1) on SecureStorageException
-        # and input() on JSON errors, both of which break daemon/Docker contexts.
-        # Instead load via KeeperParams + load_config_properties directly.
+        # No private_key in file — try loading from secure storage backend.
         try:
             from ...params import KeeperParams
             from ...config_storage.loader import load_config_properties
