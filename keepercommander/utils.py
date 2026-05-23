@@ -38,29 +38,30 @@ def get_logger():
 def get_default_path(override_path=None):
     """
     Get the default path for Commander's data directory.
-    
+
     Precedence order (highest to lowest):
     1. override_path parameter (e.g., from CLI --data-dir) - auto-appends .keeper if needed
     2. KEEPER_DATA_HOME environment variable - auto-appends .keeper if needed
-    3. XDG_DATA_HOME/.keeper (XDG Base Directory Specification)
-    4. HOME/.keeper (legacy default)
-    
+    3. Legacy ~/.keeper directory if it already exists (backward compatibility)
+    4. platformdirs.user_data_dir() + .keeper - platform-appropriate location for new installs
+
+    The legacy check uses directory existence rather than an XDG environment
+    variable so the resolved path is the same whether Commander is launched
+    from an interactive shell or a context like `systemctl --user` that does
+    not inherit the user's environment.
+
     Args:
         override_path (str, optional): Override path, typically from CLI argument
-        
+
     Returns:
         Path: The path to use for Commander's data directory
     """
-    import os
-    
+    import platformdirs
+
     def ensure_keeper_suffix(path_str):
-        """Helper to ensure path ends with .keeper suffix"""
-        expanded_path = Path(os.path.expanduser(path_str))
-        if expanded_path.name == '.keeper':
-            return expanded_path
-        else:
-            return expanded_path.joinpath('.keeper')
-    
+        expanded = Path(os.path.expanduser(path_str))
+        return expanded if expanded.name == '.keeper' else expanded.joinpath('.keeper')
+
     if override_path:
         default_path = ensure_keeper_suffix(override_path)
     else:
@@ -68,12 +69,12 @@ def get_default_path(override_path=None):
         if keeper_data_home:
             default_path = ensure_keeper_suffix(keeper_data_home)
         else:
-            xdg_data_home = os.getenv('XDG_DATA_HOME')
-            if xdg_data_home:
-                default_path = Path(xdg_data_home).joinpath('.keeper')
+            legacy_path = Path.home().joinpath('.keeper')
+            if legacy_path.is_dir():
+                default_path = legacy_path
             else:
-                default_path = Path.home().joinpath('.keeper')
-    
+                default_path = Path(platformdirs.user_data_dir()).joinpath('.keeper')
+
     default_path.mkdir(parents=True, exist_ok=True)
     return default_path
 
