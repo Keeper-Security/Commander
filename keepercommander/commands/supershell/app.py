@@ -595,6 +595,8 @@ class SuperShellApp(App):
                                         record_dict['login'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['login'] = field_value
+                                    if field_label:
+                                        record_dict['login_label'] = field_label
 
                                 # Extract URL from typed field if not already set
                                 if field_type == 'url' and field_value and not record_dict.get('login_url'):
@@ -602,6 +604,8 @@ class SuperShellApp(App):
                                         record_dict['login_url'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['login_url'] = field_value
+                                    if field_label:
+                                        record_dict['login_url_label'] = field_label
 
                                 # Extract TOTP URL from oneTimeCode field
                                 if field_type == 'oneTimeCode' and field_value and not record_dict.get('totp_url'):
@@ -2089,8 +2093,9 @@ class SuperShellApp(App):
                         display_value = '******' if actual_password else value
                     copy_value = actual_password if actual_password else None
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_value))}[/{t['primary']}]", copy_value, is_password=True)
-                elif key == 'URL':
-                    # Display URL, then TOTP if present
+                elif key == 'URL' or (record_data.get('login_url_label') and key == record_data['login_url_label']):
+                    # Display URL, then TOTP if present. Matches both the canonical "URL" label
+                    # and any custom label set on a type=url field.
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                     display_totp()  # Add TOTP section right after URL (before Notes)
                 elif key == 'Notes':

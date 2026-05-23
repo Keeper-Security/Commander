@@ -87,6 +87,9 @@ class Record:
         self.totp = None
         self.version = 2
         self.password_label = ''  # custom label on the v3 password field (e.g. "Passphrase")
+        self.login_label = ''     # custom label on the v3 login field
+        self.url_label = ''       # custom label on the v3 url field
+        self.totp_label = ''      # custom label on the v3 oneTimeCode field
 
     def load(self, data, **kwargs):
         self.version = kwargs.get('version', 2)
@@ -127,6 +130,7 @@ class Record:
                     if isinstance(field_value, str):
                         if field_type == 'login' and not self.login:
                             self.login = field_value
+                            self.login_label = field_label
                             continue
                         if field_type == 'password' and not self.password:
                             self.password = field_value
@@ -134,9 +138,11 @@ class Record:
                             continue
                         if field_type == 'url' and not self.login_url:
                             self.login_url = field_value
+                            self.url_label = field_label
                             continue
                         if field_type == 'oneTimeCode' and not self.totp:
                             self.totp = field_value
+                            self.totp_label = field_label
                             continue
 
                     if field_type:
@@ -224,12 +230,16 @@ class Record:
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
         print('{0:>20s}: {1:<20s}'.format('Type', self.record_type if self.record_type else ''))
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
-        if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
+        if self.login:
+            login_label = self.login_label or 'Login'
+            print('{0:>20s}: {1:<20s}'.format(login_label, self.login))
         if self.password:
             display_password = (self.unmasked_password or self.password) if unmask else '********'
             password_label = self.password_label or 'Password'
             print('{0:>20s}: {1:<20s}'.format(password_label, display_password))
-        if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
+        if self.login_url:
+            url_label = self.url_label or 'URL'
+            print('{0:>20s}: {1:<20s}'.format(url_label, self.login_url))
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
 
         if len(self.custom_fields) > 0:
@@ -311,7 +321,8 @@ class Record:
                     'Attachments:' if i == 0 else '', atta.get('title') or atta.get('name'), sz, scale, 'ID', atta.get('id')))
 
         if self.totp:
-            print('{0:>20s}: {1}'.format('TOTP URL', self.totp if unmask else '********'))
+            totp_label = self.totp_label or 'TOTP URL'
+            print('{0:>20s}: {1}'.format(totp_label, self.totp if unmask else '********'))
             code, remain, _ = get_totp_code(self.totp)
             if code:
                 print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
