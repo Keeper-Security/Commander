@@ -205,7 +205,12 @@ def convert_keeper_record(record, has_attachments=False):
                 rec.login = field_value
             elif field_type == 'password' and not rec.password and isinstance(field_value, str):
                 rec.password = field_value
-            elif field_type == 'url' and not field.get('label') and not rec.login_url and isinstance(field_value, str):
+            elif field_type == 'url' and not rec.login_url and isinstance(field_value, str) and \
+                    (not field.get('label') or field.get('label') == field_type):
+                # Treat label='url' as canonical (KC-1163 stamps the type name as a
+                # default label on standard fields). Without this, the URL stored on
+                # imported login records is left out of rec.login_url, the partial
+                # hash diverges, and import --update creates duplicates.
                 rec.login_url = field_value
             elif field_type.endswith('Ref'):
                 ref_type = field_type[:-3]
