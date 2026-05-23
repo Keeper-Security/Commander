@@ -202,7 +202,7 @@ def execute_rest(context, endpoint, payload, timeout=None):
                                proxies=context.proxies, verify=context.certificate_check,
                                timeout=timeout or DEFAULT_TIMEOUT)
         except requests.exceptions.SSLError as e:
-            doc_url = 'https://docs.keeper.io/secrets-manager/commander-cli/using-commander/troubleshooting-commander-cli#ssl-certificate-errors'
+            doc_url = 'https://docs.keeper.io/keeperpam/commander-cli/troubleshooting-commander-cli#ssl-certificate-errors'
             if len(e.args) > 0:
                 inner_e = e.args[0]
                 if hasattr(inner_e, 'reason'):
