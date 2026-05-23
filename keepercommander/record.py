@@ -86,6 +86,7 @@ class Record:
         self.unmasked_password = None
         self.totp = None
         self.version = 2
+        self.password_label = ''  # custom label on the v3 password field (e.g. "Passphrase")
 
     def load(self, data, **kwargs):
         self.version = kwargs.get('version', 2)
@@ -129,6 +130,7 @@ class Record:
                             continue
                         if field_type == 'password' and not self.password:
                             self.password = field_value
+                            self.password_label = field_label
                             continue
                         if field_type == 'url' and not self.login_url:
                             self.login_url = field_value
@@ -225,7 +227,8 @@ class Record:
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
         if self.password:
             display_password = (self.unmasked_password or self.password) if unmask else '********'
-            print('{0:>20s}: {1:<20s}'.format('Password', display_password))
+            password_label = self.password_label or 'Password'
+            print('{0:>20s}: {1:<20s}'.format(password_label, display_password))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
 

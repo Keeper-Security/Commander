@@ -586,6 +586,8 @@ class SuperShellApp(App):
                                         record_dict['password'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['password'] = field_value
+                                    if field_label:
+                                        record_dict['password_label'] = field_label
 
                                 # Extract login from typed field if not already set
                                 if field_type == 'login' and field_value and not record_dict.get('login'):
@@ -2077,9 +2079,10 @@ class SuperShellApp(App):
                     # Show 'app' for app records if type is blank
                     display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(display_type))}[/{t['primary_dim']}]", display_type)
-                elif key == 'Password':
+                elif key == 'Password' or (record_data.get('password_label') and key == record_data['password_label']):
                     # Show masked password but use ClipboardCommand to copy (generates audit event)
-                    # Respect unmask_secrets toggle
+                    # Respect unmask_secrets toggle. Matches both the canonical "Password" label
+                    # and any custom label (e.g. "Passphrase") set on a type=password field.
                     if self.unmask_secrets:
                         display_value = actual_password if actual_password else value
                     else:
