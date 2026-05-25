@@ -1,3 +1,5 @@
+import datetime
+from contextlib import contextmanager
 from unittest import TestCase, mock
 
 from data_vault import get_synced_params, VaultEnvironment
@@ -64,18 +66,21 @@ class TestRegister(TestCase):
         cmd.execute(params, email=['user2@keepersecurity.com'], action='revoke', record=record_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
-    def _patch_record_type_as_pam_user(self, target_uid):
-        """Patch vault.KeeperRecord.load so the given record reports record_type='pamUser'."""
+    @contextmanager
+    def _make_record_rotation_eligible(self, params, target_uid):
+        """Present the record as a pamUser with rotation configured (ROE-eligible)."""
         from keepercommander import vault
+        params.record_rotation_cache[target_uid] = {'record_uid': target_uid, 'revision': 1}
         real_load = vault.KeeperRecord.load
 
-        def fake_load(params, record_uid, *args, **kwargs):
-            loaded = real_load(params, record_uid, *args, **kwargs)
-            if record_uid == target_uid and loaded is not None:
+        def fake_load(p, uid, *args, **kwargs):
+            loaded = real_load(p, uid, *args, **kwargs)
+            if uid == target_uid and loaded is not None:
                 loaded.get_record_type = lambda: 'pamUser'
             return loaded
 
-        return mock.patch.object(vault.KeeperRecord, 'load', side_effect=fake_load)
+        with mock.patch.object(vault.KeeperRecord, 'load', side_effect=fake_load):
+            yield
 
     def _capture_shared_record_requests(self):
         """Patch the response-builder so we can assert on outbound SharedRecord protos."""
@@ -119,7 +124,7 @@ class TestRegister(TestCase):
 
             cmd = register.ShareRecordCommand()
             TestRegister.expected_commands.extend(['records_share_update'])
-            with self._patch_record_type_as_pam_user(record_uid):
+            with self._make_record_rotation_eligible(params, record_uid):
                 cmd.execute(params,
                             email=['user2@keepersecurity.com'],
                             action='grant',
@@ -148,7 +153,7 @@ class TestRegister(TestCase):
 
             cmd = register.ShareRecordCommand()
             TestRegister.expected_commands.extend(['records_share_update'])
-            with self._patch_record_type_as_pam_user(record_uid):
+            with self._make_record_rotation_eligible(params, record_uid):
                 cmd.execute(params,
                             email=['user2@keepersecurity.com'],
                             action='grant',
@@ -293,6 +298,55 @@ class TestRegister(TestCase):
         TestRegister.expected_commands.extend(['shared_folder_update_v3'])
         cmd.execute(params, action='revoke', user=['user2@keepersecurity.com'], folder=shared_folder_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
+
+    def test_share_folder_prepare_request_sets_rotate_on_expiration(self):
+        """SharedFolderUpdateUser/Team/Record all carry rotateOnExpiration when -roe is on."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        team_uid = utils.base64_url_encode(b'a' * 16)
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf.setdefault('users', [])
+        curr_sf['teams'] = [{'team_uid': team_uid, 'manage_records': True, 'manage_users': True}]
+        curr_sf.setdefault('records', [])
+
+        future_ts = int(datetime.datetime.now().timestamp()) + 86_400
+
+        params.key_cache['user2@keepersecurity.com'] = mock.MagicMock(
+            rsa=utils.base64_url_decode(vault_env.encoded_public_key), ec=None)
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[team_uid],
+            rec_uids=[record_uid],
+            share_expiration=future_ts,
+            rotate_on_expiration=True,
+        )
+
+        user_msgs = list(rq.sharedFolderAddUser) + list(rq.sharedFolderUpdateUser)
+        team_msgs = list(rq.sharedFolderAddTeam) + list(rq.sharedFolderUpdateTeam)
+        record_msgs = list(rq.sharedFolderAddRecord) + list(rq.sharedFolderUpdateRecord)
+
+        for msgs, label in [(user_msgs, 'user'), (team_msgs, 'team'), (record_msgs, 'record')]:
+            self.assertTrue(msgs, f'expected at least one {label} proto on the wire')
+            for m in msgs:
+                self.assertTrue(m.rotateOnExpiration,
+                                f'rotateOnExpiration must be set on every {label} proto')
+                self.assertGreater(m.expiration, 0)
+                self.assertEqual(m.timerNotificationType, record_pb2.NOTIFY_OWNER)
+
+    def test_share_folder_rotate_on_expiration_rejects_folder_without_pam_user(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        cmd = register.ShareFolderCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
+                        folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
+        self.assertIn('pamUser', str(ctx.exception))
 
     @staticmethod
     def record_share_rq_rs(rq):

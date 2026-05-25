@@ -32,7 +32,7 @@ from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
 from .utils import SyncDownCommand
-from .. import api, utils, crypto, constants, rest_api, vault
+from .. import api, utils, crypto, constants, rest_api, vault, vault_extensions
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
 from ..loginv3 import LoginV3API
@@ -89,8 +89,8 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store',
                         help='share expiration: never or period')
 share_record_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
                                  help='rotate the password when the share access expires. '
-                                      'Requires --action=grant, a positive --expire-at/--expire-in '
-                                      '(not "never"), and a pamUser record.')
+                                      'Only valid on grant; requires a positive --expire-at/--expire-in '
+                                      '(not "never") and a pamUser record with rotation configured.')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
@@ -118,6 +118,11 @@ expiration.add_argument('--expire-at', dest='expire_at', action='store', metavar
                         help='share expiration: never or ISO datetime (yyyy-MM-dd[ hh:mm:ss])')
 expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar='PERIOD',
                         help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
+share_folder_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
+                                 help='rotate the password when the share access expires. '
+                                      'Only valid on grant; requires a positive --expire-at/--expire-in '
+                                      '(not "never") and at least one pamUser record with rotation '
+                                      'configured in the folder.')
 share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
 share_report_parser = argparse.ArgumentParser(prog='share-report', description='Generates a report of shared records',
@@ -307,6 +312,25 @@ class ShareFolderCommand(Command):
         if action == 'grant':
             share_expiration = get_share_expiration(kwargs.get('expire_at'), kwargs.get('expire_in'))
 
+        rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
+        if rotate_on_expiration:
+            if action != 'grant':
+                raise CommandError('share-folder',
+                                   '--rotate-on-expiration is only valid when granting access')
+            if not isinstance(share_expiration, int) or share_expiration <= 0:
+                raise CommandError('share-folder',
+                                   '--rotate-on-expiration requires a positive --expire-at / --expire-in '
+                                   '(cannot be "never").')
+            ineligible_folders = [
+                uid for uid in shared_folder_uids
+                if not vault_extensions.shared_folder_has_pam_user_with_rotation(params, uid)
+            ]
+            if ineligible_folders:
+                raise CommandError(
+                    'share-folder',
+                    '--rotate-on-expiration requires the folder to contain at least one pamUser record '
+                    'with rotation configured. Ineligible folder(s): ' + ', '.join(sorted(ineligible_folders)))
+
         as_users = set()
         as_teams = set()
 
@@ -368,7 +392,8 @@ class ShareFolderCommand(Command):
 
         def prep_rq(recs, users, curr_sf):
             return self.prepare_request(params, kwargs, curr_sf, users, sf_teams, recs, default_record=default_record,
-                                        default_account=default_account, share_expiration=share_expiration)
+                                        default_account=default_account, share_expiration=share_expiration,
+                                        rotate_on_expiration=rotate_on_expiration)
 
         for sf_uid in shared_folder_uids:
             sf_users = as_users.copy()
@@ -419,7 +444,7 @@ class ShareFolderCommand(Command):
     @staticmethod
     def prepare_request(params, kwargs, curr_sf, users, teams, rec_uids, *,
                         default_record=False, default_account=False,
-                        share_expiration=None):
+                        share_expiration=None, rotate_on_expiration=False):
         rq = folder_pb2.SharedFolderUpdateV3Request()
         rq.sharedFolderUid = utils.base64_url_decode(curr_sf['shared_folder_uid'])
         if 'revision' in curr_sf:
@@ -429,6 +454,19 @@ class ShareFolderCommand(Command):
         action = kwargs.get('action') or 'grant'
         mr = kwargs.get('manage_records')
         mu = kwargs.get('manage_users')
+
+        def apply_share_expiration(target):
+            """Set expiration / timer / rotateOnExpiration on a User/Team/Record update proto."""
+            if not isinstance(share_expiration, int):
+                return
+            if share_expiration > 0:
+                target.expiration = share_expiration * 1000
+                target.timerNotificationType = record_pb2.NOTIFY_OWNER
+                if rotate_on_expiration:
+                    target.rotateOnExpiration = True
+            elif share_expiration < 0:
+                target.expiration = -1
+
         if default_account and action == 'grant':
             if mr is not None:
                 rq.defaultManageRecords = folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
@@ -444,12 +482,7 @@ class ShareFolderCommand(Command):
             for email in users:
                 uo = folder_pb2.SharedFolderUpdateUser()
                 uo.username = email
-                if isinstance(share_expiration, int):
-                    if share_expiration > 0:
-                        uo.expiration = share_expiration * 1000
-                        uo.timerNotificationType = record_pb2.NOTIFY_OWNER
-                    elif share_expiration < 0:
-                        uo.expiration = -1
+                apply_share_expiration(uo)
                 if email in existing_users:
                     if action == 'grant':
                         uo.manageRecords = folder_pb2.BOOLEAN_NO_CHANGE if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
@@ -489,12 +522,7 @@ class ShareFolderCommand(Command):
             for team_uid in teams:
                 to = folder_pb2.SharedFolderUpdateTeam()
                 to.teamUid = utils.base64_url_decode(team_uid)
-                if isinstance(share_expiration, int):
-                    if share_expiration > 0:
-                        to.expiration = share_expiration * 1000
-                        to.timerNotificationType = record_pb2.NOTIFY_OWNER
-                    elif share_expiration < 0:
-                        to.expiration = -1
+                apply_share_expiration(to)
                 if team_uid in existing_teams:
                     team = existing_teams[team_uid]
                     if action == 'grant':
@@ -546,12 +574,7 @@ class ShareFolderCommand(Command):
             for record_uid in rec_uids:
                 ro = folder_pb2.SharedFolderUpdateRecord()
                 ro.recordUid = utils.base64_url_decode(record_uid)
-                if isinstance(share_expiration, int):
-                    if share_expiration > 0:
-                        ro.expiration = share_expiration * 1000
-                        ro.timerNotificationType = record_pb2.NOTIFY_OWNER
-                    elif share_expiration < 0:
-                        ro.expiration = -1
+                apply_share_expiration(ro)
 
                 if record_uid in existing_records:
                     if action == 'grant':
@@ -562,8 +585,10 @@ class ShareFolderCommand(Command):
                         rq.sharedFolderRemoveRecord.append(ro.recordUid)
                 else:
                     if action == 'grant':
-                        ro.canEdit = curr_sf.get('default_can_edit') is True if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
-                        ro.canShare = curr_sf.get('default_can_share') is True if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
+                        default_ce = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_edit') is True else folder_pb2.BOOLEAN_FALSE
+                        default_cs = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_share') is True else folder_pb2.BOOLEAN_FALSE
+                        ro.canEdit = default_ce if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
+                        ro.canShare = default_cs if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')
                         if sf_key:
                             rec = params.record_cache[record_uid]
@@ -671,7 +696,7 @@ class ShareRecordCommand(Command):
         if rotate_on_expiration:
             if action != 'grant':
                 raise CommandError('share-record',
-                                   '--rotate-on-expiration is only valid with --action=grant')
+                                   '--rotate-on-expiration is only valid when granting access')
             if not isinstance(share_expiration, int) or share_expiration <= 0:
                 raise CommandError('share-record',
                                    '--rotate-on-expiration requires a positive --expire-at / --expire-in '
@@ -763,15 +788,16 @@ class ShareRecordCommand(Command):
             raise CommandError('share-record', 'There are no records to share selected')
 
         if rotate_on_expiration:
-            non_pam_user_uids = [
+            ineligible_record_uids = [
                 ruid for ruid in record_uids
                 if getattr(vault.KeeperRecord.load(params, ruid), 'record_type', None) != 'pamUser'
+                or not vault_extensions.record_has_rotation_configured(params, ruid)
             ]
-            if non_pam_user_uids:
+            if ineligible_record_uids:
                 raise CommandError(
                     'share-record',
-                    '--rotate-on-expiration is only supported for pamUser records. '
-                    'Not pamUser: ' + ', '.join(sorted(non_pam_user_uids)))
+                    '--rotate-on-expiration requires a pamUser record with rotation configured. '
+                    'Ineligible record(s): ' + ', '.join(sorted(ineligible_record_uids)))
 
         if action == 'owner' and len(emails) > 1:
             raise CommandError('share-record', 'You can transfer ownership to a single account only')
