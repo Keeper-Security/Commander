@@ -371,7 +371,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     record.folders.append(record_folder)
 
             template_name = secret.get('secretTemplateName', '')
-            template_name = template_name[:30]
+            template_name = template_name[:32]
             if template_name in loaded_record_types:
                 record.type = template_name
             elif template_name in ('Pin', 'Security Alarm Code'):
