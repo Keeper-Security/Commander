@@ -119,6 +119,31 @@ def matches_record(record, pattern, search_fields=None):    # type: (vault.Keepe
     return False
 
 
+def record_has_rotation_configured(params, record_uid):
+    # type: (KeeperParams, str) -> bool
+    """Return True if the record has a rotation configuration set up."""
+    return record_uid in (params.record_rotation_cache or {})
+
+
+def shared_folder_has_pam_user_with_rotation(params, shared_folder_uid):
+    # type: (KeeperParams, str) -> bool
+    """Return True if the shared folder contains at least one pamUser record with rotation configured.
+
+    Required precondition for the server to accept --rotate-on-expiration on a folder share.
+    """
+    sf = params.shared_folder_cache.get(shared_folder_uid)
+    if not sf:
+        return False
+    for r in sf.get('records', []):
+        record_uid = r['record_uid']
+        record = vault.KeeperRecord.load(params, record_uid)
+        if (record is not None
+                and record.record_type == 'pamUser'
+                and record_has_rotation_configured(params, record_uid)):
+            return True
+    return False
+
+
 def find_records(params,                   # type: KeeperParams
                  search_str=None,          # type: Optional[str]
                  record_type=None,         # type: Union[str, Iterable[str], None]
