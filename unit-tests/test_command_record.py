@@ -177,6 +177,21 @@ class TestRecord(TestCase):
             cmd.execute(params, pattern='INVALID')
             mock_print.assert_not_called()
 
+    def test_shared_list_filters_by_roe_eligible(self):
+        params = get_synced_params()
+        cmd = record.RecordListSfCommand()
+
+        with mock.patch('builtins.print') as mock_print:
+            cmd.execute(params, roe_eligible=True)
+            mock_print.assert_not_called()
+
+        with mock.patch(
+                'keepercommander.vault_extensions.shared_folder_has_pam_user_with_rotation',
+                return_value=True):
+            with mock.patch('builtins.print') as mock_print:
+                cmd.execute(params, roe_eligible=True)
+                mock_print.assert_called()
+
     def test_team_list_command(self):
         params = get_synced_params()
         cmd = record.RecordListTeamCommand()
