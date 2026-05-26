@@ -15,8 +15,12 @@ from typing import Tuple, Union
 from ..decorators.unified import unified_api_decorator
 from ..util.command_util import CommandExecutor
 from ..decorators.logging import logger
-from ..core.request_queue import queue_manager
+from ..core.request_queue import queue_manager, derive_owner_key
 from ..util.request_validation import RequestValidator
+
+
+def _caller_owner_key():
+    return derive_owner_key(request.headers.get('api-key'))
 
 
 def _prepare_command_request():
@@ -36,8 +40,11 @@ def _prepare_command_request():
 def _submit_queue_request(processed_command: str, temp_files: list, wait_for_completion: bool):
     """Submit a request to the queue, optionally waiting for the result."""
     request_submitted = False
+    owner_key = _caller_owner_key()
     try:
-        request_id = queue_manager.submit_request(processed_command, temp_files)
+        request_id = queue_manager.submit_request(
+            processed_command, temp_files, owner_key=owner_key
+        )
         request_submitted = True
     except queue.Full:
         RequestValidator.cleanup_temp_files(temp_files)
@@ -47,7 +54,7 @@ def _submit_queue_request(processed_command: str, temp_files: list, wait_for_com
         }), 503), False
 
     if wait_for_completion:
-        result_data = queue_manager.wait_for_result(request_id)
+        result_data = queue_manager.wait_for_result(request_id, owner_key=owner_key)
         if result_data is None:
             return (jsonify({
                 "status": "error",
@@ -136,9 +143,10 @@ def create_command_blueprint():
     @bp.route("/status/<request_id>", methods=["GET"])
     @unified_api_decorator()
     def get_request_status(request_id: str, **kwargs) -> Tuple[Response, int]:
-        """Get the status of a specific request."""
+        """Get status; only the submitting API key can read its own request."""
         try:
-            status_info = queue_manager.get_request_status(request_id)
+            owner_key = _caller_owner_key()
+            status_info = queue_manager.get_request_status(request_id, owner_key=owner_key)
             if status_info is None:
                 return jsonify({
                     "status": "error",
@@ -158,12 +166,12 @@ def create_command_blueprint():
     @bp.route("/result/<request_id>", methods=["GET"])
     @unified_api_decorator()
     def get_request_result(request_id: str, **kwargs) -> Tuple[Union[Response, bytes], int]:
-        """Get the result of a completed request."""
+        """Get result; only the submitting API key can read its own request."""
         try:
-            result_data = queue_manager.get_request_result(request_id)
+            owner_key = _caller_owner_key()
+            result_data = queue_manager.get_request_result(request_id, owner_key=owner_key)
             if result_data is None:
-                # Check if request exists but isn't completed
-                status_info = queue_manager.get_request_status(request_id)
+                status_info = queue_manager.get_request_status(request_id, owner_key=owner_key)
                 if status_info is None:
                     return jsonify({
                         "status": "error",
@@ -186,9 +194,10 @@ def create_command_blueprint():
     @bp.route("/queue/status", methods=["GET"])
     @unified_api_decorator()
     def get_queue_status(**kwargs) -> Tuple[Response, int]:
-        """Get overall queue status information."""
+        """Get queue status, scoped to the caller's API key."""
         try:
-            queue_status = queue_manager.get_queue_status()
+            owner_key = _caller_owner_key()
+            queue_status = queue_manager.get_queue_status(owner_key=owner_key)
             return jsonify({
                 "success": True,
                 **queue_status
