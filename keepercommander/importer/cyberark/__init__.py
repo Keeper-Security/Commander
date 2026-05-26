@@ -1,3 +1,3 @@
-from .cyberark import CyberArkImporter as Importer
+from .cyberark import CyberArkImporter as Importer, CyberArkMembershipDownload as MembershipDownload
 
-__all__ = ["Importer"]
+__all__ = ["Importer", "MembershipDownload"]
