@@ -14,13 +14,20 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from keeper_secrets_manager_core.utils import bytes_to_base64
+# Pre-load `keepercommander.commands.record` before anything else from the
+# `keepercommander.commands` package. There is a pre-existing record <-> ksm
+# circular import that only resolves when `record` is loaded first; running this
+# file in isolation (e.g. `pytest unit-tests/pam/test_cnapp.py`) would otherwise
+# hit the cycle via `discoveryrotation -> ksm -> record -> ksm`.
+import keepercommander.commands.record  # noqa: F401, E402 - intentional import-order guard
 
-from keepercommander.commands.pam import cnapp_helper
-from keepercommander.commands.pam import cnapp_commands
-from keepercommander.error import CommandError
-from keepercommander.proto import cnapp_pb2
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
+from keeper_secrets_manager_core.utils import bytes_to_base64  # noqa: E402
+
+from keepercommander.commands.pam import cnapp_helper  # noqa: E402
+from keepercommander.commands.pam import cnapp_commands  # noqa: E402
+from keepercommander.error import CommandError  # noqa: E402
+from keepercommander.proto import cnapp_pb2  # noqa: E402
 
 
 # Sample 16-byte UIDs as base64url (the format Commander callers pass in).
@@ -797,7 +804,11 @@ class TestQueueListDecryptionIntegration(unittest.TestCase):
             self.assertNotIn('payload', payload['items'][0])
 
     def test_decrypt_failure_keeps_other_rows_and_reports(self):
-        good = self._make_item(1, {'issue': {'id': 'wiz-good'}, 'control': {'name': 'OK'}})
+        # Payload shape matters: `_decrypted_summary` picks `control.name` over
+        # `issue.id`, so to assert the good row was rendered we use a payload where
+        # the marker we look for is actually what surfaces in the table cell.
+        good = self._make_item(1, {'issue': {'id': 'wiz-good'},
+                                   'resource': {'name': 'good-resource'}})
         bad = cnapp_pb2.CnappQueueItem(
             cnappQueueId=2,
             cnappProviderId=cnapp_pb2.CNAPP_PROVIDER_WIZ,
@@ -816,7 +827,9 @@ class TestQueueListDecryptionIntegration(unittest.TestCase):
                     self.params, network_uid=NETWORK_UID, status=0, format='table',
                     provider='wiz', no_decrypt=False)
             output = buf.getvalue()
-            self.assertIn('wiz-good', output.lower().replace('wiz-good', 'wiz-good'))
+            self.assertIn('wiz-good', output)
+            self.assertIn('good-resource', output)
+            self.assertIn('<encrypted>', output)
             self.assertIn('failed to decrypt payload', output)
 
     def test_no_decrypt_flag_skips_key_lookup(self):
