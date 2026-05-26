@@ -38,9 +38,26 @@ from typing import Optional
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from .router_helper import _post_request_to_router
 from ...params import KeeperParams
 from ...proto import cnapp_pb2
+
+
+# NOTE: `router_helper` is imported lazily inside `_post_request_to_router` below.
+# Importing it at module top creates this import-time chain:
+#     cnapp_helper -> router_helper -> gateway_helper
+#         -> keepercommander.commands.utils -> commands.ksm
+#         -> commands.record -> commands.ksm  (ksm still partially loaded — crash)
+# That `record <-> ksm` cycle is pre-existing and only works because production
+# code paths load `record` first. Tests that import `cnapp_helper` cold hit the
+# cycle directly. Keep the indirection — do not "inline" this import.
+def _post_request_to_router(params, endpoint, **kwargs):
+    """Lazy proxy to `router_helper._post_request_to_router`.
+
+    Defined as a module-level function so callers (and `unittest.mock.patch.object`)
+    can keep referring to `cnapp_helper._post_request_to_router` as if it were the
+    original symbol."""
+    from .router_helper import _post_request_to_router as _real_post
+    return _real_post(params, endpoint, **kwargs)
 
 
 # Public re-exports — let commands/tests reach proto types via the helper module so they
