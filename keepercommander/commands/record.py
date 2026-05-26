@@ -143,9 +143,11 @@ get_info_parser.add_argument('uid', type=str, action='store', help='UID or title
 search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Words can be in any order.')
 search_parser.add_argument('pattern', nargs='*', type=str, action='store', help='search terms (space-separated, order independent)')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-search_parser.add_argument('-c', '--categories', dest='categories', action='store',
-                           help='One or more of these letters for categories to search: "r" = records, '
-                                '"s" = shared folders, "t" = teams, "d" = Nested Share Folders')
+search_parser.add_argument('-c', '--categories', dest='categories', action='append',
+                           help='Category to search — repeatable: "r" = records, "s" = Classic shared folders, '
+                                '"t" = teams, "d" = KeeperDrive folders. '
+                                'Pass multiple times (e.g. -c s -c d) or combine letters (e.g. -c sd). '
+                                'Default when omitted: all categories (rstd).')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
                            help='treat pattern as a regular expression instead of space-separated search terms')
 search_parser.add_argument('--device', dest='device', action='store_true',
@@ -1455,7 +1457,7 @@ class SearchCommand(Command):
             else:
                 pattern = ''  # Empty pattern matches all in token mode
 
-        categories = (kwargs.get('categories') or 'rstd').lower()
+        categories = ''.join(kwargs.get('categories') or ['rstd']).lower()
         skip_details = not verbose
 
         nsf_records_map = getattr(params, 'nested_share_records', {}) or {}
@@ -1575,14 +1577,12 @@ class SearchCommand(Command):
                                f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'Classic')}"]
                     elif item['type'] == 'shared_folder':
                         row = [item['type'], item['shared_folder_uid'], item['name'],
-                               f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
+                               'Folder Category: Classic']
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
                                f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
                     elif item['type'] == 'nested_share_folder':
-                        details = (f"Parent UID: {item['parent_uid']}"
-                                   if item.get('parent_uid') else '')
-                        row = [item['type'], item['folder_uid'], item['name'], details]
+                        row = [item['type'], item['folder_uid'], item['name'], 'Folder Category: KeeperDrive']
                     table.append(row)
                 
                 return base.dump_report_data(table, headers, fmt='json')
