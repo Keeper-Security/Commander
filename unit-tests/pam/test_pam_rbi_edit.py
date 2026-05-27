@@ -2,7 +2,7 @@
 Unit tests for PAM RBI Edit command - KC-1034 Feature Parity
 
 Tests the new CLI arguments added to expose RBI settings:
-- Browser Settings: --allow-url-navigation, --ignore-server-cert (on/off/default)
+- Browser Settings: --allow-url-navigation, --ignore-server-cert, --allow-file-uploads, --allow-file-downloads (on/off/default)
 - URL Filtering: --allowed-urls, --allowed-resource-urls (multi-value)
 - Autofill: --autofill-targets (multi-value)
 - Clipboard: --allow-copy, --allow-paste (on/off/default)
@@ -66,6 +66,46 @@ class TestPamRbiEditArguments(unittest.TestCase):
     def test_ignore_server_cert_default(self):
         args = self.parser.parse_args(['--record', 'test-record', '--ignore-server-cert', 'default'])
         self.assertEqual(args.ignore_server_cert, 'default')
+
+    def test_allow_file_uploads_on(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-uploads', 'on'])
+        self.assertEqual(args.allow_file_uploads, 'on')
+
+    def test_allow_file_uploads_off(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-uploads', 'off'])
+        self.assertEqual(args.allow_file_uploads, 'off')
+
+    def test_allow_file_uploads_default(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-uploads', 'default'])
+        self.assertEqual(args.allow_file_uploads, 'default')
+
+    def test_allow_file_uploads_invalid(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(['--record', 'test-record', '--allow-file-uploads', 'invalid'])
+
+    def test_allow_file_uploads_not_provided(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--key-events', 'on'])
+        self.assertIsNone(args.allow_file_uploads)
+
+    def test_allow_file_downloads_on(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-downloads', 'on'])
+        self.assertEqual(args.allow_file_downloads, 'on')
+
+    def test_allow_file_downloads_off(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-downloads', 'off'])
+        self.assertEqual(args.allow_file_downloads, 'off')
+
+    def test_allow_file_downloads_default(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--allow-file-downloads', 'default'])
+        self.assertEqual(args.allow_file_downloads, 'default')
+
+    def test_allow_file_downloads_invalid(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(['--record', 'test-record', '--allow-file-downloads', 'invalid'])
+
+    def test_allow_file_downloads_not_provided(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--key-events', 'on'])
+        self.assertIsNone(args.allow_file_downloads)
 
     def test_allowed_urls_single(self):
         args = self.parser.parse_args(['--record', 'test-record', '--allowed-urls', '*.example.com'])
@@ -217,6 +257,56 @@ class TestPamRbiEditExecute(unittest.TestCase):
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_uploads_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_file_uploads='on')
+        self.assertEqual(self.pam_settings['connection'].get('allowFileUploads'), True)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_uploads_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_file_uploads='off')
+        self.assertEqual(self.pam_settings['connection'].get('allowFileUploads'), False)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_uploads_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['allowFileUploads'] = True
+        self.command.execute(self.mock_params, record='test-record', allow_file_uploads='default')
+        self.assertNotIn('allowFileUploads', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_downloads_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_file_downloads='on')
+        self.assertEqual(self.pam_settings['connection'].get('allowFileDownloads'), True)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_downloads_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_file_downloads='off')
+        self.assertEqual(self.pam_settings['connection'].get('allowFileDownloads'), False)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_allow_file_downloads_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['allowFileDownloads'] = True
+        self.command.execute(self.mock_params, record='test-record', allow_file_downloads='default')
+        self.assertNotIn('allowFileDownloads', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     def test_allowed_urls_joins_with_newlines(self, mock_sync, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allowed_urls=['*.example.com', '*.test.com'])
@@ -356,6 +446,8 @@ class TestPamRbiEditHelp(unittest.TestCase):
         help_text = PAMRbiEditCommand.parser.format_help()
         self.assertIn('--allow-url-navigation', help_text)
         self.assertIn('--ignore-server-cert', help_text)
+        self.assertIn('--allow-file-uploads', help_text)
+        self.assertIn('--allow-file-downloads', help_text)
         self.assertIn('--allowed-urls', help_text)
         self.assertIn('--allowed-resource-urls', help_text)
         self.assertIn('--autofill-targets', help_text)
@@ -385,6 +477,14 @@ class TestPamRbiEditAliases(unittest.TestCase):
     def test_alias_isc(self):
         args = self.parser.parse_args(['--record', 'test-record', '-isc', 'on'])
         self.assertEqual(args.ignore_server_cert, 'on')
+
+    def test_alias_fu(self):
+        args = self.parser.parse_args(['--record', 'test-record', '-fu', 'on'])
+        self.assertEqual(args.allow_file_uploads, 'on')
+
+    def test_alias_fd(self):
+        args = self.parser.parse_args(['--record', 'test-record', '-fd', 'on'])
+        self.assertEqual(args.allow_file_downloads, 'on')
 
     def test_alias_au(self):
         args = self.parser.parse_args(['--record', 'test-record', '-au', '*.example.com'])
