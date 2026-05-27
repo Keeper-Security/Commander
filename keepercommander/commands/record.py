@@ -1577,12 +1577,15 @@ class SearchCommand(Command):
                                f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'Classic')}"]
                     elif item['type'] == 'shared_folder':
                         row = [item['type'], item['shared_folder_uid'], item['name'],
-                               'Folder Category: Classic']
+                               f"Folder Category: Classic, Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
                                f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
                     elif item['type'] == 'nested_share_folder':
-                        row = [item['type'], item['folder_uid'], item['name'], 'Folder Category: KeeperDrive']
+                        details = 'Folder Category: NestedShare'
+                        if item.get('parent_uid'):
+                            details += f", Parent UID: {item['parent_uid']}"
+                        row = [item['type'], item['folder_uid'], item['name'], details]
                     table.append(row)
                 
                 return base.dump_report_data(table, headers, fmt='json')
