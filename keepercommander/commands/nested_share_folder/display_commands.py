@@ -91,10 +91,11 @@ class NestedShareGetCommand(Command):
         return nested_share_get_parser
 
     def execute(self, params, **kwargs):
-        uid     = (kwargs.get('uid') or '').strip()
-        fmt     = kwargs.get('format') or 'detail'
-        verbose = kwargs.get('verbose', False)
-        unmask  = kwargs.get('unmask', False)
+        uid         = (kwargs.get('uid') or '').strip()
+        fmt         = kwargs.get('format') or 'detail'
+        verbose     = kwargs.get('verbose', False)
+        unmask      = kwargs.get('unmask', False)
+        include_dag = kwargs.get('include_dag', False)
 
         if not uid:
             raise CommandError('nsf-get', 'UID parameter is required')
@@ -116,7 +117,7 @@ class NestedShareGetCommand(Command):
                     resolved,
                 )
             (self._record_json if fmt == 'json' else self._record_detail)(
-                params, resolved, verbose, unmask)
+                params, resolved, verbose, unmask, include_dag=include_dag)
             return
 
         raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
@@ -231,7 +232,7 @@ class NestedShareGetCommand(Command):
                             ', '.join(f'{k}: {v}' for k, v in val.items() if v)
         return ''
 
-    def _record_json(self, params, record_uid, verbose, _unmask=False):
+    def _record_json(self, params, record_uid, verbose, _unmask=False, include_dag=False):
         meta = load_record_metadata(params, record_uid)
         ro = {
             'record_uid': record_uid, 'title': meta['title'],
@@ -276,6 +277,16 @@ class NestedShareGetCommand(Command):
                 ro['share_admins'] = share_admins
         except Exception as e:
             logger.debug('Could not retrieve share admins: %s', e)
+
+        if include_dag:
+            try:
+                from ..record import RecordGetUidCommand
+                from ... import vault
+                r = vault.KeeperRecord.load(params, record_uid)
+                if r:
+                    RecordGetUidCommand().include_dag(params, ro, r)
+            except Exception as e:
+                logger.debug('Could not retrieve DAG info for record %s: %s', record_uid, e)
 
         print(json.dumps(ro, indent=2))
 
@@ -391,7 +402,13 @@ class NestedShareGetCommand(Command):
         owner_username = fobj.get('owner_username')
         owner_account_uid = fobj.get('owner_account_uid')
 
-        fo = {'nested_share_folder_uid': folder_uid, 'name': name}
+        parent_uid = fobj.get('parent_uid') or None
+        fo = {
+            'folder_uid': folder_uid,
+            'type': 'nested_share_folder',
+            'name': name,
+            'parent_uid': parent_uid
+        }
         if owner_username:
             fo['owner'] = owner_username
 

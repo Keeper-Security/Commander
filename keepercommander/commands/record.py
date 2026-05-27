@@ -305,10 +305,13 @@ class RecordGetUidCommand(Command):
             sf = api.get_shared_folder(params, uid)
             if fmt == 'json':
                 path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep) if sf.shared_folder_uid else ''
+                sf_node = params.folder_cache.get(sf.shared_folder_uid) if sf.shared_folder_uid else None
                 sfo = {
-                    "shared_folder_uid": sf.shared_folder_uid,
+                    "folder_uid": sf.shared_folder_uid,
+                    "type": "shared_folder",
                     "name": sf.name,
                     "path": path,
+                    "parent_uid": sf_node.parent_uid if sf_node and sf_node.parent_uid else None,
                     "manage_users": sf.default_manage_users,
                     "manage_records": sf.default_manage_records,
                     "can_edit": sf.default_can_edit,
@@ -365,13 +368,11 @@ class RecordGetUidCommand(Command):
                 fo = {
                     'folder_uid': f.uid,
                     'type': f.type,
-                    'name': f.name
+                    'name': f.name,
+                    'parent_uid': f.parent_uid or None
                 }
-                if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                    fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
-                        else f.uid
-                if f.parent_uid:
-                    fo['parent_folder_uid'] = f.parent_uid
+                if isinstance(f, subfolder.SharedFolderFolderNode):
+                    fo['shared_folder_uid'] = f.shared_folder_uid
                 if f.type == BaseFolderNode.UserFolderType:
                     fo['path'] = get_folder_path(params, f.uid)
                     record_uids = params.subfolder_record_cache.get(f.uid, set())

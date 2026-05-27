@@ -349,3 +349,6 @@ nested_share_get_parser.add_argument(
 nested_share_get_parser.add_argument(
     '--unmask', dest='unmask', action='store_true', default=False,
     help='Reveal masked field values (passwords, secrets)')
+nested_share_get_parser.add_argument(
+    '--include-dag', dest='include_dag', action='store_true', default=False,
+    help='Include DAG/GraphSync information in json output (PAM record types only)')
