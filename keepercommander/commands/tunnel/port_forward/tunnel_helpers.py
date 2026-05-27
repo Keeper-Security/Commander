@@ -834,6 +834,32 @@ def get_config_uid(params, encrypted_session_token, encrypted_transmission_key, 
     return None
 
 
+def get_config_uid_via_pam_link(params, record_uid):
+    """Resolve a resource record's PAM Config UID via KRouter's PAM_LINK graph.
+
+    Returns the config_uid that owns the resource. Used as a fallback when
+    ``get_config_uid`` (legacy ``/api/user/get_leafs`` with graphId=0) returns
+    nothing for resources whose link lives only in the new PAM_LINK stream.
+
+    Returns the config_uid as a base64-url-safe string, or empty string on
+    failure / no link.
+    """
+    try:
+        from ....keeper_dag.proto import GraphSync_pb2 as gs_pb2
+        from ...pam.router_helper import _post_request_to_router
+        record_uid_bytes = url_safe_str_to_bytes(record_uid)
+        rq = gs_pb2.GraphSyncLeafsQuery(vertices=[record_uid_bytes])
+        rs = _post_request_to_router(params, 'graph-sync/pam/get_leafs',
+                                     rq_proto=rq, rs_type=gs_pb2.GraphSyncRefsResult)
+        if rs and rs.refs:
+            for ref in rs.refs:
+                if ref.value:
+                    return utils.base64_url_encode(ref.value)
+    except Exception as e:
+        logging.debug('get_config_uid_via_pam_link: lookup failed for %s: %s', record_uid, e)
+    return ''
+
+
 def get_keeper_tokens(params):
     transmission_key = generate_random_bytes(32)
     server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
