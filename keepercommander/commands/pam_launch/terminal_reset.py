@@ -29,23 +29,108 @@ Then the Commander prompt looks wrong and the first key can be lost.
   the window showing the top of the buffer while new output is written below.
 - **Discard queued stdin**: POSIX uses ``termios.tcflush``; Windows uses
   ``FlushConsoleInputBuffer`` — there is no ``stty`` on Windows.
-- **``stty sane``**: Unix/macOS only (line discipline); not applicable on Windows.
+- **Re-apply stdin termios**: After ANSI + padding, stdin attributes may drift on
+  some terminals; we ``tcsetattr`` again using a copy taken at successful
+  ``InputHandler`` / ``StdinHandler`` restore (see :func:`_reapply_stashed_stdin_termios_attrs`).
+- **RIS (``ESC c``)**: Emitted first in :func:`_ansi_terminal_reset_string` so the outer
+  terminal matches what interactive ``reset`` fixes when DEC/CSI state is stuck (e.g. double
+  line spacing after exit while ``stty -a`` looks unchanged).
+- **``stty sane``**: Not run after pam launch: ``InputHandler`` / ``StdinHandler`` already
+  restores the prior ``termios`` snapshot; ``stty sane`` would overwrite that with a generic
+  profile (observed on macOS: different ``iflag``/``lflag`` and broken line spacing in the
+  outer shell).
 
 **Partial vs full reset:** The default path emits ANSI mode cleanup plus newline padding
-(see :func:`_ansi_terminal_reset_string` and :func:`_post_reset_newlines`). An optional
-full viewport clear :func:`_post_reset_clear_viewport` is available but commented out
-in :func:`reset_local_terminal_after_pam_session` because it erases scrollback.
+(see :func:`_ansi_terminal_reset_string` and :func:`_post_reset_newlines`). The full
+viewport clear :func:`_post_reset_clear_viewport` is **not** emitted on exit (it erases
+scrollback and can confuse some terminals); kept as a helper for optional future use.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 import shutil
-import subprocess
 import sys
+from typing import Any, List, Optional
 
 # Fallback if get_terminal_size fails (matches launch.py pre-session clear).
 _FALLBACK_TERMINAL_ROWS = 24
+
+# After InputHandler/StdinHandler.restore(), ``reset_local_terminal_after_pam_session``
+# writes ANSI to stdout; some terminals (e.g. macOS Terminal) may nudge stdin termios.
+# We stash attrs at successful restore and tcsetattr them again at end of reset.
+_stdin_termios_for_post_reset_reapply: Optional[List[Any]] = None
+
+
+def _shallow_copy_termios_attrs(attrs: List[Any]) -> List[Any]:
+    """``tcgetattr``/``tcsetattr`` list: copy top-level list and the ``cc`` sub-list."""
+    a = list(attrs)
+    if len(a) >= 7 and isinstance(a[6], list):
+        a[6] = a[6][:]
+    return a
+
+
+def stash_stdin_termios_attrs_for_post_reset(attrs: List[Any]) -> None:
+    """Remember stdin termios for :func:`_reapply_stashed_stdin_termios_attrs` (POSIX only)."""
+    global _stdin_termios_for_post_reset_reapply
+    try:
+        _stdin_termios_for_post_reset_reapply = copy.deepcopy(list(attrs))
+    except Exception as exc:
+        logging.debug('stash stdin termios: deepcopy failed (%s), using shallow cc copy', exc)
+        try:
+            _stdin_termios_for_post_reset_reapply = _shallow_copy_termios_attrs(attrs)
+        except Exception as exc2:
+            logging.debug('stash stdin termios: shallow copy failed: %s', exc2)
+            _stdin_termios_for_post_reset_reapply = None
+
+
+def stash_stdin_termios_from_stdin() -> None:
+    """
+    Snapshot current stdin termios after a successful restore (read-back from kernel).
+
+    Prefer this over :func:`stash_stdin_termios_attrs_for_post_reset` with pre-raw attrs so
+    the reapply path matches what the driver actually applied.
+    """
+    global _stdin_termios_for_post_reset_reapply
+    if sys.platform == 'win32' or not sys.stdin.isatty():
+        return
+    try:
+        import termios
+
+        attrs = list(termios.tcgetattr(sys.stdin.fileno()))
+        try:
+            _stdin_termios_for_post_reset_reapply = copy.deepcopy(attrs)
+        except Exception as exc:
+            logging.debug('stash stdin termios from fd: deepcopy failed (%s), shallow cc', exc)
+            _stdin_termios_for_post_reset_reapply = _shallow_copy_termios_attrs(attrs)
+    except Exception as exc:
+        logging.debug('stash stdin termios from fd: %s', exc)
+        _stdin_termios_for_post_reset_reapply = None
+
+
+def _reapply_stashed_stdin_termios_attrs() -> None:
+    """If a stash helper ran after restore, re-apply those attrs to stdin."""
+    global _stdin_termios_for_post_reset_reapply
+    if _stdin_termios_for_post_reset_reapply is None:
+        return
+    if sys.platform == 'win32':
+        _stdin_termios_for_post_reset_reapply = None
+        return
+    try:
+        if not sys.stdin.isatty():
+            return
+        import termios
+
+        termios.tcsetattr(
+            sys.stdin.fileno(),
+            termios.TCSADRAIN,
+            _stdin_termios_for_post_reset_reapply,
+        )
+    except Exception as exc:
+        logging.debug('reapply stashed stdin termios after pam reset: %s', exc)
+    finally:
+        _stdin_termios_for_post_reset_reapply = None
 
 
 def _post_reset_line_count() -> int:
@@ -75,6 +160,10 @@ def _padding_line_count(session_start_rows: int | None) -> int:
 def _ansi_terminal_reset_string() -> str:
     """VT sequences to undo common fullscreen TUI state (nano, vim, etc.)."""
     return (
+        # RIS (ESC c): full terminal reset—same class of fix as interactive `reset`. Do not remove:
+        # without it, macOS Terminal (and similar) can leave broken newline / line-spacing after
+        # pam launch exits, even when `stty -a` looks unchanged.
+        '\033c'
         '\x1b[?1049l'  # rmcup — exit alternate screen
         '\x1b[?47l'    # old secondary screen off (no-op on modern terminals)
         '\x1b[r'       # reset scroll region / margins (DECSTBM full screen)
@@ -216,21 +305,6 @@ def _flush_stdin_queue_windows() -> None:
         logging.debug('FlushConsoleInputBuffer after pam session: %s', exc)
 
 
-def _stty_sane_posix() -> None:
-    try:
-        if not sys.stdin.isatty():
-            return
-        subprocess.run(
-            ['stty', 'sane'],
-            stdin=sys.stdin,
-            check=False,
-            timeout=3,
-            capture_output=True,
-        )
-    except Exception as exc:
-        logging.debug('stty sane after pam session: %s', exc)
-
-
 def reset_local_terminal_after_pam_session(
     session_start_rows: int | None = None,
 ) -> None:
@@ -251,18 +325,19 @@ def reset_local_terminal_after_pam_session(
     try:
         sys.stdout.write(_ansi_terminal_reset_string())
 
-        # Optional full clear (scrollback loss)
-        sys.stdout.write(_post_reset_clear_viewport())
+        # Do not emit _post_reset_clear_viewport() here: it clears scrollback (CSI 3J)
+        # and was never meant to run on every exit; some terminals then behave oddly.
 
         sys.stdout.write(_post_reset_newlines(session_start_rows=session_start_rows))
         sys.stdout.flush()
     except Exception as exc:
         logging.debug('Terminal ANSI reset: %s', exc)
 
-    # Queued input: POSIX tcflush; Windows FlushConsoleInputBuffer (before stty on Unix).
+    # Queued input: POSIX tcflush; Windows FlushConsoleInputBuffer.
     if sys.platform == 'win32':
         _windows_scroll_viewport_to_cursor()
         _flush_stdin_queue_windows()
     else:
         _flush_stdin_queue_posix()
-        _stty_sane_posix()
+
+    _reapply_stashed_stdin_termios_attrs()

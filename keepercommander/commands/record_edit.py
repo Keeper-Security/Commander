@@ -28,6 +28,7 @@ from .helpers.timeout import parse_timeout
 from .. import api, utils, vault, record_types, generator, crypto, attachment, record_facades, record_management
 from ..breachwatch import BreachWatch
 from ..commands import recordv3
+from ..enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
@@ -230,6 +231,7 @@ ParsedFieldValue = collections.namedtuple('ParsedFieldValue', ['section', 'type'
 class RecordEditMixin:
     def __init__(self):
         self.warnings = []
+        self._password_policy = None   # type: Optional[Dict[str, Any]]
 
     def on_warning(self, message):
         if message:
@@ -390,7 +392,7 @@ class RecordEditMixin:
         }
 
     @staticmethod
-    def generate_password(parameters=None):   # type: (Optional[Sequence[str]]) -> str
+    def generate_password(parameters=None, policy=None):   # type: (Optional[Sequence[str]], Optional[dict]) -> str
         if isinstance(parameters, (tuple, list, set)):
             algorithm = next((x for x in parameters if x in ('rand', 'dice', 'crypto')), 'rand')
             length = next((x for x in parameters if x.isnumeric()), None)
@@ -415,14 +417,17 @@ class RecordEditMixin:
                 length = 5
             gen = generator.DicewarePasswordGenerator(length)
         else:
-            if isinstance(length, int):
-                if length < 4:
-                    length = 4
-                elif length > 200:
-                    length = 200
+            if policy:
+                gen = generator.KeeperPasswordGenerator.create_from_policy(policy, length_override=length)
             else:
-                length = 20
-            gen = generator.KeeperPasswordGenerator(length=length)
+                if isinstance(length, int):
+                    if length < 4:
+                        length = 4
+                    elif length > 200:
+                        length = 200
+                else:
+                    length = 20
+                gen = generator.KeeperPasswordGenerator(length=length)
         return gen.generate()
 
     @staticmethod
@@ -599,7 +604,7 @@ class RecordEditMixin:
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
-                        value = self.generate_password(action_params)
+                        value = self.generate_password(action_params, policy=self._password_policy)
                     elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
                     elif record_field.type in ('keyPair', 'privateKey'):
@@ -670,7 +675,7 @@ class RecordEditMixin:
                             value = vault.TypedField.import_schedule_field(parsed_field.value)
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
-                if value:
+                if value is not None:
                     if isinstance(value, list):
                         record_field.value.clear()
                         record_field.value.extend(value)
@@ -833,6 +838,9 @@ class RecordAddCommand(Command, RecordEditMixin):
         if not record_type:
             raise CommandError('record-add', 'Record type parameter is required.')
 
+        RecordTypeEnforcer.enforce(params, record_type, 'record-add')
+        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+
         fields = kwargs.get('fields', [])
         # Filter out empty strings that might be introduced by copy-paste or line continuation issues
         fields = [field.strip() for field in fields if field.strip()]
@@ -878,6 +886,12 @@ class RecordAddCommand(Command, RecordEditMixin):
             record.record_uid = record_uid
         record.title = title
         record.notes = self.validate_notes(kwargs.get('notes') or '')
+
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
+        for f in pw_failures:
+            self.on_warning(f)
+        if pw_failures and not kwargs.get('force'):
+            self.on_warning('Use --force to bypass password policy warnings.')
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:
@@ -1243,12 +1257,15 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             else:
                 record_fields.append(parsed_field)
 
+        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+
         if isinstance(record, vault.PasswordRecord):
             raise CommandError('record-update', 'Legacy record type is not supported. Convert the record to login record type.')
             # self.assign_legacy_fields(record, record_fields)
         elif isinstance(record, vault.TypedRecord):
             record_type = kwargs.get('record_type')
             if record_type:
+                RecordTypeEnforcer.enforce(params, record_type, 'record-update')
                 record.type_name = record_type
                 rt_fields = self.get_record_type_fields(params, record_type)
                 if not rt_fields:
@@ -1257,6 +1274,13 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             self.assign_typed_fields(record, record_fields)
         else:
             raise CommandError('record-update', f'Record \"{record_name}\" can not be edited.')
+
+        if isinstance(record, vault.TypedRecord):
+            pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
+            for f in pw_failures:
+                self.on_warning(f)
+            if pw_failures and not kwargs.get('force'):
+                self.on_warning('Use --force to bypass password policy warnings.')
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:

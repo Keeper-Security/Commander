@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 import re, json
 
 class KeeperResponseParser:
@@ -36,7 +36,7 @@ class KeeperResponseParser:
         return text
     
     @staticmethod
-    def _preprocess_response(response: Any, log_output: str = None) -> tuple[str, bool]:
+    def _preprocess_response(response: Any, log_output: str = None) -> Tuple[str, bool]:
         """Preprocess response by cleaning ANSI codes and determining source.
         
         Returns:
@@ -79,6 +79,7 @@ class KeeperResponseParser:
             'enterprise-push': '_parse_enterprise_push_command',
             'search record': '_parse_search_record_command',
             'search folder': '_parse_search_folder_command',
+            'policy add': '_parse_epm_policy_add_command',
         }
         
         for pattern, method_name in substring_patterns.items():
@@ -132,17 +133,20 @@ class KeeperResponseParser:
         if not response_str:
             return KeeperResponseParser._handle_empty_response(command)
         
-        # If from log output, use logging-based parsing directly
+        # Find the appropriate parser method (used for both log and non-log paths)
+        parser_method_name = KeeperResponseParser._find_parser_method(command)
+
+        # If from log output, use command-specific parser if available, else generic logging parser
         if is_from_log:
             return KeeperResponseParser._parse_logging_based_command(command, response_str)
         
-        # Find and call the appropriate parser method
         parser_method_name = KeeperResponseParser._find_parser_method(command)
         parser_method = getattr(KeeperResponseParser, parser_method_name)
         
         # Call the parser method with appropriate arguments
         if parser_method_name in ['_parse_generate_command', '_parse_json_format_command', 
-                                '_parse_pam_project_import_command', '_parse_enterprise_push_command']:
+                                '_parse_pam_project_import_command', '_parse_enterprise_push_command',
+                                '_parse_epm_policy_add_command']:
             return parser_method(command, response_str)
         else:
             return parser_method(response_str) if parser_method_name != '_parse_logging_based_command' else parser_method(command, response_str)
@@ -215,6 +219,56 @@ class KeeperResponseParser:
                     })
 
         return result
+
+    @staticmethod
+    def _parse_share_bracket_list(
+        bracket_blob: str, target_key: str = "username"
+    ) -> List[Dict[str, Any]]:
+        """Parse comma-separated [target:perm1,perm2] segments from tree share lines."""
+        entries: List[Dict[str, Any]] = []
+        if not bracket_blob or not bracket_blob.strip():
+            return entries
+        for target, perms_str in re.findall(r'\[([^:]+):([^\]]+)\]', bracket_blob):
+            codes = [p.strip() for p in perms_str.split(',') if p.strip()]
+            entries.append({
+                target_key: target.strip(),
+                "permissions": ",".join(codes),
+            })
+        return entries
+
+    @staticmethod
+    def _parse_tree_share_permissions(name: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse shared-folder permission suffix from a tree line into structured fields.
+
+        CLI format (from folder.formatted_tree): (default:...; user:...; teams:...; users:...)
+        """
+        # Ordered segments from folder.py: default, user, optional teams, optional users
+        m = re.search(
+            r'\(default:([^;]+); user:([^;]+)(?:; teams:([^;]+))?(?:; users:([^)]+))?\)',
+            name,
+        )
+        if not m:
+            return None
+
+        default_val = m.group(1).strip()
+        user_val = m.group(2).strip()
+        teams_seg = (m.group(3) or "").strip()
+        users_seg = (m.group(4) or "").strip()
+
+        share_permissions: Dict[str, Any] = {
+            "default": default_val,
+            "user": user_val,
+        }
+        if teams_seg:
+            share_permissions["teams"] = KeeperResponseParser._parse_share_bracket_list(
+                teams_seg, target_key="name"
+            )
+        if users_seg:
+            share_permissions["users"] = KeeperResponseParser._parse_share_bracket_list(
+                users_seg, target_key="username"
+            )
+        return share_permissions
 
     @staticmethod
     def _parse_tree_command(response: str) -> Dict[str, Any]:
@@ -303,13 +357,9 @@ class KeeperResponseParser:
                 uid = uid_match.group(1)
             
             # Extract share permissions if present (for -s flag)
-            share_permissions = None
-            perm_match = re.search(r'\(default:([^;]+); user:([^)]+)\)', name)
-            if perm_match:
-                share_permissions = {
-                    "default": perm_match.group(1),
-                    "user": perm_match.group(2)
-                }
+            share_permissions = (
+                KeeperResponseParser._parse_tree_share_permissions(name) if is_shared else None
+            )
             
             # Clean the name from all indicators
             clean_name = name
@@ -922,6 +972,35 @@ class KeeperResponseParser:
                 "message": "Command executed successfully but produced no output",
                 "data": None
             }
+
+    @staticmethod
+    def _parse_epm_policy_add_command(command: str, response_str: str) -> Dict[str, Any]:
+        """Parse 'epm policy add' command output to extract policy ID and name."""
+        response_str = KeeperResponseParser._filter_login_messages(response_str.strip())
+
+        result = {
+            "status": "success",
+            "command": "epm policy add",
+            "message": response_str,
+            "data": {}
+        }
+
+        policy_match = re.search(
+            r'Successfully created policy "([^"]*)" with Policy ID:\s*(\S+)',
+            response_str
+        )
+        if policy_match:
+            result["data"]["policy_name"] = policy_match.group(1)
+            result["data"]["policy_id"] = policy_match.group(2)
+        else:
+            response_lower = response_str.lower()
+            if any(kw in response_lower for kw in ["error", "failed", "not supported"]):
+                result["status"] = "error"
+                result["error"] = response_str
+                del result["data"]
+                del result["message"]
+
+        return result
 
     @staticmethod
     def _parse_enterprise_push_command(command: str, response_str: str) -> Dict[str, Any]:

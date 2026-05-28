@@ -23,10 +23,16 @@ from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
 
 from colorama import Fore, Back, Style
 
+import requests
+
 from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
+from .ksm import KSMCommand
+from .pam import gateway_helper
+from .pam.router_helper import router_get_connected_gateways
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, record_types
 from ..breachwatch import BreachWatch
+from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2, folder_pb2, enterprise_pb2
@@ -63,6 +69,10 @@ def handle_empty_result(fmt, message, filename=None):
     return None
 
 def register_commands(commands):
+    from . import aws_import, azure_import, gcp_import
+    commands['aws-secrets-import'] = aws_import.AwsSecretsImportCommand()
+    commands['azure-secrets-import'] = azure_import.AzureSecretsImportCommand()
+    commands['gcp-secrets-import'] = gcp_import.GcpSecretsImportCommand()
     commands['search'] = SearchCommand()
     commands['get'] = RecordGetUidCommand()
     commands['rm'] = RecordRemoveCommand()
@@ -100,6 +110,14 @@ def register_command_info(aliases, command_info):
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
 
+    from . import aws_import, azure_import, gcp_import
+    aliases['amsi'] = 'aws-secrets-import'
+    aliases['azsi'] = 'azure-secrets-import'
+    aliases['gcsi'] = 'gcp-secrets-import'
+    command_info[aws_import.aws_secrets_import_parser.prog] = aws_import.aws_secrets_import_parser.description
+    command_info[azure_import.azure_secrets_import_parser.prog] = azure_import.azure_secrets_import_parser.description
+    command_info[gcp_import.gcp_secrets_import_parser.prog] = gcp_import.gcp_secrets_import_parser.description
+
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
@@ -125,11 +143,17 @@ get_info_parser.add_argument('uid', type=str, action='store', help='UID or title
 search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Words can be in any order.')
 search_parser.add_argument('pattern', nargs='*', type=str, action='store', help='search terms (space-separated, order independent)')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-search_parser.add_argument('-c', '--categories', dest='categories', action='store',
-                           help='One or more of these letters for categories to search: "r" = records, '
-                                '"s" = shared folders, "t" = teams')
+search_parser.add_argument('-c', '--categories', dest='categories', action='append',
+                           help='Category to search — repeatable: "r" = records, "s" = shared folders, '
+                                '"t" = teams, "d" = Nested Share folders. '
+                                'Pass multiple times (e.g. -c s -c d) or combine letters (e.g. -c sd). '
+                                'Default when omitted: all categories (rstd).')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
                            help='treat pattern as a regular expression instead of space-separated search terms')
+search_parser.add_argument('--device', dest='device', action='store_true',
+                           help='treat pattern as a PAM Gateway UID (exact) or controllerName (case-insensitive '
+                                'substring). Prints full Gateway info and PAM Configs bound to it. '
+                                'Incompatible with --regex and --categories.')
 search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                            default='table', help='output format')
 
@@ -143,6 +167,9 @@ list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='s
 
 
 list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List all shared folders', parents=[base.report_output_parser])
+list_sf_parser.add_argument('--roe-eligible', dest='roe_eligible', action='store_true',
+                            help='only list shared folders eligible for --rotate-on-expiration '
+                                 '(contain at least one pamUser record with rotation configured)')
 list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
@@ -202,6 +229,8 @@ clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store'
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove or delete a record from the vault')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+rm_parser.add_argument('--purge', dest='purge', action='store_true',
+                        help='permanently delete the record for ALL users (default: remove only from your vault)')
 rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
 
@@ -288,11 +317,18 @@ class RecordGetUidCommand(Command):
                     "can_share": sf.default_can_share
                 }
                 if sf.records:
-                    sfo['records'] = [{
-                        'record_uid': r['record_uid'],
-                        'can_edit': r['can_edit'],
-                        'can_share': r['can_share']
-                    } for r in sf.records]
+                    records_list = []
+                    for r in sf.records:
+                        rec_entry = {
+                            'record_uid': r['record_uid'],
+                            'can_edit': r['can_edit'],
+                            'can_share': r['can_share']
+                        }
+                        rec = vault.KeeperRecord.load(params, r['record_uid'])
+                        if rec:
+                            rec_entry['record_name'] = rec.title
+                        records_list.append(rec_entry)
+                    sfo['records'] = records_list
                 def _format_expiration(expiration_value):
                     if expiration_value is None or expiration_value <= 0:
                         return 'never'
@@ -338,9 +374,20 @@ class RecordGetUidCommand(Command):
                         else f.uid
                 if f.parent_uid:
                     fo['parent_folder_uid'] = f.parent_uid
+                if f.type == BaseFolderNode.UserFolderType:
+                    fo['path'] = get_folder_path(params, f.uid)
+                    record_uids = params.subfolder_record_cache.get(f.uid, set())
+                    fo['records'] = [{'record_uid': r} for r in record_uids]
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
+                if f.type == BaseFolderNode.NestedShareFolderType:
+                    try:
+                        from .nested_share_folder.display_commands import NestedShareGetCommand
+                        NestedShareGetCommand._print_folder_permissions(
+                            params, f.uid, kwargs.get('verbose', False))
+                    except Exception as e:
+                        logging.debug('Nested Share Folder permission display skipped: %s', e)
             direct_match = True
             return
 
@@ -444,6 +491,32 @@ class RecordGetUidCommand(Command):
                             ro['user_permissions'] = rec['shares']['user_permissions'].copy()
                         if 'shared_folder_permissions' in rec['shares']:
                             ro['shared_folder_permissions'] = rec['shares']['shared_folder_permissions'].copy()
+
+                    # For Nested Share Records, replace the user_permissions
+                    # block with role-aware entries fetched from the Nested Share Folder
+                    # access graph (matches ``nsf-get --format json``).
+                    if (hasattr(params, 'nested_share_records')
+                            and uid in getattr(params, 'nested_share_records', {})):
+                        try:
+                            from .. import nested_share_folder as _nsf
+                            from .nested_share_folder.helpers import get_access_role_label
+                            nsf_accesses = (_nsf.get_record_accesses_v3(params, [uid])
+                                           .get('record_accesses', []))
+                            if nsf_accesses:
+                                nsf_perms = []
+                                for a in nsf_accesses:
+                                    accessor = a.get('accessor_name') or a.get('access_type_uid', '')
+                                    nsf_perms.append({
+                                        'username':  accessor,
+                                        'owner':     a.get('owner', False),
+                                        'shareable': a.get('can_approve_access', False) or a.get('can_update_access', False),
+                                        'editable':  a.get('can_edit', False),
+                                        'role':      get_access_role_label(a),
+                                    })
+                                ro['user_permissions'] = nsf_perms
+                        except Exception as e:
+                            logging.debug('Could not enrich Nested Share Folder user_permissions for %s: %s', uid, e)
+
                     if admins:
                         ro['share_admins'] = admins
 
@@ -524,8 +597,52 @@ class RecordGetUidCommand(Command):
                 else:
                     unmask = kwargs.get('unmask') is True
                     r.display(unmask=unmask)
+
+                    # Nested Share Records carry their permissions on the Nested Share Folder
+                    # access graph, not in ``rec['shares']['user_permissions']``.
+                    # Render the Nested-Share-Folder-style "User Permissions" block (with Role)
+                    # so ``get`` matches ``nsf-get`` for Nested Share Records.
+                    is_nsf_record = (
+                        hasattr(params, 'nested_share_records')
+                        and uid in getattr(params, 'nested_share_records', {})
+                    )
+                    nsf_user_perms_rendered = False
+                    if is_nsf_record:
+                        try:
+                            from .. import nested_share_folder as _nsf
+                            accesses = (_nsf.get_record_accesses_v3(params, [uid])
+                                        .get('record_accesses', []))
+                            if accesses:
+                                from .nested_share_folder.helpers import (
+                                    get_access_role_label,
+                                    RECORD_PERM_LABELS,
+                                )
+                                print('')
+                                print('User Permissions:')
+                                for a in accesses:
+                                    accessor = a.get('accessor_name') or a.get('access_type_uid', '')
+                                    is_owner = a.get('owner', False)
+                                    can_edit = a.get('can_edit', False)
+                                    can_share = a.get('can_approve_access', False) or a.get('can_update_access', False)
+                                    role = get_access_role_label(a)
+
+                                    print('')
+                                    print('  User: ' + accessor)
+                                    if is_owner:
+                                        print('  Owner: Yes')
+                                    else:
+                                        # Skip role for owners - their access is implicit.
+                                        print('  Role: ' + role)
+                                    print('  Shareable: ' + ('Yes' if can_share else 'No'))
+                                    print('  Read-Only: ' + ('Yes' if not can_edit else 'No'))
+                                nsf_user_perms_rendered = True
+                        except Exception as e:
+                            logging.debug('Could not render Nested Share Folder permissions for %s: %s', uid, e)
+
                     if rec.get('shares'):
-                        if 'user_permissions' in rec['shares'] and rec['shares']['user_permissions']:
+                        if (not nsf_user_perms_rendered
+                                and 'user_permissions' in rec['shares']
+                                and rec['shares']['user_permissions']):
                             print('')
                             print('User Permissions:')
                             for user in rec['shares']['user_permissions']:
@@ -646,19 +763,36 @@ class RecordGetUidCommand(Command):
             if total_matches == 1:
                 # If only one match, display it directly
                 if len(matched_records) == 1:
-                    return self.execute(params, uid=matched_records[0].record_uid, format=fmt, unmask=kwargs.get('unmask'), legacy=kwargs.get('legacy'))
+                    return self.execute(
+                        params,
+                        uid=matched_records[0].record_uid,
+                        format=fmt,
+                        unmask=kwargs.get('unmask'),
+                        legacy=kwargs.get('legacy'),
+                        include_dag=kwargs.get('include_dag')
+                    )
                 elif len(matched_folders) == 1:
                     uid = matched_folders[0].uid
                     f = params.folder_cache[uid]
+                    sf_uid = f.uid if isinstance(f, subfolder.SharedFolderNode) else \
+                        (f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) else None)
+                    if sf_uid and api.is_shared_folder(params, sf_uid):
+                        return self.execute(
+                            params,
+                            uid=sf_uid,
+                            format=fmt,
+                            unmask=kwargs.get('unmask'),
+                            legacy=kwargs.get('legacy'),
+                            include_dag=kwargs.get('include_dag')
+                        )
                     if fmt == 'json':
                         fo = {
                             'folder_uid': f.uid,
                             'type': f.type,
                             'name': f.name
                         }
-                        if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                            fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
-                                else f.uid
+                        if sf_uid:
+                            fo['shared_folder_uid'] = sf_uid
                         if f.parent_uid:
                             fo['parent_folder_uid'] = f.parent_uid
                         print(json.dumps(fo, indent=2))
@@ -834,16 +968,62 @@ class RecordGetUidCommand(Command):
             'rotation': None,
             'sessionRecording': None,
             'typescriptRecording': None,
-            'remoteBrowserIsolation': None
+            'remoteBrowserIsolation': None,
+            'aiEnabled': None,
+            'aiSessionTerminate': None,
         }
+        ro['pam_configuration_uid'] = None
+        ro['gateway_uid'] = None
+        ro['folder'] = None
+        ro['configuration_allowed_settings'] = None
 
         try:
             # Get keeper tokens for DAG access
-            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-            from .tunnel.port_forward.TunnelGraph import TunnelDAG
+            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens, get_config_uid, get_gateway_uid_from_record
+            from .tunnel.port_forward.TunnelGraph import TunnelDAG, get_vertex_content
             from ..keeper_dag import EdgeType
 
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+
+            ro['pam_configuration_uid'] = get_config_uid(
+                params, encrypted_session_token, encrypted_transmission_key, r.record_uid) or None
+            try:
+                _gw = get_gateway_uid_from_record(params, vault, r.record_uid)
+                ro['gateway_uid'] = _gw if _gw else None
+            except Exception as e:
+                logging.debug('get gateway for record %s: %s', r.record_uid, e)
+                ro['gateway_uid'] = None
+
+            _first_fuid = next(find_folders(params, r.record_uid), None)
+            if _first_fuid:
+                ro['folder'] = {
+                    'uid': _first_fuid,
+                    'path': get_folder_path(params, _first_fuid),
+                }
+
+            cfg_uid = ro['pam_configuration_uid']
+            if cfg_uid:
+                try:
+                    cfg_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, cfg_uid,
+                                        is_config=True, transmission_key=transmission_key)
+                    cfg_dag.linking_dag.load()
+                    cfg_vertex = cfg_dag.linking_dag.get_vertex(cfg_uid)
+                    cfg_content = get_vertex_content(cfg_vertex) if cfg_vertex else None
+                    ca = (cfg_content or {}).get('allowedSettings')
+                    if ca is not None and isinstance(ca, dict):
+                        ro['configuration_allowed_settings'] = {
+                            'connections': ca.get('connections'),
+                            'tunneling': ca.get('portForwards'),
+                            'rotation': ca.get('rotation'),
+                            'connections_recording': ca.get('sessionRecording'),
+                            'typescript_recording': ca.get('typescriptRecording'),
+                            'remote_browser_isolation': ca.get('remoteBrowserIsolation'),
+                            'ai_threat_detection': ca.get('aiEnabled'),
+                            'ai_terminate_session_on_detection': ca.get('aiSessionTerminate'),
+                        }
+                except Exception as e:
+                    logging.debug('PAM config allowedSettings for %s: %s', cfg_uid, e)
+
             tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid,
                              transmission_key=transmission_key)
 
@@ -877,6 +1057,8 @@ class RecordGetUidCommand(Command):
                         ro['pamSettingsEnabled']['sessionRecording'] = allowed_settings.get('sessionRecording')
                         ro['pamSettingsEnabled']['typescriptRecording'] = allowed_settings.get('typescriptRecording')
                         ro['pamSettingsEnabled']['remoteBrowserIsolation'] = allowed_settings.get('remoteBrowserIsolation')
+                        ro['pamSettingsEnabled']['aiEnabled'] = allowed_settings.get('aiEnabled')
+                        ro['pamSettingsEnabled']['aiSessionTerminate'] = allowed_settings.get('aiSessionTerminate')
             except Exception as e:
                 ro['dagDebug']['content_error'] = str(e)
 
@@ -1121,6 +1303,131 @@ class RecordGetUidCommand(Command):
             print(f'  Error: Could not retrieve rotation info')
 
 
+def _resolve_gateways_by_pattern(params, pattern):
+    """Resolve a `--device` pattern to a list of Gateway controller objects.
+
+    Matches both: exact controllerUid AND case-insensitive substring on
+    controllerName (vault parity). `*` matches all Gateways. Returns
+    (matched_controllers, connected_by_uid_bytes, is_router_down).
+    """
+    is_router_down = False
+    enterprise_controllers_connected = None
+    try:
+        enterprise_controllers_connected = router_get_connected_gateways(params)
+    except requests.exceptions.ConnectionError:
+        is_router_down = True
+    except Exception as e:
+        logging.debug(f'router_get_connected_gateways failed: {e}')
+
+    connected_by_uid = {}
+    if enterprise_controllers_connected:
+        for ctrl in list(enterprise_controllers_connected.controllers):
+            connected_by_uid.setdefault(ctrl.controllerUid, []).append(ctrl)
+
+    all_gateways = list(gateway_helper.get_all_gateways(params) or [])
+    is_wildcard = pattern == '*'
+    pattern_lower = pattern.lower()
+
+    matched = []
+    seen = set()
+    for g in all_gateways:
+        uid_str = utils.base64_url_encode(g.controllerUid)
+        name = g.controllerName or ''
+        if is_wildcard:
+            hit = True
+        else:
+            hit = (uid_str == pattern) or (pattern_lower and pattern_lower in name.lower())
+        if hit and uid_str not in seen:
+            matched.append(g)
+            seen.add(uid_str)
+    return matched, connected_by_uid, is_router_down
+
+
+def _find_pam_configs_for_gateway(params, gateway_uid_str):
+    """Return list of PAM Config record summaries bound to the given Gateway UID.
+
+    PAM Configurations are record version 6 (pamAws/Azure/Gcp/Domain/Network/Oci
+    Configuration types). The Gateway link lives in the `pamResources` typed
+    field's `controllerUid` value (vault parity).
+    """
+    configs = []
+    for kr in vault_extensions.find_records(params, record_version=6):
+        if not isinstance(kr, vault.TypedRecord):
+            continue
+        try:
+            field = kr.get_typed_field('pamResources')
+            value = field.get_default_value(dict) if field else None
+            if not value:
+                continue
+            if value.get('controllerUid', '') == gateway_uid_str:
+                configs.append({
+                    'record_uid': kr.record_uid,
+                    'title': kr.title or '',
+                    'record_type': kr.record_type,
+                    'description': vault_extensions.get_record_description(kr) or '',
+                })
+        except Exception as e:
+            logging.debug(f'Skipping record {kr.record_uid} while scanning for PAM Configs: {e}')
+            continue
+    configs.sort(key=lambda c: (c['title'] or '').lower())
+    return configs
+
+
+def _build_gateway_info(c, connected_instances, params, is_router_down, is_verbose):
+    """Build a dict describing one Gateway, suitable for table or JSON rendering."""
+    gateway_uid_str = utils.base64_url_encode(c.controllerUid)
+    ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
+    ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
+    ksm_app_name = None
+    ksm_app_accessible = False
+    if ksm_app:
+        try:
+            ksm_app_data = json.loads(ksm_app.get('data_unencrypted'))
+            ksm_app_name = ksm_app_data.get('title')
+            ksm_app_accessible = True
+        except Exception:
+            pass
+
+    is_pool = len(connected_instances) > 1
+    if is_router_down:
+        status = 'UNKNOWN'
+    elif connected_instances:
+        status = f'ONLINE ({len(connected_instances)} instances)' if is_pool else 'ONLINE'
+    else:
+        status = 'OFFLINE'
+
+    version_parts = []
+    version = ''
+    if connected_instances:
+        first = connected_instances[0]
+        if getattr(first, 'version', ''):
+            version_parts = first.version.split(';')
+            version = version_parts[0] if version_parts else first.version
+
+    info = {
+        'gateway_name': c.controllerName,
+        'gateway_uid': gateway_uid_str,
+        'status': status,
+        'gateway_version': version,
+        'ksm_app_name': ksm_app_name,
+        'ksm_app_uid': ksm_app_uid_str,
+        'ksm_app_accessible': ksm_app_accessible,
+    }
+    if is_verbose:
+        info.update({
+            'device_name': c.deviceName,
+            'device_token': c.deviceToken,
+            'created_on': datetime.datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'last_modified': datetime.datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'node_id': c.nodeId,
+            'os': version_parts[1] if len(version_parts) > 1 else '',
+            'os_release': version_parts[2] if len(version_parts) > 2 else '',
+            'machine_type': version_parts[3] if len(version_parts) > 3 else '',
+            'os_version': version_parts[4] if len(version_parts) > 4 else '',
+        })
+    return info
+
+
 class SearchCommand(Command):
     def get_parser(self):
         return search_parser
@@ -1130,6 +1437,18 @@ class SearchCommand(Command):
         # Join multiple words into a single pattern string
         pattern = ' '.join(pattern_args) if isinstance(pattern_args, list) else (pattern_args or '')
         use_regex = kwargs.get('regex', False)
+        device_mode = kwargs.get('device', False)
+        fmt = kwargs.get('format', 'table')
+        verbose = kwargs.get('verbose') is True
+
+        if device_mode:
+            if use_regex:
+                raise CommandError('search', '--regex is not supported with --device (pattern is UID or controllerName)')
+            if kwargs.get('categories'):
+                raise CommandError('search', '--categories is not supported with --device (only PAM Configs apply)')
+            if not pattern:
+                raise CommandError('search', '--device requires a pattern: gateway UID or controllerName substring (use "*" for all)')
+            return self._execute_device_search(params, pattern, verbose, fmt)
 
         # Handle wildcard: '*' means match all
         if pattern == '*':
@@ -1138,10 +1457,10 @@ class SearchCommand(Command):
             else:
                 pattern = ''  # Empty pattern matches all in token mode
 
-        categories = (kwargs.get('categories') or 'rst').lower()
-        verbose = kwargs.get('verbose') is True
+        categories = ''.join(kwargs.get('categories') or ['rstd']).lower()
         skip_details = not verbose
-        fmt = kwargs.get('format', 'table')
+
+        nsf_records_map = getattr(params, 'nested_share_records', {}) or {}
 
         all_results = []
 
@@ -1151,21 +1470,24 @@ class SearchCommand(Command):
             if records:
                 if fmt == 'json':
                     for record in records:
+                        is_nsf = record.record_uid in nsf_records_map
                         result_item = {
                             'type': 'record',
                             'record_uid': record.record_uid,
                             'record_type': record.record_type,
                             'title': record.title,
-                            'description': vault_extensions.get_record_description(record)
+                            'description': vault_extensions.get_record_description(record),
+                            'record_category': 'Nested' if is_nsf else 'Classic',
                         }
                         all_results.append(result_item)
                 else:
                     logging.info('')
                     table = []
-                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    headers = ['Record UID', 'Type', 'Title', 'Description', 'Record Category']
                     for record in records:
+                        record_category = 'Nested' if record.record_uid in nsf_records_map else 'Classic'
                         row = [record.record_uid, record.record_type, record.title,
-                               vault_extensions.get_record_description(record)]
+                               vault_extensions.get_record_description(record), record_category]
                         table.append(row)
                     table.sort(key=lambda x: (x[2] or '').lower())
 
@@ -1212,6 +1534,38 @@ class SearchCommand(Command):
                     logging.info('')
                     display.formatted_teams(results, params=params, skip_details=skip_details)
 
+
+        if 'd' in categories:
+            nsf_folder_results = self._search_nested_share_folders(params, pattern, use_regex=use_regex)
+            if nsf_folder_results:
+                if fmt == 'json':
+                    for folder_uid, fobj in nsf_folder_results:
+                        result_item = {
+                            'type': 'nested_share_folder',
+                            'folder_uid': folder_uid,
+                            'name': fobj.get('name', ''),
+                            'parent_uid': self._display_parent_uid(fobj.get('parent_uid', '')),
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    rows_with_parent = [
+                        (folder_uid, fobj.get('name', ''),
+                         self._display_parent_uid(fobj.get('parent_uid', '')))
+                        for folder_uid, fobj in nsf_folder_results
+                    ]
+                    any_non_root = any(parent for _, _, parent in rows_with_parent)
+                    if any_non_root:
+                        headers = ['Nested Share Folder UID', 'Name', 'Parent UID']
+                        table = [[fuid, name, parent]
+                                 for fuid, name, parent in rows_with_parent]
+                    else:
+                        headers = ['Nested Share Folder UID', 'Name']
+                        table = [[fuid, name] for fuid, name, _ in rows_with_parent]
+                    table.sort(key=lambda x: (x[1] or '').lower())
+                    base.dump_report_data(table, headers, row_number=True,
+                                          column_width=None if verbose else 40)
+
         if fmt == 'json':
             if all_results:
                 table = []
@@ -1220,18 +1574,132 @@ class SearchCommand(Command):
                 for item in all_results:
                     if item['type'] == 'record':
                         row = [item['type'], item['record_uid'], item['title'], 
-                               f"Type: {item['record_type']}, Description: {item['description']}"]
+                               f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'Classic')}"]
                     elif item['type'] == 'shared_folder':
                         row = [item['type'], item['shared_folder_uid'], item['name'],
-                               f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
+                               f"Folder Category: Classic, Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
                                f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
+                    elif item['type'] == 'nested_share_folder':
+                        details = 'Folder Category: NestedShare'
+                        if item.get('parent_uid'):
+                            details += f", Parent UID: {item['parent_uid']}"
+                        row = [item['type'], item['folder_uid'], item['name'], details]
                     table.append(row)
                 
                 return base.dump_report_data(table, headers, fmt='json')
             else:
                 return base.dump_report_data([], ['type', 'uid', 'name', 'details'], fmt='json')
+
+    @staticmethod
+    def _execute_device_search(params, pattern, is_verbose, fmt):
+        """Handle `search <pattern> --device`: resolve Gateway(s), print info + bound PAM Configs."""
+        matched, connected_by_uid, is_router_down = _resolve_gateways_by_pattern(params, pattern)
+
+        if not matched:
+            msg = f'No gateways match "{pattern}"'
+            if fmt == 'json':
+                return base.dump_report_data([], ['gateway_uid', 'gateway_name', 'status', 'pam_config_count'],
+                                             fmt='json')
+            logging.info(msg)
+            return None
+
+        if len(matched) >= 2:
+            logging.warning(f'{len(matched)} gateways matched "{pattern}"')
+
+        gateways_payload = []
+        for g in matched:
+            info = _build_gateway_info(g, connected_by_uid.get(g.controllerUid, []),
+                                       params, is_router_down, is_verbose)
+            pam_configs = _find_pam_configs_for_gateway(params, info['gateway_uid'])
+            info['pam_config_count'] = len(pam_configs)
+            info['pam_configs'] = pam_configs
+            gateways_payload.append(info)
+
+        if fmt == 'json':
+            return json.dumps({'gateways': gateways_payload}, indent=2, default=base.json_serialized)
+
+        # Table output
+        for info in gateways_payload:
+            status_color = bcolors.OKGREEN if info['status'].startswith('ONLINE') else \
+                           (bcolors.WARNING if info['status'] == 'UNKNOWN' else bcolors.FAIL)
+            logging.info('')
+            logging.info(f'=== Gateway: {bcolors.BOLD}{info["gateway_name"]}{bcolors.ENDC} '
+                         f'({info["gateway_uid"]}) ===')
+            logging.info(f'  Status:        {status_color}{info["status"]}{bcolors.ENDC}')
+            logging.info(f'  Version:       {info["gateway_version"] or "-"}')
+            ksm_label = (f'{info["ksm_app_name"]} ({info["ksm_app_uid"]})'
+                         if info['ksm_app_accessible']
+                         else f'[APP NOT ACCESSIBLE OR DELETED] ({info["ksm_app_uid"]})')
+            logging.info(f'  KSM App:       {ksm_label}')
+            logging.info(f'  PAM Configs:   {info["pam_config_count"]}')
+            if is_verbose:
+                logging.info(f'  Device Name:   {info.get("device_name", "")}')
+                logging.info(f'  Device Token:  {info.get("device_token", "")}')
+                logging.info(f'  Node ID:       {info.get("node_id", "")}')
+                logging.info(f'  Created:       {info.get("created_on", "")}')
+                logging.info(f'  Last modified: {info.get("last_modified", "")}')
+                if info.get('os'):
+                    logging.info(f'  OS:            {info["os"]} {info.get("os_release", "")} '
+                                 f'({info.get("machine_type", "")}) {info.get("os_version", "")}'.rstrip())
+
+            if info['pam_configs']:
+                if is_verbose:
+                    rows = [[c['record_uid'], c['record_type'], c['title'], c['description']]
+                            for c in info['pam_configs']]
+                    base.dump_report_data(rows,
+                                          ['Record UID', 'Type', 'Title', 'Description'],
+                                          row_number=True,
+                                          column_width=None)
+                else:
+                    for idx, c in enumerate(info['pam_configs'], 1):
+                        logging.info(f'    PamConfig{idx}:  {c["record_uid"]}  {c["title"]}')
+            else:
+                logging.info('  (no PAM Configs bound to this gateway)')
+        return None
+
+    @staticmethod
+    def _display_parent_uid(parent_uid):
+        """Render a Nested Share Folder ``parent_uid`` for display.
+        """
+        if not parent_uid or parent_uid == 'root':
+            return ''
+        if parent_uid.startswith('AAAAAAAAAA'):
+            return ''
+        return parent_uid
+
+    @staticmethod
+    def _search_nested_share_folders(params, search_str, use_regex=False):
+        """Search Nested Share Folders by name.
+        """
+        nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+        if not nsf_folders:
+            return []
+
+        if not search_str:
+            match_func = lambda target: True
+        elif use_regex:
+            try:
+                pat = re.compile(search_str, re.IGNORECASE)
+            except re.error:
+                return []
+            match_func = lambda target: bool(pat.search(target))
+        else:
+            tokens = [t.lower() for t in search_str.split() if t.strip()]
+            if not tokens:
+                match_func = lambda target: True
+            else:
+                match_func = lambda target: all(token in target for token in tokens)
+
+        results = []
+        for folder_uid, fobj in nsf_folders.items():
+            name = (fobj.get('name') or '')
+            
+            haystack = f"{name.lower()} {folder_uid.lower()}"
+            if match_func(haystack):
+                results.append((folder_uid, fobj))
+        return results
 
 
 class RecordListCommand(Command):
@@ -1276,13 +1744,16 @@ class RecordListCommand(Command):
             search_fields=search_fields,
             use_regex=True)]
         if any(records):
-            headers = ['record_uid', 'type', 'title', 'description', 'shared']
+            headers = ['record_uid', 'type', 'title', 'description', 'shared', 'record_category']
             if fmt == 'table':
                 headers = [base.field_to_title(x) for x in headers]
             table = []
             for record in records:
+                # Determine if record is from Nested Share Folder or Classic
+                is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
+                record_category = 'Nested' if is_nested_share else 'Classic'
                 row = [record.record_uid, record.record_type, record.title,
-                       vault_extensions.get_record_description(record), record.shared]
+                       vault_extensions.get_record_description(record), record.shared, record_category]
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
             if fmt != 'json':
@@ -1301,6 +1772,9 @@ class RecordListSfCommand(Command):
         fmt = kwargs.get('format', 'table')
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_shared_folders(params, pattern or '')
+        if kwargs.get('roe_eligible'):
+            results = [sf for sf in results
+                       if vault_extensions.shared_folder_has_pam_user_with_rotation(params, sf.shared_folder_uid)]
         if any(results):
             table = []
             headers = ['shared_folder_uid', 'name'] if fmt == 'json' else ['Shared Folder UID', 'Name']
@@ -2607,50 +3081,116 @@ class RecordRemoveCommand(Command):
                                         if record.title.casefold() == record_name.casefold():
                                             records_to_delete.append((folder, record_uid))
                 if len(records_to_delete) == orig_len:
-                    raise CommandError('rm', f'Record {name} cannot be resolved')
+                    # Fallback: global title search so records in shared folders are also found.
+                    for record_uid in params.record_cache:
+                        record = vault.KeeperRecord.load(params, record_uid)
+                        if record and record.title.casefold() == name.casefold():
+                            for folder in find_all_folders(params, record_uid):
+                                records_to_delete.append((folder, record_uid))
+                if len(records_to_delete) == orig_len:
+                    raise CommandError('rm', f'No record found matching "{name}". '
+                                       f'Provide a valid record title, path, or UID.')
+                # Check across both path-based and fallback results: if multiple distinct
+                # record UIDs were matched by title, require the user to specify a UID.
+                found_uids = list({uid for _, uid in records_to_delete[orig_len:]})
+                if len(found_uids) > 1:
+                    lines = [f'  {uid}' for uid in found_uids]
+                    raise CommandError('rm', f'"{name}" matches {len(found_uids)} records. '
+                                       f'Use a UID to identify the record:\n' + '\n'.join(lines))
 
         vault_changed = False
-        while len(records_to_delete) > 0:
-            rq = {
-                'command': 'pre_delete',
-                'objects': []
-            }
+        force = kwargs.get('force') or False
+        purge = kwargs.get('purge') or False
 
-            chunk = records_to_delete[:rq_obj_limit]
-            records_to_delete = records_to_delete[rq_obj_limit:]
-            for folder, record_uid in chunk:
-                del_obj = {
-                    'delete_resolution': 'unlink',
-                    'object_uid': record_uid,
-                    'object_type': 'record'
-                }
-                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                    del_obj['from_type'] = 'user_folder'
-                    if folder.type == BaseFolderNode.UserFolderType:
-                        del_obj['from_uid'] = folder.uid
+        if purge:
+            # Hard-delete records for ALL users: deduplicate UIDs across folders
+            record_uids = list({uid for _, uid in records_to_delete})
+
+            # Only the record owner may permanently delete a record
+            non_owned = []
+            owned_uids = []
+            for uid in record_uids:
+                ro = params.record_owner_cache.get(uid)
+                if ro and ro.owner:
+                    owned_uids.append(uid)
                 else:
-                    del_obj['from_type'] = 'shared_folder_folder'
-                    del_obj['from_uid'] = folder.uid
-                rq['objects'].append(del_obj)
+                    record = vault.KeeperRecord.load(params, uid)
+                    title = record.title if record else uid
+                    non_owned.append(title)
+            if non_owned:
+                for title in non_owned:
+                    logging.warning('Cannot permanently delete "%s": you are not the record owner.', title)
+            if not owned_uids:
+                return
+            record_uids = owned_uids
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
+            if not force:
+                print(f'This will permanently delete {len(record_uids)} record(s) for ALL users.')
+                np = base.user_choice('Do you want to proceed?', 'y/n', default='n')
+                if np.lower() != 'y':
+                    return
+            success_count = 0
+            while record_uids:
+                chunk = record_uids[:rq_obj_limit]
+                record_uids = record_uids[rq_obj_limit:]
+                rq = {
+                    'command': 'record_update',
+                    'delete_records': chunk
+                }
+                rs = api.communicate(params, rq)
+                if 'delete_records' in rs:
+                    for status in rs['delete_records']:
+                        if status.get('status') == 'success':
+                            success_count += 1
+                        else:
+                            logging.warning('Failed to delete record %s: %s',
+                                            status.get('uid', ''), status.get('status', ''))
+            if success_count:
+                logging.info('%d record(s) permanently deleted for all users.', success_count)
+                api.sync_down(params)
+                vault_changed = True
+        else:
+            # Remove records from your vault only (unlink), leaving them intact for other users
+            while len(records_to_delete) > 0:
+                rq = {
+                    'command': 'pre_delete',
+                    'objects': []
+                }
 
-                force = kwargs.get('force') or False
-                np = 'y'
-                if force is not True:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                    np = base.user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
+                chunk = records_to_delete[:rq_obj_limit]
+                records_to_delete = records_to_delete[rq_obj_limit:]
+                for folder, record_uid in chunk:
+                    del_obj = {
+                        'delete_resolution': 'unlink',
+                        'object_uid': record_uid,
+                        'object_type': 'record'
                     }
-                    api.communicate(params, rq)
-                    vault_changed = True
+                    if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                        del_obj['from_type'] = 'user_folder'
+                        if folder.type == BaseFolderNode.UserFolderType:
+                            del_obj['from_uid'] = folder.uid
+                    else:
+                        del_obj['from_type'] = 'shared_folder_folder'
+                        del_obj['from_uid'] = folder.uid
+                    rq['objects'].append(del_obj)
+
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    pdr = rs['pre_delete_response']
+
+                    np = 'y'
+                    if force is not True:
+                        summary = pdr['would_delete']['deletion_summary']
+                        for x in summary:
+                            print(x)
+                        np = base.user_choice('Do you want to proceed with removal?', 'yn', default='n')
+                    if np.lower() == 'y':
+                        rq = {
+                            'command': 'delete',
+                            'pre_delete_token': pdr['pre_delete_token']
+                        }
+                        api.communicate(params, rq)
+                        vault_changed = True
 
         if vault_changed:
             BreachWatch.save_reused_pw_count(params)

@@ -97,7 +97,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return f'keeper-service-{self.get_integration_name().lower()}'
 
     def get_service_commands(self) -> str:
-        return 'search,share-record,share-folder,record-add,one-time-share,epm,pedm,device-approve,get,server'
+        return 'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,sync-down,list-sf'
 
     # -- Parser (auto-built from name, cached per subclass) ----------
 
@@ -156,6 +156,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def execute(self, params, **kwargs):
         name = self.get_integration_name()
+        self._require_file_based_config(params, f'{name.lower()}-app-setup')
 
         # Phase 1 -- Docker service mode setup
         print(f"\n{bcolors.BOLD}Phase 1: Running Docker Service Mode Setup{bcolors.ENDC}")
@@ -313,14 +314,14 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                                record_uid: str, config=None) -> None:
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         service_name = self.get_docker_service_name()
-
-        if os.path.exists(compose_file):
+        compose_exists = os.path.exists(compose_file)
+        if compose_exists:
             with open(compose_file, 'r') as f:
                 content = f.read()
-
             if f'{service_name}:' in content:
-                DockerSetupPrinter.print_warning(f"{service_name} service already exists in docker-compose.yml")
-                return
+                DockerSetupPrinter.print_warning(
+                    f"{service_name} service already exists in docker-compose.yml; rewriting. Hand edits will be lost."
+                )
 
         try:
             builder = DockerComposeBuilder(
@@ -340,7 +341,9 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             with open(compose_file, 'w') as f:
                 f.write(yaml_content)
 
-            DockerSetupPrinter.print_success("docker-compose.yml updated successfully")
+            DockerSetupPrinter.print_success(
+                "docker-compose.yml regenerated successfully" if compose_exists else "docker-compose.yml created successfully"
+            )
         except Exception as e:
             raise CommandError(self.get_command_name(), f'Failed to update docker-compose.yml: {str(e)}')
 
@@ -370,18 +373,18 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
         print(f"    • {name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
         self.print_integration_specific_resources(config)
-        print(f"    • PEDM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
+        print(f"    • EPM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
         print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}")
 
     # -- Optional feature collectors -----------------------------------
 
     def _collect_pedm_config(self) -> Tuple[bool, int]:
-        print(f"\n{bcolors.BOLD}PEDM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
-        print(f"  Integrate with Keeper PEDM for privilege elevation")
-        enabled = input(f"{bcolors.OKBLUE}Enable PEDM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        print(f"\n{bcolors.BOLD}EPM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
+        print(f"  Integrate with Keeper EPM for privilege elevation")
+        enabled = input(f"{bcolors.OKBLUE}Enable EPM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
         interval = 120
         if enabled:
-            interval_input = input(f"{bcolors.OKBLUE}PEDM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
+            interval_input = input(f"{bcolors.OKBLUE}EPM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
             interval = int(interval_input) if interval_input else 120
         return enabled, interval
 

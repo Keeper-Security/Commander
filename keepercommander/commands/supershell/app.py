@@ -90,6 +90,7 @@ class SuperShellApp(App):
         Binding("m", "toggle_unmask", "Toggle Unmask", show=False),
         Binding("W", "show_user_info", "User Info", show=False),
         Binding("D", "show_device_info", "Device Info", show=False),
+        Binding("L", "launch_pam", "Launch PAM", show=False),
         Binding("?", "show_help", "Help", show=False),
         # Vim-style navigation
         Binding("j", "cursor_down", "Down", show=False),
@@ -250,6 +251,12 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
+[bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
 
     def _apply_theme_css(self):
@@ -383,6 +390,12 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
+[bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
+  [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
 
@@ -411,17 +424,22 @@ class SuperShellApp(App):
 
     def _load_vault_data(self):
         """Load vault data from params"""
-        # Build record to folder mapping using subfolder_record_cache
-        # Records in root folder have folder_uid = '' (empty string)
+        # Build record to folder mapping using subfolder_record_cache.
+        # Records in root folder have folder_uid = '' (empty string).
+        real_folder_uids = set(getattr(self.params, 'folder_cache', {}).keys())
+        real_folder_uids.update(getattr(self.params, 'nested_share_folders', {}).keys())
+
         self.record_to_folder = {}  # Maps record_uid -> folder_uid
-        self.records_in_subfolders = set()  # Track records that are in actual subfolders (not root)
+        self.records_in_subfolders = set()  # Records that are in actual subfolders (not root)
         if hasattr(self.params, 'subfolder_record_cache'):
             for folder_uid, record_uids in self.params.subfolder_record_cache.items():
+                is_real_subfolder = bool(folder_uid) and folder_uid in real_folder_uids
                 for record_uid in record_uids:
-                    self.record_to_folder[record_uid] = folder_uid
-                    # Track records in non-root folders
-                    if folder_uid and folder_uid != '':
+                    if is_real_subfolder:
+                        self.record_to_folder[record_uid] = folder_uid
                         self.records_in_subfolders.add(record_uid)
+                    else:
+                        self.record_to_folder.setdefault(record_uid, '')
 
         # Track file attachments and their parent records
         self.file_attachment_to_parent = {}  # Maps attachment_uid -> parent_record_uid
@@ -568,6 +586,8 @@ class SuperShellApp(App):
                                         record_dict['password'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['password'] = field_value
+                                    if field_label:
+                                        record_dict['password_label'] = field_label
 
                                 # Extract login from typed field if not already set
                                 if field_type == 'login' and field_value and not record_dict.get('login'):
@@ -575,6 +595,8 @@ class SuperShellApp(App):
                                         record_dict['login'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['login'] = field_value
+                                    if field_label:
+                                        record_dict['login_label'] = field_label
 
                                 # Extract URL from typed field if not already set
                                 if field_type == 'url' and field_value and not record_dict.get('login_url'):
@@ -582,6 +604,8 @@ class SuperShellApp(App):
                                         record_dict['login_url'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['login_url'] = field_value
+                                    if field_label:
+                                        record_dict['login_url_label'] = field_label
 
                                 # Extract TOTP URL from oneTimeCode field
                                 if field_type == 'oneTimeCode' and field_value and not record_dict.get('totp_url'):
@@ -953,6 +977,75 @@ class SuperShellApp(App):
             data={'type': 'record', 'uid': record_uid, 'has_attachments': bool(attachments or linked_records)}
         )
 
+    def _get_folder_icon(self, folder_node):
+        """Return the appropriate icon for a folder based on its type and sharing status.
+
+        Icon mapping (matches Keeper desktop client):
+          - Legacy Personal Folder  (user_folder)           → 🔒
+          - Legacy Shared Folder    (shared_folder)          → 📦
+          - Subfolder in Shared     (shared_folder_folder)   → 📦
+          - Drive Shared Folder     (nested_share_folder, shared) → 👥
+          - Drive NonShared Folder  (nested_share_folder, not shared) → 📁
+        """
+        from ...subfolder import BaseFolderNode
+        if folder_node is None:
+            return "📁"
+        ft = folder_node.type
+        if ft == BaseFolderNode.UserFolderType:
+            return "🔒"
+        if ft in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+            return "📦"
+        if ft == BaseFolderNode.NestedShareFolderType:
+            try:
+                from ...proto import folder_pb2
+                from ..nested_share_folder.helpers import (
+                    _current_user_account_uid,
+                    _is_current_user_access,
+                )
+
+                folder_obj = (getattr(self.params, 'nested_share_folders', {}) or {}).get(
+                    folder_node.uid, {}
+                ) or {}
+                owner_username = folder_obj.get('owner_username') or ''
+                owner_account_uid = folder_obj.get('owner_account_uid') or ''
+                current_username = getattr(self.params, 'user', '') or ''
+                current_account_uid = _current_user_account_uid(self.params)
+
+              
+                current_user_is_owner = False
+                owner_known = bool(owner_username) or bool(owner_account_uid)
+                if owner_username and current_username and \
+                        owner_username.lower() == current_username.lower():
+                    current_user_is_owner = True
+                elif owner_account_uid and current_account_uid and \
+                        owner_account_uid == current_account_uid:
+                    current_user_is_owner = True
+
+                if owner_known and not current_user_is_owner:
+                    return "👥"
+
+                sharing_state = (
+                    getattr(self.params, 'nested_share_folder_sharing_states', {}) or {}
+                ).get(folder_node.uid)
+                if sharing_state and sharing_state.get('shared'):
+                    return "👥"
+
+                accesses = (getattr(self.params, 'nested_share_folder_accesses', {}) or {}).get(
+                    folder_node.uid, []
+                ) or []
+                at_user = int(folder_pb2.AT_USER)
+                at_team = int(folder_pb2.AT_TEAM)
+                for a in accesses:
+                    if int(a.get('access_type', 0) or 0) not in (at_user, at_team):
+                        continue
+                    if _is_current_user_access(a, self.params, current_account_uid):
+                        continue
+                    return "👥"
+            except Exception:
+                pass
+            return "📁"
+        return "📁"
+
     def _setup_folder_tree(self):
         """Setup the folder tree structure with records as children"""
         tree = self.query_one("#folder_tree", Tree)
@@ -1007,12 +1100,8 @@ class SuperShellApp(App):
 
             # Determine label and color based on folder type
             color = t['folder']
-            if folder_node.type == 'shared_folder':
-                # Shared folder: bold green name with share icon after
-                label = f"[bold {color}]{folder_node.name}[/bold {color}] 👥"
-            else:
-                # Regular folder: bold green name
-                label = f"[bold {color}]{folder_node.name}[/bold {color}]"
+            folder_icon = self._get_folder_icon(folder_node)
+            label = f"[bold {color}]{folder_node.name}[/bold {color}] {folder_icon}"
 
             # Add this folder to the tree with color
             tree_node = parent_tree_node.add(
@@ -1428,9 +1517,7 @@ class SuperShellApp(App):
                 # Fallback to basic folder info if get command didn't work
                 folder = self.params.folder_cache.get(folder_uid)
                 if folder:
-                    folder_type = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else folder.type
-                    folder_type_str = str(folder_type) if folder_type else 'Folder'
-                    folder_icon = "👥" if 'shared' in folder_type_str.lower() else "📁"
+                    folder_icon = self._get_folder_icon(folder)
                     return (
                         f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder.name))}[/bold {t['secondary']}]\n\n"
                         f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
@@ -1445,8 +1532,7 @@ class SuperShellApp(App):
             # Determine folder header with icon and name
             folder = self.params.folder_cache.get(folder_uid)
             folder_name = folder.name if folder else "Folder"
-            is_shared = 'Shared Folder UID' in output
-            folder_icon = "👥" if is_shared else "📁"
+            folder_icon = self._get_folder_icon(folder)
             lines.append(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]")
             lines.append("")
 
@@ -1724,6 +1810,33 @@ class SuperShellApp(App):
         except Exception as e:
             logging.debug(f"Error clearing clickable fields: {e}")
 
+    @staticmethod
+    def _strip_pam_internal_fields(output: str) -> str:
+        """Drop noisy PAM fields (pamHostname, pamSettings, trafficEncryptionSeed,
+        checkbox:*) from the legacy ``get`` output, including multi-line dict
+        continuations. The fields stay visible in JSON view; this only affects
+        the Detail view for pamMachine/pamDatabase records.
+        """
+        skip_prefixes = ('pamHostname:', 'pamSettings:', 'trafficEncryptionSeed:', 'checkbox:')
+        kept = []
+        skipping = False
+        brace_depth = 0
+        for raw_line in output.split('\n'):
+            stripped_left = raw_line.lstrip()
+            if skipping:
+                brace_depth += raw_line.count('{') - raw_line.count('}')
+                if brace_depth <= 0:
+                    skipping = False
+                continue
+            if any(stripped_left.startswith(p) for p in skip_prefixes):
+                brace_depth = raw_line.count('{') - raw_line.count('}')
+                if brace_depth > 0:
+                    skipping = True
+                # else: single-line value, just drop this one line
+                continue
+            kept.append(raw_line)
+        return '\n'.join(kept)
+
     def _display_record_with_clickable_fields(self, record_uid: str):
         """Display record details with clickable fields for copy-on-click"""
         t = self.theme_colors
@@ -1736,6 +1849,14 @@ class SuperShellApp(App):
         # Get and parse record output
         output = self._get_record_output(record_uid, format_type='detail')
         output = strip_ansi_codes(output)
+
+        # For launchable PAM records (pamMachine/pamDatabase) hide the
+        # noisy raw fields from Detail view — a parsed Launch section
+        # below replaces them. JSON view stays unchanged.
+        record_data_for_filter = self.records.get(record_uid, {})
+        record_type_for_filter = record_data_for_filter.get('record_type', '')
+        if record_type_for_filter in ('pamMachine', 'pamDatabase'):
+            output = self._strip_pam_internal_fields(output)
 
         if not output or output.strip() == '':
             detail_widget.update("[red]Failed to get record details[/red]")
@@ -1880,6 +2001,68 @@ class SuperShellApp(App):
 
             rotation_displayed = True
 
+        launch_displayed = False
+
+        def display_launch_section():
+            """Render the parsed Launch section for pamMachine/pamDatabase."""
+            nonlocal launch_displayed
+            if launch_displayed:
+                return
+            try:
+                from ..pam_launch.launch import get_launch_info
+                info = get_launch_info(self.params, record_uid)
+            except Exception as e:
+                logging.debug(f"Launch section: get_launch_info failed: {e}")
+                info = None
+            if not info:
+                return
+            protocol = (info.get('protocol') or '').upper() or 'PAM'
+            if info.get('host'):
+                host_str = f"{info['host']}:{info['port']}" if info.get('port') else info['host']
+                if info.get('allow_supply_host'):
+                    host_display = f"{host_str}  (or supplied at launch)"
+                else:
+                    host_display = host_str
+            elif info.get('allow_supply_host'):
+                host_display = "(prompted at launch)"
+            else:
+                host_display = "(not configured)"
+            if info.get('credential_uid'):
+                cred_str = info.get('credential_title') or info['credential_uid']
+                if info.get('allow_supply_user'):
+                    cred_display = f"{cred_str}  (or supplied at launch)"
+                else:
+                    cred_display = cred_str
+            elif info.get('allow_supply_user') or info.get('allow_supply_host'):
+                cred_display = "(prompted at launch)"
+            else:
+                cred_display = "(not configured)"
+            mount_line("", None)
+            mount_line(f"[bold {t['secondary']}]Launch:[/bold {t['secondary']}]", None)
+            mount_line(
+                f"  [{t['text_dim']}]Protocol:[/{t['text_dim']}]    "
+                f"[{t['primary']}]{rich_escape(protocol)}[/{t['primary']}]",
+                protocol,
+            )
+            mount_line(
+                f"  [{t['text_dim']}]Host:[/{t['text_dim']}]        "
+                f"[{t['primary']}]{rich_escape(str(host_display))}[/{t['primary']}]",
+                host_display,
+            )
+            mount_line(
+                f"  [{t['text_dim']}]Credential:[/{t['text_dim']}]  "
+                f"[{t['primary']}]{rich_escape(str(cred_display))}[/{t['primary']}]",
+                cred_display,
+            )
+            mount_line("", None)
+            mount_line(
+                f"  [bold black on {t['primary']}]  >> Press L to Launch {rich_escape(protocol)}  <<  "
+                f"[/bold black on {t['primary']}]",
+                None,
+            )
+            mount_line("", None)
+            launch_displayed = True
+
         for line in output.split('\n'):
             stripped = line.strip()
             if not stripped:
@@ -1894,21 +2077,25 @@ class SuperShellApp(App):
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key in ['Title', 'Name'] and not current_section:
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
+                    if record_type_for_filter in ('pamMachine', 'pamDatabase'):
+                        display_launch_section()
                 elif key == 'Type':
                     # Show 'app' for app records if type is blank
                     display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(display_type))}[/{t['primary_dim']}]", display_type)
-                elif key == 'Password':
+                elif key == 'Password' or (record_data.get('password_label') and key == record_data['password_label']):
                     # Show masked password but use ClipboardCommand to copy (generates audit event)
-                    # Respect unmask_secrets toggle
+                    # Respect unmask_secrets toggle. Matches both the canonical "Password" label
+                    # and any custom label (e.g. "Passphrase") set on a type=password field.
                     if self.unmask_secrets:
                         display_value = actual_password if actual_password else value
                     else:
                         display_value = '******' if actual_password else value
                     copy_value = actual_password if actual_password else None
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_value))}[/{t['primary']}]", copy_value, is_password=True)
-                elif key == 'URL':
-                    # Display URL, then TOTP if present
+                elif key == 'URL' or (record_data.get('login_url_label') and key == record_data['login_url_label']):
+                    # Display URL, then TOTP if present. Matches both the canonical "URL" label
+                    # and any custom label set on a type=url field.
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                     display_totp()  # Add TOTP section right after URL (before Notes)
                 elif key == 'Notes':
@@ -2362,14 +2549,7 @@ class SuperShellApp(App):
 
         # Determine folder header with icon and name
         folder_name = folder.name if folder else "Folder"
-        if folder:
-            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
-            if 'shared' in ft.lower():
-                folder_icon = "👥"
-            else:
-                folder_icon = "📁"
-        else:
-            folder_icon = "📁"
+        folder_icon = self._get_folder_icon(folder)
 
         # Type header with icon and folder name
         mount_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]", None)
@@ -2506,14 +2686,7 @@ class SuperShellApp(App):
         # Determine folder header with icon and name
         folder = self.params.folder_cache.get(folder_uid)
         folder_name = folder.name if folder else "Folder"
-        if folder:
-            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
-            if 'shared' in ft.lower():
-                folder_icon = "👥"
-            else:
-                folder_icon = "📁"
-        else:
-            folder_icon = "📁"
+        folder_icon = self._get_folder_icon(folder)
 
         # Build formatted JSON output with clickable values
         mount_json_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}] [{t['text_dim']}](JSON)[/{t['text_dim']}]", None)
@@ -2832,6 +3005,17 @@ class SuperShellApp(App):
             elif record_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
                 mask_label = "Mask" if self.unmask_secrets else "Unmask"
+                launch_hint = ""
+                if self.selected_record:
+                    try:
+                        from ..pam_launch.launch import is_launchable
+                        ok, protocol = is_launchable(self.params, self.selected_record)
+                        if ok:
+                            launch_hint = (
+                                f"  [{t['text_dim']}]L[/{t['text_dim']}]=Launch {protocol.upper()}"
+                            )
+                    except Exception as e:
+                        logging.debug(f"is_launchable check failed: {e}")
                 shortcuts_bar.update(
                     f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
                     f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle  "
@@ -2839,6 +3023,7 @@ class SuperShellApp(App):
                     f"[{t['text_dim']}]u[/{t['text_dim']}]=Username  "
                     f"[{t['text_dim']}]c[/{t['text_dim']}]=Copy All  "
                     f"[{t['text_dim']}]m[/{t['text_dim']}]={mask_label}"
+                    f"{launch_hint}"
                 )
             elif folder_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
@@ -3614,6 +3799,36 @@ class SuperShellApp(App):
                 self._update_shortcuts_bar(folder_selected=True)
         except Exception as e:
             logging.error(f"Error toggling unmask: {e}", exc_info=True)
+
+    def action_launch_pam(self):
+        """Launch a KeeperPAM connection for the selected record."""
+        if not self.selected_record or self.selected_record not in self.records:
+            self.notify("No record selected", severity="warning")
+            return
+        from ..pam_launch.launch import PAMLaunchCommand, is_launchable
+        from ...error import CommandError
+        ok, protocol = is_launchable(self.params, self.selected_record)
+        if not ok:
+            self.notify("This record is not launchable", severity="warning")
+            return
+        record_uid = self.selected_record
+        with self.suspend():
+            try:
+                PAMLaunchCommand().execute(self.params, record=record_uid)
+            except CommandError as e:
+                # User-visible launch failure — show the message, no traceback.
+                print(f"\nLaunch failed: {e}", file=sys.stderr)
+                try:
+                    input("Press Enter to return to SuperShell...")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+            except Exception as e:
+                logging.error(f"pam launch failed: {e}", exc_info=True)
+                try:
+                    input("Press Enter to return to SuperShell...")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+        self._display_record_detail(record_uid)
 
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""

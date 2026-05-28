@@ -10,7 +10,6 @@
 #
 
 import io, html
-from pathlib import Path
 import sys
 import json
 import logging
@@ -21,8 +20,6 @@ from .parse_keeper_response import parse_keeper_response
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
-from ...__main__ import get_params_from_config
-from ...service.config.service_config import ServiceConfig
 from ...crypto import encrypt_aes_v2
 
 class CommandExecutor:
@@ -142,8 +139,6 @@ class CommandExecutor:
             logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}', log_output: '{sanitized_logs}'")
             sanitized_response = sanitize_debug_data(str(response))
             logger.debug(f"Final response: '{sanitized_response}', response type: {type(response)}")
-
-            cli.do_command(params, 'sync-down')
             
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)

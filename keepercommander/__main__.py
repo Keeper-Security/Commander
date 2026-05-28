@@ -164,6 +164,8 @@ fail_on_throttle_help = 'Disable default client-side pausing of command executio
 parser.add_argument('--fail-on-throttle', action='store_true', help=fail_on_throttle_help)
 parser.add_argument('--data-dir', dest='data_dir', action='store', help='Directory to use for Commander data (config, cache, etc.). Overrides environment variables.')
 parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow (bypass persistent login)')
+parser.add_argument('--config-file', dest='config_file', action='store_true',
+                    help='Store credentials in config.json instead of the OS-native keychain')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -284,17 +286,24 @@ def main(from_package=False):
                     skip_next = False
                     continue
                     
-                # Skip arguments that were handled by main parser
-                main_parser_args = ['--config', '--server', '--user', '--password', '--version', '--debug', 
-                                  '--batch-mode', '--launched-with-shortcut', '--proxy', '--unmask-all', '--fail-on-throttle',
-                                  '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
-                
+                # Skip arguments that were handled by main parser.
+                # Value flags: skip the flag AND the following value argument.
+                # Boolean flags: skip only the flag itself (no value follows).
+                value_main_parser_args = ['--config', '--server', '--user', '--password',
+                                          '--launched-with-shortcut', '--proxy',
+                                          '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
+                bool_main_parser_args = ['--version', '--debug', '--batch-mode',
+                                         '--unmask-all', '--fail-on-throttle',
+                                         '--new-login', '--config-file']
+                main_parser_args = value_main_parser_args + bool_main_parser_args
+
                 is_main_parser_arg = False
                 for main_arg in main_parser_args:
                     if arg.startswith(main_arg + '=') or arg == main_arg:
                         is_main_parser_arg = True
-                        if arg == main_arg:
-                            skip_next = True  # Skip the next argument too (the argument value)
+                        # Only skip the next token for flags that consume a value.
+                        if arg == main_arg and main_arg in value_main_parser_args:
+                            skip_next = True
                         break
                 
                 if is_main_parser_arg:
@@ -418,6 +427,27 @@ def main(from_package=False):
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
+            # Pre-queue any sub-command passed after 'shell', or apply session-level
+            # flags when no explicit sub-command is given.
+            if original_args_after_command:
+                sub_cmd = ' '.join([shlex.quote(x) for x in original_args_after_command])
+                first_token = original_args_after_command[0]
+                if first_token == 'login':
+                    # Inject main-parser flags that were stripped from original_args_after_command
+                    login_flags = ''
+                    if opts.new_login:
+                        login_flags += ' --new-login'
+                    if opts.config_file:
+                        login_flags += ' --config-file'
+                    if login_flags:
+                        rest = sub_cmd[len('login'):].strip()
+                        sub_cmd = f'login{login_flags} {rest}'.strip()
+                params.commands.insert(0, sub_cmd)
+            elif opts.config_file:
+                # `keeper shell --config-file` with no sub-command:
+                # set the file sentinel for this session so any subsequent login
+                # uses file-based storage, without forcing a re-login now.
+                params.config[loader.CONFIG_STORAGE_URL] = 'file'
         elif opts.command and os.path.isfile(opts.command):
             with open(opts.command, 'r') as f:
                 lines = f.readlines()
@@ -428,9 +458,11 @@ def main(from_package=False):
             if opts.command:
                 # Use the filtered original argument order to preserve proper flag/value pairing
                 options = ' '.join([shlex.quote(x) for x in original_args_after_command]) if original_args_after_command else ''
-                # Inject --new-login into login command if main parser captured it
+                # Inject --new-login / --config-file into login if main parser captured them
                 if opts.command == 'login' and opts.new_login:
                     options = '--new-login ' + options if options else '--new-login'
+                if opts.command == 'login' and opts.config_file:
+                    options = '--config-file ' + options if options else '--config-file'
                 command = ' '.join([opts.command or '', options]).strip()
                 params.commands.append(command)
             params.commands.append('q')

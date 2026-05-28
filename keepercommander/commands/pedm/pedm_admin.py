@@ -228,8 +228,8 @@ class PedmScimCommand(base.ArgparseCommand):
                                   help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
 
         ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
-        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<host>)')
-        ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
+        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<dc-fqdn>)')
+        ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (userPrincipalName or DOMAIN\\username)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
         ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
@@ -316,19 +316,19 @@ class PedmScimCommand(base.ArgparseCommand):
                         ad_user = custom_field.get_default_value(str)
                     if not ad_user:
                         ad_user = login
-                    if not ad_user:
-                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD User" or "Login" value')
-                    kwargs['ad_user'] = ad_user
-
-                    ad_password: Optional[str] = None
-                    custom_field = config_record.get_typed_field(field_type=None, label='AD Password')
-                    if custom_field:
-                        ad_password = custom_field.get_default_value(str)
-                    if not ad_password:
-                        ad_password = password
-                    if not ad_password:
-                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD Password" or "Password" value')
-                    kwargs['ad_password'] = ad_password
+                    if ad_user:
+                        kwargs['ad_user'] = ad_user
+                        ad_password: Optional[str] = None
+                        custom_field = config_record.get_typed_field(field_type=None, label='AD Password')
+                        if custom_field:
+                            ad_password = custom_field.get_default_value(str)
+                        if not ad_password:
+                            ad_password = password
+                        if not ad_password:
+                            raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD Password" or "Password" value')
+                        kwargs['ad_password'] = ad_password
+                    else:
+                        logging.debug("AD Connect: username is not provided. Trying Kerberos login.")
 
                     custom_field = config_record.get_typed_field(field_type=None, label='SCIM Group')
                     if custom_field:
@@ -360,10 +360,12 @@ class PedmScimCommand(base.ArgparseCommand):
                 scim_groups = None
 
             use_netbios_domain = ad_domain != 'dns'
-            if not ad_url or not ad_user:
-                raise base.CommandError('AD source requires AD URL and AD User')
+            if not ad_url:
+                raise base.CommandError('AD source requires AD URL')
+            if os.name != 'nt' and not ad_user:
+                raise base.CommandError('AD source requires AD User')
             try:
-                if not ad_password:
+                if ad_user and not ad_password:
                     ad_password = getpass.getpass(prompt=f'{ad_user} Password: ', stream=None)
                     if not ad_password:
                         raise base.CommandError('Cancelled')
@@ -499,9 +501,12 @@ class PedmScimCommand(base.ArgparseCommand):
             scim_records = list(data_source.populate())
         except Exception as e:
             raise base.CommandError(f'Error connecting to {account_type}: {e}')
-        
+
+        users_loaded = 0
+        group_loaded = 0
         for element in scim_records:
             if isinstance(element, ScimUser):
+                users_loaded += 1
                 result = build_user(element)
                 if isinstance(result, tuple):
                     cd, is_update = result
@@ -510,6 +515,7 @@ class PedmScimCommand(base.ArgparseCommand):
                     else:
                         add_map[cd.collection_uid] = cd
             elif isinstance(element, ScimGroup):
+                group_loaded += 1
                 result = build_group(element)
                 if isinstance(result, tuple):
                     cd, is_update = result
@@ -518,12 +524,17 @@ class PedmScimCommand(base.ArgparseCommand):
                     else:
                         add_map[cd.collection_uid] = cd
 
+        logging.debug(f'Loaded {users_loaded} user(s) from AD')
+        logging.debug(f'Loaded {group_loaded} group(s) from AD')
+
         add_collections = list(add_map.values())
         update_collections = list(update_map.values())
 
         if len(add_collections) == 0 and len(update_collections) == 0:
             logging.info('No EPM collections to add or update.')
             return
+
+        logging.debug(f'User collections: to add {len(add_collections)}, to_update {len(update_collections)}')
 
         status = plugin.modify_collections(add_collections=add_collections, update_collections=update_collections)
         logging.info('EPM SCIM sync completed. Added: %d, Updated: %d', len(status.add), len(status.update))
@@ -1038,7 +1049,7 @@ class PedmPolicyMixin:
     policy_filter.add_argument('--date-filter', dest='date_filter', action='append',
                         help='Policy date filter. Date range in ISO format. YYYY-MM-DD:YYYY-MM-DD')
     policy_filter.add_argument('--time-filter', dest='time_filter', action='append',
-                        help='Policy time filter. Time. 24 hours format: HH:MM-HH:MM')
+                        help='Policy time filter. Hour range in 24-hour format: HH-HH (e.g. 9-17)')
     policy_filter.add_argument('--day-filter', dest='day_filter', action='append',
                         help='Policy day filter. Day of Week')
     policy_filter.add_argument('--risk-level', dest='risk_level', type=int, help='Policy risk level')
@@ -1051,9 +1062,8 @@ class PedmPolicyMixin:
 
         collection_lookup: Dict[str, Union[str, List[str]]] = {}
         for c in plugin.collections.get_all_entities():
-            if c.collection_type not in col_types: continue
             collection_lookup[c.collection_uid] = c.collection_uid
-            if c.collection_type >= 100:
+            if c.collection_type in col_types and c.collection_type >= 100:
                 collection_name: Optional[str] = c.collection_data.get('Name')
                 if not collection_name:
                     continue
@@ -1072,13 +1082,13 @@ class PedmPolicyMixin:
         for col_value in col_values:
             if col_value == '*':
                 result.append(col_value)
-            else:
-                cv = collection_lookup[col_value]
+            elif col_value:
+                cv = collection_lookup.get(col_value)
                 if not cv:
-                    cv = collection_lookup[col_value.lower()]
+                    cv = collection_lookup.get(col_value.lower())
                 if not cv:
-                    raise base.CommandError(f'collection value "{col_value}" cannot be resolved')
-                if isinstance(cv, str):
+                    result.append(col_value)
+                elif isinstance(cv, str):
                     result.append(cv)
                 else:
                     raise base.CommandError(f'collection value "{col_value}" is not unique. Use collection UID')
@@ -1090,19 +1100,18 @@ class PedmPolicyMixin:
         if not v:
             return None
 
-        try:
-            tc = [int(x) for x in v.split(':')]
-            while len(tc) < 3:
-                tc.append(0)
-            if tc[0] >= 24:
-                raise base.CommandError(f'time value "{v}" is not valid. Hours: 0 - 23')
-            if tc[1] >= 60:
-                raise base.CommandError(f'time value "{v}" is not valid. Minutes: 0 - 59')
-            if tc[2] >= 60:
-                raise base.CommandError(f'time value "{v}" is not valid. Seconds: 0 - 59')
+        if ':' in v:
+            raise base.CommandError(
+                f'time value "{v}" is not valid. Use hour-only format (0-23), e.g. --time-filter 9-17')
 
-            return ':'.join((f'{x:02d}' for x in tc))
-        except Exception as e:
+        try:
+            hour = int(v)
+            if hour < 0 or hour >= 24:
+                raise base.CommandError(f'time value "{v}" is not valid. Hours: 0 - 23')
+            return str(hour)
+        except base.CommandError:
+            raise
+        except Exception:
             raise base.CommandError(f'time value "{v}" is not valid.')
 
     @staticmethod
@@ -1110,11 +1119,10 @@ class PedmPolicyMixin:
         if not isinstance(v, str):
             return None
         try:
-            tc = [int(x) for x in v.split(':')]
-            tc = tc[:3]
-            if tc[2] == 0:
-                tc = tc[:2]
-            return ':'.join((f'{x:02d}' for x in tc))
+            # Handle both legacy HH:MM:SS format and current integer-hour format
+            hour = int(v.split(':')[0]) if ':' in v else int(v)
+            if 0 <= hour <= 23:
+                return str(hour)
         except Exception:
             pass
 
@@ -1164,7 +1172,7 @@ class PedmPolicyMixin:
 
     @staticmethod
     def resolve_times(t_values: List[str]) -> List[Dict[str, str]]:
-        #   { "StartTime" : "09:00:00", "EndTime" : "18:00:00" }
+        #   { "StartTime" : "9", "EndTime" : "18" }
         result: List[Dict[str, str]] = []
         if not t_values:
             return result
@@ -1227,13 +1235,7 @@ class PedmPolicyMixin:
         if not p_controls:
             return None
 
-        allowed_controls: Set[str] = set()
-        if policy_type_name == 'PrivilegeElevation':
-            allowed_controls.update(('audit', 'notify', 'mfa', 'justify', 'approval'))
-        elif policy_type_name == 'Access':
-            allowed_controls.update(('audit', 'notify', 'allow', 'deny'))
-        elif policy_type_name == 'CommandLine':
-            allowed_controls.update(('audit', 'notify', 'allow', 'deny'))
+        allowed_controls: Set[str] = {'audit', 'notify', 'mfa', 'justify', 'approval', 'allow', 'deny'}
 
         controls: List[str] = []
         if isinstance(p_controls, str):
@@ -1256,6 +1258,12 @@ class PedmPolicyMixin:
     def get_policy_filter(plugin: admin_plugin.PedmPlugin, **kwargs) -> Dict[str, Any]:
         policy_filter: Dict[str, Any] = {}
         for f in PedmPolicyMixin.ALL_FILTERS:
+            arg_name = f'{f.lower()}_filter'
+            p_filter: Any = kwargs.get(arg_name)
+            if not p_filter: continue
+            if isinstance(p_filter, str):
+                p_filter = [p_filter]
+
             if f == 'USER':
                 filter_name = 'UserCheck'
             elif f == 'MACHINE':
@@ -1270,31 +1278,21 @@ class PedmPolicyMixin:
                 filter_name = 'DayCheck'
             else:
                 continue
-
-            arg_name = f'{f.lower()}_filter'
-            p_filter: Any = kwargs.get(arg_name)
-            if p_filter:
-                if isinstance(p_filter, str):
-                    p_filter = [p_filter]
-                if '*' in p_filter:
-                    policy_filter[filter_name] = ['*']
-                else:
-                    if f == 'USER':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
-                    elif f == 'MACHINE':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101], p_filter)
-                    elif f == 'APP':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
-                    elif f == 'DATE':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
-                    elif f == 'TIME':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
-                    elif f == 'DAY':
-                        policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
+            if '*' in p_filter:
+                policy_filter[filter_name] = ['*']
             else:
-                if filter_name not in policy_filter:
-                    policy_filter[filter_name] = []
-
+                if f == 'USER':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [3, 6, 103], p_filter)
+                elif f == 'MACHINE':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [1, 101, 201], p_filter)
+                elif f == 'APP':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_collections(plugin, [2, 102], p_filter)
+                elif f == 'DATE':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_dates(p_filter)
+                elif f == 'TIME':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_times(p_filter)
+                elif f == 'DAY':
+                    policy_filter[filter_name] = PedmPolicyAddCommand.resolve_days(p_filter)
         risk_level = kwargs.get('risk_level')
         if isinstance(risk_level, int):
             if risk_level < 0 or risk_level > 100:
@@ -1347,7 +1345,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-type', dest='policy_type', action='store', default='elevation',
                             choices=['elevation', 'file_access', 'command', 'least_privilege'],
                             help='Policy type')
-        parser.add_argument('--policy-name', dest='policy_name', action='store',
+        parser.add_argument('--policy-name', dest='policy_name', action='store', required=True,
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
                             choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
@@ -1357,6 +1355,11 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
                             help='Policy Status')
         parser.add_argument('--enable', dest='enable', action='store', choices=['on', 'off'],
                             help='Enables or disables policy')
+        parser.add_argument('--message', dest='notification_message', action='store',
+                            help='Notification message (only for monitor_and_notify status)')
+        parser.add_argument('--require-acknowledgement', dest='require_acknowledgement',
+                            action='store', choices=['on', 'off'], default=None,
+                            help='Require policy acknowledgement (only for monitor_and_notify status)')
 
         super().__init__(parser)
 
@@ -1434,10 +1437,16 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         if policy_filter:
             policy_data.update(policy_filter)
 
-        for filter_name in ('UserCheck', 'MachineCheck', 'ApplicationCheck', 'DateCheck', 'TimeCheck', 'DayCheck'):
-            f = policy_filter.get(filter_name)
-            if f is None:
-                policy_filter[filter_name] = ['*']
+        collection_defaults = {
+            'PrivilegeElevation': {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': ['*']},
+            'FileAccess':         {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': ['*']},
+            'CommandLine':        {'UserCheck': ['*'], 'MachineCheck': ['*'], 'ApplicationCheck': []},
+            'LeastPrivilege':     {'UserCheck': [],    'MachineCheck': ['*'], 'ApplicationCheck': []},
+        }
+        for filter_name, default in {**collection_defaults.get(policy_type, {}),
+                                      **{'DateCheck': [], 'TimeCheck': [], 'DayCheck': []}}.items():
+            if policy_data.get(filter_name) is None:
+                policy_data[filter_name] = default
 
         arg_status = kwargs.get('status')
         if isinstance(arg_status, str):
@@ -1445,10 +1454,22 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         else:
             policy_data['Status'] = 'enforce'
 
+        notification_message = kwargs.get('notification_message')
+        require_ack = kwargs.get('require_acknowledgement')
+        if notification_message is not None or require_ack is not None:
+            if policy_data['Status'] != 'monitor_and_notify':
+                raise base.CommandError('--message and --require-acknowledgement are only valid when --status is monitor_and_notify')
+        if notification_message is not None:
+            policy_data['NotificationMessage'] = notification_message
+        if require_ack is not None:
+            policy_data['NotificationRequiresAcknowledge'] = require_ack == 'on'
+
         disabled: bool = False
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
-            disabled = True if arg_enable == 'off' else False
+            disabled = arg_enable == 'off'
+            if disabled:
+                policy_data['Status'] = 'off'
 
         policy_key = utils.generate_aes_key()
         add_policy = admin_types.PedmPolicy(
@@ -1459,11 +1480,24 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to add policy "{status.entity_uid}": {status.message}')
 
+        policy_name = policy_data.get('PolicyName') or ''
+        print(f'Successfully created policy "{policy_name}" with Policy ID: {policy_uid}')
+
 
 class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
+    POLICY_TYPE_MAP = {
+        'elevation': 'PrivilegeElevation',
+        'file_access': 'FileAccess',
+        'command': 'CommandLine',
+        'least_privilege': 'LeastPrivilege',
+    }
+
     def __init__(self):
         parser = argparse.ArgumentParser(prog='edit', description='Edit EPM policy', parents=[PedmPolicyMixin.policy_filter])
-        parser.add_argument('policy', help='Policy UID')
+        parser.add_argument('policy', help='Policy UID or name')
+        parser.add_argument('--policy-type', dest='policy_type', action='store',
+                            choices=['elevation', 'file_access', 'command', 'least_privilege'],
+                            help='Change policy type')
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
@@ -1474,6 +1508,11 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
                             help='Policy Status')
         parser.add_argument('--enable', dest='enable', action='store', choices=['on', 'off'],
                             help='Enables or disables policy')
+        parser.add_argument('--message', dest='notification_message', action='store',
+                            help='Notification message (only for monitor_and_notify status)')
+        parser.add_argument('--require-acknowledgement', dest='require_acknowledgement',
+                            action='store', choices=['on', 'off'], default=None,
+                            help='Require policy acknowledgement (only for monitor_and_notify status)')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -1482,7 +1521,17 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
         policy_data = copy.deepcopy(policy.data or {})
-        policy_type = policy_data.get('PolicyType') or 'Unknown'
+
+        p_type = kwargs.get('policy_type')
+        if p_type:
+            new_policy_type = PedmPolicyEditCommand.POLICY_TYPE_MAP.get(p_type)
+            if not new_policy_type:
+                raise base.CommandError(f'"policy-type: {p_type}" is not supported')
+            policy_data['PolicyType'] = new_policy_type
+            policy_type = new_policy_type
+        else:
+            policy_type = policy_data.get('PolicyType') or 'Unknown'
+
         controls = PedmPolicyMixin.get_policy_controls(policy_type, **kwargs)
         if isinstance(controls, list):
             actions = policy_data.get('Actions')
@@ -1506,10 +1555,35 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         if isinstance(arg_status, str):
             policy_data['Status'] = arg_status
 
+        effective_status = policy_data.get('Status', '')
+
+        if p_type and policy_type != 'LeastPrivilege' and effective_status == 'enforce' and not controls:
+            existing_actions = policy_data.get('Actions')
+            existing_controls = []
+            if isinstance(existing_actions, dict):
+                on_success = existing_actions.get('OnSuccess')
+                if isinstance(on_success, dict):
+                    existing_controls = on_success.get('Controls') or []
+            if not existing_controls:
+                raise base.CommandError(f'At least one --control is required for {policy_type} policy type when status is enforce')
+        notification_message = kwargs.get('notification_message')
+        require_ack = kwargs.get('require_acknowledgement')
+        if notification_message is not None or require_ack is not None:
+            if effective_status != 'monitor_and_notify':
+                raise base.CommandError('--message and --require-acknowledgement are only valid when status is monitor_and_notify')
+        if notification_message is not None:
+            policy_data['NotificationMessage'] = notification_message
+        if require_ack is not None:
+            policy_data['NotificationRequiresAcknowledge'] = require_ack == 'on'
+
         disabled: Optional[bool] = None
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
-            disabled = True if arg_enable == 'off' else False
+            disabled = arg_enable == 'off'
+            if disabled:
+                policy_data['Status'] = 'off'
+            elif policy_data.get('Status') == 'off':
+                policy_data['Status'] = arg_status if isinstance(arg_status, str) else 'enforce'
 
         pu = admin_types.PedmUpdatePolicy(policy_uid=policy.policy_uid, data=policy_data, disabled=disabled)
 
@@ -1518,6 +1592,9 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
             status = rs.update[0]
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
+
+        updated_name = policy_data.get('PolicyName') or policy.policy_uid
+        print(f'Successfully updated policy "{updated_name}" (Policy ID: {policy.policy_uid})')
 
 
 class PedmPolicyViewCommand(base.ArgparseCommand):

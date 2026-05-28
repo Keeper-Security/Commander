@@ -39,6 +39,23 @@ from ..config.record_handler import RecordHandler
 class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
 
+    @staticmethod
+    def _require_file_based_config(params, command_name: str) -> None:
+        """Raise CommandError if credentials are in the OS keychain rather than config.json."""
+        from ...config_storage.loader import CONFIG_STORAGE_URL, _is_os_keychain_url
+        config_storage = params.config.get(CONFIG_STORAGE_URL, '') if isinstance(params.config, dict) else ''
+        if _is_os_keychain_url(config_storage):
+            raise CommandError(
+                command_name,
+                f'{bcolors.FAIL}{bcolors.BOLD}Error:{bcolors.ENDC} '
+                f'{bcolors.FAIL}This command requires credentials to be stored in config.json, '
+                f'but they are currently stored in the OS keychain.{bcolors.ENDC}\n\n'
+                f'{bcolors.OKBLUE}Please re-login with the --config-file flag first:{bcolors.ENDC}\n\n'
+                f'    {bcolors.OKGREEN}login --config-file{bcolors.ENDC}    '
+                f'{bcolors.OKGREEN}(or: keeper shell --config-file){bcolors.ENDC}\n\n'
+                f'Then re-run this command.'
+            )
+
     def run_setup_steps(self, params, folder_name: str, app_name: str, record_name: str,
                        config_path: str, timeout: str, skip_device_setup: bool = False) -> SetupResult:
         """
@@ -138,16 +155,20 @@ class DockerSetupBase:
 
         # Create new folder
         try:
-            folder_cmd = FolderMakeCommand()
-            folder_uid = folder_cmd.execute(
-                params,
-                folder=folder_name,
-                shared_folder=True,
-                manage_users=True,
-                manage_records=True,
-                can_edit=True,
-                can_share=True
-            )
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                folder_uid = FolderMakeCommand().execute(
+                    params,
+                    folder=folder_name,
+                    shared_folder=True,
+                    manage_users=True,
+                    manage_records=True,
+                    can_edit=True,
+                    can_share=True
+                )
+            finally:
+                sys.stdout = old_stdout
             api.sync_down(params)
             DockerSetupPrinter.print_success(f"Shared folder created successfully (UID: {folder_uid})")
             return folder_uid
@@ -181,7 +202,9 @@ class DockerSetupBase:
             raise CommandError('docker-setup', f'Failed to create record: {str(e)}')
 
     def _upload_config_file(self, params, record_uid: str, config_path: str) -> None:
-        """Upload config.json as attachment, or store as custom field if no file storage plan."""
+        """Upload config.json as attachment, or store as custom field if no file storage plan.
+        
+        """
         temp_config_path = None
         try:
             cleaned_config_path = self._clean_config_json(config_path)
@@ -211,6 +234,7 @@ class DockerSetupBase:
         self._delete_existing_config_attachments(record, params)
 
         upload_task = attachment.FileUploadTask(config_path)
+        upload_task.name = 'config.json'
         upload_task.title = 'config.json'
 
         attachment.upload_attachments(params, record, [upload_task])

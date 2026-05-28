@@ -12,27 +12,58 @@
 import argparse
 import datetime
 import http.client
+import json
 import logging
 import os
+import platform
+import signal
 import socket
 import ssl
 import struct
+import subprocess
 import sys
+import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
-from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
+from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_config_uid_via_pam_link, \
+    get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
-    remove_field, start_rust_tunnel, get_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
+    remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
+    wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close, \
+    print_above_keeper_prompt
+from .pam.router_helper import get_dag_leafs
+from .tunnel_registry import (
+    PARENT_GRACE_SECONDS,
+    is_pid_alive,
+    list_registered_tunnels,
+    register_tunnel,
+    stop_tunnel_process,
+    unregister_tunnel,
+)
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders
 from ..utils import value_to_boolean
+from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname
+
+# Per-record map of pending lease-expiry timers. Used by PAMTunnelStartCommand
+# to cancel any prior timer for the same record before scheduling a new one,
+# so a re-run of `pam tunnel start` in the same shell session doesn't leave
+# the original timer alive and produce duplicate "Tunnel access expired"
+# messages from the prior tunnel.
+_LEASE_EXPIRY_TIMERS_BY_RECORD: Dict[str, threading.Timer] = {}
+# Maps record_uid -> threading.Event used by --foreground / --run modes to break
+# their blocking wait when the workflow lease expires. Set by the mode block,
+# read by the lease-expiry callback. Default interactive mode does NOT register
+# (it has no blocking wait to interrupt; user SSH session continues naturally).
+_LEASE_SHUTDOWN_EVENTS_BY_RECORD: Dict[str, threading.Event] = {}
+
 
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
@@ -54,6 +85,7 @@ class PAMConnectionCommand(GroupCommand):
         # self.register_command('start', PAMConnectionStartCommand(), 'Start Connection', 's')
         # self.register_command('stop', PAMConnectionStopCommand(), 'Stop Connection', 'x')
         self.register_command('edit', PAMConnectionEditCommand(), 'Edit Connection settings', 'e')
+        self.register_command('jit', PAMConnectionJitCommand(), 'View/update JIT settings', 'j')
         self.default_verb = 'edit'
 
 
@@ -73,78 +105,78 @@ class PAMTunnelListCommand(Command):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        # Try to get active tunnels from Rust PyTubeRegistry
-        # Logger initialization is handled by get_or_create_tube_registry()
+        table = []
+        headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
+
+        # In-process tunnels from the Rust PyTubeRegistry
         tube_registry = get_or_create_tube_registry(params)
-        if tube_registry:
-            if not tube_registry.has_active_tubes():
-                logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
-                return
-
-            table = []
-            headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
-
-            # Get all tube IDs
+        in_process_tube_ids = set()
+        if tube_registry and tube_registry.has_active_tubes():
             tube_ids = tube_registry.all_tube_ids()
-
             for tube_id in tube_ids:
-                # Get conversation IDs for this tube
+                in_process_tube_ids.add(tube_id)
                 conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
-
-                # Get tunnel session for detailed info
                 tunnel_session = get_tunnel_session(tube_id)
 
-                # Record title
                 record_title = tunnel_session.record_title if tunnel_session and tunnel_session.record_title else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Remote target
                 if tunnel_session and tunnel_session.target_host and tunnel_session.target_port:
                     remote_target = f"{tunnel_session.target_host}:{tunnel_session.target_port}"
                 else:
                     remote_target = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Local listening address
                 if tunnel_session and tunnel_session.host and tunnel_session.port:
                     local_addr = f"{bcolors.OKGREEN}{tunnel_session.host}:{tunnel_session.port}{bcolors.ENDC}"
                 else:
                     local_addr = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Tunnel ID (tube_id) - this is what's needed for stopping
-                tunnel_id = tube_id
-
-                # Conversation ID - WebRTC signaling identifier
                 conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
 
-                # Connection state
                 try:
                     state = tube_registry.get_connection_state(tube_id)
                     status_color = f"{bcolors.OKGREEN}" if state.lower() == "connected" else f"{bcolors.WARNING}"
                     status = f"{status_color}{state}{bcolors.ENDC}"
-                except:
+                except Exception:
                     status = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                row = [
-                    record_title,
-                    remote_target,
-                    local_addr,
-                    tunnel_id,
-                    conv_id,
-                    status,
-                ]
-                table.append(row)
+                table.append([record_title, remote_target, local_addr, tube_id, conv_id, status])
 
-            dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
-        else:
-            # Rust WebRTC library is required for tunnel operations
-            print(f"{bcolors.FAIL}This command requires the Rust WebRTC library (keeper_pam_webrtc_rs).{bcolors.ENDC}")
-            print(f"{bcolors.OKBLUE}Please ensure the keeper_pam_webrtc_rs module is installed and available.{bcolors.ENDC}")
+        # Cross-process tunnels from the file-based registry
+        for entry in list_registered_tunnels():
+            if entry.get('tube_id') in in_process_tube_ids:
+                continue
+            pid = entry.get('pid')
+            rec = entry.get('record_title') or entry.get('record_uid', '?')
+            th = entry.get('target_host')
+            tp = entry.get('target_port')
+            remote = f"{th}:{tp}" if th and tp else f"{bcolors.WARNING}n/a{bcolors.ENDC}"
+            h = entry.get('host', '127.0.0.1')
+            p = entry.get('port', '?')
+            local = f"{bcolors.OKGREEN}{h}:{p}{bcolors.ENDC}"
+            tid = entry.get('tube_id', '')
+            mode = entry.get('mode', '?')
+            status = f"{bcolors.OKGREEN}{mode} (PID {pid}){bcolors.ENDC}"
+            table.append([rec, remote, local, tid, '', status])
+
+        if not table:
+            logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
+
+        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 class PAMTunnelStopCommand(Command):
+    # Note on workflow lease lifecycle: stopping a tunnel intentionally does
+    # NOT call end_workflow on the workflow lease. This matches the web vault
+    # (ConnectionManager.ts:268-303 stops the connection but never releases
+    # the lease). The workflow lease and the tunnel are decoupled — one
+    # checkout window may host many sequential or concurrent tunnels — and
+    # the lease ends via either expiresOn server-side expiry or an explicit
+    # `pam workflow end`. Releasing here would clobber leases the user
+    # checked out manually via `pam workflow start`.
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
     pam_cmd_parser.add_argument('uid', type=str, action='store', nargs='?', help='The Tunnel ID, Conversation ID, or Record UID (omit with --all to stop all tunnels)')
-    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true', 
+    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true',
                                 help='Stop all tunnels (if no UID) or all tunnels matching the UID (if UID provided)')
 
     def get_parser(self):
@@ -194,6 +226,22 @@ class PAMTunnelStopCommand(Command):
             if tube_id:
                 matching_tubes = [tube_id]
 
+        # Fall back to file-based registry (cross-process tunnels)
+        if not matching_tubes:
+            for entry in list_registered_tunnels():
+                if uid in (entry.get('tube_id', ''), entry.get('record_uid', ''),
+                           entry.get('record_title', '')):
+                    pid = entry.get('pid')
+                    if pid and is_pid_alive(pid):
+                        if stop_tunnel_process(pid):
+                            print(f"{bcolors.OKGREEN}Sent stop signal to tunnel process "
+                                  f"(PID {pid}, {entry.get('mode', '?')} mode){bcolors.ENDC}")
+                        else:
+                            print(f"{bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
+                    else:
+                        unregister_tunnel(pid)
+                    return
+
         if not matching_tubes:
             raise CommandError('tunnel stop', f"No active tunnels found matching '{uid}'")
 
@@ -224,43 +272,48 @@ class PAMTunnelStopCommand(Command):
             raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
 
     def _stop_all_tunnels(self, params):
-        """Stop all active tunnels"""
-        tube_registry = get_or_create_tube_registry(params)
-        if not tube_registry:
-            raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
+        """Stop all active tunnels (in-process and cross-process)."""
+        stopped_count = 0
+        failed_count = 0
 
-        # Get all active tunnel IDs
-        all_tube_ids = tube_registry.all_tube_ids()
-        
-        if not all_tube_ids:
+        # In-process tunnels
+        tube_registry = get_or_create_tube_registry(params)
+        if tube_registry:
+            all_tube_ids = tube_registry.all_tube_ids()
+            if all_tube_ids:
+                print(f"{bcolors.WARNING}Stopping {len(all_tube_ids)} in-process tunnel(s):{bcolors.ENDC}")
+                for tube_id in all_tube_ids:
+                    try:
+                        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                        print(f"  {bcolors.OKGREEN}Stopped: {tube_id}{bcolors.ENDC}")
+                        stopped_count += 1
+                    except Exception as e:
+                        print(f"  {bcolors.FAIL}Failed: {tube_id}: {e}{bcolors.ENDC}")
+                        failed_count += 1
+
+        # Cross-process tunnels from file registry
+        registered = list_registered_tunnels()
+        if registered:
+            print(f"{bcolors.WARNING}Stopping {len(registered)} external tunnel(s):{bcolors.ENDC}")
+            for entry in registered:
+                pid = entry.get('pid')
+                if stop_tunnel_process(pid):
+                    print(f"  {bcolors.OKGREEN}Sent stop signal to PID {pid} "
+                          f"({entry.get('mode', '?')} mode, {entry.get('host')}:{entry.get('port')}){bcolors.ENDC}")
+                    stopped_count += 1
+                else:
+                    print(f"  {bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
+                    failed_count += 1
+                    unregister_tunnel(pid)
+
+        if stopped_count == 0 and failed_count == 0:
             print(f"{bcolors.WARNING}No active tunnels to stop.{bcolors.ENDC}")
             return
 
-        # Confirm with user
-        print(f"{bcolors.WARNING}About to stop {len(all_tube_ids)} active tunnel(s):{bcolors.ENDC}")
-        for tube_id in all_tube_ids:
-            print(f"  - {tube_id}")
-        
-        # Stop all tunnels
-        stopped_count = 0
-        failed_count = 0
-        for tube_id in all_tube_ids:
-            try:
-                tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
-                stopped_count += 1
-            except Exception as e:
-                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
-                failed_count += 1
-
-        # Summary
         if stopped_count > 0:
             print(f"\n{bcolors.OKGREEN}Successfully stopped {stopped_count} tunnel(s).{bcolors.ENDC}")
         if failed_count > 0:
             print(f"{bcolors.FAIL}Failed to stop {failed_count} tunnel(s).{bcolors.ENDC}")
-        
-        if stopped_count == 0:
-            raise CommandError('tunnel stop', 'Failed to stop any tunnels')
 
 
 class PAMTunnelEditCommand(Command):
@@ -418,6 +471,11 @@ class PAMTunnelEditCommand(Command):
                 if _remove_tunneling_override_port and pam_settings.value[0]['portForward'].get('port'):
                     pam_settings.value[0]['portForward'].pop('port')
                     dirty = True
+            # Persist the record changes (new pamSettings field or port modifications)
+            if dirty:
+                record_management.update_record(params, record)
+                api.sync_down(params)
+                dirty = False
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
                       f"This can be done by running "
@@ -497,9 +555,98 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
+    pam_cmd_parser.add_argument('--proxy', '-px', required=False, dest='proxy', action='store_true',
+                                help='Activate KeeperDB Proxy: the gateway substitutes credentials '
+                                     'from your Keeper vault when the local client connects to the tunnel.')
+    # TODO(rdp-proxy): once RDP Proxy support lands on pamMachine, generalize --proxy
+    # to or auto-detect from the record type). For now, --proxy is KeeperDB-only.
+    pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
+                                help='Justification text for workflow access request. Used when the record\'s '
+                                     'workflow requires a reason; non-interactive equivalent of the inline prompt.')
+    pam_cmd_parser.add_argument('--ticket', '-tk', required=False, dest='workflow_ticket', type=str,
+                                help='External ticket / reference number for workflow access request. Used when '
+                                     'the record\'s workflow requires a ticket; non-interactive equivalent of the inline prompt.')
+    pam_cmd_parser.add_argument('--auto-checkout', '-aco', required=False, dest='workflow_auto_checkout',
+                                action='store_true',
+                                help='Auto-confirm workflow check-out when the record is approved but not yet '
+                                     'checked out (skips the interactive Y/n prompt). The lease is released '
+                                     'automatically when the tunnel ends.')
+    pam_cmd_parser.add_argument('--wait', '-w', required=False, dest='workflow_wait',
+                                action='store_true',
+                                help='When the workflow is waiting on approval, poll until approved '
+                                     '(or --wait-timeout elapses) instead of exiting immediately.')
+    pam_cmd_parser.add_argument('--wait-timeout', '-wt', required=False, dest='workflow_wait_timeout',
+                                type=int, default=600,
+                                help='Maximum seconds to poll for approval when --wait is set (default: 600).')
+    pam_cmd_parser.add_argument('--foreground', '-fg', required=False, dest='foreground', action='store_true',
+                                help='Keep the tunnel running in the foreground, blocking until '
+                                     'SIGTERM/SIGINT/Ctrl+C is received. Use this flag when running '
+                                     'tunnels from scripts, systemd services, or any non-interactive '
+                                     'context where the process would otherwise exit immediately.')
+    pam_cmd_parser.add_argument('--pid-file', required=False, dest='pid_file', action='store',
+                                help='Write the process PID to a file when using --foreground. '
+                                     'Enables stopping the tunnel from another terminal via '
+                                     'kill -SIGTERM $(cat <pid-file>). The file is removed on shutdown.')
+    pam_cmd_parser.add_argument('--run', '-R', required=False, dest='run_command', action='store',
+                                help='Shell command to execute while tunnel is active. '
+                                     'The command runs via the system shell (supports pipes, redirects, env vars). '
+                                     'The tunnel is stopped and Commander exits with the command\'s exit code. '
+                                     "Example: --run 'pg_dump -h localhost -p 5432 mydb > backup.sql'")
+    pam_cmd_parser.add_argument('--timeout', required=False, dest='connect_timeout', action='store',
+                                type=int, default=30,
+                                help='Seconds to wait for the tunnel to connect before giving up '
+                                     '(used with --foreground, --background, and --run). Default: 30')
+    pam_cmd_parser.add_argument('--background', '-bg', required=False, dest='background', action='store_true',
+                                help='Start the tunnel in a background process, wait for '
+                                     'connection readiness, then return control to the caller. '
+                                     'The tunnel continues running independently. Use --pid-file '
+                                     'to write the daemon PID for later shutdown. Use '
+                                     "'pam tunnel list' / 'pam tunnel stop' from any session.")
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
+
+    @staticmethod
+    def _resolve_database_type(record, pam_settings_value):
+        # Mirrors the gateway/pam-launch lookup: prefer pamSettings.connection.databaseType,
+        # fall back to the top-level 'databaseType' typed field. Returns canonical
+        # 'mysql' | 'postgresql' | 'mssql' or None.
+        raw = ''
+        if isinstance(pam_settings_value, dict):
+            raw = (pam_settings_value.get('connection') or {}).get('databaseType') or ''
+        if not raw:
+            db_field = record.get_typed_field('databaseType')
+            if db_field:
+                v = db_field.get_default_value()
+                if isinstance(v, str):
+                    raw = v
+                elif isinstance(v, list) and v:
+                    raw = str(v[0])
+        raw = (raw or '').strip().lower()
+        if 'mysql' in raw or 'mariadb' in raw:
+            return 'mysql'
+        if 'postgres' in raw:
+            return 'postgresql'
+        if 'sql server' in raw or 'sqlserver' in raw or 'mssql' in raw:
+            return 'mssql'
+        return None
+
+    @staticmethod
+    def _print_keeperdb_proxy_banner(host, port, db_type):
+        suffix = f' ({db_type})' if db_type else ''
+        print(f"\n{bcolors.OKGREEN}KeeperDB Proxy ready{suffix}{bcolors.ENDC}")
+        print(f"  Listening:  {host}:{port}")
+        if db_type == 'mysql':
+            print(f"  Connect:    mysql -h {host} -P {port} -u <any> -p")
+        elif db_type == 'postgresql':
+            print(f"  Connect:    psql -h {host} -p {port} -U <any>")
+        elif db_type == 'mssql':
+            print(f"  Connect:    sqlcmd -S {host},{port} -U <any> -P <any>")
+        else:
+            print(f"  Connect:    use your database client to connect to {host}:{port}")
+        print(f"{bcolors.OKBLUE}  Note:       when your DB client prompts for credentials you may "
+              f"supply any value — the proxy will substitute the credentials configured in your "
+              f"Keeper vault.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
         # Python version validation (same as before)
@@ -545,6 +692,58 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        # Per-user enforcement gate (matches web vault getAllowPortForwards,
+        # pam-enforcement-selectors.ts:48-49). Bail before any further work
+        # when the user's enterprise enforcement disallows PAM tunnels.
+        try:
+            from .workflow.helpers import is_pam_action_allowed_by_enforcement
+            if not is_pam_action_allowed_by_enforcement(
+                    params, 'allow_launch_pam_tunnels'):
+                print(f"{bcolors.FAIL}PAM tunnels are not allowed by your enterprise "
+                      f"enforcement (allow_launch_pam_tunnels).{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
+        # PAM-config gate (matches web vault StartPortForwardButton.tsx:160-163):
+        # bail before the workflow gate / lease auto-checkout when the PAM
+        # configuration disables tunneling for this record. The JSON helper
+        # renames the DAG key portForwards → tunneling.
+        try:
+            from .workflow.helpers import is_pam_config_action_allowed_for_record
+            if not is_pam_config_action_allowed_for_record(params, record_uid, 'tunneling'):
+                print(f"{bcolors.FAIL}Tunneling is disabled by the PAM configuration "
+                      f"for record {record_uid}.{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
+        # Workflow access check and 2FA prompt.
+        # Lease lifecycle: when the gate finds WS_READY_TO_START it may
+        # auto-checkout (Phase 2.2), but stopping the tunnel does NOT
+        # release the resulting lease — see PAMTunnelStopCommand. This
+        # mirrors the web vault: one approval window can host many
+        # sequential/concurrent tunnels until expiresOn fires server-side
+        # or the user runs `pam workflow end`.
+        two_factor_value = None
+        workflow_expires_on_ms = 0
+        try:
+            from .workflow import check_workflow_for_launch
+            gate = check_workflow_for_launch(
+                params, record_uid,
+                reason=kwargs.get('workflow_reason'),
+                ticket=kwargs.get('workflow_ticket'),
+                auto_checkout=bool(kwargs.get('workflow_auto_checkout')),
+                wait=bool(kwargs.get('workflow_wait')),
+                wait_timeout=int(kwargs.get('workflow_wait_timeout') or 600),
+            )
+            if not gate.allowed:
+                return
+            two_factor_value = gate.two_factor_value
+            workflow_expires_on_ms = gate.expires_on_ms
+        except ImportError:
+            pass
+
         # Validate PAM settings
         pam_settings = record.get_typed_field('pamSettings')
         if not pam_settings:
@@ -559,14 +758,61 @@ class PAMTunnelStartCommand(Command):
         pam_settings_value = pam_settings.get_default_value() if pam_settings else {}
         allow_supply_host = pam_settings_value.get('allowSupplyHost', False) if isinstance(pam_settings_value, dict) else False
 
+        # --proxy: KeeperDB Proxy mode (gateway substitutes credentials from vault).
+        # This is a Commander-side validator/declaration; the gateway currently
+        # auto-routes pamDatabase + allowKeeperDBProxy to the proxy regardless of
+        # any client-side flag (see is_keeperdb_proxy_tunnel in dr-controller's
+        # tunnel_helpers.py and _build_protocol_settings in WebRTCSessionAction.py).
+        # Requiring no-`--proxy` to mean "raw TCP tunnel to remote host" depends on
+        # a future gateway change to honor a client-side opt-in flag; until that
+        # lands, omitting --proxy will still proxy if the record allows it.
+        is_keeperdb_proxy = bool(kwargs.get('proxy'))
+        db_type_for_banner = None
+        if is_keeperdb_proxy:
+            record_type = record.record_type
+            # TODO(rdp-proxy): once RDP Proxy support lands, also accept
+            # 'pamMachine' here and dispatch by record type.
+            if record_type != 'pamDatabase':
+                print(f"{bcolors.FAIL}--proxy is only supported on pamDatabase records. "
+                      f"Record {record_uid} is of type \"{record_type}\".{bcolors.ENDC}")
+                return
+            allow_kdb = isinstance(pam_settings_value, dict) and bool(
+                (pam_settings_value.get('portForward') or {}).get('allowKeeperDBProxy')
+                or (pam_settings_value.get('connection') or {}).get('allowKeeperDBProxy')
+            )
+            if not allow_kdb:
+                print(f"{bcolors.FAIL}KeeperDB Proxy is not enabled for record {record_uid}.{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Enable it with "
+                      f"{bcolors.OKBLUE}'pam tunnel edit {record_uid} --keeper-db-proxy on'"
+                      f"{bcolors.ENDC}")
+                return
+            # Mirror the launch-credential pre-flight from PAMTunnelEditCommand
+            # (--keeper-db-proxy on path) so the failure message and timing are
+            # identical between edit and start.
+            _est, _ett, _tk = get_keeper_tokens(params)
+            _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
+            _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
+            if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
+                print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                      f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Use: "
+                      f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                      f"{bcolors.ENDC}")
+                return
+            db_type_for_banner = self._resolve_database_type(record, pam_settings_value)
+
         # Get target host and port
         if allow_supply_host:
             # User must supply target host and port via command arguments or interactive prompt
             target_host = kwargs.get('target_host')
             target_port = kwargs.get('target_port')
 
-            # If not provided via command line, prompt interactively
+            # If not provided via command line, prompt interactively (or error in batch mode)
             if not target_host:
+                if params.batch_mode:
+                    raise CommandError('tunnel start',
+                                       'Target host is required in non-interactive mode. '
+                                       'Use --target-host <HOST> --target-port <PORT>')
                 print(f"{bcolors.WARNING}This resource requires you to supply the target host and port.{bcolors.ENDC}")
                 try:
                     target_host = input(f"{bcolors.OKBLUE}Enter target hostname or IP address: {bcolors.ENDC}").strip()
@@ -578,6 +824,10 @@ class PAMTunnelStartCommand(Command):
                     return
 
             if not target_port:
+                if params.batch_mode:
+                    raise CommandError('tunnel start',
+                                       'Target port is required in non-interactive mode. '
+                                       'Use --target-host <HOST> --target-port <PORT>')
                 try:
                     target_port_str = input(f"{bcolors.OKBLUE}Enter target port number: {bcolors.ENDC}").strip()
                     if not target_port_str:
@@ -640,11 +890,364 @@ class PAMTunnelStartCommand(Command):
 
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
-        
+
+        # Validate mutual exclusivity of mode flags
+        background = kwargs.get('background', False)
+        foreground = kwargs.get('foreground', False)
+        run_command = kwargs.get('run_command')
+        mode_flags = sum(bool(f) for f in [background, foreground, run_command])
+        if mode_flags > 1:
+            raise CommandError('tunnel start',
+                               '--foreground, --background, and --run are mutually exclusive. '
+                               'Use only one at a time.')
+
+        # --background: launch a separate Commander process with --foreground,
+        # then poll the file-based tunnel registry for readiness.
+        if background:
+            if not params.batch_mode:
+                print(f"\n{bcolors.OKBLUE}Note: --background is not needed inside the interactive shell.{bcolors.ENDC}")
+                print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
+                print(f"{bcolors.OKBLUE}Use 'pam tunnel list' to see active tunnels, 'pam tunnel stop' to stop them.{bcolors.ENDC}\n")
+                return
+
+            connect_timeout = kwargs.get('connect_timeout', 30)
+            pid_file = kwargs.get('pid_file')
+
+            bg_cmd = [sys.executable, '-m', 'keepercommander']
+            if params.config_filename:
+                bg_cmd.extend(['--config', os.path.abspath(params.config_filename)])
+            if hasattr(params, 'server') and params.server:
+                bg_cmd.extend(['--server', params.server])
+
+            tunnel_parts = ['pam', 'tunnel', 'start', record_uid,
+                            '--port', str(port), '--foreground',
+                            '--timeout', str(connect_timeout)]
+            if host and host != '127.0.0.1':
+                tunnel_parts.extend(['--host', host])
+            if target_host:
+                tunnel_parts.extend(['--target-host', str(target_host)])
+            if target_port:
+                tunnel_parts.extend(['--target-port', str(target_port)])
+            if pid_file:
+                tunnel_parts.extend(['--pid-file', pid_file])
+            if no_trickle_ice:
+                tunnel_parts.append('--no-trickle-ice')
+            bg_cmd.append(' '.join(tunnel_parts))
+
+            print(f"{bcolors.OKBLUE}Starting tunnel in background...{bcolors.ENDC}")
+            try:
+                bg_proc = subprocess.Popen(
+                    bg_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+            except Exception as e:
+                raise CommandError('tunnel start', f'Failed to launch background process: {e}')
+
+            # Parent waits longer than child to account for process startup time.
+            # The child's --timeout controls the actual WebRTC connection timeout.
+            bg_deadline = time.time() + connect_timeout + PARENT_GRACE_SECONDS
+            bg_info = None
+            while time.time() < bg_deadline:
+                for entry in list_registered_tunnels(clean_stale=False):
+                    if entry.get('pid') == bg_proc.pid and entry.get('record_uid') == record_uid:
+                        bg_info = entry
+                        break
+                if bg_info:
+                    break
+                poll_code = bg_proc.poll()
+                if poll_code is not None:
+                    stderr_output = ''
+                    try:
+                        stderr_output = bg_proc.stderr.read().decode('utf-8', errors='replace').strip()
+                    except Exception:
+                        pass
+                    print(f"{bcolors.FAIL}Background tunnel process exited before tunnel was ready "
+                          f"(code {poll_code}){bcolors.ENDC}")
+                    if stderr_output:
+                        print(f"{bcolors.FAIL}{stderr_output}{bcolors.ENDC}")
+                    elif poll_code == 0:
+                        print(f"{bcolors.FAIL}Process exited before registry registration. "
+                              f"Check WebRTC connectivity and gateway logs.{bcolors.ENDC}")
+                    return
+                time.sleep(0.5)
+
+            if not bg_info:
+                print(f"{bcolors.FAIL}Tunnel did not become ready within the timeout{bcolors.ENDC}")
+                try:
+                    bg_proc.terminate()
+                except Exception:
+                    pass
+                return
+
+            print(f"\n{bcolors.OKGREEN}Tunnel running in background{bcolors.ENDC}")
+            print(f"  Record:     {bg_info.get('record_title') or record_uid}")
+            if bg_info.get('tube_id'):
+                print(f"  Tube ID:    {bg_info['tube_id']}")
+            print(f"  Listening:  {host}:{port}")
+            print(f"  Daemon PID: {bg_proc.pid}")
+            if pid_file:
+                print(f"  PID file:   {pid_file}")
+            print(f"\n{bcolors.OKGREEN}To stop: pam tunnel stop {record_uid}  or  "
+                  f"kill -SIGTERM {bg_proc.pid}{bcolors.ENDC}")
+            if pid_file:
+                print(f"    or:   kill -SIGTERM $(cat {pid_file})")
+            print(f"{bcolors.OKBLUE}Use 'pam tunnel list' from any Commander session "
+                  f"to see this tunnel.{bcolors.ENDC}")
+            if platform.system() == 'Windows':
+                print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
+                      f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
+            return
+
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
+
         if result and result.get("success"):
+            # When --proxy was used, print the KeeperDB Proxy info banner once.
+            # Local listener is already bound (start_rust_tunnel returns the
+            # actual_local_listen_addr from Rust), so the connect string is
+            # valid even though the WebRTC handshake may still be in progress.
+            # Single call covers interactive, foreground, run, and background-
+            # child modes — the background parent returns earlier and never
+            # reaches this branch.
+            if is_keeperdb_proxy:
+                self._print_keeperdb_proxy_banner(host, port, db_type_for_banner)
+            # Workflow lease expiry handling.
+            #
+            # At expiresOn we soft-close the tube (stops new channels, sends
+            # CloseConnection control frames) and, after a short delay, escalate
+            # to force_close_tube which drops the local TCP listener and severs
+            # any active forwarded streams (SSH, MySQL, etc.). The escalation
+            # only fires when both the local Rust crate and the remote peer
+            # advertise FORCE_CLOSE_MIN_VERSION; older peers get the soft close
+            # only and the in-flight session lingers until natural disconnect.
+            if workflow_expires_on_ms and workflow_expires_on_ms > 0:
+                seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - time.time()
+                tube_id = result.get('tube_id')
+                if tube_id and seconds_until_expiry > 0:
+                    # Dedup: cancel any pending lease-expiry timer for this
+                    # record from a previous `pam tunnel start` in the same
+                    # shell session. Without this, a re-run of the command
+                    # leaves the prior timer scheduled and duplicate
+                    # "Tunnel access lease expired" messages fire.
+                    prior = _LEASE_EXPIRY_TIMERS_BY_RECORD.pop(record_uid, None)
+                    if prior is not None:
+                        try:
+                            prior.cancel()
+                        except Exception:
+                            pass
+
+                    def _close_on_lease_expiry(_tube_id=tube_id, _record_uid=record_uid):
+                        try:
+                            print_above_keeper_prompt(
+                                f"\n{bcolors.WARNING}Tunnel access lease expired for "
+                                f"{_record_uid}. Closing the tunnel; any in-flight "
+                                f"forwarded connections will be terminated."
+                                f"{bcolors.ENDC}"
+                            )
+                            sess = get_tunnel_session(_tube_id)
+                            remote_ver = getattr(sess, 'remote_webrtc_version', None) if sess else None
+                            escalate_close(
+                                tube_registry,
+                                _tube_id,
+                                remote_webrtc_version=remote_ver,
+                                reason=CloseConnectionReasons.AdminClosed,
+                                log_prefix=f"[lease-expiry tunnel record={_record_uid}] ",
+                            )
+                            # Wake any --foreground / --run blocking wait so the
+                            # process self-terminates. Default interactive mode
+                            # does not register an event here.
+                            shutdown_event = _LEASE_SHUTDOWN_EVENTS_BY_RECORD.get(_record_uid)
+                            if shutdown_event is not None:
+                                shutdown_event.set()
+                        except Exception as e:
+                            logging.debug(f"Lease-expiry tunnel notice failed: {e}")
+                        finally:
+                            _LEASE_EXPIRY_TIMERS_BY_RECORD.pop(_record_uid, None)
+
+                    timer = threading.Timer(
+                        seconds_until_expiry, _close_on_lease_expiry,
+                    )
+                    timer.daemon = True
+                    _LEASE_EXPIRY_TIMERS_BY_RECORD[record_uid] = timer
+                    timer.start()
             # The helper will show endpoint table when local socket is actually listening
-            pass
+            connect_timeout = kwargs.get('connect_timeout', 30)
+
+            if run_command:
+                run_tube_id = result.get("tube_id")
+                run_tube_registry = result.get("tube_registry")
+
+                print(f"{bcolors.OKBLUE}Waiting for tunnel to connect (timeout: {connect_timeout}s)...{bcolors.ENDC}")
+                conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
+
+                if not conn_status.get("connected"):
+                    err = conn_status.get("error", "Connection failed")
+                    print(f"{bcolors.FAIL}Tunnel did not connect: {err}{bcolors.ENDC}")
+                    if run_tube_registry and run_tube_id:
+                        try:
+                            run_tube_registry.close_tube(run_tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(run_tube_id)
+                        except Exception:
+                            pass
+                    return
+
+                try:
+                    register_tunnel(os.getpid(), record_uid, run_tube_id, host, port,
+                                    target_host, target_port, mode='run',
+                                    record_title=record.title if record else None)
+                except CommandError as reg_err:
+                    print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
+                    if run_tube_registry and run_tube_id:
+                        try:
+                            run_tube_registry.close_tube(run_tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(run_tube_id)
+                        except Exception:
+                            pass
+                    return
+
+                print(f"{bcolors.OKGREEN}Tunnel ready{bcolors.ENDC}  {host}:{port} -> {target_host}:{target_port}")
+                if platform.system() == 'Windows':
+                    print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
+                          f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
+                print(f"{bcolors.OKBLUE}Running:{bcolors.ENDC} {run_command}\n")
+
+                cmd_exit = 1
+                try:
+                    # shell=True is intentional: --run commands need shell features (pipes, redirects, env vars).
+                    # The user is already authenticated to Keeper and controls the command string.
+                    proc = subprocess.run(run_command, shell=True)
+                    cmd_exit = proc.returncode if proc.returncode is not None else 1
+                except KeyboardInterrupt:
+                    cmd_exit = 130
+                except Exception as run_err:
+                    logging.warning("Error running command: %s", run_err)
+                    cmd_exit = 1
+                finally:
+                    unregister_tunnel()
+                    print(f"\n{bcolors.OKBLUE}Stopping tunnel {run_tube_id or record_uid}...{bcolors.ENDC}")
+                    try:
+                        if run_tube_registry and run_tube_id:
+                            run_tube_registry.close_tube(run_tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(run_tube_id)
+                        print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                    except Exception as stop_err:
+                        logging.warning("Error stopping tunnel: %s", stop_err)
+
+                raise SystemExit(cmd_exit)
+
+            elif foreground:
+                if not params.batch_mode:
+                    print(f"\n{bcolors.OKBLUE}Note: --foreground is not needed inside the interactive shell.{bcolors.ENDC}")
+                    print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
+                    print(f"{bcolors.OKBLUE}Use 'pam tunnel list' to see active tunnels, 'pam tunnel stop' to stop them.{bcolors.ENDC}\n")
+                else:
+                    fg_tube_id = result.get("tube_id")
+                    fg_tube_registry = result.get("tube_registry")
+                    fg_shutdown = threading.Event()
+                    pid_file = kwargs.get('pid_file')
+                    # Wire lease-expiry callback to break out of fg_shutdown.wait()
+                    # if the workflow lease expires while we're blocking. Cleared
+                    # in the finally block below.
+                    _LEASE_SHUTDOWN_EVENTS_BY_RECORD[record_uid] = fg_shutdown
+
+                    def _fg_signal_handler(signum, _frame):
+                        sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+                        print(f"\n{bcolors.WARNING}Received {sig_name}, stopping tunnel...{bcolors.ENDC}")
+                        fg_shutdown.set()
+
+                    prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
+                    prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
+                    prev_sighup = None
+                    if hasattr(signal, 'SIGHUP'):
+                        prev_sighup = signal.signal(signal.SIGHUP, _fg_signal_handler)
+
+                    print(f"{bcolors.OKBLUE}Waiting for tunnel to connect (timeout: {connect_timeout}s)...{bcolors.ENDC}")
+                    conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
+
+                    if not conn_status.get("connected"):
+                        signal.signal(signal.SIGTERM, prev_sigterm)
+                        signal.signal(signal.SIGINT, prev_sigint)
+                        if prev_sighup is not None:
+                            signal.signal(signal.SIGHUP, prev_sighup)
+                        err = conn_status.get("error", "Connection failed")
+                        print(f"{bcolors.FAIL}Tunnel did not connect: {err}{bcolors.ENDC}")
+                        if fg_tube_registry and fg_tube_id:
+                            try:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            except Exception:
+                                pass
+                        return
+
+                    if pid_file:
+                        try:
+                            with open(pid_file, 'w') as pf:
+                                pf.write(str(os.getpid()))
+                        except Exception as e:
+                            logging.warning("Could not write PID file '%s': %s", pid_file, e)
+                            pid_file = None
+
+                    try:
+                        register_tunnel(os.getpid(), record_uid, fg_tube_id, host, port,
+                                        target_host, target_port, mode='foreground',
+                                        record_title=record.title if record else None)
+                    except CommandError as reg_err:
+                        print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
+                        signal.signal(signal.SIGTERM, prev_sigterm)
+                        signal.signal(signal.SIGINT, prev_sigint)
+                        if prev_sighup is not None:
+                            signal.signal(signal.SIGHUP, prev_sighup)
+                        if fg_tube_registry and fg_tube_id:
+                            try:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            except Exception:
+                                pass
+                        return
+
+                    print(f"\n{bcolors.OKGREEN}Tunnel running in foreground mode{bcolors.ENDC}")
+                    print(f"  Record:     {record_uid}")
+                    if fg_tube_id:
+                        print(f"  Tube ID:    {fg_tube_id}")
+                    print(f"  Listening:  {host}:{port}")
+                    print(f"  PID:        {os.getpid()}")
+                    if pid_file:
+                        print(f"  PID file:   {pid_file}")
+                    print(f"\n{bcolors.OKGREEN}To stop: kill -SIGTERM {os.getpid()}  (or Ctrl+C)  or  pam tunnel stop {record_uid}{bcolors.ENDC}\n")
+                    if platform.system() == 'Windows':
+                        print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
+                              f"WebRTC cleanup is best-effort.{bcolors.ENDC}\n")
+
+                    try:
+                        fg_shutdown.wait()
+                    except KeyboardInterrupt:
+                        pass
+                    finally:
+                        _LEASE_SHUTDOWN_EVENTS_BY_RECORD.pop(record_uid, None)
+                        unregister_tunnel()
+                        signal.signal(signal.SIGTERM, prev_sigterm)
+                        signal.signal(signal.SIGINT, prev_sigint)
+                        if prev_sighup is not None:
+                            signal.signal(signal.SIGHUP, prev_sighup)
+                        print(f"\n{bcolors.OKBLUE}Stopping tunnel {fg_tube_id or record_uid}...{bcolors.ENDC}")
+                        try:
+                            if fg_tube_registry and fg_tube_id:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            else:
+                                stop_cmd = PAMTunnelStopCommand()
+                                stop_cmd.execute(params, uid=record_uid)
+                            print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                        except Exception as fg_err:
+                            logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
+                        finally:
+                            if pid_file:
+                                try:
+                                    os.remove(pid_file)
+                                except OSError:
+                                    pass
         else:
             # Print failure message
             error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"
@@ -678,6 +1281,39 @@ class PAMTunnelDiagnoseCommand(Command):
                                 help='Comma-separated list of specific WebRTC tests to run. Available: '
                                      'dns_resolution,aws_connectivity,tcp_connectivity,udp_binding,'
                                      'ice_configuration,webrtc_peer_connection')
+    pam_cmd_parser.add_argument('--test-dns', required=False, dest='test_dns', action='store_true',
+                                help='Run the dns_resolution WebRTC test only')
+    pam_cmd_parser.add_argument('--test-aws', required=False, dest='test_aws', action='store_true',
+                                help='Run the aws_connectivity WebRTC test only')
+    pam_cmd_parser.add_argument('--test-tcp', required=False, dest='test_tcp', action='store_true',
+                                help='Run the tcp_connectivity WebRTC test only')
+    pam_cmd_parser.add_argument('--test-udp', required=False, dest='test_udp', action='store_true',
+                                help='Run the udp_binding WebRTC test only')
+    pam_cmd_parser.add_argument('--test-ice', required=False, dest='test_ice', action='store_true',
+                                help='Run the ice_configuration WebRTC test only')
+    pam_cmd_parser.add_argument('--test-webrtc', required=False, dest='test_webrtc', action='store_true',
+                                help='Run the webrtc_peer_connection WebRTC test only')
+    pam_cmd_parser.add_argument('--turn-test', required=False, dest='turn_test', action='store_true',
+                                help='Run an end-to-end TURN relay probe through the gateway. '
+                                     'Establishes a real WebRTC/TURN connection without proxying any traffic, '
+                                     'reproducing the full ICE negotiation path. Requires a record argument.')
+    pam_cmd_parser.add_argument('--probe-duration', required=False, dest='probe_duration', type=int, default=30,
+                                help='How long (seconds) to hold the TURN probe connection open after it connects. '
+                                     'Default 30s. Use 360+ to trigger a TURN permission refresh cycle (~300s TTL) '
+                                     'and verify the connection survives it. Requires --turn-test.')
+    pam_cmd_parser.add_argument('--probe-count', required=False, dest='probe_count', type=int, default=1,
+                                help='Number of simultaneous TURN probes to run. Use >1 to reproduce the '
+                                     '"35 concurrent connections" CreatePermission failure scenario. '
+                                     'Requires --turn-test.')
+    pam_cmd_parser.add_argument('--stress-test', required=False, dest='stress_test', action='store_true',
+                                help='Full WebRTC stress test through the TURN relay: connection cycling '
+                                     '(open→data→close repeated), throughput across 64B/8KB/64KB/256KB '
+                                     'frame sizes, and concurrent connection load. Implies --turn-test. '
+                                     'Requires a record.')
+    pam_cmd_parser.add_argument('--stun-only', required=False, dest='stun_test', action='store_true',
+                                help='Run an end-to-end probe restricted to STUN/reflexive candidates — '
+                                     'no TURN relay. Confirms that peer-to-peer ICE works when the relay '
+                                     'is bypassed. Mutually exclusive with --turn-test. Requires a record.')
 
     def get_parser(self):
         return PAMTunnelDiagnoseCommand.pam_cmd_parser
@@ -697,6 +1333,8 @@ class PAMTunnelDiagnoseCommand(Command):
     def _bright(cls, t: str) -> str: return cls._c('1;92', t)
     @classmethod
     def _dim(cls, t: str) -> str:    return cls._c('2;32', t)
+    @classmethod
+    def _yellow(cls, t: str) -> str: return cls._c('1;93', t)
     @classmethod
     def _red(cls, t: str) -> str:    return cls._c('1;91', t)
     @classmethod
@@ -727,7 +1365,8 @@ class PAMTunnelDiagnoseCommand(Command):
     def _print_result(cls, name: str, passed: bool, detail: str, ms: int, indent: int = 4):
         icon = cls._check() if passed else cls._cross()
         ms_str = cls._dim(f'  {ms}ms')
-        body = f'{cls._green(name)}  \u00b7  {cls._green(detail)}' if detail else cls._green(name)
+        _color = cls._green if passed else cls._red
+        body = f'{_color(name)}  \u00b7  {_color(detail)}' if detail else _color(name)
         print(f'{" " * indent}{icon}  {body}{ms_str}')
 
     # ── STUN ──────────────────────────────────────────────────────────────────
@@ -934,17 +1573,60 @@ class PAMTunnelDiagnoseCommand(Command):
         timeout = kwargs.get('timeout', 30)
         verbose = kwargs.get('verbose', False)
         output_format = kwargs.get('format', 'table')
-        test_filter = kwargs.get('test_filter')
+        turn_test = kwargs.get('turn_test', False)
 
-        server = params.server  # e.g. "keepersecurity.com"
-        krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server}'
-        connect_host = f'connect.{server}'
+        # Build unified WebRTC test filter from --test string and/or individual --test-* flags
+        _test_flag_map = {
+            'test_dns':    'dns_resolution',
+            'test_aws':    'aws_connectivity',
+            'test_tcp':    'tcp_connectivity',
+            'test_udp':    'udp_binding',
+            'test_ice':    'ice_configuration',
+            'test_webrtc': 'webrtc_peer_connection',
+        }
+        _allowed_tests = set(_test_flag_map.values())
+        test_filter_set: set = set()
+        _test_str = kwargs.get('test_filter')
+        if _test_str:
+            _requested = {t.strip() for t in _test_str.split(',')}
+            _invalid = _requested - _allowed_tests
+            if _invalid:
+                raise CommandError('pam tunnel diagnose',
+                                   f'Invalid test names: {", ".join(_invalid)}. '
+                                   f'Available: {", ".join(sorted(_allowed_tests))}')
+            test_filter_set = _requested
+        for _dest, _name in _test_flag_map.items():
+            if kwargs.get(_dest, False):
+                test_filter_set.add(_name)
+        stress_test = kwargs.get('stress_test', False)
+        stun_test = kwargs.get('stun_test', False)
+        if stress_test:
+            turn_test = True  # --stress-test implies --turn-test
+        if stun_test and turn_test:
+            raise CommandError('pam tunnel diagnose',
+                               '--stun-only and --turn-test are mutually exclusive')
+        if stun_test:
+            turn_test = True  # reuse the probe section
+        probe_duration = kwargs.get('probe_duration', 30)
+        probe_count = kwargs.get('probe_count', 1)
+        probe_stun_only = stun_test
+        probe_turn_only = not stun_test and turn_test  # TURN-only when --turn-test but not --stun-only
+
+        if (turn_test or stress_test) and not record_name:
+            raise CommandError('pam tunnel diagnose',
+                               '--turn-test / --stun-only requires a record argument: '
+                               'pam tunnel diagnose <pamMachine-or-pamDirectory-UID> --turn-test')
+
+        server = params.server  # e.g. "keepersecurity.com" or "https://qa.keepersecurity.com"
+        server_host = get_keeper_server_hostname(server)
+        krelay_server = get_relay_host(params.server)
+        connect_host = get_router_host(params.server)
 
         # ── header ────────────────────────────────────────────────────────────
         self._print_header()
         print()
         now = datetime.datetime.utcnow()
-        region_label = 'US' if server == 'keepersecurity.com' else server.split('.')[0].upper()
+        region_label = 'US' if server_host == 'keepersecurity.com' else server_host.split('.')[0].upper()
         print(self._green(f'  Region  {region_label}  \u00b7  {server}'))
         print(self._green(f'  Date    {now.strftime("%Y-%m-%d  %H:%M")} UTC'))
         if record_name:
@@ -969,16 +1651,16 @@ class PAMTunnelDiagnoseCommand(Command):
         # DNS
         t0 = time.monotonic()
         try:
-            infos = socket.getaddrinfo(server, None, socket.AF_INET)
+            infos = socket.getaddrinfo(server_host, None, socket.AF_INET)
             ips = list(dict.fromkeys(a[4][0] for a in infos))
             ms = int((time.monotonic() - t0) * 1000)
             extra = f'(+{len(ips) - 1} addr)' if len(ips) > 1 else ''
-            _record(f'DNS  {server}', True, f'\u2192  {ips[0]}  {extra}'.strip(), ms)
+            _record(f'DNS  {server_host}', True, f'\u2192  {ips[0]}  {extra}'.strip(), ms)
         except Exception as exc:
-            _record(f'DNS  {server}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
+            _record(f'DNS  {server_host}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
 
-        passed, detail, ms = self._test_https(server)
-        _record(f'HTTPS  {server}:443', passed, detail, ms)
+        passed, detail, ms = self._test_https(server_host)
+        _record(f'HTTPS  {server_host}:443', passed, detail, ms)
 
         passed, detail, ms = self._test_websocket(connect_host)
         _record(f'WebSocket  {connect_host}:443', passed, detail, ms)
@@ -1065,15 +1747,8 @@ class PAMTunnelDiagnoseCommand(Command):
                 logging.debug(f'Could not get TURN credentials: {exc}', exc_info=True)
 
             settings = {'use_turn': True, 'turn_only': False}
-            if test_filter:
-                allowed = {'dns_resolution', 'aws_connectivity', 'tcp_connectivity',
-                           'udp_binding', 'ice_configuration', 'webrtc_peer_connection'}
-                requested = {t.strip() for t in test_filter.split(',')}
-                invalid = requested - allowed
-                if invalid:
-                    print(f"{bcolors.FAIL}Invalid test names: {', '.join(invalid)}{bcolors.ENDC}")
-                    return 1
-                settings['test_filter'] = list(requested)
+            if test_filter_set:
+                settings['test_filter'] = list(test_filter_set)
 
             try:
                 rust_results = tube_registry.test_webrtc_connectivity(
@@ -1084,7 +1759,6 @@ class PAMTunnelDiagnoseCommand(Command):
                     password=turn_password,
                 )
                 if output_format == 'json':
-                    import json
                     print(json.dumps(rust_results, indent=2))
                     return 0
 
@@ -1284,7 +1958,600 @@ class PAMTunnelDiagnoseCommand(Command):
 
             print()
 
-        # ── section 6: technical details ──────────────────────────────────────
+        # ── section 6: TURN / STUN-only end-to-end probe ─────────────────────
+        if turn_test:
+            _probe_label = 'STUN-Only End-to-End Probe' if stun_test else 'TURN End-to-End Probe'
+            print(f'{self._bullet()}  {self._bright(_probe_label)}  '
+                  f'({probe_count} connection{"s" if probe_count > 1 else ""}, '
+                  f'hold {probe_duration}s)')
+            print(f'  {self._sep()}')
+            try:
+                probe_registry = get_or_create_tube_registry(params)
+                if not probe_registry:
+                    raise RuntimeError('Rust WebRTC library not available')
+
+                api.sync_down(params)
+                probe_record_obj = RecordMixin.resolve_single_record(params, record_name)
+                probe_record_uid = probe_record_obj.record_uid if probe_record_obj else record_name
+                probe_record = vault.KeeperRecord.load(params, probe_record_uid)
+                if probe_record is None:
+                    raise RuntimeError(
+                        f'Record "{record_name}" not found in vault — '
+                        f'run "sync-down" first, or pass the record UID directly'
+                    )
+                if not isinstance(probe_record, vault.TypedRecord):
+                    raise RuntimeError(
+                        f'Record "{record_name}" is a legacy v2 record (type: {type(probe_record).__name__}) — '
+                        f'--turn-test requires a PAM typed record (pamMachine, pamDirectory, etc.)'
+                    )
+
+                seed_field = probe_record.get_typed_field('trafficEncryptionSeed')
+                if not seed_field:
+                    raise RuntimeError(
+                        f'Record "{record_name}" (type: {probe_record.record_type}) has no '
+                        f'trafficEncryptionSeed field — '
+                        f'pass a PAM resource record (pamMachine / pamDirectory / pamUser), '
+                        f'not a pamConfiguration record'
+                    )
+                probe_seed = base64_to_bytes(seed_field.get_default_value(str).encode('utf-8'))
+
+                probe_gateway_uid = get_gateway_uid_from_record(params, vault, probe_record.record_uid)
+                if not probe_gateway_uid:
+                    raise RuntimeError(
+                        f'No gateway linked to record "{record_name}" — '
+                        f'the record must be in a PAM config that has an active gateway'
+                    )
+
+                # --- Launch probe_count tunnels concurrently ---
+                import concurrent.futures as _cf
+
+                def _run_one_probe(probe_idx):
+                    """Launch one probe tunnel and return a result dict."""
+                    probe_port = find_open_port(tried_ports=[], host='127.0.0.1')
+                    if not probe_port:
+                        return {'idx': probe_idx, 'success': False, 'error': 'no open port'}
+                    t0 = time.monotonic()
+                    result = start_rust_tunnel(
+                        params=params,
+                        record_uid=probe_record.record_uid,
+                        gateway_uid=probe_gateway_uid,
+                        host='127.0.0.1',
+                        port=probe_port,
+                        seed=probe_seed,
+                        target_host='127.0.0.1',
+                        target_port=1,
+                        socks=False,
+                        trickle_ice=True,
+                        record_title=probe_record.title,
+                        kind='probe',
+                        probe_duration=probe_duration,
+                        probe_turn_only=probe_turn_only,
+                        probe_stun_only=probe_stun_only,
+                    )
+                    offer_ms = int((time.monotonic() - t0) * 1000)
+                    if not result or not result.get('success'):
+                        return {'idx': probe_idx, 'success': False,
+                                'error': (result or {}).get('error', 'offer failed'), 'offer_ms': offer_ms}
+                    return {'idx': probe_idx, 'success': True, 'offer_ms': offer_ms,
+                            'tube_id': result['tube_id'], 'registry': result['tube_registry'],
+                            'signal_handler': result.get('signal_handler'), 't0': t0,
+                            'port': result.get('local_port', probe_port)}
+
+                t_all = time.monotonic()
+                with _cf.ThreadPoolExecutor(max_workers=min(probe_count, 20)) as pool:
+                    probe_futures = [pool.submit(_run_one_probe, i) for i in range(probe_count)]
+                    probe_launches = [f.result() for f in _cf.as_completed(probe_futures)]
+                launch_ms = int((time.monotonic() - t_all) * 1000)
+
+                launched_ok = [p for p in probe_launches if p['success']]
+                launched_fail = [p for p in probe_launches if not p['success']]
+
+                _record(
+                    f'Probe offer{"s" if probe_count > 1 else ""} sent',
+                    len(launched_fail) == 0,
+                    f'{len(launched_ok)}/{probe_count} sent in {launch_ms}ms'
+                    + (f' — failed: {[p["error"] for p in launched_fail]}' if launched_fail else ''),
+                    launch_ms,
+                )
+
+                if not launched_ok:
+                    raise RuntimeError('All probes failed to launch')
+
+                # --- Wait for each probe to reach Connected ---
+                connect_deadline = time.monotonic() + timeout
+                for p in launched_ok:
+                    p['connected_ms'] = None
+                    p['final_state'] = 'pending'
+
+                while time.monotonic() < connect_deadline:
+                    pending = [p for p in launched_ok if p['connected_ms'] is None
+                               and p['final_state'] not in ('failed', 'closed', 'timeout')]
+                    if not pending:
+                        break
+                    for p in pending:
+                        try:
+                            state = p['registry'].get_connection_state(p['tube_id'])
+                        except Exception:
+                            state = 'closed'
+                        state_l = (state or '').lower()
+                        if state_l == 'connected':
+                            p['connected_ms'] = int((time.monotonic() - p['t0']) * 1000)
+                            p['final_state'] = 'connected'
+                        elif state_l in ('failed', 'closed'):
+                            p['final_state'] = state_l
+                    time.sleep(0.2)
+
+                for p in launched_ok:
+                    if p['connected_ms'] is None and p['final_state'] == 'pending':
+                        p['final_state'] = 'timeout'
+
+                connected_probes = [p for p in launched_ok if p['connected_ms'] is not None]
+                failed_probes    = [p for p in launched_ok if p['connected_ms'] is None]
+                avg_connect_ms   = int(sum(p['connected_ms'] for p in connected_probes) / len(connected_probes)) \
+                                   if connected_probes else 0
+
+                _record(
+                    'STUN peer connected' if stun_test else 'TURN relay connected',
+                    len(failed_probes) == 0,
+                    f'{len(connected_probes)}/{len(launched_ok)} connected'
+                    + (f', avg {avg_connect_ms}ms' if connected_probes else '')
+                    + (f' — not connected: {[p["final_state"] for p in failed_probes]}' if failed_probes else ''),
+                    avg_connect_ms,
+                )
+
+                # --- Hold phase: monitor state transitions for probe_duration seconds ---
+                if connected_probes and probe_duration > 0:
+                    _path_label = 'STUN' if stun_test else 'TURN'
+                    print(f'    Holding {len(connected_probes)} connection{"s" if len(connected_probes) > 1 else ""} '
+                          f'for {probe_duration}s to monitor {_path_label} stability...')
+
+                    # --- Throughput test: RTT + bulk throughput via the echo tunnel ---
+                    for p in connected_probes:
+                        p['throughput_mbps'] = None
+                        p['rtt_ms'] = None
+                        local_port = p.get('port')
+                        logging.debug(f'Throughput test: probe-{p["idx"]} port={local_port} keys={list(p.keys())}')
+                        if not local_port:
+                            logging.warning(f'Throughput test: probe-{p["idx"]} has no local port — skipping')
+                            continue
+                        try:
+                            import socket as _socket
+                            # The Rust TCP listener binds after the data channel opens,
+                            # which can lag the ICE 'connected' state by a short window.
+                            # Retry a few times with a brief pause before giving up.
+                            sock = None
+                            for _attempt in range(5):
+                                try:
+                                    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                                    s.settimeout(5)
+                                    s.connect(('127.0.0.1', local_port))
+                                    sock = s
+                                    break
+                                except OSError:
+                                    s.close()
+                                    if _attempt < 4:
+                                        time.sleep(0.5)
+                            if sock is None:
+                                logging.warning(
+                                    f'Throughput test: probe-{p["idx"]} could not connect to '
+                                    f'127.0.0.1:{local_port} after 5 attempts — '
+                                    f'Rust listener may not be ready'
+                                )
+                                continue
+
+                            sock.settimeout(15)  # 15s: 256 KB at ~17 KB/s minimum
+
+                            # RTT: single small ping
+                            t_rtt = time.monotonic()
+                            sock.sendall(b'PING')
+                            sock.recv(4)
+                            p['rtt_ms'] = int((time.monotonic() - t_rtt) * 1000)
+
+                            # Throughput: 256 KB in 8 KB chunks.
+                            # Each sendall matches MAX_READ_SIZE so it maps to one WebRTC message.
+                            # At the minimum passing threshold (50 KB/s) this completes in ~5s,
+                            # leaving 10s of headroom before the 15s timeout.
+                            chunk = b'X' * 8192
+                            total_bytes = 256 * 1024
+                            sent = 0
+                            t_start = time.monotonic()
+                            while sent < total_bytes:
+                                sock.sendall(chunk)
+                                sent += len(chunk)
+                            recv = 0
+                            while recv < total_bytes:
+                                data = sock.recv(65536)
+                                if not data:
+                                    break
+                                recv += len(data)
+                            elapsed = time.monotonic() - t_start
+                            p['throughput_mbps'] = round((recv / elapsed) / 1_000_000, 2)
+                            sock.close()
+                        except Exception as tput_err:
+                            logging.warning(f'Throughput test error for probe-{p["idx"]} (port={local_port}): {tput_err}', exc_info=True)
+
+                    # Report throughput results
+                    tput_results = [p for p in connected_probes if p['throughput_mbps'] is not None]
+                    if tput_results:
+                        avg_tput = round(sum(p['throughput_mbps'] for p in tput_results) / len(tput_results), 2)
+                        avg_rtt  = int(sum(p['rtt_ms'] for p in tput_results if p['rtt_ms']) / len(tput_results))
+                        # Fixed floor: the probe sends 256 KB from a cold SCTP association,
+                        # so measured throughput is dominated by slow-start, not RTT.
+                        # An RTT-aware formula would demand higher throughput at low RTT,
+                        # producing false failures on fast paths.  0.03 MB/s (30 KB/s) is
+                        # achievable even during SCTP ramp-up at 400ms RTT, and any relay
+                        # delivering less than that is genuinely broken.
+                        _tput_threshold = 0.03
+                        _record(
+                            f'{_path_label} throughput',
+                            avg_tput >= _tput_threshold,
+                            f'{avg_tput} MB/s avg over {_path_label} path  ·  RTT {avg_rtt}ms',
+                            int(avg_tput * 1000),
+                        )
+                    else:
+                        print(f'    (throughput test skipped — no data returned from echo path)')
+
+                    # Base hold_end on connection time, not throughput-test completion.
+                    # The gateway auto-closes probe_duration seconds after the probe STARTED,
+                    # so align the monitoring window to the first connected probe's t0.
+                    earliest_t0 = min(p['t0'] for p in connected_probes)
+                    hold_end = earliest_t0 + probe_duration + (avg_connect_ms / 1000)
+                    # Per-probe tracking: count disconnects and reconnects
+                    for p in connected_probes:
+                        p['disconnects'] = 0
+                        p['reconnects'] = 0
+                        p['last_state'] = 'connected'
+                        p['died'] = False
+
+                    while time.monotonic() < hold_end:
+                        for p in connected_probes:
+                            if p['died']:
+                                continue
+                            try:
+                                state = p['registry'].get_connection_state(p['tube_id'])
+                            except Exception:
+                                state = 'closed'
+                            state_l = (state or '').lower()
+
+                            if state_l != p['last_state']:
+                                elapsed = int((time.monotonic() - p['t0']))
+                                if state_l == 'disconnected':
+                                    p['disconnects'] += 1
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._yellow("DISCONNECTED")} — ICE restart should fire')
+                                elif state_l == 'connected' and p['last_state'] == 'disconnected':
+                                    p['reconnects'] += 1
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._green("RECONNECTED")} via ICE restart')
+                                elif state_l == 'failed':
+                                    p['died'] = True
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._red("DIED")} (state=failed) — '
+                                          f'ICE failed, tube removed from registry')
+                                elif state_l == 'closed':
+                                    # 'closed' is the normal probe auto-close at probe_duration.
+                                    # Only count as death if it fired well before the deadline.
+                                    remaining = hold_end - time.monotonic()
+                                    if remaining > 10:
+                                        p['died'] = True
+                                        print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                              f'{self._red("DIED")} (state=closed, {int(remaining)}s early) — '
+                                              f'tube removed unexpectedly')
+                                    else:
+                                        print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                              f'{self._green("CLOSED")} (probe auto-close)')
+                                p['last_state'] = state_l
+                        time.sleep(1.0)
+
+                    # Summarise hold phase
+                    survived   = [p for p in connected_probes if not p['died']]
+                    died       = [p for p in connected_probes if p['died']]
+                    total_disc = sum(p['disconnects'] for p in connected_probes)
+                    total_rec  = sum(p['reconnects'] for p in connected_probes)
+
+                    _record(
+                        f'{_path_label} stability ({probe_duration}s hold)',
+                        len(died) == 0,
+                        f'{len(survived)}/{len(connected_probes)} survived'
+                        + (f', {total_disc} disconnect(s), {total_rec} ICE restart(s)' if total_disc else ', no interruptions')
+                        + (f' — {len(died)} died permanently' if died else ''),
+                        probe_duration * 1000,
+                    )
+
+                    if total_disc > 0 and total_rec == total_disc:
+                        print(f'    {self._green("ICE restart fix working:")} all disconnects recovered automatically')
+                    elif total_disc > 0 and total_rec < total_disc:
+                        print(f'    {self._red("ICE restart fix incomplete:")} {total_disc - total_rec} disconnect(s) did not recover')
+
+                # --- Clean up all probes ---
+                for p in probe_launches:
+                    if not p['success']:
+                        continue
+                    try:
+                        p['registry'].close_tube(p['tube_id'])
+                    except Exception:
+                        pass
+                    sh = p.get('signal_handler')
+                    if sh:
+                        try:
+                            sh.cleanup()
+                        except Exception:
+                            pass
+
+            except Exception as exc:
+                _record('TURN probe', False, str(exc)[:70], 0)
+                logging.debug('TURN probe error', exc_info=True)
+
+            print()
+
+        # ── section 7: stress test ────────────────────────────────────────────
+        if stress_test:
+            print(f'{self._bullet()}  {self._bright("WebRTC Stress Test")}  (TURN relay)')
+            print(f'  {self._sep()}')
+            if not record_name:
+                print(f'    {self._cross()}  {self._red("--stress-test requires a record argument")}')
+            else:
+                import socket as _sock
+                import concurrent.futures as _cf2
+
+                def _one_stress_probe(sp=None):
+                    """Single connected probe for stress use — returns (port, registry, tube_id, sh) or None.
+                    Pass sp to use a pre-allocated port (for concurrent calls); omit for sequential use.
+                    """
+                    if sp is None:
+                        sp = find_open_port(tried_ports=[], host='127.0.0.1')
+                    if not sp:
+                        return None
+                    r = start_rust_tunnel(
+                        params=params,
+                        record_uid=probe_record.record_uid,
+                        gateway_uid=probe_gateway_uid,
+                        host='127.0.0.1', port=sp,
+                        seed=probe_seed, target_host='127.0.0.1', target_port=1,
+                        socks=False, trickle_ice=True,
+                        record_title=probe_record.title,
+                        kind='probe', probe_duration=120, probe_turn_only=probe_turn_only,
+                    )
+                    if not r or not r.get('success'):
+                        return None
+                    deadline = time.monotonic() + 20
+                    reg = r['tube_registry']
+                    tid = r['tube_id']
+                    while time.monotonic() < deadline:
+                        if (reg.get_connection_state(tid) or '').lower() == 'connected':
+                            return sp, reg, tid, r.get('signal_handler')
+                        time.sleep(0.2)
+                    try:
+                        reg.close_tube(tid)
+                    except Exception: pass
+
+                    return None
+
+                def _tput_via_port(port):
+                    """Connect to local tunnel port, measure RTT and aggregate throughput.
+                    Sends 256 KB as 32 × 8 KB messages — matching the Rust channel's
+                    MAX_READ_SIZE exactly so the measurement reflects real wire behaviour.
+                    Returns (mbps, rtt_ms) or (None, None) on failure.
+                    """
+                    try:
+                        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                        s.settimeout(15)
+                        s.connect(('127.0.0.1', port))
+                        # Warmup ping — also gives us RTT for the threshold formula.
+                        _t_rtt = time.monotonic()
+                        s.sendall(b'\x00' * 64)
+                        s.recv(64)
+                        rtt_ms = int((time.monotonic() - _t_rtt) * 1000)
+                        # Bulk: 256 KB in 8 KB chunks so each send maps to one WebRTC
+                        # message (RECEIVE_MTU = 8 KB in webrtc-data).  More chunks =
+                        # more frames in-flight = better pipelining signal.
+                        total = 256 * 1024
+                        chunk = b'\x01' * 8192
+                        t0 = time.monotonic()
+                        sent = 0
+                        while sent < total:
+                            s.sendall(chunk)
+                            sent += len(chunk)
+                        got = 0
+                        while got < total:
+                            d = s.recv(65536)
+                            if not d:
+                                break
+                            got += len(d)
+                        elapsed = time.monotonic() - t0
+                        s.close()
+                        return round(got / elapsed / 1_000_000, 3), rtt_ms
+                    except Exception as e:
+                        logging.debug(f'Stress tput error: {e}')
+                        return None, None
+
+                CYCLES      = 5
+                CONCURRENCY = 5
+
+                # --- 1. Cycle test: open → data → close, repeated ---
+                print(f'    {self._bright("1. Connection cycling")} ({CYCLES} open/data/close cycles)')
+                cycle_ok = 0
+                for cycle in range(CYCLES):
+                    info = _one_stress_probe()
+                    if info:
+                        sp, reg, tid, sh = info
+                        try:
+                            reg.close_tube(tid)
+                            if sh: sh.tube_close_initiated = True
+                        except Exception: pass
+                        if sh:
+                            try: sh.cleanup()
+                            except Exception: pass
+                        cycle_ok += 1
+                _record('Cycle open/close', cycle_ok == CYCLES,
+                        f'{cycle_ok}/{CYCLES} cycles completed', cycle_ok * 1000)
+
+                # --- 2. Throughput ---
+                print(f'    {self._bright("2. Throughput")} (32 × 8 KB messages over TURN relay)')
+                info = _one_stress_probe()
+                if info:
+                    sp, reg, tid, sh = info
+                    mbps, rtt_ms = _tput_via_port(sp)
+                    if mbps is not None:
+                        # RTT-aware threshold: same formula as TURN probe section.
+                        # 32 × 8 KB in-flight; SCTP window / RTT gives the pipelining ceiling.
+                        _rtt = max(rtt_ms or 1000, 1)
+                        _threshold = max(0.05, round(65536 / _rtt * 0.5 / 1000, 3))
+                        _record('TURN throughput',
+                                mbps >= _threshold,
+                                f'{mbps} MB/s  ·  RTT {rtt_ms}ms',
+                                int(mbps * 1000))
+                    else:
+                        _record('TURN throughput', False, 'could not connect for throughput test', 0)
+                    try:
+                        reg.close_tube(tid)
+                        if sh: sh.tube_close_initiated = True
+                    except Exception: pass
+                    if sh:
+                        try: sh.cleanup()
+                        except Exception: pass
+                else:
+                    _record('TURN throughput', False, 'could not connect for throughput test', 0)
+
+                # --- 3. Concurrent connections ---
+                # Pre-allocate all ports sequentially so no two workers race on find_open_port.
+                print(f'    {self._bright(f"3. Concurrent connections")} ({CONCURRENCY} simultaneous)')
+                conc_ports, tried = [], []
+                for _ in range(CONCURRENCY):
+                    p = find_open_port(tried_ports=tried, host='127.0.0.1')
+                    if p:
+                        conc_ports.append(p)
+                        tried.append(p)
+                with _cf2.ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+                    conc_futures = [pool.submit(_one_stress_probe, p) for p in conc_ports]
+                    conc_results = [f.result() for f in _cf2.as_completed(conc_futures)]
+                conc_ok = sum(1 for r in conc_results if r is not None)
+                for r in conc_results:
+                    if r:
+                        sp, reg, tid, sh = r
+                        try:
+                            reg.close_tube(tid)
+                            if sh: sh.tube_close_initiated = True
+                        except Exception: pass
+                        if sh:
+                            try: sh.cleanup()
+                            except Exception: pass
+
+                _record(f'Concurrent {CONCURRENCY}x', conc_ok == CONCURRENCY,
+                        f'{conc_ok}/{CONCURRENCY} connected simultaneously', conc_ok * 1000)
+
+                # --- 4. Interactive latency under bulk load ---
+                # Two TCP connections to the same probe port = two conn_no streams
+                # on the same WebRTC data channel.  conn_no=1 sends 512 KB bulk;
+                # conn_no=2 sends 64-byte pings every 200ms and measures RTT.
+                # This tests whether the EventDrivenSender saw-tooth fix allows
+                # interactive frames to interleave with bulk frames.
+                print(f'    {self._bright("4. Interactive latency under load")}')
+                import threading as _threading
+                info = _one_stress_probe()
+                if info:
+                    sp, reg, tid, sh = info
+                    rtt_under_load: list = []
+                    _bulk_done = _threading.Event()
+
+                    # Baseline: single ping before bulk starts
+                    _baseline_rtt = None
+                    try:
+                        _bs = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                        _bs.settimeout(5)
+                        _bs.connect(('127.0.0.1', sp))
+                        _t0 = time.monotonic()
+                        _bs.sendall(b'B' * 64)
+                        _bs.recv(64)
+                        _baseline_rtt = int((time.monotonic() - _t0) * 1000)
+                        _bs.close()
+                    except Exception as _e:
+                        logging.debug(f'Latency baseline error: {_e}')
+
+                    def _bulk_sender():
+                        try:
+                            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                            s.settimeout(30)
+                            s.connect(('127.0.0.1', sp))
+                            total = 512 * 1024
+                            chunk = b'\x02' * 8192
+                            sent = 0
+                            while sent < total:
+                                s.sendall(chunk)
+                                sent += len(chunk)
+                            got = 0
+                            while got < total:
+                                d = s.recv(65536)
+                                if not d:
+                                    break
+                                got += len(d)
+                            s.close()
+                        except Exception as _e:
+                            logging.debug(f'Bulk sender error: {_e}')
+                        finally:
+                            _bulk_done.set()
+
+                    def _latency_sampler():
+                        try:
+                            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                            s.settimeout(5)
+                            s.connect(('127.0.0.1', sp))
+                            while not _bulk_done.is_set():
+                                try:
+                                    _t = time.monotonic()
+                                    s.sendall(b'P' * 64)
+                                    s.recv(64)
+                                    rtt_under_load.append(
+                                        int((time.monotonic() - _t) * 1000)
+                                    )
+                                except OSError:
+                                    break
+                                time.sleep(0.2)
+                            s.close()
+                        except Exception as _e:
+                            logging.debug(f'Latency sampler error: {_e}')
+
+                    _bt = _threading.Thread(target=_bulk_sender, daemon=True)
+                    _lt = _threading.Thread(target=_latency_sampler, daemon=True)
+                    _lt.start()
+                    _bt.start()
+                    _bt.join(timeout=30)
+                    _bulk_done.set()
+                    _lt.join(timeout=2)
+
+                    try:
+                        reg.close_tube(tid)
+                        if sh: sh.tube_close_initiated = True
+                    except Exception: pass
+                    if sh:
+                        try: sh.cleanup()
+                        except Exception: pass
+
+                    if rtt_under_load and _baseline_rtt:
+                        _avg = int(sum(rtt_under_load) / len(rtt_under_load))
+                        _max = max(rtt_under_load)
+                        # Pass if average latency under load stays within 5× baseline.
+                        # With the 50-frame drain batch, interactive frames interleave
+                        # between bursts; with the old 2000-frame batch the multiplier
+                        # could reach 100× or more at TURN relay speeds.
+                        _ok = _avg <= _baseline_rtt * 5
+                        _record(
+                            'Latency under load',
+                            _ok,
+                            f'avg {_avg}ms, max {_max}ms  ·  baseline {_baseline_rtt}ms'
+                            f'  ·  {len(rtt_under_load)} samples',
+                            _avg,
+                        )
+                    elif not rtt_under_load:
+                        _record('Latency under load', False, 'no samples collected', 0)
+                    else:
+                        _record('Latency under load', False, 'baseline RTT unavailable', 0)
+                else:
+                    _record('Latency under load', False, 'could not connect probe', 0)
+
+            print()
+
+        # ── section 8: technical details ──────────────────────────────────────
         print(f'{self._bullet()}  {self._bright("Technical Details")}')
         print(f'  {self._sep()}')
 
@@ -1342,7 +2609,9 @@ class PAMConnectionEditCommand(Command):
                     'credential on the PAM Resource')
     parser.add_argument('--launch-user', '-lu', required=False, dest='launch_user', action='store',
 					help='The record path or UID of the PAM User record to configure as the launch '
-                    'credential on the PAM Resource')
+                    'credential on the PAM Resource.')
+    parser.add_argument('--clear-launch-user', required=False, dest='clear_launch_user', action='store_true',
+                        help='Remove the launch credential from the resource (clears is_launch_credential in the DAG)')
     parser.add_argument('--protocol', '-p', dest='protocol', choices=protocols,
                         help='Set connection protocol')
     parser.add_argument('--connections', '-cn', dest='connections', choices=choices,
@@ -1356,6 +2625,13 @@ class PAMConnectionEditCommand(Command):
                         'the port from the record will be used.')
     parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
                         help='Toggle Key Events settings')
+    parser.add_argument('--scrollback', '-sb', required=False, dest='scrollback', action='store',
+                        help='Maximum Scrollback Size (terminal history). Integer to set, '
+                             'empty string to remove. Supported only for pamDatabase (any DB protocol) and '
+                             'pamMachine/pamDirectory (ssh/telnet/kubernetes).')
+    parser.add_argument('--rotate-on-termination', required=False, dest='rotate_on_termination',
+                        choices=['on', 'off'],
+                        help='Rotate launch credentials when the PAM session ends (DAG resource meta)')
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
 					help='Silent mode - don\'t print PAM User, PAM Config etc.')
 
@@ -1400,6 +2676,51 @@ class PAMConnectionEditCommand(Command):
                                    f"Connections are only supported on pamMachine, pamDatabase, pamDirectory, "
                                    f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
                                    f"pamAzureConfiguration records{bcolors.ENDC}")
+
+        # --scrollback: validate record type + effective protocol before any mutation
+        scrollback_arg = kwargs.get('scrollback', None)
+        scrollback_clear = False
+        scrollback_value = None  # parsed int, or None to skip apply
+        if scrollback_arg is not None:
+            db_scrollback_protocols = {'mysql', 'postgresql', 'sql-server', 'mariadb', 'oracle',
+                                       'mongodb', 'redis', 'elasticsearch', 'clickhouse', 'dynamodb'}
+            terminal_scrollback_protocols = {'ssh', 'telnet', 'kubernetes'}
+            if record_type == 'pamDatabase':
+                allowed_protocols = db_scrollback_protocols
+            elif record_type in ('pamMachine', 'pamDirectory'):
+                allowed_protocols = terminal_scrollback_protocols
+            else:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--scrollback is only supported for pamDatabase, pamMachine, and pamDirectory '
+                    f'records. Record "{record_uid}" is of type "{record_type}".{bcolors.ENDC}')
+
+            existing_ps = record.get_typed_field('pamSettings')
+            existing_protocol = ''
+            if existing_ps and existing_ps.value and isinstance(existing_ps.value[0], dict):
+                existing_protocol = existing_ps.value[0].get('connection', {}).get('protocol') or ''
+            new_protocol_arg = kwargs.get('protocol', None)
+            if kwargs.get('connections') == 'on' and new_protocol_arg is not None:
+                effective_protocol = new_protocol_arg  # may be '' to clear
+            else:
+                effective_protocol = existing_protocol
+            if effective_protocol not in allowed_protocols:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--scrollback is not supported for protocol "{effective_protocol or "(unset)"}" '
+                    f'on {record_type} records. Allowed protocols: {", ".join(sorted(allowed_protocols))}.{bcolors.ENDC}')
+
+            if scrollback_arg == '':
+                scrollback_clear = True
+            else:
+                try:
+                    scrollback_value = int(scrollback_arg)
+                except (ValueError, TypeError):
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}--scrollback must be a non-negative integer or empty string. '
+                        f'Got: "{scrollback_arg}".{bcolors.ENDC}')
+                if scrollback_value < 0:
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}--scrollback must be a non-negative integer or empty string. '
+                        f'Got: "{scrollback_arg}".{bcolors.ENDC}')
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
@@ -1487,6 +2808,24 @@ class PAMConnectionEditCommand(Command):
                 else:
                     logging.debug(f'Unexpected value for --key-events {key_events} (ignored)')
 
+            # --scrollback: apply (validated above; record_type + effective protocol already checked)
+            if scrollback_clear or scrollback_value is not None:
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                current_sb = vcon.get('scrollback') if isinstance(vcon, dict) else None
+                if scrollback_clear:
+                    if current_sb is not None:
+                        pam_settings.value[0]["connection"].pop('scrollback', None)
+                        dirty = True
+                    else:
+                        logging.debug(f'scrollback is already unset on record={record_uid}')
+                else:
+                    if current_sb != scrollback_value:
+                        pam_settings.value[0]["connection"]["scrollback"] = scrollback_value
+                        dirty = True
+                    else:
+                        logging.debug(f'scrollback is already {scrollback_value} on record={record_uid}')
+
             if dirty:
                 record_management.update_record(params, record)
                 api.sync_down(params)
@@ -1497,7 +2836,35 @@ class PAMConnectionEditCommand(Command):
                                        f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
             dirty = False
 
+            # If only record-level args were passed (e.g. --scrollback, --key-events, --protocol
+            # alone), the record update above is complete — skip the DAG/config lookup, which
+            # would otherwise raise a misleading "No PAM Configuration UID set" error when the
+            # resource isn't linked to a config yet. Mirrors the PAMRbiEditCommand pattern.
+            dag_affecting = (kwargs.get('config') or kwargs.get('admin') or kwargs.get('launch_user')
+                             or kwargs.get('clear_launch_user') or kwargs.get('connections')
+                             or kwargs.get('recording') or kwargs.get('typescriptrecording')
+                             or kwargs.get('rotate_on_termination'))
+            if not dag_affecting:
+                return
+
             existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+
+            # When the user did not pass --configuration, fall back to
+            # first the legacy /api/user/get_leafs if that also returned nothing,
+            # then the new /api/user/graph-sync/pam/get_leafs (PAM_LINK stream) 
+            # Without this, `tdag` would be built with config_uid=None, has_graph=False,
+            # and the misleading "No PAM Configuration UID set" error would fire
+            # even though the link is resolvable.
+            if not config_uid:
+                if existing_config_uid:
+                    config_uid = existing_config_uid
+                    logging.debug('pam connection edit: using DAG-resolved config_uid: %s', config_uid)
+                else:
+                    found = get_config_uid_via_pam_link(params, record_uid)
+                    if found:
+                        logging.debug('pam connection edit: resolved config_uid via graph-sync/pam fallback: %s', found)
+                        existing_config_uid = found
+                        config_uid = found
 
             tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
                              transmission_key=transmission_key)
@@ -1552,24 +2919,47 @@ class PAMConnectionEditCommand(Command):
             if _typescript_recording is not None and tdag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
                 dirty = True
 
-            if dirty:
+            launch_credential_record_types = ("pamDatabase", "pamDirectory", "pamMachine")
+            rot_kw = kwargs.get('rotate_on_termination')
+            rot_bool = True if rot_kw == 'on' else False if rot_kw == 'off' else None
+            if rot_bool is not None and record_type not in launch_credential_record_types:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--rotate-on-termination is only supported for pamMachine, pamDatabase, and '
+                    f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not support '
+                    f'launch credentials.{bcolors.ENDC}')
+
+            if dirty or rot_bool is not None:
                 tdag.set_resource_allowed(resource_uid=record_uid,
                                           allowed_settings_name=allowed_settings_name,
                                           connections=kwargs.get('connections', None),
                                           session_recording=kwargs.get('recording', None),
-                                          typescript_recording=kwargs.get('typescriptrecording', None))
+                                          typescript_recording=kwargs.get('typescriptrecording', None),
+                                          rotate_on_termination=rot_bool)
 
             # admin parameter is optional yet if not set connections may fail
             admin_name = kwargs.get('admin')
             adm_rec = RecordMixin.resolve_single_record(params, admin_name)
             admin_uid = adm_rec.record_uid if adm_rec else None
-            if admin_uid and record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+            if admin_uid and record_type in launch_credential_record_types:
                 tdag.link_user_to_resource(admin_uid, record_uid, is_admin=True, belongs_to=True)
                 # tdag.link_user_to_config(admin_uid)  # is_iam_user=True
 
-            # launch-user parameter sets the launch credential on the resource
+            # launch-user parameter sets the launch credential; --clear-launch-user removes it
+            clear_launch_user = bool(kwargs.get('clear_launch_user'))
             launch_user_name = kwargs.get('launch_user')
-            if launch_user_name:
+
+            if clear_launch_user and launch_user_name:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}Use either --clear-launch-user or --launch-user, not both.{bcolors.ENDC}')
+            if clear_launch_user:
+                if record_type not in launch_credential_record_types:
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}--clear-launch-user is only supported for pamMachine, pamDatabase, and '
+                        f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not '
+                        f'support launch credentials.{bcolors.ENDC}')
+                tdag.clear_launch_credential_for_resource(record_uid)
+                tdag.upgrade_resource_meta_to_v1(record_uid)
+            elif launch_user_name:
                 launch_rec = RecordMixin.resolve_single_record(params, launch_user_name)
                 if not launch_rec:
                     raise CommandError('',
@@ -1578,13 +2968,258 @@ class PAMConnectionEditCommand(Command):
                     raise CommandError('',
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
                 launch_uid = launch_rec.record_uid
-                if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                if record_type in launch_credential_record_types:
                     tdag.clear_launch_credential_for_resource(record_uid, exclude_user_uid=launch_uid)
                     tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
                     tdag.upgrade_resource_meta_to_v1(record_uid)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+
+
+class PAMConnectionJitCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam connection jit')
+    parser.add_argument('record', type=str, action='store',
+                        help='Record UID, path, or title (pamMachine, pamDatabase, or pamDirectory)')
+    parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
+                        help='PAM Configuration UID or title (required when record is linked to 2+ configs)')
+    parser.add_argument('--create-ephemeral', type=str, dest='create_ephemeral', action='store', default=None,
+                        metavar='BOOL', help='Create ephemeral account (true/false)')
+    parser.add_argument('--elevate', type=str, dest='elevate', action='store', default=None,
+                        metavar='BOOL', help='Elevate account (true/false)')
+    parser.add_argument('--elevation-method', dest='elevation_method', choices=['group', 'role'], default=None,
+                        help='Elevation method (group or role)')
+    parser.add_argument('--elevation-string', dest='elevation_string', type=str, action='store', default=None,
+                        help='Elevation string')
+    parser.add_argument('--base-distinguished-name', dest='base_distinguished_name', type=str, action='store',
+                        default=None, help='Base distinguished name')
+    parser.add_argument('--ephemeral-account-type', dest='ephemeral_account_type',
+                        choices=['linux', 'mac', 'windows', 'domain'], default=None,
+                        help='Ephemeral account type')
+    parser.add_argument('--pam-directory-record', dest='pam_directory_record', type=str, action='store',
+                        default=None,
+                        help='pamDirectory record UID/path/title (required when ephemeral-account-type=domain)')
+    parser.add_argument('--remove', dest='remove', action='store_true', default=False,
+                        help='Remove all JIT settings (jit_settings path only)')
+    parser.add_argument('--show', dest='show', action='store_true', default=False,
+                        help='Show current JIT settings')
+
+    def get_parser(self):
+        return PAMConnectionJitCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        configuration = kwargs.get('configuration')
+        remove_flag = kwargs.get('remove', False)
+        show_flag = kwargs.get('show', False)
+
+        jit_option_keys = ['create_ephemeral', 'elevate', 'elevation_method', 'elevation_string',
+                           'base_distinguished_name', 'ephemeral_account_type', 'pam_directory_record']
+        jit_options_provided = any(kwargs.get(k) is not None for k in jit_option_keys)
+
+        # Mutual exclusion checks
+        if remove_flag and show_flag:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with --show.{bcolors.ENDC}')
+        if remove_flag and jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with any other option.{bcolors.ENDC}')
+        if show_flag and jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--show cannot be used with --remove or any JIT option.{bcolors.ENDC}')
+        if not remove_flag and not show_flag and not jit_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}Provide at least one JIT option, --remove, or --show.{bcolors.ENDC}')
+
+        # 1. Resolve record: try UID/path first, then title search across PAM resource types
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if record is None:
+            pam_resource_types = {'pamMachine', 'pamDatabase', 'pamDirectory'}
+            matches = []
+            for uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, uid)
+                if rec and rec.record_type in pam_resource_types and rec.title.casefold() == record_name.casefold():
+                    matches.append(rec)
+            if len(matches) == 0:
+                raise CommandError('', f'{bcolors.FAIL}Record "{record_name}" not found.{bcolors.ENDC}')
+            if len(matches) > 1:
+                raise CommandError('',
+                    f'{bcolors.FAIL}Multiple records match title "{record_name}"; use UID or path.{bcolors.ENDC}')
+            record = matches[0]
+
+        # 2. Record type check
+        if not isinstance(record, vault.TypedRecord) or \
+                record.record_type not in ('pamMachine', 'pamDatabase', 'pamDirectory'):
+            raise CommandError('',
+                f'{bcolors.FAIL}JIT settings are only supported on pamMachine, pamDatabase, '
+                f'and pamDirectory records.{bcolors.ENDC}')
+
+        record_uid = record.record_uid
+
+        # 3. Resolve PAM config(s) via DAG
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        config_leafs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        config_uids = [leaf.get('value') for leaf in (config_leafs or []) if leaf.get('value')]
+
+        if not config_uids:
+            raise CommandError('',
+                f'{bcolors.FAIL}Record is not set up for connections. '
+                f'Use: pam connection edit {record_uid} --config <ConfigUID> --enable-connections. '
+                f'List configs: pam config list.{bcolors.ENDC}')
+
+        if len(config_uids) == 1:
+            config_uid = config_uids[0]
+        else:
+            if not configuration:
+                raise CommandError('',
+                    f'{bcolors.FAIL}Record is linked to multiple PAM Configurations; '
+                    f'specify --configuration|-c.{bcolors.ENDC}')
+            # Resolve --configuration: try UID/path, then title among version-6 records
+            config_rec = RecordMixin.resolve_single_record(params, configuration)
+            if config_rec is None:
+                for uid in params.record_cache:
+                    if params.record_cache[uid].get('version', 0) == 6:
+                        r = vault.KeeperRecord.load(params, uid)
+                        if r and r.title.casefold() == configuration.casefold():
+                            config_rec = r
+                            break
+            if config_rec is None:
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Configuration "{configuration}" not found.{bcolors.ENDC}')
+            config_uid = config_rec.record_uid
+            if config_uid not in config_uids:
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Configuration "{configuration}" is not linked to this record.{bcolors.ENDC}')
+
+        # 4. Branch
+        if show_flag:
+            self._do_show(params, record, record_uid, config_uid)
+        elif remove_flag:
+            self._do_remove(params, record_uid, config_uid)
+        else:
+            self._do_set(params, kwargs, record_uid, config_uid)
+
+    def _do_show(self, params, record, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import get_resource_jit_settings, get_resource_domain_dir_uid
+
+        settings = get_resource_jit_settings(params, record_uid, config_uid)
+
+        print(f'\nJIT Settings for {bcolors.OKBLUE}{record.title}{bcolors.ENDC} ({record_uid}):')
+        if not settings:
+            print(f'  {bcolors.WARNING}No JIT settings configured.{bcolors.ENDC}\n')
+            return
+
+        field_labels = [
+            ('createEphemeral', 'Create Ephemeral'),
+            ('elevate', 'Elevate'),
+            ('elevationMethod', 'Elevation Method'),
+            ('elevationString', 'Elevation String'),
+            ('baseDistinguishedName', 'Base Distinguished Name'),
+            ('ephemeralAccountType', 'Ephemeral Account Type'),
+        ]
+        for key, label in field_labels:
+            if key in settings:
+                print(f'  {label}: {settings[key]}')
+
+        if settings.get('ephemeralAccountType') == 'domain':
+            domain_dir_uid = get_resource_domain_dir_uid(params, record_uid, config_uid)
+            if domain_dir_uid:
+                dir_rec = vault.KeeperRecord.load(params, domain_dir_uid)
+                dir_title = dir_rec.title if dir_rec else domain_dir_uid
+                print(f'  PAM Directory: {dir_title} ({domain_dir_uid})')
+
+        print()
+
+    def _do_remove(self, params, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import remove_resource_jit_settings
+
+        ok = remove_resource_jit_settings(params, record_uid, config_uid)
+        if ok:
+            print(f'{bcolors.OKGREEN}JIT settings removed successfully.{bcolors.ENDC}')
+        else:
+            print(f'{bcolors.WARNING}No JIT settings found or removal failed.{bcolors.ENDC}')
+
+    def _do_set(self, params, kwargs, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import (get_resource_jit_settings, set_resource_jit_settings,
+                                                     set_resource_domain_dir)
+
+        # Merge provided CLI args into existing settings
+        existing = get_resource_jit_settings(params, record_uid, config_uid) or {}
+        jit_dict = dict(existing)
+
+        create_ephemeral = kwargs.get('create_ephemeral')
+        if create_ephemeral is not None:
+            jit_dict['createEphemeral'] = value_to_boolean(create_ephemeral)
+
+        elevate = kwargs.get('elevate')
+        if elevate is not None:
+            jit_dict['elevate'] = value_to_boolean(elevate)
+
+        elevation_method = kwargs.get('elevation_method')
+        if elevation_method is not None:
+            jit_dict['elevationMethod'] = elevation_method
+
+        elevation_string = kwargs.get('elevation_string')
+        if elevation_string is not None:
+            jit_dict['elevationString'] = elevation_string
+
+        base_dn = kwargs.get('base_distinguished_name')
+        if base_dn is not None:
+            jit_dict['baseDistinguishedName'] = base_dn
+
+        ephemeral_type = kwargs.get('ephemeral_account_type')
+        if ephemeral_type is not None:
+            jit_dict['ephemeralAccountType'] = ephemeral_type
+
+        # Validate domain requires --pam-directory-record
+        pam_dir_record = kwargs.get('pam_directory_record')
+        if jit_dict.get('ephemeralAccountType') == 'domain' and not pam_dir_record:
+            raise CommandError('',
+                f'{bcolors.FAIL}ephemeral-account-type=domain requires --pam-directory-record '
+                f'(pamDirectory UID/path/title with directory_type active_directory or openldap).{bcolors.ENDC}')
+        if pam_dir_record and jit_dict.get('ephemeralAccountType') != 'domain':
+            raise CommandError('',
+                f'{bcolors.FAIL}--pam-directory-record requires --ephemeral-account-type=domain.{bcolors.ENDC}')
+
+        # Resolve pamDirectory if provided
+        pam_dir_uid = None
+        if pam_dir_record:
+            dir_rec = RecordMixin.resolve_single_record(params, pam_dir_record)
+            if dir_rec is None:
+                matches = []
+                for uid in params.record_cache:
+                    rec = vault.KeeperRecord.load(params, uid)
+                    if (rec and rec.record_type == 'pamDirectory' and
+                            rec.title.casefold() == pam_dir_record.casefold()):
+                        matches.append(rec)
+                if not matches:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}PAM Directory record "{pam_dir_record}" not found.{bcolors.ENDC}')
+                if len(matches) > 1:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}Multiple records match title "{pam_dir_record}"; use UID or path.{bcolors.ENDC}')
+                dir_rec = matches[0]
+
+            if not isinstance(dir_rec, vault.TypedRecord) or dir_rec.record_type != 'pamDirectory':
+                raise CommandError('',
+                    f'{bcolors.FAIL}--pam-directory-record must reference a pamDirectory record.{bcolors.ENDC}')
+
+            dir_type_field = dir_rec.get_typed_field('directoryType')
+            dir_type = dir_type_field.get_default_value(str) if dir_type_field else None
+            if dir_type not in ('active_directory', 'openldap'):
+                raise CommandError('',
+                    f'{bcolors.FAIL}PAM Directory must have directory_type "active_directory" or "openldap" '
+                    f'(found: "{dir_type}").{bcolors.ENDC}')
+
+            pam_dir_uid = dir_rec.record_uid
+
+        # Save JIT settings
+        ok = set_resource_jit_settings(params, record_uid, jit_dict, config_uid)
+        if not ok:
+            raise CommandError('', f'{bcolors.FAIL}Failed to save JIT settings.{bcolors.ENDC}')
+
+        # Add/replace domain LINK edge if pamDirectory provided
+        if pam_dir_uid:
+            set_resource_domain_dir(params, record_uid, pam_dir_uid, config_uid)
+
+        print(f'{bcolors.OKGREEN}JIT settings saved successfully.{bcolors.ENDC}')
+
 
 class PAMRbiEditCommand(Command):
     choices = ['on', 'off', 'default']
@@ -1610,6 +3245,10 @@ class PAMRbiEditCommand(Command):
                         help='Allow navigation via direct URL manipulation (on/off/default)')
     parser.add_argument('--ignore-server-cert', '-isc', dest='ignore_server_cert', choices=choices,
                         help='Ignore server certificate errors (on/off/default)')
+    parser.add_argument('--allow-file-uploads', '-fu', dest='allow_file_uploads', choices=choices,
+                        help='Allow file uploads in RBI sessions (on/off/default)')
+    parser.add_argument('--allow-file-downloads', '-fd', dest='allow_file_downloads', choices=choices,
+                        help='Allow file downloads in RBI sessions (on/off/default)')
 
     # URL Filtering
     parser.add_argument('--allowed-urls', '-au', dest='allowed_urls', action='append',
@@ -1658,6 +3297,8 @@ class PAMRbiEditCommand(Command):
         # New RBI settings (Phase 1 - KC-1034)
         allow_url_navigation = kwargs.get('allow_url_navigation')  # on/off/default/None
         ignore_server_cert = kwargs.get('ignore_server_cert')  # on/off/default/None
+        allow_file_uploads = kwargs.get('allow_file_uploads')  # on/off/default/None
+        allow_file_downloads = kwargs.get('allow_file_downloads')  # on/off/default/None
         allowed_urls = kwargs.get('allowed_urls')  # list or None
         allowed_resource_urls = kwargs.get('allowed_resource_urls')  # list or None
         autofill_targets = kwargs.get('autofill_targets')  # list or None
@@ -1675,6 +3316,8 @@ class PAMRbiEditCommand(Command):
         has_new_settings = any([
             allow_url_navigation is not None,
             ignore_server_cert is not None,
+            allow_file_uploads is not None,
+            allow_file_downloads is not None,
             allowed_urls is not None,
             allowed_resource_urls is not None,
             autofill_targets is not None,
@@ -1849,6 +3492,14 @@ class PAMRbiEditCommand(Command):
         # Browser Settings - ignoreInitialSslCert (on/off/default)
         if ignore_server_cert:
             update_connection_toggle('ignoreInitialSslCert', ignore_server_cert)
+
+        # Browser Settings - allowFileUploads (on/off/default)
+        if allow_file_uploads:
+            update_connection_toggle('allowFileUploads', allow_file_uploads)
+
+        # Browser Settings - allowFileDownloads (on/off/default)
+        if allow_file_downloads:
+            update_connection_toggle('allowFileDownloads', allow_file_downloads)
 
         # URL Filtering - allowedUrlPatterns (multi-value, joined with newlines)
         if allowed_urls is not None:

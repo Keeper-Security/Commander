@@ -24,6 +24,7 @@ import tempfile
 from typing import Optional, Callable, List, Iterable, Tuple, Union
 
 from .base import Command, RecordMixin, dump_report_data, field_to_title, report_output_parser, user_choice
+from .connect_prompts import confirm_argv, confirm_env, confirm_ssh_key
 from .record import find_record, RecordListCommand
 from .ssh_agent import add_ssh_key, try_extract_private_key, SshAgentCommand
 from ..attachment import prepare_attachment_download
@@ -127,23 +128,15 @@ class BaseConnectCommand(Command, RecordMixin):
     def support_extra_parameters(self):
         return True
 
-    # SHELL_SUBSTITUTION = {
-    #     '`': r'\`',
-    #     '$': r'\$',
-    #     '?': r'\?',
-    #     '*': r'\*',
-    #     '^': r'\^',
-    #     '(': r'\(',
-    #     ')': r'\)'
-    # }
-
-    def execute_shell(self):
+    def execute_shell(self, record=None, stage='connect'):
+        # type: (Optional[KeeperRecord], str) -> None
         logging.debug('Executing "%s"', self.command)
         try:
-            # command = self.command.translate(str.maketrans(BaseConnectCommand.SHELL_SUBSTITUTION))
-            command = self.command
-            subprocess.run(shlex.split(command))
-            # os.system(command)
+            argv = shlex.split(self.command)
+            if not confirm_argv(stage, argv, record):
+                logging.info('Skipped %s (user declined).', stage)
+                return
+            subprocess.run(argv)
         finally:
             self.command = ''
             for cb in self.run_at_the_end:
@@ -358,7 +351,7 @@ class ConnectSshCommand(BaseConnectCommand):
         command = ['ssh']
         options = self.get_extra_options(params, record, 'ssh')
         if options:
-            command.append(shlex.split(options.strip(), posix=False))
+            command.extend(shlex.split(options.strip(), posix=False))
         command.append(f'{login}@{host_name}')
         if port:
             command.extend(['-p', port])
@@ -366,9 +359,13 @@ class ConnectSshCommand(BaseConnectCommand):
         pk = try_extract_private_key(params, record)
         if pk:
             private_key, passphrase = pk
-            to_remove = add_ssh_key(private_key, passphrase, record.title)
-            if to_remove:
-                self.run_at_the_end.append(to_remove)
+            if confirm_ssh_key('ssh:record-key', record.title, record,
+                               hint='intrinsic key from record fields'):
+                to_remove = add_ssh_key(private_key, passphrase, record.title)
+                if to_remove:
+                    self.run_at_the_end.append(to_remove)
+            else:
+                logging.info('Skipped ssh:record-key (user declined).')
         else:
             password = BaseConnectCommand.get_record_field(record, 'password')
             if password:
@@ -402,7 +399,7 @@ class ConnectSshCommand(BaseConnectCommand):
 
         self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
-        self.execute_shell()
+        self.execute_shell(record=record, stage='ssh')
 
 
 class ConnectMysqlCommand(BaseConnectCommand):
@@ -452,7 +449,7 @@ class ConnectMysqlCommand(BaseConnectCommand):
 
         self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
-        self.execute_shell()
+        self.execute_shell(record=record, stage='mysql')
 
 
 class ConnectPostgresCommand(BaseConnectCommand):
@@ -503,7 +500,7 @@ class ConnectPostgresCommand(BaseConnectCommand):
 
         self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
-        self.execute_shell()
+        self.execute_shell(record=record, stage='postgresql')
 
 
 class ConnectRdpCommand(BaseConnectCommand):
@@ -547,7 +544,7 @@ class ConnectRdpCommand(BaseConnectCommand):
         self.command = shlex.join(command)
 
         logging.info('Connecting to "%s" ...', record.title)
-        self.execute_shell()
+        self.execute_shell(record=record, stage='rdp')
 
 
 connect_command_description = '''
@@ -750,9 +747,15 @@ class ConnectCommand(BaseConnectCommand):
         pk = try_extract_private_key(params, record)
         if pk:
             private_key, passphrase = pk
-            to_delete = add_ssh_key(private_key, passphrase if passphrase else None, record.title)
-            if to_delete:
-                yield to_delete
+            stage = f'connect:{endpoint}:record-key'
+            if confirm_ssh_key(stage, record.title, record,
+                               hint='intrinsic key from record fields'):
+                to_delete = add_ssh_key(
+                    private_key, passphrase if passphrase else None, record.title)
+                if to_delete:
+                    yield to_delete
+            else:
+                logging.info('Skipped %s (user declined).', stage)
 
         key_prefix = f'connect:{endpoint}:ssh-key'
         for cf_name, cf_value in ConnectCommand.get_fields_by_patters(record, key_prefix):
@@ -768,13 +771,22 @@ class ConnectCommand(BaseConnectCommand):
                     raise Exception(f'Add ssh-key. Failed to resolve key parameter: {p}')
                 parsed_values.append(val)
                 cf_value = cf_value[m.end():]
-            if len(parsed_values) > 0:
-                cf_value = cf_value.strip()
-                if cf_value:
-                    parsed_values.append(cf_value)
-                to_delete = add_ssh_key(parsed_values[0], parsed_values[1] if len(parsed_values) > 1 else None, key_name)
-                if to_delete:
-                    yield to_delete
+            if not parsed_values:
+                continue
+            cf_value = cf_value.strip()
+            if cf_value:
+                parsed_values.append(cf_value)
+            stage = f'connect:{endpoint}:ssh-key:{key_name}'
+            if not confirm_ssh_key(stage, key_name, record,
+                                   hint=f'from custom field "{cf_name}"'):
+                logging.info('Skipped %s (user declined).', stage)
+                continue
+            to_delete = add_ssh_key(
+                parsed_values[0],
+                parsed_values[1] if len(parsed_values) > 1 else None,
+                key_name)
+            if to_delete:
+                yield to_delete
 
     @staticmethod
     def add_environment_variables(params, endpoint, record, temp_files):
@@ -791,30 +803,30 @@ class ConnectCommand(BaseConnectCommand):
                 p = m.group(1)
                 val = ConnectCommand.get_parameter_value(params, record, p, temp_files)
                 if not val:
-                    raise Exception('Add environment variable. Failed to resolve key parameter: {0}'.format(p))
+                    raise Exception(f'Add environment variable. Failed to resolve key parameter: {p}')
                 cf_value = cf_value[:m.start()] + val + cf_value[m.end():]
-            if cf_value:
-                os.putenv(key_name, cf_value)
+            if not cf_value:
+                continue
+            stage = f'connect:{endpoint}:env:{key_name}'
+            if not confirm_env(stage, key_name, cf_value, record):
+                logging.info('Skipped %s (user declined).', stage)
+                continue
+            os.putenv(key_name, cf_value)
 
-                def clear_env():
-                    os.putenv(key_name, '')
-                yield clear_env
+            def clear_env(name=key_name):
+                os.putenv(name, '')
+            yield clear_env
 
     def connect_endpoint(self, params, endpoint, record, **kwargs):
         # type: (KeeperParams, str, KeeperRecord, ...) -> None
         temp_files = []
         try:
-            command = BaseConnectCommand.get_custom_field(record, f'connect:{endpoint}:pre')
-            if command:
-                command = BaseConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if command:
-                    args = shlex.split(command)
-                    subprocess.run(args)
-                    # os.system(command)
+            self._run_record_hook(params, endpoint, record, temp_files, 'pre')
 
             command = ConnectCommand.get_custom_field(record, f'connect:{endpoint}')
             if command:
-                cmd = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
+                cmd = ConnectCommand.get_command_string(
+                    params, record, command, temp_files, endpoint=endpoint)
                 if cmd:
                     self.run_at_the_end.extend(
                         ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files))
@@ -823,20 +835,31 @@ class ConnectCommand(BaseConnectCommand):
 
                     command = shlex.split(cmd, posix=False)
                     parameters = kwargs.get('parameters')
-                    if isinstance(parameters, list) and len(parameters) > 0:
+                    if isinstance(parameters, list) and parameters:
                         command.extend(parameters)
 
                     self.command = shlex.join(command)
                     logging.info('Connecting to "%s" ...', record.title)
-                    self.execute_shell()
+                    self.execute_shell(record=record, stage=f'connect:{endpoint}')
 
-            command = BaseConnectCommand.get_custom_field(record, f'connect:{endpoint}:post')
-            if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if command:
-                    args = shlex.split(command)
-                    subprocess.run(args)
-                    # os.system(command)
+            self._run_record_hook(params, endpoint, record, temp_files, 'post')
         finally:
             for file in temp_files:
                 os.remove(file)
+
+    @staticmethod
+    def _run_record_hook(params, endpoint, record, temp_files, kind):
+        # type: (KeeperParams, str, KeeperRecord, List[str], str) -> None
+        template = BaseConnectCommand.get_custom_field(record, f'connect:{endpoint}:{kind}')
+        if not template:
+            return
+        command = BaseConnectCommand.get_command_string(
+            params, record, template, temp_files, endpoint=endpoint)
+        if not command:
+            return
+        args = shlex.split(command)
+        stage = f'connect:{endpoint}:{kind}'
+        if confirm_argv(stage, args, record):
+            subprocess.run(args)
+        else:
+            logging.info('Skipped %s (user declined).', stage)

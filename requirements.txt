@@ -1,4 +1,5 @@
 asciitree
+zxcvbn
 bcrypt
 colorama
 prompt_toolkit
@@ -9,21 +10,25 @@ textual>=0.82.0
 websockets
 fido2>=2.0.0; python_version>='3.10'
 requests>=2.31.0
-cryptography>=39.0.1
-protobuf>=4.23.0
+cryptography>=46.0.6
+protobuf>=5.29.6
 keeper-secrets-manager-core>=16.6.0
-keeper_pam_webrtc_rs>=2.1.6; python_version>='3.8'
-pydantic>=2.6.4; python_version>='3.8'
-flask; python_version>='3.8'
+keeper_pam_webrtc_rs>=2.1.17
+pydantic>=2.6.4
+flask
 pyngrok>=7.5.0
-flask-limiter; python_version>='3.8'
-psutil; python_version>='3.8'
+flask-limiter
+psutil
 python-dotenv
+keyring
+platformdirs
 fpdf2>=2.8.3
 cbor2; sys_platform == "darwin" and python_version>='3.10'
 pyobjc-framework-LocalAuthentication; sys_platform == "darwin" and python_version>='3.10'
 winrt-runtime; sys_platform == "win32"
 winrt-Windows.Foundation; sys_platform == "win32"
 winrt-Windows.Security.Credentials.UI; sys_platform == "win32"
+googleapis-common-protos
+tzlocal>=5.0
 keeper-mlkem; python_version>='3.11'
 textual; python_version>='3.9'

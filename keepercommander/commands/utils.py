@@ -47,7 +47,7 @@ from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, Cryp
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
 from ..security_audit import needs_security_audit, update_security_audit_data
-from ..utils import password_score
+from ..utils import password_score, master_password_score
 from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
 
@@ -296,6 +296,10 @@ login_parser = argparse.ArgumentParser(prog='login', description='Start a login 
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
 login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
+login_parser.add_argument('--config-file', dest='config_file', action='store_true',
+                          help='Store config in config.json instead of the OS-native keychain '
+                               '(use for headless servers, Docker, or CI/CD environments). '
+                               'Equivalent to setting KEEPER_CONFIG_STORAGE=file.')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -1583,24 +1587,22 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
         if logging.getLogger().isEnabledFor(logging.DEBUG) or show_packages:
-            ver = sys.version_info
-            if ver.major >= 3 and ver.minor >= 8:
-                import importlib.metadata
-                dist = importlib.metadata.packages_distributions()
-                packages = {}
-                for pack in dist.values():
-                    if isinstance(pack, list) and len(pack) > 0:
-                        name = pack[0]
-                        if name in packages:
-                            continue
-                        try:
-                            version = importlib.metadata.version(name)
-                            packages[name] = version
-                        except Exception as e:
-                            logging.debug('Get package %s version error: %s', name, e)
-                installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
-                installed_packages_list.sort(key=lambda x: x.lower())
-                print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
+            import importlib.metadata
+            dist = importlib.metadata.packages_distributions()
+            packages = {}
+            for pack in dist.values():
+                if isinstance(pack, list) and len(pack) > 0:
+                    name = pack[0]
+                    if name in packages:
+                        continue
+                    try:
+                        version = importlib.metadata.version(name)
+                        packages[name] = version
+                    except Exception as e:
+                        logging.debug('Get package %s version error: %s', name, e)
+            installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
+            installed_packages_list.sort(key=lambda x: x.lower())
+            print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
 
         if version_details.get('is_up_to_date') is None:
             logging.debug("It appears that Commander is up to date")
@@ -1697,7 +1699,8 @@ class LoginCommand(Command):
                     # Check extended server list
                     region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
                 print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}', file=sys.stderr)
-                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
+                hint_cmd = 'keeper login --server <region>' if params.batch_mode else 'login --server <region>'
+                print(f'{Fore.CYAN}Use {Fore.GREEN}{hint_cmd}{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
                 print('', file=sys.stderr)
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:
@@ -1715,6 +1718,53 @@ class LoginCommand(Command):
         params.password = password
         new_login = kwargs.get('new_login') is True
         skip_sync = kwargs.get('skip_sync') is True
+
+        # Apply storage backend choice before login so that store_config_properties
+        # (called inside api.login) honours the user's explicit preference.
+        # Mirrors KSM CLI's use_config_file / use_keyring logic in Profile.init().
+        import platform as _platform
+        from ..config_storage.loader import (
+            CONFIG_STORAGE_URL, OS_KEYCHAIN_URL, is_os_keychain_available, _is_os_keychain_url
+        )
+
+        use_config_file = (
+            kwargs.get('config_file') is True
+            or os.environ.get('KEEPER_CONFIG_STORAGE', '').lower() == 'file'
+            # Also respect a sentinel set programmatically before login
+            # (e.g. `keeper shell --config-file` sets it in __main__.py).
+            or params.config.get(CONFIG_STORAGE_URL) == 'file'
+        )
+
+        if not isinstance(params.config, dict):
+            params.config = {}
+
+        if use_config_file:
+            # User explicitly chose file storage (--config-file flag or env var).
+            # Set the sentinel so store_config_properties skips keychain auto-detection
+            # and preserves this choice in config.json for future runs.
+            params.config[CONFIG_STORAGE_URL] = 'file'
+        else:
+            # User wants default behaviour (keychain when available).
+            # Clear any lingering 'file' sentinel written by a previous
+            # `keeper login --config-file` so keychain auto-detection can run.
+            if params.config.get(CONFIG_STORAGE_URL) == 'file':
+                del params.config[CONFIG_STORAGE_URL]
+
+            # Warn if keychain is unavailable (headless/CI environments),
+            # mirroring KSM CLI's fallback warning in Profile.init().
+            # Also fires when a previously stored keychain URL is in config.json
+            # but the keychain is no longer reachable (e.g. SSH into a desktop box).
+            current_backend = params.config.get(CONFIG_STORAGE_URL)
+            keychain_was_or_would_be_selected = (
+                not current_backend or _is_os_keychain_url(current_backend)
+            )
+            if keychain_was_or_would_be_selected and not is_os_keychain_available():
+                logging.warning(
+                    '%sWarning: OS keychain not available. Config will be stored in config.json '
+                    '(use --config-file to suppress this message).%s',
+                    Fore.YELLOW, Fore.RESET
+                )
+
         try:
             api.login(params, new_login=new_login)
         except Exception as exc:
@@ -1740,6 +1790,22 @@ class LoginCommand(Command):
                 loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
             except Exception as e:
                 logging.debug(f'Device registration: {e}')
+
+            # Print config storage confirmation, mirroring KSM CLI's post-init messages.
+            stored_backend = (params.config or {}).get(CONFIG_STORAGE_URL, '')
+            if stored_backend and stored_backend != 'file':
+                _os = _platform.system()
+                if _os == 'Darwin':
+                    _storage_label = 'macOS Keychain'
+                elif _os == 'Windows':
+                    _storage_label = 'Windows Credential Manager'
+                else:
+                    _storage_label = 'system keyring (Secret Service)'
+                logging.info('%sConfig stored in %s.%s', Fore.GREEN, _storage_label, Fore.RESET)
+            else:
+                logging.info('%sConfig stored in %s.%s', Fore.GREEN,
+                             os.path.abspath(params.config_filename) if params.config_filename else 'config.json',
+                             Fore.RESET)
 
             # Show post-login message (only for explicit login command, not auto-login)
             show_help = kwargs.get('show_help', True)
@@ -2006,7 +2072,11 @@ class HelpCommand(Command):
         show_legacy = kwargs.get('legacy', False)
         if not help_commands:
             from ..cli import display_command_help
-            display_command_help(params.enterprise_ec_key, show_legacy=show_legacy)
+            display_command_help(
+                params.enterprise_ec_key,
+                show_legacy=show_legacy,
+                show_nested_share_folder=not params.is_feature_disallowed('keeper_drive')
+            )
             return
 
         if isinstance(help_commands, list) and len(help_commands) > 0:
@@ -2319,6 +2389,9 @@ class ResetPasswordCommand(Command):
             logging.warning('Password rules:\n%s', '\n'.join((f'  {x}' for x in failed_rules)))
             return
 
+        score = utils.master_password_score(new_password)
+        logging.info('Password strength: %s', 'WEAK' if score <= 25 else 'FAIR' if score == 50 else 'MEDIUM' if score == 75 else 'STRONG')
+
         if params.breach_watch:
             euids = []
             for result in params.breach_watch.scan_passwords(params, [new_password]):
@@ -2327,9 +2400,6 @@ class ResetPasswordCommand(Command):
                 logging.info('Breachwatch password scan result: %s', 'WEAK' if result[1].breachDetected else 'GOOD')
             if euids:
                 params.breach_watch.delete_euids(params, euids)
-        else:
-            score = utils.password_score(new_password)
-            logging.info('Password strength: %s', 'WEAK' if score < 40 else 'FAIR' if score < 60 else 'MEDIUM' if score < 80 else 'STRONG')
 
         iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
         iterations = max(iterations, constants.PBKDF2_ITERATIONS)

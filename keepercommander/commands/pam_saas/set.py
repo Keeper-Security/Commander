@@ -91,7 +91,8 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         if plugin_name not in plugins:
-            print(self._f("The SaaS configuration record's custom field label 'SaaS Type' is not supported by the "
+            print(self._f(f"The SaaS configuration record's custom field label 'SaaS Type', {plugin_name}, "
+                          "is not supported by the "
                           "gateway or the value is not correct."))
             return
 

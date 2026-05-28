@@ -118,9 +118,9 @@ My Vault> service-stop
 
 ### API Versioning
 
-The service provides two API versions based on queue configuration:
-- **`/api/v2/`** - Queue enabled (default): Asynchronous request processing with enhanced features
-- **`/api/v1/`** - Queue disabled (legacy): Direct synchronous execution 
+The service exposes different endpoints depending on queue configuration:
+- **Queue enabled (`queue_enabled: y`, default)**: `/api/v2/` is available for asynchronous request processing, and `/api/v1/executecommand` remains available as a synchronous compatibility endpoint backed by the same queue worker.
+- **Queue disabled (`queue_enabled: n`)**: `/api/v1/` runs in standalone legacy mode with direct synchronous execution only.
 
 ### Request Queue System
 
@@ -484,14 +484,14 @@ This automates the complete setup for Slack App integration:
   - Collects Slack tokens (App Token, Bot Token, Signing Secret)
   - Creates Slack configuration record
   - Updates `docker-compose.yml` with Slack App service
-  - Supports optional PEDM and Device Approval integrations
+  - Supports optional EPM and Device Approval integrations
 
 **Configuration Options:**
 - Port selection (default: 8900)
 - Ngrok/Cloudflare tunneling for public URL exposure
 - Slack App credentials
 - Approvals channel ID
-- Optional PEDM integration
+- Optional EPM integration
 - Optional SSO Cloud Device Approval
 
 The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.
@@ -785,7 +785,7 @@ docker run -d -p <port>:<port> \
 ### Execute Command Endpoint
 
    ```bash
-   # Queue enabled (v2 - async)
+   # Queue enabled: native v2 async endpoint
    curl --location 'http://localhost:<port>/api/v2/executecommand-async' \
    --header 'Content-Type: application/json' \
    --header 'api-key: <your-api-key>' \
@@ -793,7 +793,7 @@ docker run -d -p <port>:<port> \
       "command": "<command>"
    }'
    
-   # Queue disabled (v1 - direct)  
+   # Queue enabled or disabled: v1 synchronous endpoint
    curl --location 'http://localhost:<port>/api/v1/executecommand' \
    --header 'Content-Type: application/json' \
    --header 'api-key: <your-api-key>' \

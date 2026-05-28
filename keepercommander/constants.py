@@ -1,4 +1,5 @@
 import enum
+import os
 import sys
 from typing import List, Tuple, Optional
 from datetime import timedelta
@@ -111,6 +112,7 @@ _ENFORCEMENTS = [
     ("MASTER_PASSWORD_MINIMUM_UPPER", 12, "LONG", "LOGIN_SETTINGS"),
     ("MASTER_PASSWORD_MINIMUM_LOWER", 13, "LONG", "LOGIN_SETTINGS"),
     ("MASTER_PASSWORD_MINIMUM_DIGITS", 14, "LONG", "LOGIN_SETTINGS"),
+    ("MASTER_PASSWORD_MINIMUM_LENGTH_NO_PROMPT", 15, "LONG", "LOGIN_SETTINGS"),
     ("MASTER_PASSWORD_RESTRICT_DAYS_BEFORE_REUSE", 16, "LONG", "LOGIN_SETTINGS"),
     ("REQUIRE_TWO_FACTOR", 20, "BOOLEAN", "TWO_FACTOR_AUTHENTICATION"),
     ("MASTER_PASSWORD_MAXIMUM_DAYS_BEFORE_CHANGE", 22, "LONG", "LOGIN_SETTINGS"),
@@ -230,6 +232,7 @@ _ENFORCEMENTS = [
     ("ALLOW_VIEW_KCM_RECORDINGS", 234, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_TOTP_FIELD", 235, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("ALLOW_VIEW_RBI_RECORDINGS", 236, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
+    ("USE_DEFAULT_BROWSER_FOR_SSO", 237, "TERNARY_DEN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_MANAGE_TLA", 238, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_SELF_DESTRUCT_RECORDS", 239, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_PERSONAL_USING_BUSINESS_DOMAINS", 240, "STRING", "ACCOUNT_ENFORCEMENTS"),
@@ -239,6 +242,8 @@ _ENFORCEMENTS = [
     ("WARN_PERSONAL_USING_BUSINESS_SITES", 244, "STRING", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_ACCOUNT_SWITCHING", 245, "BOOLEAN", "AUTHENTICATION_ENFORCEMENTS"),
     ("RESTRICT_PASSKEY_LOGIN", 246, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
+    # NOTE: 247 server name is ALLOW_CAN_EDIT_EXTERNAL_SHARES (positive). Commander's
+    # RESTRICT_ name is kept for backward compat but the polarity is inverted vs the server.
     ("RESTRICT_CAN_EDIT_EXTERNAL_SHARES", 247, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_SNAPSHOT_TOOL", 248, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_FORCEFIELD", 249, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
@@ -248,6 +253,16 @@ _ENFORCEMENTS = [
     ("RESTRICT_PLATFORM_PASSKEY_LOGIN", 254, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("RESTRICT_CROSS_PLATFORM_PASSKEY_LOGIN", 255, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
     ("ALLOW_CONFIGURE_USS_SETTINGS", 265, "BOOLEAN", "VAULT_FEATURES"),
+    ("IP_MAX_DISTANCE_SESSION_WEB", 256, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_SESSION_MOBILE", 257, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_SESSION_DESKTOP", 258, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_SESSION_CONSOLE", 259, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_DEFAULT_WEB", 260, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_DEFAULT_MOBILE", 261, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_DEFAULT_DESKTOP", 262, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("IP_MAX_DISTANCE_DEFAULT_CONSOLE", 263, "LONG", "ACCOUNT_ENFORCEMENTS"),
+    ("LOGOUT_TIMER_CONSOLE", 264, "LONG", "ACCOUNT_SETTINGS"),
+    ("ALLOW_CONFIGURE_WORKFLOW_SETTINGS", 267, "BOOLEAN", "ACCOUNT_ENFORCEMENTS"),
 ]
 
 _COMPOUND_ENFORCEMENTS = [
@@ -417,7 +432,21 @@ def get_abbrev_by_host(host):
     return None
 
 
-def get_router_host(server_hostname):
+def get_keeper_server_hostname(server):
+    """
+    Return a bare hostname from ``params.server`` / config ``server`` when the value
+    is a full URL (https://qa.keepersecurity.com). Otherwise return the string unchanged.
+    Used for krelay / ICE hostnames where a scheme must not be present.
+    """
+    if not server:
+        return server
+    if server.startswith("http://") or server.startswith("https://"):
+        parsed_host = urlparse(server).hostname
+        if parsed_host:
+            return parsed_host
+    return server
+
+def get_keeper_host_for_services(server_hostname):
     """
     Get the router hostname for a given Keeper server hostname.
 
@@ -432,13 +461,32 @@ def get_router_host(server_hostname):
         The router hostname:
           - 'keepersecurity.com' -> 'connect.keepersecurity.com'
           - 'govcloud.keepersecurity.us' -> 'connect.keepersecurity.us'
-          - 'govcloud.dev.keepersecurity.us' -> 'connect.dev.keepersecurity.us'
-          - 'govcloud.qa.keepersecurity.us' -> 'connect.qa.keepersecurity.us'
+          - 'govcloud.dev.keepersecurity.us' -> 'connect.govcloud.dev.keepersecurity.us'
+          - 'govcloud.qa.keepersecurity.us' -> 'connect.govcloud.qa.keepersecurity.us'
     """
+    server_hostname = get_keeper_server_hostname(server_hostname)
+    if not server_hostname:
+        return server_hostname
+    server_hostname = server_hostname.lower()
     # GovCloud environments (.keepersecurity.us) replace 'govcloud.' with 'connect.'
-    if server_hostname and server_hostname.startswith('govcloud.'):
-        return 'connect.' + server_hostname[len('govcloud.'):]
-    return f'connect.{server_hostname}'
+    if server_hostname == 'govcloud.keepersecurity.us':
+        return 'keepersecurity.us'
+    return server_hostname
+
+def get_router_host(server_hostname):
+    krouter_url = os.getenv('KROUTER_URL')
+    if krouter_url:
+        return krouter_url
+
+    return f'connect.{get_keeper_host_for_services(server_hostname)}'
+
+
+def get_relay_host(server_hostname):
+    krelay_url = os.getenv('KRELAY_URL')
+    if krelay_url:
+        return krelay_url
+
+    return f'krelay.{get_keeper_host_for_services(server_hostname)}'
 
 
 # Messages

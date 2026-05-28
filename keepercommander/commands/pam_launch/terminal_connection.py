@@ -22,6 +22,7 @@ import os
 import base64
 import json
 import secrets
+import shutil
 import time
 import uuid
 from typing import TYPE_CHECKING, Optional, Dict, Any
@@ -36,6 +37,7 @@ from cryptography.hazmat.primitives import serialization
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes, string_to_bytes, bytes_to_string
 
 from ...error import CommandError
+from ...constants import get_relay_host
 from ... import vault, api
 from ...keeper_dag import EdgeType
 from ...proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
@@ -54,8 +56,8 @@ from ..tunnel.port_forward.tunnel_helpers import (
     get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
-    parse_keeper_webrtc_version_from_sdp,
     set_remote_description_and_parse_version,
+    _version_at_least,
 )
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
@@ -73,6 +75,18 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 from ..pam_import.base import ConnectionProtocol
+from ..pam_import.keeper_ai_settings import get_resource_jit_settings
+from .connect_timing import (
+    PamConnectTiming,
+    websocket_backend_delay_sec,
+    websocket_backend_delay_legacy_sec,
+    pre_offer_delay_sec,
+    offer_retry_extra_delay_sec,
+)
+
+# Sentinel for "dag_linked_uid not resolved yet" — ``None`` is a valid resolved
+# result (no DAG-linked launch credential), so we need a distinct marker.
+_DAG_UID_UNSET = object()
 
 # Protocol sets and defaults (ConnectionProtocol from pam_import.base)
 GRAPHICAL = {ConnectionProtocol.RDP.value, ConnectionProtocol.VNC.value}  # not supported by CLI
@@ -102,8 +116,10 @@ DEFAULT_PORTS = {
 from .terminal_size import (
     DEFAULT_TERMINAL_COLUMNS,
     DEFAULT_TERMINAL_ROWS,
+    GUACAMOLE_HANDSHAKE_DPI,
     _build_screen_info,
     get_terminal_size_pixels,
+    scale_screen_info,
 )
 
 # Computed at import time using the best available platform APIs so the initial
@@ -119,37 +135,6 @@ MAX_MESSAGE_SIZE_LINE = "a=max-message-size:1073741823"
 # Minimum keeper-pam-webrtc-rs version that supports ConnectAs payload in OpenConnection.
 # Older Gateways (Rust module < this) do not parse connect_as_payload; omit it when not supported.
 CONNECT_AS_MIN_VERSION = "2.1.6"
-
-
-def _version_at_least(version: Optional[str], min_version: str) -> bool:
-    """
-    Compare semantic versions. Returns True if version >= min_version.
-
-    Args:
-        version: Parsed version (e.g. "2.1.4") or None (treated as unknown/old).
-        min_version: Minimum required version (e.g. "2.1.0").
-
-    Returns:
-        True if version is known and >= min_version; False if unknown or older.
-    """
-    if not version:
-        return False
-
-    def parse(v: str) -> tuple:
-        parts = []
-        for p in v.split(".")[:3]:  # major.minor.patch
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
-        while len(parts) < 3:
-            parts.append(0)
-        return tuple(parts[:3])
-
-    try:
-        return parse(version) >= parse(min_version)
-    except Exception:
-        return False
 
 
 def _ensure_max_message_size_attribute(sdp_offer: Optional[str]) -> Optional[str]:
@@ -358,6 +343,7 @@ def extract_terminal_settings(
     launch_credential_uid: Optional[str] = None,
     custom_host: Optional[str] = None,
     custom_port: Optional[int] = None,
+    dag_linked_uid: Any = _DAG_UID_UNSET,
 ) -> Dict[str, Any]:
     """
     Extract terminal connection settings from a PAM record.
@@ -389,6 +375,13 @@ def extract_terminal_settings(
     if not isinstance(record, vault.TypedRecord):
         raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
+    # Resolve DAG-linked launch credential UID once; the pamSettings block and the
+    # later CLI-override comparison both need the same value. Pam launch passes
+    # a pre-resolved value via the kwarg so the 2–3 HTTP round-trips that build
+    # a TunnelDAG only happen once per command instead of per call site.
+    if dag_linked_uid is _DAG_UID_UNSET:
+        dag_linked_uid = _get_launch_credential_uid(params, record_uid)
+
     settings = {
         'hostname': None,
         'port': None,
@@ -399,6 +392,10 @@ def extract_terminal_settings(
         'allowSupplyUser': False,
         'allowSupplyHost': False,
         'userRecordUid': None,
+        # JIT: mirrors web vault jitSettings.createEphemeral on the PAM resource graph.
+        # When True the gateway must receive credentialType='ephemeral'; the gateway
+        # re-reads jit_settings from the DAG and creates a temp account on the target.
+        'createEphemeral': False,
     }
 
     # Extract hostname and port from record - enforce single non-empty host/pamHostname field.
@@ -472,10 +469,10 @@ def extract_terminal_settings(
                 settings['allowSupplyUser'] = connection.get('allowSupplyUser', False)
 
                 # Extract linked pamUser record UID from pamSettings (may be overridden by CLI later)
-                # When both admin and launch credentials exist, we must use launch credential
-                dag_launch_uid = _get_launch_credential_uid(params, record_uid)
-                if dag_launch_uid:
-                    settings['userRecordUid'] = dag_launch_uid
+                # When both admin and launch credentials exist, we must use launch credential.
+                # dag_linked_uid was resolved once at the top of the function.
+                if dag_linked_uid:
+                    settings['userRecordUid'] = dag_linked_uid
                     logging.debug(f"Using launch credential from DAG: {settings['userRecordUid']}")
                 elif not launch_credential_uid:
                     # No DAG-linked credential and no -cr given.
@@ -520,15 +517,29 @@ def extract_terminal_settings(
             # allowSupplyHost is at top level of pamSettings value, not inside connection
             settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
 
+    # JIT settings live on the PAM resource DAG as an encrypted DATA edge ('jit_settings').
+    # If createEphemeral is true, the gateway requires credentialType='ephemeral' and will
+    # reject 'linked'/'userSupplied'. Failure to read jit_settings is non-fatal — it just
+    # means the record is not JIT-configured, which is the normal path.
+    try:
+        jit = get_resource_jit_settings(params, record_uid)
+        if jit and jit.get('createEphemeral'):
+            settings['createEphemeral'] = True
+            logging.debug(
+                f"Record {record_uid} has jit_settings.createEphemeral=true; "
+                "launch will use 'ephemeral' credential type"
+            )
+    except Exception as e:
+        logging.debug(f"Could not read jit_settings for {record_uid}: {e}")
+
     # Final port fallback to protocol default
     if settings['port'] is None:
         settings['port'] = DEFAULT_PORTS.get(protocol, 22)
 
     # CLI overrides: check if --credential provides a DIFFERENT user than DAG-linked.
-    # Always query the DAG directly - settings['userRecordUid'] may have been set from the
+    # dag_linked_uid is the once-resolved DAG value from the top of the function —
+    # distinct from settings['userRecordUid'] which may have been set from the
     # userRecords[0] fallback (not DAG-linked) and must not be used for this comparison.
-    dag_linked_uid = _get_launch_credential_uid(params, record_uid)
-
     if launch_credential_uid:
         if launch_credential_uid == dag_linked_uid:
             # CLI --credential matches DAG-linked credential - treat as if no --credential was provided
@@ -653,6 +664,8 @@ def create_connection_context(params: KeeperParams,
         # Required by the offer-building path to distinguish "flag enabled but nothing supplied"
         # from "flag enabled and user actually provided credentials".
         'cliUserOverride': settings.get('cliUserOverride', False),
+        # JIT: resource is configured for ephemeral/JIT accounts.
+        'createEphemeral': settings.get('createEphemeral', False),
     }
 
     # Add protocol-specific settings
@@ -669,7 +682,11 @@ def create_connection_context(params: KeeperParams,
     return context
 
 
-def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optional[str]:
+def _get_launch_credential_uid(
+    params: 'KeeperParams',
+    record_uid: str,
+    tdag: Optional['TunnelDAG'] = None,
+) -> Optional[str]:
     """
     Find the launch credential UID for a PAM record using the DAG.
 
@@ -680,14 +697,19 @@ def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optio
     Args:
         params: KeeperParams instance
         record_uid: UID of the pamMachine record
+        tdag: Optional pre-built TunnelDAG to reuse. When provided, skips the
+            expensive ``TunnelDAG(...)`` construction (which issues 2–3 HTTP
+            round-trips). Used by ``pam launch`` to avoid resolving the same
+            DAG three times per command invocation.
 
     Returns:
         UID of the launch credential pamUser record, or None if not found
     """
     try:
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
-                         transmission_key=transmission_key)
+        if tdag is None:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
+                             transmission_key=transmission_key)
 
         if not tdag.linking_dag.has_graph:
             logging.debug(f"No DAG graph loaded for record {record_uid}")
@@ -999,6 +1021,7 @@ def _build_guacamole_connection_settings(
     screen_info: Dict[str, int],
     user_record_uid: Optional[str] = None,
     credential_type: str = 'linked',
+    normalize_crlf: bool = False,
 ) -> Dict[str, Any]:
     """
     Build connection settings for Guacamole handshake in PythonHandler mode.
@@ -1022,6 +1045,8 @@ def _build_guacamole_connection_settings(
         screen_info: Screen dimensions dict
         user_record_uid: Optional UID of linked pamUser record for credentials
         credential_type: Credential type ('linked', 'userSupplied', 'ephemeral')
+        normalize_crlf: When True, map CRLF to LF on decoded STDOUT blobs and run downstream LF cleanup
+            (``pam launch --normalize-crlf`` / ``-n``). Default False keeps raw CR/LF (CLI default).
 
     Returns:
         Dictionary with connection settings for GuacamoleHandler
@@ -1034,7 +1059,11 @@ def _build_guacamole_connection_settings(
     # Determine how to get credentials based on credential_type
     # Note: Even for 'userSupplied', if we have user_record_uid (from CLI --credential), extract credentials
     # because guacd_params go directly to guacd via our connect instruction
-    if credential_type == 'userSupplied' and not user_record_uid:
+    if credential_type == 'ephemeral':
+        # JIT: gateway creates the target account and injects creds after guacd handshake.
+        # Do NOT pull creds from the pamMachine record — they'd be wrong and misleading.
+        logging.debug("Using ephemeral credential type - leaving handshake credentials empty for gateway to inject")
+    elif credential_type == 'userSupplied' and not user_record_uid:
         # True user-supplied: no credentials provided at all
         # Note: user may not be able to provide via guacamole prompt since STDIN/STDOUT not open yet
         logging.debug("Using userSupplied credential type with no pamUser - leaving credentials empty")
@@ -1126,8 +1155,14 @@ def _build_guacamole_connection_settings(
     terminal_settings = settings.get('terminal', {})
     if terminal_settings.get('colorScheme'):
         guacd_params['color-scheme'] = terminal_settings['colorScheme']
-    if terminal_settings.get('fontSize'):
-        guacd_params['font-size'] = terminal_settings['fontSize']
+    _record_font_size = terminal_settings.get('fontSize')
+    if _record_font_size and str(_record_font_size) != '12':
+        logging.debug(
+            "Record font-size %r is not supported for terminal sessions "
+            "(pixel metrics are calibrated for font-size 12); converting to font-size 12.",
+            _record_font_size,
+        )
+    guacd_params['font-size'] = '12'
 
     # PAM clipboard → guacd: only pass disable-* when the record sets them (guacd "true" = on).
     _pam_clip = settings.get('clipboard') or {}
@@ -1136,6 +1171,15 @@ def _build_guacamole_connection_settings(
     if _pam_clip.get('disableCopy'):
         guacd_params['disable-copy'] = 'true'
 
+    # Terminal dimensions and DPI must be in guacd_params so the 'connect' instruction
+    # carries them to guacd. Without these, guacd initialises its font metrics at its
+    # built-in default DPI (96), giving char_width ≈ 10 px. The kcm pixel formula uses
+    # char_width = 19 px (calibrated for DPI 192), so a missing DPI in 'connect' causes
+    # guacd to compute ~2× too many PTY columns from the pixel width we send.
+    guacd_params['width'] = str(screen_info.get('pixel_width', 800))
+    guacd_params['height'] = str(screen_info.get('pixel_height', 600))
+    guacd_params['dpi'] = str(screen_info.get('dpi', GUACAMOLE_HANDSHAKE_DPI))
+
     # Build final connection settings
     connection_settings = {
         'protocol': protocol,
@@ -1143,7 +1187,10 @@ def _build_guacamole_connection_settings(
         'port': settings.get('port', 22),
         'width': screen_info.get('pixel_width', 800),
         'height': screen_info.get('pixel_height', 600),
-        'dpi': screen_info.get('dpi', 96),
+        # DPI comes from screen_info (192 for KCM mode, 96 for guacd/scale mode) — also
+        # carried via guacd_params['dpi'] so the 'connect' instruction sets guacd's font
+        # metrics to the correct DPI from the start.
+        'dpi': screen_info.get('dpi', GUACAMOLE_HANDSHAKE_DPI),
         'guacd_params': guacd_params,
         # Supported mimetypes for terminal sessions
         'audio_mimetypes': [],  # No audio for terminal
@@ -1151,6 +1198,8 @@ def _build_guacamole_connection_settings(
         'image_mimetypes': ['image/png', 'image/jpeg', 'image/webp'],
         # PAM clipboard policy (also in guacd_params as disable-* only when record disables)
         'clipboard': dict(settings.get('clipboard') or {}),
+        # CLI-only: GuacamoleHandler / instruction router (not sent to guacd)
+        'normalize_crlf': bool(normalize_crlf),
     }
 
     logging.debug(f"Built Guacamole connection settings for {protocol}: "
@@ -1197,6 +1246,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
     screen_info = DEFAULT_SCREEN_INFO
 
     try:
+        _pam_tc = PamConnectTiming('pam-launch:webrtc-tunnel')
+        _pam_tc.checkpoint('enter')
         router_token = None
 
         # Get encryption seed from record
@@ -1247,14 +1298,12 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         base64_nonce = bytes_to_base64(nonce)
 
         # Get relay server configuration
-        relay_url = 'krelay.' + params.server
-        krelay_url = os.getenv('KRELAY_URL')
-        if krelay_url:
-            relay_url = krelay_url
+        relay_url = get_relay_host(params.server)
 
         response = router_get_relay_access_creds(params=params, expire_sec=60000000)
         if response is None:
             return {"success": False, "error": "Failed to get relay access credentials"}
+        _pam_tc.checkpoint('relay_creds_ok')
 
         # Create WebRTC settings for terminal (no local socket needed)
         webrtc_settings = {
@@ -1336,6 +1385,22 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Store signal handler reference
         tunnel_session.signal_handler = signal_handler  # type: ignore[assignment]
 
+        # Start the dedicated WebSocket listener *before* ``create_tube``. The Rust
+        # tube creation takes ~500ms; running the WebSocket TLS handshake / router
+        # registration concurrently with it saves most of that window. The listener
+        # only reads the ``conversation_id`` from tunnel_session; the tube_id is
+        # used for the thread name and log context only (updated in-place after
+        # ``create_tube`` returns). No message will arrive before the gateway has
+        # received our offer, so there is no race between early listener start and
+        # the tube-id being rewritten from the temp UUID to the real one.
+        websocket_thread = start_websocket_listener(
+            params, tube_registry, timeout=300, gateway_uid=gateway_uid,
+            tunnel_session=tunnel_session,
+            router_tokens=router_tokens,
+            cookie_header=cookie_header,
+        )
+        _pam_tc.checkpoint('websocket_listener_started_early')
+
         logging.debug(f"{bcolors.OKBLUE}Creating WebRTC offer for {protocol} connection...{bcolors.ENDC}")
         if trickle_ice:
             logging.debug("Using trickle ICE for real-time candidate exchange")
@@ -1359,19 +1424,24 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             # Do NOT change context["conversationType"] - gateway needs the real protocol type
             logging.debug(f"Set webrtc_settings conversationType to 'python_handler' (gateway will receive: {context['conversationType']})")
 
-            # Determine credential type based on allowSupplyHost, allowSupplyUser flags
-            # This matches gateway validation logic:
-            # - If allowSupplyHost=True: must be 'userSupplied'
-            # - If allowSupplyUser=True and no linked user: use 'userSupplied'
-            # - If linked user present: use 'linked'
+            # Determine credential type based on JIT config and allowSupply* flags.
+            # Mirrors the gateway-side decision in the main offer path below.
+            # Precedence: ephemeral (JIT) > linked > userSupplied > None.
             allow_supply_host = context.get('allowSupplyHost', False)
             allow_supply_user = context.get('allowSupplyUser', False)
             user_record_uid = context.get('userRecordUid')
+            create_ephemeral = context.get('createEphemeral', False)
 
             # credential_type is None when using pamMachine credentials directly (backward compatible)
-            # Priority: if user_record_uid is provided (from CLI or record), use 'linked' to send those credentials
             credential_type = None
-            if user_record_uid:
+            if create_ephemeral:
+                # JIT: gateway will inject ephemeral creds at session start. Leave the
+                # guacd handshake creds empty — _build_guacamole_connection_settings
+                # handles the empty-credential path for ephemeral.
+                credential_type = 'ephemeral'
+                user_record_uid = None
+                logging.debug("Using 'ephemeral' credential type (JIT) for python_handler")
+            elif user_record_uid:
                 # Linked user present (from CLI --credential or record) - use linked credentials
                 credential_type = 'linked'
                 logging.debug(f"Using 'linked' credential type with userRecordUid: {user_record_uid}")
@@ -1382,6 +1452,28 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             else:
                 # No linked user, no supply flags - use pamMachine credentials directly
                 logging.debug("No linked user or supply flags - using pamMachine credentials directly")
+
+            # Fresh TTY metrics for the Python handshake — do not use ``screen_info`` from
+            # function start (DEFAULT_SCREEN_INFO snapshot); that can be import-time or stale.
+            _scale = kwargs.get('scale')
+            if isinstance(_scale, int) and _scale > 0 and _scale != 100:
+                _ts = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
+                screen_info = scale_screen_info(_ts.columns, _ts.lines, _scale)
+                logging.debug(
+                    "--scale %s%%: guacd-96 base, grid %sx%s → %sx%spx @ %sdpi",
+                    _scale,
+                    screen_info["columns"],
+                    screen_info["rows"],
+                    screen_info["pixel_width"],
+                    screen_info["pixel_height"],
+                    screen_info["dpi"],
+                )
+            else:
+                try:
+                    screen_info = get_terminal_size_pixels()
+                except Exception:
+                    logging.debug("Falling back to default terminal size for PythonHandler connection_settings")
+                    screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
 
             # Build connection settings for Guacamole handshake
             # These are used when guacd sends 'args' instruction
@@ -1394,6 +1486,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 screen_info=screen_info,
                 user_record_uid=user_record_uid,
                 credential_type=credential_type,
+                normalize_crlf=bool(kwargs.get('normalize_crlf')),
             )
 
             # Create the handler and callback
@@ -1433,6 +1526,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Created tube with ID: {commander_tube_id}")
         logging.debug(f"Conversation ID for this tube: {conversation_id_original}")
         logging.debug(f"Data channel will be named: {conversation_id}")
+        _pam_tc.checkpoint('create_tube_ok')
 
         # Update signal handler and tunnel session with real tube ID
         signal_handler.tube_id = commander_tube_id
@@ -1445,33 +1539,43 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Registered encryption key for conversation: {conversation_id}")
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
 
-        # Start WebSocket listener (pass cookie_header for ALB stickiness when trickle ICE)
-        websocket_thread = start_websocket_listener(
-            params, tube_registry, timeout=300, gateway_uid=gateway_uid,
-            tunnel_session=tunnel_session,
-            router_tokens=router_tokens,
-            cookie_header=cookie_header
-        )
+        # (WebSocket listener already started above, before create_tube.)
 
         # Wait for WebSocket to be ready before sending offer (same as pam tunnel start).
         # Use event.wait() when available so we proceed as soon as ready; fallback to short sleep.
         max_wait = 15.0
-        # Same backend registration delay as when event is present (router/gateway need time to register)
-        backend_delay = float(os.environ.get('WEBSOCKET_BACKEND_DELAY', '2.0'))
-        if tunnel_session.websocket_ready_event:
-            logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
-            websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
-            if not websocket_ready:
-                logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
-                signal_handler.cleanup()
-                unregister_tunnel_session(commander_tube_id)
-                return {"success": False, "error": "WebSocket connection timeout"}
-            logging.debug("Dedicated WebSocket connection established and ready for streaming")
-            logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
-            time.sleep(backend_delay)
+        # Router/gateway need a moment to register the conversation after the
+        # WebSocket handshake. Default 0.30s; on first-offer failure we top up
+        # with the delta to the legacy 2.0s before retrying (adaptive fallback).
+        backend_delay = websocket_backend_delay_sec()
+        if trickle_ice:
+            if tunnel_session.websocket_ready_event:
+                logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
+                websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
+                if not websocket_ready:
+                    logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
+                    signal_handler.cleanup()
+                    unregister_tunnel_session(commander_tube_id)
+                    return {"success": False, "error": "WebSocket connection timeout"}
+                logging.debug("Dedicated WebSocket connection established and ready for streaming")
+                logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
+                time.sleep(backend_delay)
+                _pam_tc.checkpoint('websocket_ready_backend_delay_done')
+            else:
+                logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
+                time.sleep(backend_delay)
+                _pam_tc.checkpoint('websocket_no_event_backend_delay_done')
         else:
-            logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
-            time.sleep(backend_delay)
+            # Non-trickle ICE: SDP answer comes via the HTTP offer response body
+            # (handled further below in the non-streaming branch) and ICE candidates
+            # are carried inside the offer SDP itself, so there is no streamed
+            # conversation to register on the router/gateway side. The WebSocket
+            # listener keeps running in the background for async signaling
+            # (disconnect / state changes) but the main thread does not need to
+            # block on it. Saves ~backend_delay + ~WS-TLS-handshake before the
+            # offer POST (~700ms on a typical launch).
+            logging.debug("Non-trickle ICE: skipping WebSocket-ready wait and backend_delay")
+            _pam_tc.checkpoint('non_trickle_skip_backend_delay')
 
         # Send offer to gateway via HTTP POST
         logging.debug(f"{bcolors.OKBLUE}Sending {protocol} connection offer to gateway...{bcolors.ENDC}")
@@ -1484,15 +1588,42 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # platform-specific APIs (Windows: GetCurrentConsoleFontEx; Unix:
         # TIOCGWINSZ) to obtain exact pixel dimensions before falling back to
         # the fixed cell-size estimate.
-        try:
-            screen_info = get_terminal_size_pixels()
-        except Exception:
-            logging.debug("Falling back to default terminal size for offer payload")
-            screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
+        _scale = kwargs.get('scale')
+        if isinstance(_scale, int) and _scale > 0 and _scale != 100:
+            _ts = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
+            screen_info = scale_screen_info(_ts.columns, _ts.lines, _scale)
+            logging.debug(
+                "--scale %s%% (offer): guacd-96 base, grid %sx%s → %sx%spx @ %sdpi",
+                _scale,
+                screen_info["columns"],
+                screen_info["rows"],
+                screen_info["pixel_width"],
+                screen_info["pixel_height"],
+                screen_info["dpi"],
+            )
+        else:
+            try:
+                screen_info = get_terminal_size_pixels()
+            except Exception:
+                logging.debug("Falling back to default terminal size for offer payload")
+                screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
         logging.debug(
             f"Using terminal metrics columns={screen_info['columns']} rows={screen_info['rows']} -> "
             f"{screen_info['pixel_width']}x{screen_info['pixel_height']}px @ {screen_info['dpi']}dpi"
         )
+
+        # Offer payload and Guacamole ``size`` handshake must agree. The handler was created
+        # earlier; refresh its stored width/height/dpi so a slightly later ``args``/handshake
+        # matches what we send in the connection offer (avoids PTY geometry vs. local TTY drift).
+        if python_handler is not None:
+            python_handler.connection_settings['width'] = screen_info['pixel_width']
+            python_handler.connection_settings['height'] = screen_info['pixel_height']
+            python_handler.connection_settings['dpi'] = screen_info['dpi']
+            # Keep connect-instruction lookup in sync with top-level handshake size/DPI.
+            _gp_sync = python_handler.connection_settings.setdefault('guacd_params', {})
+            _gp_sync['width'] = str(screen_info['pixel_width'])
+            _gp_sync['height'] = str(screen_info['pixel_height'])
+            _gp_sync['dpi'] = str(screen_info['dpi'])
 
         offer_payload = offer.get("offer")
         decoded_offer_bytes = None
@@ -1543,7 +1674,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             "offer": offer_payload,
             "audio": ["audio/L8", "audio/L16"],  # Supported audio codecs
             "video": [],  # Supported video codecs - None for terminal
-            "size": [screen_info['pixel_width'], screen_info['pixel_height'], screen_info['dpi']],  # [width, height, dpi]
+            # [width, height, dpi] — matches screen_info / pixel mode (e.g. 96 guacd, 192 kcm)
+            "size": [screen_info['pixel_width'], screen_info['pixel_height'], screen_info['dpi']],
             "image": ["image/jpeg", "image/png", "image/webp"],  # Supported image formats
             # CRITICAL: Gateway needs 'host' to configure guacd connection
             "host": {
@@ -1581,17 +1713,34 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         user_record_uid = context.get('userRecordUid')
         allow_supply_host = context.get('allowSupplyHost', False)
         allow_supply_user = context.get('allowSupplyUser', False)
+        create_ephemeral = context.get('createEphemeral', False)
 
         # Determine credential type for gateway inputs
-        # Gateway credential types:
+        # Gateway credential types (matches web vault useLaunchHandlers.ts):
+        # - 'ephemeral': JIT — gateway creates a temp account on the target from its own
+        #   decrypted jit_settings (client cannot override). Required when
+        #   jit_settings.createEphemeral=true on the PAM resource graph.
         # - 'linked': Look up credential in DAG (for records with DAG-linked pamUser)
         # - 'userSupplied': Skip DAG lookup, credentials from ConnectAs (-cr) or user prompt
         # - None: Use pamMachine credentials directly
-        # Priority: prefer 'linked' when DAG has credentials (even if allowSupply* is enabled).
-        # Use 'userSupplied' only when no linked credential but allowSupply* enabled.
+        # Precedence: ephemeral (JIT) wins over everything because the gateway enforces
+        # it when createEphemeral is set; sending anything else results in a gateway
+        # rejection. We warn if the user also passed -cr so they know it was ignored.
         credential_type_for_gateway = None
         cli_user_override = context.get('cliUserOverride', False)
-        if cli_user_override:
+        if create_ephemeral:
+            credential_type_for_gateway = 'ephemeral'
+            if cli_user_override:
+                logging.warning(
+                    "Record %s has JIT (createEphemeral=true); --credential override "
+                    "is ignored because the gateway creates an ephemeral account.",
+                    record_uid,
+                )
+            # userRecordUid is meaningless for ephemeral — the gateway ignores it and
+            # generates its own username. Clear it so we don't accidentally send one.
+            user_record_uid = None
+            logging.debug("Using 'ephemeral' credential type for gateway (JIT)")
+        elif cli_user_override:
             # User explicitly supplied a different credential via -cr.
             # The -cr record is NOT DAG-linked to this machine so 'linked' would fail;
             # credentials arrive via the ConnectAs payload (built in launch.py after tunnel opens).
@@ -1606,7 +1755,14 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         else:
             logging.debug(f"No linked pamUser for record {record_uid} - using pamMachine credentials directly")
 
-        time.sleep(1)  # Allow time for WebSocket listener to start
+        # Formerly a fixed ``time.sleep(1)`` — now 0.0 by default because the
+        # preceding backend_delay already covers router registration. Set
+        # PAM_PRE_OFFER_LEGACY=1 (or PAM_PRE_OFFER_SEC=<float>) to restore.
+        _pre_offer = pre_offer_delay_sec()
+        _pam_tc.checkpoint('pre_offer_sleep_start')
+        if _pre_offer > 0:
+            time.sleep(_pre_offer)
+        _pam_tc.checkpoint('pre_offer_sleep_done')
 
         # Send offer via HTTP POST - two paths: streaming vs non-streaming
         try:
@@ -1621,7 +1777,12 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             }
 
             # Add credential type and userRecordUid based on mode
-            if credential_type_for_gateway == 'linked' and user_record_uid:
+            if credential_type_for_gateway == 'ephemeral':
+                # JIT: gateway re-reads jit_settings from its own DAG and creates a temp
+                # account. Do NOT send userRecordUid (meaningless) or allowSupplyUser
+                # (gateway would interpret as userSupplied and reject ephemeral).
+                inputs['credentialType'] = 'ephemeral'
+            elif credential_type_for_gateway == 'linked' and user_record_uid:
                 inputs['credentialType'] = 'linked'
                 inputs['userRecordUid'] = user_record_uid
             elif credential_type_for_gateway == 'userSupplied':
@@ -1632,12 +1793,104 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug("Using userSupplied credential type - user will provide credentials")
             # else: no credentialType - gateway uses pamMachine credentials directly (backward compatible)
 
+            # Add 2FA value if workflow requires MFA
+            two_factor_value = kwargs.get('two_factor_value')
+            if two_factor_value:
+                inputs['twoFactorValue'] = two_factor_value
+
             # Router token is no longer extracted from cookies (removed in commit 338a9fda)
             # Router affinity is now handled server-side
 
             # Generate messageId from conversationId (replace + with -, / with _)
             message_id = GatewayAction.conversation_id_to_message_id(conversation_id_original)
             logging.debug(f"Generated messageId: {message_id} from conversationId: {conversation_id_original}")
+
+            # --- Gateway offer POST with retry + adaptive backend-delay fallback ---
+            # On a first-attempt failure that looks like a transient backend-not-ready
+            # condition (timeout, 502/503/504, controller_down, RRC timeout), sleep
+            # the retry base delay plus the delta between the fast default and the
+            # legacy ``WEBSOCKET_BACKEND_DELAY`` so the cumulative wait on the retry
+            # matches the pre-change behavior. Fast path stays fast; unlucky first
+            # try still gets the full safety window before a second attempt.
+            try:
+                _max_offer_attempts = max(1, int(os.environ.get('PAM_GATEWAY_OFFER_MAX_ATTEMPTS', '2')))
+            except (TypeError, ValueError):
+                _max_offer_attempts = 2
+            _offer_retry_extra = offer_retry_extra_delay_sec()
+            _offer_backend_catchup = max(
+                0.0,
+                websocket_backend_delay_legacy_sec() - websocket_backend_delay_sec(),
+            )
+            _offer_transient_patterns = (
+                'timeout', 'rrc_timeout', 'bad_state', 'connection',
+                '502', '503', '504', 'controller_down',
+            )
+
+            def _send_gateway_offer_with_retry(is_streaming, **extra_kwargs):
+                _resp = None
+                for _oa in range(_max_offer_attempts):
+                    if _oa > 0:
+                        if _offer_backend_catchup > 0 or _offer_retry_extra > 0:
+                            _pam_tc.checkpoint('gateway_offer_backend_catchup_delay_start')
+                        time.sleep(_offer_retry_extra + _offer_backend_catchup)
+                        if _offer_backend_catchup > 0 or _offer_retry_extra > 0:
+                            _pam_tc.checkpoint('gateway_offer_backend_catchup_delay_done')
+                    _pam_tc.checkpoint(
+                        'gateway_offer_http_attempt_1' if _oa == 0
+                        else 'gateway_offer_http_attempt_{}'.format(_oa + 1)
+                    )
+                    # Ephemeral/JIT sessions spend 30-90s on remote account creation on
+                    # the gateway (see TunnelTimeouts.jit_account_creation in the gateway);
+                    # the normal 30s offer timeout is too tight. Default 120s, overridable.
+                    if credential_type_for_gateway == 'ephemeral':
+                        try:
+                            _gw_to = int(os.environ.get('PAM_GATEWAY_OFFER_TIMEOUT_EPHEMERAL_MS', '120000'))
+                        except (TypeError, ValueError):
+                            _gw_to = 120000
+                    else:
+                        _gw_to = 30000
+                    try:
+                        _resp = router_send_action_to_gateway(
+                            params=params,
+                            destination_gateway_uid_str=gateway_uid,
+                            gateway_action=GatewayActionWebRTCSession(
+                                conversation_id=conversation_id_original,
+                                inputs=inputs,
+                                message_id=message_id,
+                            ),
+                            message_type=pam_pb2.CMT_CONNECT,
+                            is_streaming=is_streaming,
+                            gateway_timeout=_gw_to,
+                            **extra_kwargs,
+                        )
+                    except requests.exceptions.RequestException as _re:
+                        if _oa < _max_offer_attempts - 1:
+                            logging.warning(
+                                'Gateway offer HTTP error (%s); retrying (attempt %s/%s)',
+                                _re, _oa + 1, _max_offer_attempts,
+                            )
+                            continue
+                        raise
+                    except Exception as _ge:
+                        _em = str(_ge).lower()
+                        if _oa < _max_offer_attempts - 1 and any(
+                            _p in _em for _p in _offer_transient_patterns
+                        ):
+                            logging.warning(
+                                'Gateway offer transient failure (%s); retrying (attempt %s/%s)',
+                                _ge, _oa + 1, _max_offer_attempts,
+                            )
+                            continue
+                        raise
+                    if _resp is None and _oa < _max_offer_attempts - 1:
+                        logging.warning(
+                            'Gateway offer returned no response; retrying (attempt %s/%s)',
+                            _oa + 1, _max_offer_attempts,
+                        )
+                        continue
+                    break
+                _pam_tc.checkpoint('gateway_offer_http_done')
+                return _resp
 
             # Two paths: streaming vs non-streaming
             if trickle_ice:
@@ -1651,19 +1904,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     }
                 if http_session is not None:
                     offer_kwargs["http_session"] = http_session
-                router_response = router_send_action_to_gateway(
-                    params=params,
-                    destination_gateway_uid_str=gateway_uid,
-                    gateway_action=GatewayActionWebRTCSession(
-                        conversation_id=conversation_id_original,
-                        inputs=inputs,
-                        message_id=message_id
-                    ),
-                    message_type=pam_pb2.CMT_CONNECT,
-                    is_streaming=True,  # Response will come via WebSocket
-                    gateway_timeout=30000,
-                    **offer_kwargs
-                )
+                router_response = _send_gateway_offer_with_retry(is_streaming=True, **offer_kwargs)
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (streaming mode){bcolors.ENDC}")
 
@@ -1671,16 +1912,24 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 signal_handler.offer_sent = True
                 tunnel_session.offer_sent = True
 
-                # Send any buffered ICE candidates
+                # Send any buffered ICE candidates — one batched HTTP POST instead of N
+                # serial ``_send_ice_candidate_immediately`` calls. The gateway's
+                # ``add_ice_candidates_to_conversation_tunnel`` already iterates the
+                # ``candidates`` array internally and each ``add_ice_candidate`` PyO3
+                # call is spawn-and-return, so a batch costs the server ~the same as
+                # a single candidate while collapsing ~N*500ms of client-side round
+                # trips into one.
                 if tunnel_session.buffered_ice_candidates:
                     logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates")
-                    for candidate in tunnel_session.buffered_ice_candidates:
-                        signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                    signal_handler._send_ice_candidates_batch(
+                        tunnel_session.buffered_ice_candidates, commander_tube_id
+                    )
                     tunnel_session.buffered_ice_candidates.clear()
 
                 logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
                 logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}gathering candidates...")
 
+                _pam_tc.summary('webrtc_tunnel_open_ok_streaming')
                 return {
                     "success": True,
                     "tube_id": commander_tube_id,
@@ -1697,18 +1946,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 }
             else:
                 # Non-streaming path: Handle response immediately
-                router_response = router_send_action_to_gateway(
-                    params=params,
-                    destination_gateway_uid_str=gateway_uid,
-                    gateway_action=GatewayActionWebRTCSession(
-                        conversation_id=conversation_id_original,
-                        inputs=inputs,
-                        message_id=message_id
-                    ),
-                    message_type=pam_pb2.CMT_CONNECT,
-                    is_streaming=False,  # Response comes immediately in HTTP response
-                    gateway_timeout=30000
-                )
+                router_response = _send_gateway_offer_with_retry(is_streaming=False)
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (non-streaming mode){bcolors.ENDC}")
                 logging.debug(f"Router response: {router_response}")
@@ -1782,8 +2020,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
                                             if tunnel_session.buffered_ice_candidates:
                                                 logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
-                                                for candidate in tunnel_session.buffered_ice_candidates:
-                                                    signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                                                signal_handler._send_ice_candidates_batch(
+                                                    tunnel_session.buffered_ice_candidates, commander_tube_id
+                                                )
                                                 tunnel_session.buffered_ice_candidates.clear()
                                         elif isinstance(data_json, dict) and ("offer" in data_json or data_json.get("type") == "offer"):
                                             logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
@@ -1802,6 +2041,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
                 logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}established (non-streaming mode)...")
 
+                _pam_tc.summary('webrtc_tunnel_open_ok_non_streaming')
                 return {
                     "success": True,
                     "tube_id": commander_tube_id,
@@ -1876,6 +2116,8 @@ def launch_terminal_connection(params: KeeperParams,
         CommandError: If connection cannot be established
     """
     try:
+        _launch_tc = PamConnectTiming('pam-launch:terminal_connection')
+        _launch_tc.checkpoint('enter')
         # Step 1: Detect protocol
         protocol = detect_protocol(params, record_uid)
         if not protocol or protocol not in ALL_TERMINAL:
@@ -1886,8 +2128,12 @@ def launch_terminal_connection(params: KeeperParams,
             )
 
         logging.debug(f"Detected protocol: {protocol}")
+        _launch_tc.checkpoint('protocol_detected')
 
-        # Step 2: Extract settings (with optional CLI overrides)
+        # Step 2: Extract settings (with optional CLI overrides).
+        # Forward the pre-resolved DAG launch credential UID when the caller supplied it
+        # (pam launch does, to collapse three DAG loads into one); otherwise
+        # extract_terminal_settings falls back to resolving it internally.
         settings = extract_terminal_settings(
             params,
             record_uid,
@@ -1895,19 +2141,22 @@ def launch_terminal_connection(params: KeeperParams,
             launch_credential_uid=kwargs.get('launch_credential_uid'),
             custom_host=kwargs.get('custom_host'),
             custom_port=kwargs.get('custom_port'),
+            dag_linked_uid=kwargs.get('dag_linked_uid', _DAG_UID_UNSET),
         )
         logging.debug(f"Extracted settings: hostname={settings['hostname']}, port={settings['port']}")
+        _launch_tc.checkpoint('settings_extracted')
 
         # Step 3: Build connection context
         context = create_connection_context(
-            params, 
-            record_uid, 
-            gateway_info['gateway_uid'], 
-            protocol, 
+            params,
+            record_uid,
+            gateway_info['gateway_uid'],
+            protocol,
             settings,
             connect_as
         )
         logging.debug(f"Built connection context for {protocol}")
+        _launch_tc.checkpoint('context_built')
 
         # Step 4: Open WebRTC tunnel
         tunnel_result = _open_terminal_webrtc_tunnel(
@@ -1923,11 +2172,13 @@ def launch_terminal_connection(params: KeeperParams,
         if not tunnel_result.get('success'):
             error_msg = tunnel_result.get('error', 'Unknown error')
             raise CommandError('pam launch', f'Failed to open WebRTC tunnel: {error_msg}')
+        _launch_tc.checkpoint('webrtc_tunnel_opened')
 
         logging.debug(f"Terminal connection established for {protocol}")
         logging.debug(f"Target: {settings['hostname']}:{settings['port']}")
         logging.debug(f"Gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
 
+        _launch_tc.summary('terminal_connection_ok')
         return {
             'success': True,
             'protocol': protocol,

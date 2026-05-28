@@ -111,9 +111,16 @@ class HelpScreen(ModalScreen):
   t             Toggle JSON view
   m             Mask/Unmask
   d             Sync vault
+  L             Launch PAM connection
   W             User info
   D             Device info
-  P             Preferences""", classes="help_column")
+  P             Preferences
+
+[green]Folder Icons:[/green]
+  🔒            Legacy Personal Folder
+  📦            Legacy Shared Folder
+  👥            Drive Shared Folder
+  📁            Drive NonShared Folder""", classes="help_column")
             yield Static("[dim]Press Esc or q to close[/dim]", id="help_footer")
 
     def action_dismiss(self):

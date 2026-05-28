@@ -23,7 +23,7 @@ COMMAND_CATEGORIES = {
     
     # Record Type Commands
     'Record Type Commands': {
-        'record-type-info', 'record-type', 'convert'
+        'record-type-info', 'record-type', 'convert', 'convert-all'
     },
     
     # Import and Exporting Data
@@ -109,6 +109,14 @@ COMMAND_CATEGORIES = {
         'epm'
     },
 
+    # Nested Share Folder Commands
+    'Nested Share Folder Commands': {
+        'nsf-mkdir', 'nsf-record-add', 'nsf-record-update', 'nsf-rndir', 'nsf-list',
+        'nsf-share-folder', 'nsf-record-details', 'nsf-share-record',
+        'nsf-record-permission', 'nsf-transfer-record',
+            'nsf-ln', 'nsf-rm', 'nsf-rmdir', 'nsf-shortcut', 'nsf-get'
+    },
+
     # Legacy Commands
     'Legacy Commands': {
         'rotate', 'connect', 'ssh', 'ssh-agent', 'rdp', 'rsync', 'set', 'echo',
@@ -145,5 +153,6 @@ def get_category_order():
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'EPM Commands',
+        'Nested Share Folder Commands',
         'Legacy Commands'
     ]

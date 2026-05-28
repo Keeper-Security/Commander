@@ -85,14 +85,16 @@ from keepercommander.commands.pam.router_helper import (
 from keepercommander.proto import pam_pb2
 from keepercommander.commands.pam.config_facades import PamConfigurationRecordFacade
 
+# Default password complexity when no rotation: block or existing_password.
+DEFAULT_COMPLEXITY = "32,5,5,5,5"
+
 # =============================================================================
 # Argument Parser
 # =============================================================================
 
 credential_provision_parser = argparse.ArgumentParser(
     prog='credential-provision',
-    description='Automate PAM User credential provisioning with password rotation '
-                'and email delivery'
+    description='Automate PAM User credential provisioning, with optional password rotation and email delivery.'
 )
 
 # Config input: file path OR base64-encoded content (mutually exclusive)
@@ -268,6 +270,12 @@ class CredentialProvisionCommand(Command):
                 config['account'] = {}
             if pam_config_arg:
                 config['account']['pam_config_uid'] = pam_config_arg
+            elif config.get('account', {}).get('pam_config_uid'):
+                logging.warning(
+                    '⚠️  account.pam_config_uid in YAML is deprecated and will be removed in a future release.\n'
+                    '    Use the -c/--pam-config command line argument instead.\n'
+                    '    Example: credential-provision -c <PAM-CONFIG-UID> --config config.yaml'
+                )
             # If neither -c nor YAML pam_config_uid provided, validation will catch it
 
             validation_errors = self._validate_config(params, config)
@@ -366,7 +374,10 @@ class CredentialProvisionCommand(Command):
             # Execute provisioning
             state = ProvisioningState()
             has_delivery = 'delivery' in config
-            has_email = 'email' in config
+            # Email section is only active if config_name is a real value (not 'none', empty, etc.)
+            email_config = config.get('email', {})
+            email_config_name = email_config.get('config_name', '') if email_config else ''
+            has_email = bool(email_config_name and email_config_name.lower() not in ('none', 'null', ''))
 
             try:
 
@@ -380,24 +391,48 @@ class CredentialProvisionCommand(Command):
                         logging.error(error_msg)
                     raise CommandError('credential-provision', error_msg)
 
-                # Generate password
-                password = self._generate_password(config['rotation']['password_complexity'])
+                password, used_existing = self._determine_password(config)
 
-                # Create AD user via Gateway if AD-specific fields are present (KC-1035)
+                # AD-create is a push-to-target route — gated when existing_password is set.
                 ad_groups = config['account'].get('ad_groups', [])
                 has_ad_config = config['account'].get('distinguished_name') or ad_groups
+                # ad_ops_allowed tracks whether group-add (which we defer to after PAM
+                # user creation + rotation, to keep rollback semantics clean) can run.
+                ad_ops_allowed = False
+                gateway_uid = None
                 if has_ad_config:
-                    self._create_ad_user_via_gateway(config, password, params, state)
-                    if output_format == 'text':
-                        logging.info(f'✅ AD user created: {config["account"]["username"]}')
-
-                    # Add to AD groups
-                    if ad_groups:
-                        self._add_ad_user_to_groups_via_gateway(
-                            config, params, state.ad_gateway_uid
-                        )
+                    # Check Gateway version — AD operations require 1.8.0+
+                    gateway_uid = self._get_gateway_uid_for_config(
+                        config['account']['pam_config_uid'], params
+                    )
+                    if gateway_uid and not self._check_gateway_version(params, gateway_uid, '1.8.0'):
                         if output_format == 'text':
-                            logging.info(f'✅ Added to AD groups: {", ".join(ad_groups)}')
+                            logging.warning(
+                                '⚠️  Gateway version is below 1.8.0 — skipping AD user creation and group assignment.\n'
+                                '    Upgrade your Gateway to 1.8.0+ for AD provisioning support.\n'
+                                '    Continuing with PAM User record creation only.'
+                            )
+                    else:
+                        ad_ops_allowed = True
+                        if self._should_create_ad_user(config):
+                            try:
+                                self._create_ad_user_via_gateway(config, password, params, state)
+                                if output_format == 'text':
+                                    logging.info(f'✅ AD user created: {config["account"]["username"]}')
+                            except CommandError as ad_err:
+                                if 'already exists' in str(ad_err).lower():
+                                    if output_format == 'text':
+                                        logging.info(f'⚠️  AD user already exists: {config["account"]["username"]} — continuing with PAM User creation')
+                                else:
+                                    raise
+                        elif used_existing:
+                            logging.info(
+                                'Skipping AD user creation: existing_password declared; '
+                                'account is assumed to pre-exist.'
+                            )
+                        # NOTE: group-add deferred to after PAM user creation + rotation
+                        # so a failure in those steps doesn't orphan AD memberships on
+                        # the operator's pre-existing account. See review #8 / PR #2043.
 
                 # Create PAM User record
                 pam_user_uid = self._create_pam_user(config, password, params)
@@ -406,19 +441,49 @@ class CredentialProvisionCommand(Command):
                 if output_format == 'text':
                     logging.info(f'✅ PAM User record created: {pam_user_uid}')
 
+                if used_existing:
+                    self._log_existing_password_use(pam_user_uid)
+
                 # Link to PAM Configuration and configure rotation
                 self._create_dag_link(pam_user_uid, config['account']['pam_config_uid'], params)
                 state.dag_link_created = True
-                self._configure_rotation(pam_user_uid, config, params)
 
-                if output_format == 'text':
-                    logging.info('✅ Rotation configured')
+                rotation_success = False
+                if 'rotation' in config:
+                    # _configure_rotation returns False when it swallowed a gateway-500
+                    # error (rotation NOT actually configured — deferred). Gate the
+                    # success log on the real outcome to avoid contradicting the
+                    # warning lines emitted inside the helper.
+                    rotation_configured = self._configure_rotation(pam_user_uid, config, params)
+                    if rotation_configured and output_format == 'text':
+                        logging.info('✅ Rotation configured')
 
-                # Perform immediate rotation if configured
-                rotation_success = self._rotate_immediately(pam_user_uid, config, params)
+                    if self._should_rotate_on_provision(config):
+                        rotation_success = self._rotate_immediately(pam_user_uid, config, params)
+                        # Only emit the success line when _rotate_immediately actually
+                        # succeeded; failure path already logged a warning + mode-aware hint.
+                        if rotation_success and output_format == 'text':
+                            logging.info('✅ Password rotation submitted')
+                    elif output_format == 'text':
+                        logging.info(
+                            'Skipping immediate rotation (rotate_on_provision: false).'
+                        )
+                elif output_format == 'text':
+                    logging.info('No rotation: block in YAML — rotation will not be configured.')
 
-                if output_format == 'text':
-                    logging.info('✅ Password rotation submitted')
+                # AD group additions — deferred from the AD-create block above so a failure
+                # in _create_pam_user / _create_dag_link / _configure_rotation doesn't orphan
+                # group memberships on the operator's pre-existing AD account. By placing this
+                # AFTER rotation, only graceful (non-rollback) failures remain ahead of it.
+                if has_ad_config and ad_ops_allowed and ad_groups:
+                    succeeded, failed = self._add_ad_user_to_groups_via_gateway(
+                        config, params, gateway_uid
+                    )
+                    if output_format == 'text':
+                        if succeeded:
+                            logging.info(f'✅ Added to AD groups: {", ".join(succeeded)}')
+                        if failed:
+                            logging.warning(f'⚠️  Failed to add to AD groups: {", ".join(failed)}')
 
                 # Delivery: direct share or one-time share URL + email
                 share_url = None
@@ -435,7 +500,7 @@ class CredentialProvisionCommand(Command):
                         else:
                             logging.warning(f'⚠️  Direct share to {share_to} failed — share manually')
 
-                # Email delivery (if email section present)
+                # Email delivery (if email section present with valid config_name)
                 if has_email:
                     share_url = self._generate_share_url(pam_user_uid, config, params)
                     if output_format == 'text':
@@ -443,18 +508,30 @@ class CredentialProvisionCommand(Command):
                     email_success = self._send_email(config, share_url, params)
                     if output_format == 'text':
                         logging.info('✅ Email with one-time share sent')
+                elif 'email' in config and not has_email:
+                    if output_format == 'text':
+                        logging.info('⚠️  Email section present but config_name is not configured — skipping email delivery')
 
                 if not has_delivery and not has_email:
                     if output_format == 'text':
                         logging.info('✅ Record created (no delivery configured)')
 
                 if output_format == 'json':
+                    # rotation_status reflects the chosen execution path per API_CONTRACTS.md.
+                    if 'rotation' not in config:
+                        rotation_status = 'not_configured'
+                    elif rotation_success:
+                        rotation_status = 'synced'
+                    elif config['rotation'].get('on_demand'):
+                        rotation_status = 'on_demand'
+                    else:
+                        rotation_status = 'scheduled'
                     result = {
                         'success': True,
                         'pam_user_uid': pam_user_uid,
                         'username': config['account']['username'],
                         'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
-                        'rotation_status': 'synced' if rotation_success else 'scheduled',
+                        'rotation_status': rotation_status,
                         'message': 'Credential provisioning complete'
                     }
                     if has_delivery:
@@ -617,8 +694,40 @@ class CredentialProvisionCommand(Command):
         """
         errors = []
 
-        # Validate required top-level sections
-        required_sections = ['user', 'account', 'rotation']
+        # Check for deprecated pam.rotation structure
+        has_pam_rotation = isinstance(config.get('pam'), dict) and 'rotation' in config.get('pam', {})
+        has_rotation = 'rotation' in config
+        if has_pam_rotation and not has_rotation:
+            errors.append(
+                'The "pam: rotation:" YAML structure has been deprecated.\n'
+                '    Please move your rotation settings to the top level:\n'
+                '    \n'
+                '    Before:\n'
+                '      pam:\n'
+                '        rotation:\n'
+                '          schedule: "0 0 3 ? * 2"\n'
+                '          password_complexity: "24,4,4,4,4"\n'
+                '    \n'
+                '    After:\n'
+                '      rotation:\n'
+                '        schedule: "0 0 3 ? * 2"\n'
+                '        password_complexity: "24,4,4,4,4"'
+            )
+            return errors
+
+        # Reject a bare 'rotation:' key with no value. YAML parses `rotation:` to None,
+        # which would crash downstream `.get(...)` calls with an unhelpful AttributeError.
+        # The headline "rotation is optional" invites this typo — fail loudly with guidance.
+        if 'rotation' in config and config['rotation'] is None:
+            errors.append(
+                'rotation: was specified but has no value. Either remove the key entirely\n'
+                '    (Commander will not manage rotation for this record) or provide\n'
+                '    schedule (cron) or on_demand: true, plus password_complexity.'
+            )
+            return errors
+
+        # rotation: block is optional (cp-rotation-skip-feat).
+        required_sections = ['user', 'account']
         for section in required_sections:
             if section not in config:
                 errors.append(f'Missing required section: {section}')
@@ -630,26 +739,102 @@ class CredentialProvisionCommand(Command):
         # Validate each section
         errors.extend(self._validate_user_section(config.get('user', {})))
         errors.extend(self._validate_account_section(config.get('account', {})))
-        errors.extend(self._validate_rotation_section(config.get('rotation', {})))
+        # rotation: optional. Empty 'rotation: {}' still validated (and rejected).
+        if 'rotation' in config:
+            errors.extend(self._validate_rotation_section(config.get('rotation', {})))
 
         # Validate delivery section if present (vault sharing)
         if 'delivery' in config:
             errors.extend(self._validate_delivery_section(config['delivery']))
 
-        # Validate email section if present (email delivery)
-        if 'email' in config:
-            errors.extend(self._validate_email_section(params, config.get('email', {})))
+        # Validate email section if present with a real config_name
+        email_cfg = config.get('email', {})
+        email_cfg_name = email_cfg.get('config_name', '') if email_cfg else ''
+        if email_cfg and email_cfg_name and email_cfg_name.lower() not in ('none', 'null', ''):
+            errors.extend(self._validate_email_section(params, email_cfg))
 
         # Validate optional vault section
         if 'vault' in config:
             errors.extend(self._validate_vault_section(params, config['vault']))
 
+        # Validate directory_uid if provided — must be a pamDirectory record
+        directory_uid = config.get('account', {}).get('directory_uid')
+        if directory_uid:
+            try:
+                dir_record = vault.KeeperRecord.load(params, directory_uid)
+                if dir_record:
+                    if hasattr(dir_record, 'record_type') and dir_record.record_type != 'pamDirectory':
+                        errors.append(
+                            f'account.directory_uid "{directory_uid}" is a {dir_record.record_type} record, not a pamDirectory.\n'
+                            f'    The directory_uid must point to a PAM Directory record with directoryType=ad.'
+                        )
+                else:
+                    errors.append(
+                        f'account.directory_uid "{directory_uid}" not found in vault.\n'
+                        f'    Make sure the PAM Directory record exists and you have access to it.'
+                    )
+            except Exception:
+                errors.append(
+                    f'account.directory_uid "{directory_uid}" could not be loaded.\n'
+                    f'    Make sure the PAM Directory record exists and you have access to it.'
+                )
+
+        # Validate distinguished_name placeholder requires username or username_template
+        dn = config.get('account', {}).get('distinguished_name', '')
+        if '{username}' in dn:
+            if not config.get('account', {}).get('username') and not config.get('account', {}).get('username_template'):
+                errors.append(
+                    'account.distinguished_name contains {username} placeholder but neither\n'
+                    '    account.username nor account.username_template is provided.'
+                )
+
+        # Validate ad_groups requires directory_uid
+        ad_groups = config.get('account', {}).get('ad_groups', [])
+        if ad_groups and not config.get('account', {}).get('directory_uid'):
+            errors.append(
+                'account.ad_groups requires account.directory_uid to be set.\n'
+                '    The Gateway needs a PAM Directory record to know which AD to connect to for group operations.'
+            )
+
+        # Validate delivery.share_to is a Keeper user
+        delivery = config.get('delivery', {})
+        share_to = delivery.get('share_to', '') if delivery else ''
+        if share_to:
+            try:
+                user_keys = api.load_user_public_keys(params, [share_to])
+                if share_to.lower() not in params.key_cache:
+                    logging.warning(
+                        f'⚠️  delivery.share_to "{share_to}" may not have an active Keeper vault.\n'
+                        f'    Sharing may fail or require an invitation.'
+                    )
+            except Exception:
+                pass  # Non-fatal — will be caught at runtime
+
         # Validate optional managed_company section (MSP scenarios)
         if 'managed_company' in config:
             errors.extend(self._validate_mc_context(params, config['managed_company']))
 
+        # INVARIANT-001: existing_password rejected with provisioning-time
+        # rotation. See TECHNICAL_DECISIONS.md ADR-001 / SECURITY_ARCHITECTURE.md.
+        if config.get('account', {}).get('existing_password'):
+            if 'rotation' in config:
+                rop = config['rotation'].get('rotate_on_provision', True)
+                if rop is not False:
+                    errors.append(
+                        'account.existing_password cannot be combined with a rotation:\n'
+                        '    block unless rotation.rotate_on_provision is explicitly set\n'
+                        '    to false. Either:\n'
+                        '      - Omit the rotation: block (Commander stores the password\n'
+                        '        in the vault but does not manage rotation), or\n'
+                        '      - Set rotation.rotate_on_provision: false (rotation is\n'
+                        '        configured but no immediate rotation fires at provisioning).'
+                    )
+
         # Validate: transfer_ownership/remove_from_service_vault are incompatible with rotation
-        has_rotation = bool(config.get('rotation', {}).get('schedule'))
+        # (any rotation mode — the gateway must own the record to fire rotations whether
+        # cron-driven or on-demand).
+        rot = config.get('rotation', {})
+        has_rotation = bool(rot.get('schedule')) or rot.get('on_demand') is True
         transfer = config.get('delivery', {}).get('transfer_ownership', False)
         remove = config.get('delivery', {}).get('remove_from_service_vault', False)
         if has_rotation and (transfer or remove):
@@ -708,8 +893,8 @@ class CredentialProvisionCommand(Command):
         if not account.get('pam_config_uid'):
             errors.append('account.pam_config_uid is required')
 
-        # CRITICAL: Reject old 'initial_password' field (security issue)
-        # Per blocker resolution, passwords are generated by Commander, not provided in YAML
+        # CRITICAL: reject 'initial_password' (BLOCKER_KC-1007-2). Distinct from
+        # 'existing_password' (stored, never pushed) — see ADR-001.
         if 'initial_password' in account:
             errors.append(
                 'account.initial_password is NOT supported (security).\n'
@@ -717,15 +902,49 @@ class CredentialProvisionCommand(Command):
                 '    Remove this field from your YAML configuration.'
             )
 
+        # existing_password: account's current real password. Stored, never pushed.
+        # Coexistence with rotation gated by INVARIANT-001 in _validate_config.
+        # Whitespace-only strings are rejected by .strip() — bool() of non-empty
+        # strings is True so '   ' would otherwise pass.
+        if 'existing_password' in account:
+            ep = account.get('existing_password')
+            if not isinstance(ep, str) or not ep.strip():
+                errors.append(
+                    'account.existing_password must be a non-empty string if specified.'
+                )
+
         return errors
 
     def _validate_rotation_section(self, rotation: Dict[str, Any]) -> List[str]:
-        """Validate rotation section (schedule and password complexity)."""
+        """Validate rotation section (schedule/on_demand, complexity, flags)."""
         errors = []
 
-        if not rotation.get('schedule'):
-            errors.append('rotation.schedule is required (CRON format)')
+        # Exactly one of schedule (cron) or on_demand: true — mirrors
+        # PAMCreateRecordRotationCommand's mutually-exclusive group.
+        has_schedule = bool(rotation.get('schedule'))
+        on_demand = rotation.get('on_demand')
+
+        if 'on_demand' in rotation and not isinstance(on_demand, bool):
+            errors.append(
+                'rotation.on_demand must be a boolean (true/false) if specified.'
+            )
+            # Treat invalid type as "not set" for mode logic
+            on_demand_truthy = False
         else:
+            on_demand_truthy = on_demand is True
+
+        if has_schedule and on_demand_truthy:
+            errors.append(
+                'rotation must specify exactly one of: schedule (cron expression)\n'
+                '    or on_demand: true. Both are mutually exclusive.'
+            )
+        elif not has_schedule and not on_demand_truthy:
+            errors.append(
+                'rotation must specify exactly one of: schedule (cron expression)\n'
+                '    or on_demand: true.'
+            )
+
+        if has_schedule:
             schedule = rotation['schedule']
             if validate_cron_expression and not validate_cron_expression(schedule, for_rotation=True)[0]:
                 errors.append(
@@ -743,6 +962,14 @@ class CredentialProvisionCommand(Command):
                     f'rotation.password_complexity has invalid format: {complexity}\n'
                     f'    Expected: "length,upper,lower,digit,special"\n'
                     f'    Example: "32,5,5,5,5"'
+                )
+
+        # rotate_on_provision: optional bool, default true. False skips _rotate_immediately.
+        if 'rotate_on_provision' in rotation:
+            rop = rotation['rotate_on_provision']
+            if not isinstance(rop, bool):
+                errors.append(
+                    'rotation.rotate_on_provision must be a boolean (true/false) if specified.'
                 )
 
         return errors
@@ -874,7 +1101,8 @@ class CredentialProvisionCommand(Command):
         """
         Generate dry-run report showing what would be created.
 
-        PII (names, emails) are partially masked for security.
+        PII (names, emails) are partially masked for security. The value of
+        account.existing_password is NEVER included in any output.
 
         Args:
             params: KeeperParams session
@@ -895,27 +1123,72 @@ class CredentialProvisionCommand(Command):
         redacted_email = self._mask_pii(user.get('personal_email', ''))
         redacted_username = self._mask_pii(username)
 
+        has_rotation = 'rotation' in config
+        uses_existing_password = bool(account.get('existing_password'))
+        if has_rotation:
+            rotation_mode = 'on_demand' if rotation.get('on_demand') else 'scheduled'
+        else:
+            rotation_mode = 'none'
+        will_rotate_immediately = (
+            has_rotation
+            and rotation.get('rotate_on_provision', True) is not False
+        )
+
+        # Build actions list to mirror execute()'s actual call sequence.
+        ad_groups = account.get('ad_groups', [])
+        has_ad_config = bool(account.get('distinguished_name') or ad_groups)
+        delivery_cfg = config.get('delivery', {})
+        has_delivery = bool(delivery_cfg.get('share_to'))
+        email_cfg_name = email_config.get('config_name', '') if email_config else ''
+        has_email = bool(email_cfg_name and email_cfg_name.lower() not in ('none', 'null', ''))
+
+        actions = ['Check for duplicate PAM User']
+        if uses_existing_password:
+            actions.append('Use operator-supplied existing_password (value never echoed)')
+        else:
+            actions.append('Generate secure password (complexity requirements applied)')
+        # AD-create only when AD context AND not declaring an existing account
+        if has_ad_config and not uses_existing_password:
+            actions.append('Create AD user via Gateway')
+        actions.append(f'Create PAM User: {redacted_username}')
+        actions.append(f'Link PAM User to PAM Config: {account.get("pam_config_uid")}')
+        if has_rotation:
+            if rotation_mode == 'on_demand':
+                actions.append('Configure rotation: on-demand (manual triggering only)')
+            else:
+                actions.append(f'Configure rotation: {rotation.get("schedule")}')
+            if will_rotate_immediately:
+                actions.append('Submit immediate rotation')
+        # AD group-add deferred to after PAM user creation + rotation — mirrors the
+        # reorder in execute() (c663a127). Runs whenever ad_groups is set, independent
+        # of AD-create.
+        if ad_groups:
+            actions.append(f'Add to AD groups: {len(ad_groups)} group(s)')
+        # Direct vault share when delivery.share_to is set
+        if has_delivery:
+            actions.append(f'Share directly to: {self._mask_pii(delivery_cfg["share_to"])}')
+        # Share-URL generation + email run only when email is fully configured
+        if has_email:
+            actions.append(
+                f'Generate share URL for PAM User (expiry: {email_config.get("share_url_expiry", "7d")})'
+            )
+            actions.append(f'Send email to: {redacted_email} (config: {email_cfg_name})')
+        else:
+            actions.append(f'Skip welcome email (email.config_name: {email_cfg_name or "(unset)"})')
+
         if output_format == 'json':
             result = {
                 'success': True,
                 'dry_run': True,
                 'employee_name': redacted_name,
-                'actions': [
-                    'Check for duplicate PAM User',
-                    'Generate secure password (complexity requirements applied)',
-                    f'Create PAM User: {redacted_username}',
-                    f'Link PAM User to PAM Config: {account.get("pam_config_uid")}',
-                    f'Configure rotation: {rotation.get("schedule")}',
-                    'Submit immediate rotation',
-                    f'Generate share URL for PAM User (expiry: {email_config.get("share_url_expiry", "7d")})',
-                    f'Send email to: {redacted_email}'
-                ],
+                'actions': actions,
                 'configuration': {
                     'employee': redacted_name,
                     'username': redacted_username,
                     'folder': vault_config.get('folder', 'Shared Folders/PAM/{}'.format(user.get('department', 'Unknown'))),
-                    'rotation_schedule': pam.get('rotation', {}).get('schedule'),
-                    'email_recipient': redacted_email
+                    'rotation_schedule': rotation.get('schedule') if rotation_mode == 'scheduled' else None,
+                    'rotation_mode': rotation_mode,
+                    'email_recipient': redacted_email,
                 }
             }
             print(json.dumps(result, indent=2))
@@ -926,22 +1199,20 @@ class CredentialProvisionCommand(Command):
             print(f'\nEmployee: {redacted_name}')
             print(f'Username: {redacted_username}')
             print(f'Email: {redacted_email}')
+            if uses_existing_password:
+                print('Password source: operator-supplied existing_password (value not shown)')
+            if has_rotation:
+                if rotation_mode == 'on_demand':
+                    print('Rotation mode: on-demand (manual trigger only)')
+                else:
+                    print(f'Rotation mode: scheduled ({rotation.get("schedule")})')
+                if not will_rotate_immediately:
+                    print('Immediate rotation at provisioning: SKIPPED (rotate_on_provision: false)')
+            else:
+                print('Rotation: not configured (no rotation: block in YAML)')
             print('\nPlanned Actions:')
-            print('  1. Check for duplicate PAM User in folder')
-            print(f'  2. Generate secure password')
-            print(f'     Complexity: requirements applied')
-            print(f'  3. Create PAM User record')
-            default_folder = '/Employees/{}'.format(user.get('department', 'Unknown'))
-            print(f'     Folder: {vault_config.get("folder", default_folder)}')
-            print(f'  4. Link to PAM Config: {account.get("pam_config_uid")[:20]}...')
-            print(f'  5. Configure rotation')
-            print(f'     Schedule: {rotation.get("schedule")}')
-            print(f'  6. Submit immediate rotation')
-            print(f'  7. Generate one-time share URL for PAM User')
-            print(f'     Expiry: {email_config.get("share_url_expiry", "7d")}')
-            print(f'  8. Send welcome email')
-            print(f'     To: {redacted_email}')
-            print(f'     Config: {email_config.get("config_name")}')
+            for idx, action in enumerate(actions, 1):
+                print(f'  {idx}. {action}')
             print('\n' + '='*60)
             print('✓ Validation passed - ready for actual provisioning')
             print('  Run without --dry-run to execute')
@@ -1120,6 +1391,45 @@ class CredentialProvisionCommand(Command):
 
         return None
 
+    def _determine_password(self, config: Dict[str, Any]) -> Tuple[str, bool]:
+        """Resolve (password, used_existing) per cp-rotation-skip-feat:
+        existing_password → rotation.password_complexity → DEFAULT_COMPLEXITY.
+        """
+        existing = config.get('account', {}).get('existing_password')
+        if existing:
+            return existing, True
+        if 'rotation' in config:
+            complexity = config['rotation']['password_complexity']
+        else:
+            complexity = DEFAULT_COMPLEXITY
+        return self._generate_password(complexity), False
+
+    def _should_rotate_on_provision(self, config: Dict[str, Any]) -> bool:
+        """True when rotation: present and rotate_on_provision is not False."""
+        if 'rotation' not in config:
+            return False
+        return config['rotation'].get('rotate_on_provision', True) is not False
+
+    def _should_create_ad_user(self, config: Dict[str, Any]) -> bool:
+        """True when AD context is set AND existing_password is NOT — gates the
+        rm-create-user push-to-target route. See SECURITY_ARCHITECTURE.md."""
+        account = config.get('account', {})
+        has_ad_config = bool(account.get('distinguished_name') or account.get('ad_groups'))
+        if not has_ad_config:
+            return False
+        if account.get('existing_password'):
+            return False
+        return True
+
+    def _log_existing_password_use(self, pam_user_uid: str) -> None:
+        """Audit log: existing_password was used. Takes only the UID by design;
+        signature is enforced by a structural test to prevent log leakage."""
+        logging.info(
+            'Provisioning with operator-supplied existing_password for '
+            'record %s; rotation immediate skipped, AD-create skipped.',
+            pam_user_uid,
+        )
+
     def _generate_password(self, password_complexity: str) -> str:
         """
         Generate secure random password using Commander's built-in generator.
@@ -1177,21 +1487,22 @@ class CredentialProvisionCommand(Command):
         # Determine target folder
         user_specified_folder = config.get('vault', {}).get('folder')
 
-        # Validate user-specified folder path
         if user_specified_folder:
-
-            self._validate_folder_path(user_specified_folder)
-
-            # User specified a subfolder (relative to gateway folder)
-            # Example: "PAM Users/Engineering"
-            target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+            # Check if the value is a folder UID (exists in folder cache)
+            if user_specified_folder in params.folder_cache:
+                folder_uid = user_specified_folder
+            elif user_specified_folder in params.shared_folder_cache:
+                folder_uid = user_specified_folder
+            else:
+                # Treat as a relative folder path
+                self._validate_folder_path(user_specified_folder)
+                target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+                folder_uid = self._ensure_folder_exists(target_folder_path, params)
         else:
             # Auto-generate subfolder based on department
             department = config['user'].get('department', 'Default')
             target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
-
-        # Ensure target folder exists
-        folder_uid = self._ensure_folder_exists(target_folder_path, params)
+            folder_uid = self._ensure_folder_exists(target_folder_path, params)
 
         # Create PAM User typed record
         pam_user = vault.TypedRecord()
@@ -1242,7 +1553,7 @@ class CredentialProvisionCommand(Command):
 
         # KC-1035: Owner metadata for deprovision support
         delivery = config.get('delivery', {})
-        if delivery.get('method') == 'direct_share' and delivery.get('share_to'):
+        if delivery.get('share_to'):
             custom_fields.append(vault.TypedField.new_field(
                 'text',
                 delivery['share_to'],
@@ -1482,7 +1793,7 @@ class CredentialProvisionCommand(Command):
         pam_user_uid: str,
         config: Dict[str, Any],
         params: KeeperParams
-    ) -> None:
+    ) -> bool:
         """
         Configure automatic password rotation using PAM rotation command.
 
@@ -1507,28 +1818,44 @@ class CredentialProvisionCommand(Command):
             raise CommandError('credential-provision', 'Rotation requires Python 3.8+ (pydantic dependency)')
 
         try:
-            schedule = rotation_config['schedule']
             complexity = rotation_config['password_complexity']
 
             rotation_cmd = PAMCreateRecordRotationCommand()
+            directory_uid = config['account'].get('directory_uid')
             kwargs = {
                 'record_name': pam_user_uid,
-                'iam_aad_config_uid': pam_config_uid,
-                'schedule_cron_data': [schedule],
                 'pwd_complexity': complexity,
                 'enable': True,
                 'force': True,
             }
 
+            # Validator guarantees exactly one of schedule/on_demand is set.
+            if rotation_config.get('on_demand'):
+                kwargs['on_demand'] = True
+            else:
+                kwargs['schedule_cron_data'] = [rotation_config['schedule']]
+
+            # Use directory_uid as resource if available, otherwise use pam_config_uid
+            # Cannot pass both --resource and --iam-aad-config_uid simultaneously
+            if directory_uid:
+                kwargs['resource'] = directory_uid
+            else:
+                kwargs['iam_aad_config_uid'] = pam_config_uid
+
             try:
                 # Suppress verbose output from rotation command
                 with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                     rotation_cmd.execute(params, **kwargs)
+                return True  # Real success — gateway accepted the rotation configuration
             except Exception as rotation_error:
                 error_msg = str(rotation_error)
                 if '500' in error_msg or 'gateway' in error_msg.lower():
+                    # Transient gateway failure — swallow and report False so the
+                    # caller can suppress the misleading success-log. Operator must
+                    # configure rotation manually once the gateway is reachable.
                     logging.warning('Gateway unavailable - rotation configuration deferred')
                     logging.warning('Configure rotation manually when gateway is available')
+                    return False
                 else:
                     raise
 
@@ -1578,15 +1905,51 @@ class CredentialProvisionCommand(Command):
             return True
 
         except Exception as e:
-            # Non-critical failure: PAM User is created and rotation scheduled
-            # The scheduled rotation will eventually sync the password
+            # Non-critical failure: PAM User record is created; rotation is configured.
+            # Remediation hint depends on rotation mode — in on_demand mode there is
+            # no cron tick to wait for, so direct the operator to manual triggering.
             logging.warning(f'⚠️  Immediate rotation failed: {e}')
-            logging.warning(f'   Password will sync on next scheduled rotation')
+            if config.get('rotation', {}).get('on_demand'):
+                logging.warning(
+                    '   Trigger an on-demand rotation manually to sync the password '
+                    '(Rotate Now in the Vault UI, or `pam action rotate <UID>`).'
+                )
+            else:
+                logging.warning('   Password will sync on next scheduled rotation.')
             return False  # Graceful degradation
 
     # =========================================================================
     # AD User Creation via Gateway (KC-1035)
     # =========================================================================
+
+    def _get_gateway_version(self, params: KeeperParams, gateway_uid: str) -> Optional[str]:
+        """Get the Gateway version from connected controllers list."""
+        try:
+            online = router_get_connected_gateways(params)
+            if online:
+                for controller in online.controllers:
+                    uid = utils.base64_url_encode(controller.controllerUid)
+                    if uid == gateway_uid and hasattr(controller, 'version') and controller.version:
+                        # Version string may contain OS info: "1.8.0;Darwin;25.4.0;arm64"
+                        return controller.version.split(';')[0]
+        except Exception as e:
+            logging.debug(f'Failed to get Gateway version: {e}')
+        return None
+
+    def _check_gateway_version(self, params: KeeperParams, gateway_uid: str, min_version: str) -> bool:
+        """Check if Gateway version meets minimum requirement."""
+        version = self._get_gateway_version(params, gateway_uid)
+        if not version:
+            logging.warning(f'⚠️  Could not determine Gateway version — proceeding anyway')
+            return True  # Allow if we can't check
+        try:
+            from packaging.version import Version
+            return Version(version) >= Version(min_version)
+        except ImportError:
+            # Fall back to tuple comparison
+            v_parts = tuple(int(x) for x in version.split('.'))
+            m_parts = tuple(int(x) for x in min_version.split('.'))
+            return v_parts >= m_parts
 
     def _get_gateway_uid_for_config(self, pam_config_uid: str, params: KeeperParams) -> Optional[str]:
         """Find the connected Gateway UID for a PAM Configuration.
@@ -1732,7 +2095,7 @@ class CredentialProvisionCommand(Command):
         config: Dict[str, Any],
         params: KeeperParams,
         gateway_uid: str
-    ) -> None:
+    ) -> Tuple[List[str], List[str]]:
         """
         Add AD user to groups via Gateway's rm-add-user-to-group action (KC-1035).
 
@@ -1740,16 +2103,36 @@ class CredentialProvisionCommand(Command):
             config: YAML config with account.ad_groups list
             params: KeeperParams session
             gateway_uid: Connected Gateway UID
+
+        Returns:
+            Tuple of (succeeded_groups, failed_groups)
+
+        Raises:
+            CommandError: if gateway_uid is None/empty. Pre-PR this fail-fast
+                lived inside _create_ad_user_via_gateway; that path is now skipped
+                when existing_password is set, so we re-assert the precondition here.
         """
+        if not gateway_uid:
+            raise CommandError(
+                'credential-provision',
+                'No connected Gateway found for PAM Configuration — cannot add AD groups. '
+                'Ensure the Gateway associated with the PAM Configuration is online.'
+            )
         username = config['account']['username']
         pam_config_uid = config['account']['pam_config_uid']
         resource_uid = config['account'].get('directory_uid')
         groups = config['account'].get('ad_groups', [])
 
-        # Encrypt username with PAM Config record key
-        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
-        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(username.encode(), record_key)).decode()
+        # Use DN if available, otherwise username — Gateway needs to find the user in AD
+        dn = config['account'].get('distinguished_name', '')
+        user_value = dn if dn else username
 
+        # Encrypt with PAM Config record key
+        record_key = params.record_cache[pam_config_uid]['record_key_unencrypted']
+        encrypted_user = base64.b64encode(crypto.encrypt_aes_v2(user_value.encode(), record_key)).decode()
+
+        succeeded = []
+        failed = []
         for group in groups:
             action_inputs = GatewayActionRmAddUserToGroupInputs(
                 configuration_uid=pam_config_uid,
@@ -1777,11 +2160,16 @@ class CredentialProvisionCommand(Command):
                 if data and not data.get('success', False):
                     error = data.get('error', 'Unknown error')
                     logging.warning(f'   Failed to add {username} to group {group}: {error}')
+                    failed.append(group)
                 else:
                     logging.info(f'   Added {username} to AD group: {group}')
+                    succeeded.append(group)
 
             except Exception as e:
                 logging.warning(f'   Failed to add {username} to group {group}: {e}')
+                failed.append(group)
+
+        return succeeded, failed
 
     def _delete_ad_user_via_gateway(self, state: 'ProvisioningState', params: KeeperParams) -> None:
         """Delete AD user via Gateway for rollback (KC-1035)."""
@@ -2339,7 +2727,7 @@ class CredentialProvisionCommand(Command):
         # Unknown PAM Type
         # ===================================================================
         else:
-            # Skip warning when resource_uid is provided — the resource record
+            # Skip warning when directory_uid is provided — the directory record
             # determines AD behavior, not the config type
             if not config['account'].get('directory_uid'):
                 logging.warning('')

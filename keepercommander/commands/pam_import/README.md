@@ -23,6 +23,91 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 
+Import directly from a KCM/Guacamole database. Connects to the KCM database, extracts connections/users/groups, maps 130+ parameters, and feeds the result into the existing import engine.
+`pam project kcm-import --db-host=HOST [OPTIONS]`
+
+**Database (one of `--db-host` or `--docker-detect` required):**
+- `--db-host HOST` → KCM database hostname.
+- `--docker-detect` → Auto-detect credentials from Docker container. Discovers the KCM database container automatically, detects database type (mysql/postgresql), and resolves the container IP.
+- `--docker-container NAME` → Specify Docker container name _(auto-discovered if omitted)_.
+- `--db-port PORT` → Database port _(default: 3306 mysql, 5432 postgresql)_.
+- `--db-name NAME` → Database name _(default: guacamole\_db)_.
+- `--db-type {mysql,postgresql}` → Database type _(auto-detected with `--docker-detect`)_.
+- `--db-user USER` → Database username _(default: guacamole\_user)_.
+- `--db-password-record UID` → Keeper record UID or title containing DB password. If omitted, searches vault for candidates or prompts interactively.
+- `--db-ssl` → Require SSL/TLS for database connection.
+- `--allow-cleartext` → Allow unencrypted connection to remote database _(not recommended; required when connecting to a remote host without `--db-ssl`)_.
+
+**Import:**
+- `--name`, `-n` → Project name _(default: KCM-Import-TIMESTAMP)_.
+- `--config`, `-c` → Existing PAM config UID or name to extend (skip project creation).
+- `--folder-mode {ksm,exact,flat}` → Connection group mapping _(default: ksm)_.
+- `--output`, `-o` → Save JSON to file for review before importing.
+- `--gateway`, `-g` → Existing gateway UID or name _(interactive picker if omitted)_.
+- `--max-instances N` → Set gateway pool size _(0 = skip, requires new gateway)_.
+
+**Group Filtering:**
+- `--list-groups` → List available KCM connection groups with resource/user counts, then exit.
+- `--groups "Pattern1,Pattern2"` → Import only connections in matching groups. Supports fnmatch wildcards (`*`, `?`). Matches group name, full path, or any path segment.
+- `--exclude-groups "Pattern1,Pattern2"` → Exclude connections in matching groups. Same wildcard support.
+
+**Flags:**
+- `--dry-run`, `-d` → Preview without vault changes (credentials redacted).
+- `--skip-users` → Import connections only.
+- `--include-disabled` → Include disabled KCM connections.
+- `--include-credentials` → Include passwords in `--output` JSON _(redacted by default)_.
+- `--yes`, `-y` → Skip confirmation prompt.
+- `--estimate` → Show migration size estimate without importing.
+
+**Throttling:**
+- `--auto-throttle` / `--no-auto-throttle` → Enable/disable adaptive throttling with probe _(default: on)_.
+- `--batch-size N` → Override records per batch.
+- `--batch-delay N` → Override seconds between batches.
+
+**Examples:**
+```bash
+# Full auto-detect from Docker (discovers container, db type, IP, credentials)
+pam project kcm-import --docker-detect --dry-run
+
+# List available connection groups before importing
+pam project kcm-import --docker-detect --list-groups
+
+# Import only specific connection groups
+pam project kcm-import --docker-detect --groups "Production*,Staging*" --name "Prod Migration"
+
+# Exclude groups from import
+pam project kcm-import --db-host 10.0.0.5 --exclude-groups "Incomplete*,Test*"
+
+# Import using password from vault record
+pam project kcm-import --db-host db.example.com --db-password-record RECORD_UID --name "Prod KCM"
+
+# Extend existing PAM config from PostgreSQL
+pam project kcm-import --db-host pg.example.com --db-type postgresql --config "Existing Config"
+
+# Auto-detect from Docker and save JSON for review
+pam project kcm-import --docker-detect --output /tmp/kcm-review.json
+
+# Specify Docker container and save with credentials
+pam project kcm-import --docker-detect --docker-container kcm-db-1 --output /tmp/full.json --include-credentials
+```
+
+**Security:** DB passwords are never accepted as CLI arguments. Use `--db-password-record` (vault) or respond to the interactive prompt. Dry-run output redacts all credentials.
+
+**Interactive Features:** When running interactively (no `--yes`):
+- **Group picker** — shows connection groups with counts, lets you select by number
+- **Gateway picker** — shows online gateways or create new
+- **Password search** — searches vault for records matching "guacamole"/"kcm"
+- **Import confirmation** — shows summary before proceeding
+
+**Import Report:** After import, a structured report is printed to console and saved as a vault record at the project's top-level folder (alongside Resources/Users). The record includes:
+- **Copyable custom fields**: `Deploy Gateway (copy & paste)` with full docker command, Gateway Token, Config UID, Gateway UID, KSM App UID, folder names
+- `KCM-Import-Report.md` file attachment with the full report
+- Per-record pass/fail breakdown by type (including nested users)
+- Failed/skipped records with reasons
+- Throttle statistics
+- Redacted CLI command for reproducibility
+
+
 ### JSON format details
 Text UI (TUI) elements (a.k.a. JSON Keys) match their Web UI counterparts so you can create the correponding record type in your web vault to help you visualize all options and possible values.
 
@@ -218,7 +303,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrativ
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
   > **Note 4:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
 
-JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records.
+JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records. **Workflow** (approvals / checkout / temporal restrictions) is supported on all four resource types: pamMachine, pamDatabase, pamDirectory, **and** pamRemoteBrowser.
 
 <details>
 <summary>Just-In-Time Access (JIT)</summary>
@@ -321,6 +406,79 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 ```
 </details>
 <details>
+<summary>Workflow (Approvals, Checkout, Temporal Access)</summary>
+
+Workflow controls how privileged access to a resource is gated: how many approvals are needed, whether sessions require check-out, MFA, reason/ticket, what time windows access is allowed in, and who can approve (with optional escalation). Workflow is applied via the Keeper Router **after** the resource record and DAG/JIT/AI steps are complete and is not stored on the record itself.
+
+**How to Configure:** Add `pam_settings.options.workflow` to any pamMachine, pamDatabase, pamDirectory, or pamRemoteBrowser. The workflow object maps directly to the Web Vault's "Workflow" tab on a resource record.
+
+```json
+{
+    "pam_settings": {
+        "options": {
+            "workflow": {
+                "approvals_needed": 2,
+                "checkout_needed": true,
+                "start_access_on_approval": false,
+                "require_reason": true,
+                "require_ticket": false,
+                "require_mfa": true,
+                "access_duration": "8h",
+                "allowed_times": {
+                    "allowed_days": ["mon", "tue", "wed", "thu", "fri"],
+                    "time_ranges": [
+                        { "start": "09:00", "end": "17:30" }
+                    ],
+                    "timezone": "America/New_York"
+                },
+                "approvers": [
+                    {
+                        "principal": { "type": "user", "email": "primary.approver@example.com" },
+                        "escalation": false
+                    },
+                    {
+                        "principal": { "type": "user", "email": "second.approver@example.com" },
+                        "escalation": false
+                    },
+                    {
+                        "principal": {
+                            "type": "team",
+                            "team_uid_base64url": "REPLACE_TEAM_UID_BASE64URL"
+                        },
+                        "escalation": true,
+                        "escalation_after": "45m"
+                    }
+                ]
+            }
+        }
+    }
+}
+```
+
+**Field reference:**
+- `approvals_needed` *(int, default `0`)* — number of approvals required to grant access.
+- `checkout_needed` *(bool, default `false`)* — require explicit check-out before launching a session.
+- `start_access_on_approval` *(bool, default `false`)* — start the access window the moment approval is granted (rather than at session launch).
+- `require_reason` / `require_ticket` *(bool, default `false`)* — prompt the user for a reason / ticket reference at request time.
+- `require_mfa` *(bool, default `false`)* — require MFA at session launch.
+- `access_duration` *(string, default `"1d"`)* — how long approved access remains valid. Accepts `Xm` / `Xh` / `Xd` (e.g. `"30m"`, `"8h"`, `"2d"`); a bare integer is interpreted as minutes. Must be positive.
+- `allowed_times.allowed_days` *(list of strings)* — restrict access to these weekdays. Accepts 3-letter (`mon`..`sun`) or full names (`monday`..`sunday`), case-insensitive.
+- `allowed_times.time_ranges` *(list of `{start, end}` objects)* — one or more allowed daily time windows in `HH:MM` (24-hour) format. **Multiple ranges per day are supported.** A single range whose `end` is earlier than its `start` (e.g. an overnight `22:00–06:00`) **should be split into two ranges** that both fall inside one day (e.g. `22:00–23:59` and `00:00–06:00`)
+- `allowed_times.timezone` *(string)* — IANA timezone name (e.g. `"UTC"`, `"America/New_York"`). **Required when `time_ranges` is non-empty.**
+- `approvers[]` — list of approver entries.
+  - `principal.type` — `"user"` or `"team"`.
+  - For users: `principal.email` (must exist in the enterprise).
+  - For teams: `principal.team_uid_base64url` (the team's vault UID, base64url-encoded; validated against the local team cache during import — unknown UIDs fail in dry-run).
+  - `escalation` *(bool)* — whether this approver is in the escalation chain.
+  - `escalation_after` *(duration string, optional)* — wait this long before escalating to this approver. **Requires `escalation: true`.**
+
+**Behavior notes:**
+- **Trivial workflow is a no-op.** If none of `approvals_needed > 0`, `checkout_needed`, `require_mfa`, `start_access_on_approval`, `allowed_times.allowed_days`, or `allowed_times.time_ranges` is set, the workflow block is treated as absent and no Router call is made.
+- **Pre-flight validation runs in `--dry-run`.** Bad durations, malformed `HH:MM`, missing timezone, escalation rule violations, and unknown team UIDs are reported during dry-run before any vault writes.
+- **Dry-run skips the Router calls.** Workflow is applied (Router create/update + approver reconcile) only on a real run.
+- **`extend` only applies workflow to newly created resources** (existing resources are not touched).
+</details>
+<details>
 <summary>pam_data.resources.pamMachine (RDP)</summary>
 
 ```json
@@ -350,7 +508,8 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
             "ai_threat_detection": "off",
             "ai_terminate_session_on_detection": "off",
             "jit_settings": {},
-            "ai_settings": {}
+            "ai_settings": {},
+            "workflow": {}
         },
         "allow_supply_host": false,
         "port_forward": {

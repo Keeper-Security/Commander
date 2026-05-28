@@ -160,6 +160,14 @@ class TestCrypto(TestCase):
         self.assertEqual(utils.password_score('AAAbbbCCC11'), 38)
         self.assertEqual(utils.password_score('password'), 8)
 
+    def test_master_password_score(self):
+        # zxcvbn-based scoring: returns 25 (Weak), 50 (Fair), 75 (Medium), or 100 (Strong)
+        self.assertEqual(utils.master_password_score('!@#$%^&*()'), 25)       # zxcvbn score 1 -> Weak
+        self.assertEqual(utils.master_password_score('aZkljfzsnmp4w9058dsqln5yf(&*))(*)(345'), 100)  # zxcvbn score 4 -> Strong
+        self.assertEqual(utils.master_password_score('c3>^sxuKZ[Ndyo(OBE14'), 100)  # zxcvbn score 4 -> Strong
+        self.assertEqual(utils.master_password_score('AAAbbbCCC11'), 75)      # zxcvbn score 3 -> Medium
+        self.assertEqual(utils.master_password_score('password'), 25)         # zxcvbn score 0 -> Weak
+
 
 _test_random_data = \
     'cKGoVph_X0NKjk8jQgxyQWRElUY7IsbbIJaRcJVlnOb7AchFiY-izmTTOlgArwIqAxKDKSRAWx2Q1pX' \

@@ -22,9 +22,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List, Union
 
 from ..record_edit import RecordAddCommand as RecordEditAddCommand
+from ..workflow.helpers import RecordResolver, WorkflowFormatter
 from ... import api, attachment, utils, vault, vault_extensions, \
     record_facades, record_management
 from ...display import bcolors
+from ...error import CommandError
 from ...recordv3 import RecordV3
 
 
@@ -69,7 +71,8 @@ PROJECT_IMPORT_JSON_TEMPLATE = """
                 "pam_settings": {
                     "options" : {
                         "jit_settings": {},
-                        "ai_settings": {}
+                        "ai_settings": {},
+                        "workflow": {}
                     },
                     "connection" : {}
                 },
@@ -609,6 +612,144 @@ class DagSettingsObject():
         obj.ai_terminate_session_on_detection = DagOptionValue.map(data.get("ai_terminate_session_on_detection", None) or "")
 
         return obj
+
+
+class PamWorkflowOptions:
+    """Parsed workflow settings from pam_settings.options.workflow.
+    Not stored on record fields nor in DAG; applied via Krouter after record/DAG creation.
+    """
+
+    _DEFAULT_DURATION_MS = 86_400_000  # "1d"
+
+    def __init__(self):
+        self.approvals_needed: int = 0
+        self.checkout_needed: bool = False
+        self.start_access_on_approval: bool = False
+        self.require_reason: bool = False
+        self.require_ticket: bool = False
+        self.require_mfa: bool = False
+        self.access_duration_ms: int = self._DEFAULT_DURATION_MS
+        self.allowed_days: List[str] = []    # canonical 3-letter tokens: "mon".."sun"
+        self.time_ranges: List[dict] = []    # each: {"start": "HH:MM", "end": "HH:MM"}
+        self.timezone: str = ""
+        self.approvers: List[dict] = []      # each: {principal_type, email, team_uid_b64, escalation, escalation_after_ms}
+
+    @staticmethod
+    def _parse_duration(value) -> int:
+        """Return milliseconds. Raises CommandError on invalid/non-positive value.
+        Delegates to WorkflowFormatter.parse_duration; adds a None -> default-1d shim
+        (the CLI command always supplies a string, but the JSON import may omit the key).
+        """
+        if value is None:
+            return PamWorkflowOptions._DEFAULT_DURATION_MS
+        return WorkflowFormatter.parse_duration(str(value))
+
+    @classmethod
+    def load(cls, data) -> Optional['PamWorkflowOptions']:
+        """Parse workflow JSON dict. Returns None when absent / null / trivial (V2 guard)."""
+        if not data or not isinstance(data, dict):
+            return None
+
+        obj = cls()
+        obj.approvals_needed = max(0, int(data.get('approvals_needed', 0) or 0))
+        obj.checkout_needed = bool(data.get('checkout_needed', False))
+        obj.start_access_on_approval = bool(data.get('start_access_on_approval', False))
+        obj.require_reason = bool(data.get('require_reason', False))
+        obj.require_ticket = bool(data.get('require_ticket', False))
+        obj.require_mfa = bool(data.get('require_mfa', False))
+
+        # V9: access_duration — default "1d"
+        obj.access_duration_ms = cls._parse_duration(data.get('access_duration'))
+
+        # allowed_times
+        at = data.get('allowed_times') or {}
+        if isinstance(at, dict):
+            days_raw = at.get('allowed_days') or []
+            if isinstance(days_raw, list):
+                for day in days_raw:
+                    d = str(day).lower().strip()
+                    if d not in WorkflowFormatter.DAY_PARSE_MAP:
+                        raise CommandError('', f'workflow: invalid allowed_times.allowed_days token "{day}"')
+                    obj.allowed_days.append(d[:3])  # store as "mon".."sun"
+
+            ranges_raw = at.get('time_ranges') or []
+            if isinstance(ranges_raw, list):
+                for r in ranges_raw:
+                    if isinstance(r, dict):
+                        start = str(r.get('start', '') or '').strip()
+                        end = str(r.get('end', '') or '').strip()
+                        if start and end:
+                            obj.time_ranges.append({'start': start, 'end': end})
+
+            obj.timezone = str(at.get('timezone', '') or '').strip()
+
+        # V8: time_ranges non-empty => timezone required
+        if obj.time_ranges and not obj.timezone:
+            raise CommandError('', 'workflow: allowed_times.time_ranges requires timezone')
+
+        # approvers
+        for idx, a in enumerate(data.get('approvers') or []):
+            if not isinstance(a, dict):
+                continue
+            principal = a.get('principal') or {}
+            if not isinstance(principal, dict):
+                continue
+            ptype = str(principal.get('type', '') or '').lower()
+            escalation = bool(a.get('escalation', False))
+            esc_after_raw = a.get('escalation_after')
+            esc_after_ms = cls._parse_duration(esc_after_raw) if esc_after_raw else 0
+            # V7: escalation_after requires escalation: true
+            if esc_after_ms and not escalation:
+                raise CommandError('', f'workflow: approvers[{idx}] escalation_after requires escalation: true')
+            if ptype == 'user':
+                email = str(principal.get('email', '') or '').strip()
+                if not email:
+                    raise CommandError('', f'workflow: approvers[{idx}] user principal requires non-empty email')
+                obj.approvers.append({
+                    'principal_type': 'user', 'email': email, 'team_uid_b64': None,
+                    'escalation': escalation, 'escalation_after_ms': esc_after_ms,
+                })
+            elif ptype == 'team':
+                uid_b64 = str(principal.get('team_uid_base64url', '') or '').strip()
+                if not uid_b64:
+                    raise CommandError('', f'workflow: approvers[{idx}] team principal requires non-empty team_uid_base64url')
+                obj.approvers.append({
+                    'principal_type': 'team', 'email': None, 'team_uid_b64': uid_b64,
+                    'escalation': escalation, 'escalation_after_ms': esc_after_ms,
+                })
+            else:
+                raise CommandError('', f'workflow: approvers[{idx}] principal.type must be "user" or "team", got "{ptype}"')
+
+        # V2: non-trivial guard — at least one meaningful flag must be set
+        is_trivial = (
+            obj.approvals_needed == 0
+            and not obj.start_access_on_approval
+            and not obj.checkout_needed
+            and not obj.require_mfa
+            and not obj.allowed_days
+            and not obj.time_ranges
+        )
+        if is_trivial:
+            return None  # nothing to persist; caller treats as delete/no-op
+
+        # V4 warning: approvals_needed > 0 with no approvers
+        if obj.approvals_needed > 0 and not obj.approvers:
+            logging.warning('workflow: approvals_needed > 0 but no approvers specified')
+
+        return obj
+
+    def validate_principals(self, params, resource_title: str = '') -> None:
+        """Validate team UIDs via RecordResolver.validate_team (which checks both
+        team_cache and enterprise.teams). Raises CommandError on first unknown UID.
+        """
+        for idx, a in enumerate(self.approvers):
+            if a['principal_type'] != 'team':
+                continue
+            try:
+                RecordResolver.validate_team(params, a['team_uid_b64'])
+            except CommandError as e:
+                prefix = f'Resource "{resource_title}": ' if resource_title else ''
+                raise CommandError('', f'{prefix}workflow approvers[{idx}]: {e.message or str(e)}')
 
 
 class DagJitSettingsObject():
@@ -2085,7 +2226,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
 
         # disable_dynamic_resizing ? "" : "display-update"
         val = utils.value_to_boolean(data.get("disable_dynamic_resizing", None))
-        if val is not True: obj.resizeMethod = "display-update"
+        obj.resizeMethod = "" if val is True else "display-update"
 
         return obj
 
@@ -2131,7 +2272,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             kvp["enableWallpaper"] = self.enableWallpaper
 
         # populated on load - "resizeMethod": disable_dynamic_resizing ? "" : "display-update"
-        if str(self.resizeMethod) == "display-update":
+        if isinstance(self.resizeMethod, str):
             kvp["resizeMethod"] = self.resizeMethod
 
         if isinstance(self.sftp, SFTPConnectionSettings):
@@ -2900,10 +3041,12 @@ class PamRemoteBrowserSettings:
     def __init__(
         self,
         options: Optional[DagSettingsObject] = None,
-        connection: Optional[ConnectionSettingsHTTP] = None
+        connection: Optional[ConnectionSettingsHTTP] = None,
+        workflow: Optional[PamWorkflowOptions] = None,
     ):
         self.options = options
         self.connection = connection
+        self.workflow = workflow  # not on record nor in DAG; applied via Krouter
 
     @classmethod
     def load(cls, data: Optional[Union[str, dict]]):
@@ -2912,9 +3055,14 @@ class PamRemoteBrowserSettings:
         except: logging.error(f"PAM RBI Settings field failed to load from: {str(data)[:80]}...")
         if not isinstance(data, dict): return obj
 
-        options = DagSettingsObject.load(data.get("options", {}))
+        options_dict = data.get("options", {}) or {}
+        options = DagSettingsObject.load(options_dict)
         if not is_empty_instance(options):
             obj.options = options
+        if isinstance(options_dict, dict):
+            workflow_value = options_dict.get("workflow")
+            if workflow_value is not None:
+                obj.workflow = PamWorkflowOptions.load(workflow_value)
 
         cdata = data.get("connection", {})
         # TO DO: if isinstance(cdata, str): lookup_by_name(pam_data.connections)
@@ -2944,6 +3092,7 @@ class PamSettingsFieldData:
         options: Optional[DagSettingsObject] = None,
         jit_settings: Optional[DagJitSettingsObject] = None,
         ai_settings: Optional[DagAiSettingsObject] = None,
+        workflow: Optional[PamWorkflowOptions] = None,
     ):
         self.allowSupplyHost = allowSupplyHost
         self.connection = connection
@@ -2951,6 +3100,7 @@ class PamSettingsFieldData:
         self.options = options
         self.jit_settings = jit_settings
         self.ai_settings = ai_settings
+        self.workflow = workflow  # not on record nor in DAG; applied via Krouter
 
     # PamConnectionSettings excludes ConnectionSettingsHTTP
     pam_connection_classes = [
@@ -2981,8 +3131,8 @@ class PamSettingsFieldData:
         empty = is_empty_instance(self.options)
         empty = empty and is_empty_instance(self.portForward)
         empty = empty and is_empty_instance(self.connection, ["protocol"])
-        # NB! JIT and AI settings are in import json but not in record json (just DAG json)
-        empty = empty and self.jit_settings is None and self.ai_settings is None
+        # NB! JIT, AI, workflow are in import json but not in record json (not DAG either for workflow)
+        empty = empty and self.jit_settings is None and self.ai_settings is None and self.workflow is None
         return empty
 
     @classmethod
@@ -3008,6 +3158,9 @@ class PamSettingsFieldData:
                 ai_settings = DagAiSettingsObject.load(ai_value)
                 if ai_settings:
                     obj.ai_settings = ai_settings
+            workflow_value = options_dict.get("workflow")
+            if workflow_value is not None:
+                obj.workflow = PamWorkflowOptions.load(workflow_value)
 
         portForward = PamPortForwardSettings.load(data.get("port_forward", {}))
         if not is_empty_instance(portForward):

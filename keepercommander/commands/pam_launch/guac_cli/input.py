@@ -34,6 +34,7 @@ import os
 import sys
 import logging
 import threading
+import time
 from typing import Optional, Callable
 
 from .decoder import X11Keysym
@@ -42,6 +43,9 @@ from .win_console_input import (
     win_stdin_disable_ctrl_c_process_input,
     win_stdin_restore_console_mode,
 )
+
+from ..crlf_merge_delay import pam_launch_crlf_merge_delay_sec
+from ..terminal_reset import stash_stdin_termios_from_stdin
 
 # Paste-chord sentinels (InputHandler internal)
 # Ctrl+V (Unix raw + Windows uChar): 0x16
@@ -96,6 +100,8 @@ class InputHandler:
         self.raw_mode_active = False
 
         self.stdin_reader = self._get_stdin_reader()
+        # Partner ``\\n`` after ``\\r`` only if it arrives within a few ms (split ``\\r\\n``).
+        self._suppress_lf_key_deadline: Optional[float] = None
 
     def _get_stdin_reader(self):
         if sys.platform == 'win32':
@@ -202,6 +208,18 @@ class InputHandler:
         if code == 0x03 and self.ctrl_c_coordinator:
             self.ctrl_c_coordinator.handle()
             return
+
+        # Enter: many TTYs send ``\\r`` then ``\\n`` as separate reads — one physical Return.
+        if code == 13:
+            self._suppress_lf_key_deadline = time.monotonic() + pam_launch_crlf_merge_delay_sec()
+            self._send_key(X11Keysym.RETURN)
+            return
+        if code == 10:
+            dline = self._suppress_lf_key_deadline
+            if dline is not None and time.monotonic() <= dline:
+                self._suppress_lf_key_deadline = None
+                return
+            self._suppress_lf_key_deadline = None
 
         # Paste chords: local clipboard stream vs key events (disablePaste)
         if ch in (
@@ -352,9 +370,9 @@ class UnixStdinReader:
         if self.old_settings:
             try:
                 import termios
-                termios.tcsetattr(
-                    sys.stdin.fileno(), termios.TCSADRAIN, self.old_settings
-                )
+                _fd = sys.stdin.fileno()
+                termios.tcsetattr(_fd, termios.TCSADRAIN, self.old_settings)
+                stash_stdin_termios_from_stdin()
             except Exception as exc:
                 logging.warning(f'Failed to restore terminal: {exc}')
             self.old_settings = None

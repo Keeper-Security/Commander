@@ -1,0 +1,61 @@
+name: Generate SBOM
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  generate-sbom:
+    name: "Generate and Publish SBOM"
+    environment: prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Commander and SBOM tools
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install .
+          pip install cyclonedx-bom
+
+          VERSION=$(python3 -c "import keepercommander.__init__ as init; print(init.__version__)")
+          echo "PACKAGE_VERSION=${VERSION}" >> $GITHUB_ENV
+
+          pip freeze > installed_packages.txt
+
+      - name: Generate CycloneDX SBOM
+        run: cyclonedx-py environment -o sbom.cdx.json
+
+      - name: Upload SBOM to Manifest-Cyber
+        run: |
+          sbom="$(base64 -w 0 sbom.cdx.json)"
+          cat <<EOF > manifest-request.json
+          {
+              "base64BomContents": "$sbom",
+              "source": "github-actions",
+              "relationship": "first",
+              "filename": "sbom.cdx.json"
+          }
+          EOF
+
+          curl --location --fail --request PUT 'https://api.manifestcyber.com/v1/sbom/upload' \
+            --header 'Authorization: Bearer ${{ secrets.MANIFEST_TOKEN }}' \
+            --header 'Content-Type: application/json' \
+            --data-binary "@manifest-request.json"
+
+      - name: Archive SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-keepercommander-${{ env.PACKAGE_VERSION }}
+          path: |
+            sbom.cdx.json
+            installed_packages.txt
+          retention-days: 30

@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from typing import Callable, Optional
 
 from .session_input import CtrlCCoordinator, PasteOrchestrator
@@ -39,6 +40,9 @@ from .win_console_input import (
     win_stdin_disable_ctrl_c_process_input,
     win_stdin_restore_console_mode,
 )
+
+from ..crlf_merge_delay import pam_launch_crlf_merge_delay_sec
+from ..terminal_reset import stash_stdin_termios_from_stdin
 
 
 class StdinHandler:
@@ -79,6 +83,9 @@ class StdinHandler:
         self.thread: Optional[threading.Thread] = None
         self.raw_mode_active = False
         self._escape_buffer = b''  # Buffer for escape sequences
+        # After a lone ``\\r`` -> ``\\n``, the next read may be the partner ``\\n`` (split ``\\r\\n``).
+        # Only drop that LF if it arrives within a few ms; a second Enter's LF is usually later.
+        self._suppress_lf_deadline: Optional[float] = None
 
         # Platform-specific stdin reader
         self._stdin_reader = self._get_stdin_reader()
@@ -257,6 +264,23 @@ class StdinHandler:
                 self.stdin_callback(b'\n')
                 if i + 1 < len(data) and data[i + 1] == 0x0A:  # skip trailing \n in \r\n
                     i += 1
+                    self._suppress_lf_deadline = None
+                else:
+                    self._suppress_lf_deadline = time.monotonic() + pam_launch_crlf_merge_delay_sec()
+            elif byte == 0x0A:
+                dline = self._suppress_lf_deadline
+                if (
+                    dline is not None
+                    and time.monotonic() <= dline
+                    and len(data) == 1
+                ):
+                    self._suppress_lf_deadline = None
+                    i += 1
+                    continue
+                self._suppress_lf_deadline = None
+                self.stdin_callback(b'\n')
+                i += 1
+                continue
             elif byte == 0x03:  # Ctrl+C — double-tap coordinator
                 if self.ctrl_c_coordinator:
                     self.ctrl_c_coordinator.handle()
@@ -486,6 +510,7 @@ class _UnixStdinReader:
             try:
                 import termios
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self.old_settings)
+                stash_stdin_termios_from_stdin()
             except Exception as e:
                 logging.warning(f"Failed to restore terminal: {e}")
             self.old_settings = None
@@ -558,6 +583,7 @@ class _MacOSStdinReader:
             try:
                 import termios
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self.old_settings)
+                stash_stdin_termios_from_stdin()
             except Exception as e:
                 logging.warning(f"Failed to restore terminal on macOS: {e}")
             self.old_settings = None

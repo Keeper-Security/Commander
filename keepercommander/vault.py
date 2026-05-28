@@ -327,7 +327,7 @@ class TypedField(object):
         f_type = sanitize_str_field_value(field_type) or 'text'
         # TODO check field value
         if not isinstance(field_value, list):
-            if field_value:
+            if field_value is not None:
                 field_value = [field_value]
             else:
                 field_value = []

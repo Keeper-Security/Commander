@@ -9,18 +9,55 @@
 # Contact: ops@keepersecurity.com
 #
 
+import itertools
 import json
 import logging
 import getpass
 import threading
 from datetime import datetime, timedelta
-from typing import Tuple
+from typing import Tuple, Optional, List, Dict, Any, Set
 
 from . import api, utils, crypto
 from .proto import APIRequest_pb2
 from .display import bcolors
 from .params import KeeperParams
-from .error import KeeperApiError
+from .error import KeeperApiError, CommandError
+
+
+def _find_enforcement_value(enforcements, key):
+    # type: (Any, str) -> Any
+    """Return raw enforcement value for `key` across known layouts, or None."""
+    if not isinstance(enforcements, dict):
+        return None
+    for bucket in ('jsons', 'strings'):
+        items = enforcements.get(bucket)
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get('key') == key:
+                    return item.get('value')
+    return enforcements.get(key) if key in enforcements else None
+
+
+def _coerce_int(value):
+    # type: (Any) -> Optional[int]
+    """Coerce enforcement values to int.
+
+    Server-side enforcement payloads sometimes serialize numeric fields as
+    strings. Returns None if the value cannot be safely interpreted as int.
+    `bool` is intentionally rejected (it's a subclass of int).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if s.lstrip('-').isdigit():
+            try:
+                return int(s)
+            except ValueError:
+                return None
+    return None
 
 
 class MasterPasswordReentryEnforcer:
@@ -354,3 +391,167 @@ class MasterPasswordReentryEnforcer:
         # If no authentication methods are available, policy does not apply
         logging.info("Master Password Re-authentication skipped: Master Password or alternate SSO Master Password not available - policy does not apply")
         return True
+
+
+class PasswordComplexityEnforcer:
+    """Enforces GENERATED_PASSWORD_COMPLEXITY policy on record passwords."""
+
+    _POLICY_KEY = 'generated_password_complexity'
+
+    _CHAR_CLASSES = (
+        ('lower-use', 'lower-min', 'lowercase', str.islower),
+        ('upper-use', 'upper-min', 'uppercase', str.isupper),
+        ('digit-use', 'digit-min', 'digit',     str.isdigit),
+    )
+
+    @classmethod
+    def get_policy(cls, params):   # type: (KeeperParams) -> Optional[Dict[str, Any]]
+        if not params or not params.enforcements:
+            return None
+        raw = _find_enforcement_value(params.enforcements, cls._POLICY_KEY)
+        if raw is None:
+            return None
+        try:
+            rules = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            logging.debug('Failed to parse %s enforcement', cls._POLICY_KEY)
+            return None
+        if isinstance(rules, list) and rules and isinstance(rules[0], dict):
+            return rules[0]
+        if isinstance(rules, dict):
+            return rules
+        return None
+
+    @classmethod
+    def validate_password(cls, password, policy):   # type: (str, Dict[str, Any]) -> List[str]
+        failures = []   # type: List[str]
+        if not policy or not isinstance(password, str) or not password:
+            return failures
+
+        min_length = _coerce_int(policy.get('length'))
+        if min_length is not None and min_length > 0 and len(password) < min_length:
+            failures.append(
+                f'Password must be at least {min_length} characters (got {len(password)}).')
+
+        for use_key, min_key, label, predicate in cls._CHAR_CLASSES:
+            if not policy.get(use_key):
+                continue
+            required = _coerce_int(policy.get(min_key, 1))
+            if required is None or required <= 0:
+                continue
+            count = sum(1 for c in password if predicate(c))
+            if count < required:
+                failures.append(
+                    f'Password must contain at least {required} {label} character(s) (got {count}).')
+
+        if policy.get('special-use'):
+            required = _coerce_int(policy.get('special-min', 1))
+            if required is not None and required > 0:
+                allowed = policy.get('special') or ''
+                count = (sum(1 for c in password if c in allowed) if allowed
+                         else sum(1 for c in password if not c.isalnum()))
+                if count < required:
+                    failures.append(
+                        f'Password must contain at least {required} special character(s) (got {count}).')
+
+        return failures
+
+    @classmethod
+    def validate_record(cls, params, source):   # type: (KeeperParams, Any) -> List[str]
+        """Return policy violations across all password fields in `source`.
+
+        `source` may be a vault.TypedRecord, a v3 record-data dict, or a JSON
+        string of that dict. Returns [] when no policy applies or no password
+        fields are present.
+        """
+        policy = cls.get_policy(params)
+        if not policy:
+            return []
+        failures = []   # type: List[str]
+        for pw in cls._extract_passwords(source):
+            failures.extend(cls.validate_password(pw, policy))
+        return failures
+
+    @staticmethod
+    def _extract_passwords(source):   # type: (Any) -> List[str]
+        if source is None:
+            return []
+        passwords = []   # type: List[str]
+        if hasattr(source, 'fields') and hasattr(source, 'custom'):
+            for fld in itertools.chain(source.fields or [], source.custom or []):
+                if getattr(fld, 'type', None) == 'password':
+                    val = getattr(fld, 'value', None)
+                    if isinstance(val, list):
+                        passwords.extend(v for v in val if isinstance(v, str) and v)
+            return passwords
+
+        data = source
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(data, dict):
+            return []
+        for fld in data.get('fields') or []:
+            if isinstance(fld, dict) and fld.get('type') == 'password':
+                val = fld.get('value')
+                if isinstance(val, list):
+                    passwords.extend(v for v in val if isinstance(v, str) and v)
+        return passwords
+
+
+class RecordTypeEnforcer:
+    """Enforces RESTRICT_RECORD_TYPES policy on record creation/update.
+
+    Stored value is a JSON object {"std": [<id>, ...], "ent": [<id>, ...]} of
+    record-type IDs the user is *blocked* from creating. IDs are resolved to
+    type names via `params.record_type_cache`.
+    """
+
+    _POLICY_KEY = 'restrict_record_types'
+
+    @classmethod
+    def get_restricted_record_types(cls, params):   # type: (KeeperParams) -> Optional[Set[str]]
+        if not params or not params.enforcements:
+            return None
+        raw = _find_enforcement_value(params.enforcements, cls._POLICY_KEY)
+        if raw is None:
+            return None
+        try:
+            policy = raw if isinstance(raw, dict) else json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logging.debug('Failed to parse %s enforcement', cls._POLICY_KEY)
+            return None
+        if not isinstance(policy, dict):
+            return None
+
+        cache = getattr(params, 'record_type_cache', None) or {}
+        restricted = set()   # type: Set[str]
+        for rt_id in list(policy.get('std') or []) + list(policy.get('ent') or []):
+            entry = cache.get(rt_id)
+            if not entry:
+                continue
+            try:
+                schema = json.loads(entry) if isinstance(entry, str) else entry
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(schema, dict):
+                name = schema.get('$id')
+                if name:
+                    restricted.add(name)
+        return restricted
+
+    @classmethod
+    def enforce(cls, params, record_type, command):
+        # type: (KeeperParams, Optional[str], str) -> None
+        """Raise CommandError when `record_type` is blocked by policy."""
+        if not record_type:
+            return
+        restricted = cls.get_restricted_record_types(params)
+        if not restricted or record_type not in restricted:
+            return
+        raise CommandError(
+            command,
+            f'Record type "{record_type}" is restricted by your enterprise role policy '
+            f'and cannot be created.')

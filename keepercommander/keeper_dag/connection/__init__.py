@@ -8,9 +8,10 @@ from ..utils import value_to_boolean, kotlin_bytes
 from ..crypto import encrypt_aes, decrypt_aes
 import csv
 import os
-import time
 import sys
+import time
 from enum import Enum
+from ...constants import get_keeper_server_hostname
 from pydantic import BaseModel
 from typing import Optional, Union, Any, Dict, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
@@ -99,6 +100,7 @@ class ConnectionBase:
 
     @staticmethod
     def get_router_host(server_hostname: str):
+        server_hostname = get_keeper_server_hostname(server_hostname)
 
         # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
         # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.

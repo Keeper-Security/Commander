@@ -1,7 +1,10 @@
 import abc
 import datetime
 import logging
+import os
+import ssl
 from collections import namedtuple
+from contextlib import contextmanager
 from typing import Iterable, Union, Callable, Dict, List, Optional, Set, Any
 
 import requests
@@ -40,14 +43,51 @@ class ICrmDataSource(abc.ABC):
 
 
 class AdCrmDataSource(ICrmDataSource):
-    def __init__(self, ad_url, ad_user, ad_password, scim_groups, use_netbios_domain=False):  # type: (str, str, str, Optional[List[str]], bool) -> None
+    def __init__(self, ad_url, ad_user, ad_password, scim_groups, use_netbios_domain=False):  # type: (str, Optional[str], Optional[str], Optional[List[str]], bool) -> None
         super().__init__()
+        if not ad_url.lower().startswith('ldap'):
+            ad_url = 'ldaps://' + ad_url
         self.ad_url = ad_url
-        self.ad_user = ad_user
-        self.ad_password = ad_password
+        self.ad_user = ad_user if ad_user else None
+        self.ad_password = ad_password if self.ad_user else None
         self.scim_groups = scim_groups or []
         self.use_netbios_domain = use_netbios_domain
         self._domain_lookup = None  # type: Optional[Dict[str, str]]
+
+    @staticmethod
+    def _get_ldap_module():
+        try:
+            import ldap3
+            return ldap3
+        except ModuleNotFoundError:
+            message = 'LDAP3 client is not installed.\npip install ldap3'
+            if os.name == 'nt':
+                message += '\nOptional: pip install winkerberos'
+            raise CommandError('', message)
+
+    @contextmanager
+    def get_ldap_connection(self):
+        ldap3 = AdCrmDataSource._get_ldap_module()
+        tls = None   # type: Optional[ldap3.Tls]
+        if self.ad_user:
+            auth_method = ldap3.SIMPLE
+            if self.ad_url.startswith('ldap://'):
+                logging.debug('AD connect: Request TLS login for LDAP port')
+                tls = ldap3.Tls(validate=ssl.CERT_REQUIRED)
+            else:
+                logging.debug('AD connect: LDAPS Simple login')
+        else:
+            logging.debug('AD connect: Kerberos auth method. Requires Windows, domain user, and domain computer')
+            auth_method = ldap3.SASL
+        server = ldap3.Server(self.ad_url, tls=tls)
+        with ldap3.Connection(server, user=self.ad_user, password=self.ad_password,
+                                      authentication=auth_method,
+                                      sasl_mechanism=ldap3.KERBEROS if auth_method == ldap3.SASL else None) as connection:
+            connection.open()
+            connection.bind()
+            if not connection.bind():
+                raise Exception('Invalid AD username or password')
+            yield connection
 
     def _build_domain_lookup(self, connection) -> Dict[str, str]:
         """Build a mapping of DNS domain names to NetBIOS names.
@@ -55,13 +95,9 @@ class AdCrmDataSource(ICrmDataSource):
         Returns:
             Dict mapping DNS names (e.g., 'test.local') to NetBIOS names (e.g., 'TEST')
         """
-        try:
-            import ldap3
-        except ModuleNotFoundError:
-            return {}
+        ldap3 = AdCrmDataSource._get_ldap_module()
 
         domain_map: Dict[str, str] = {}
-
         if not connection.search('', '(class=*)', search_scope=ldap3.BASE, attributes=["*"]):
             return domain_map
         if len(connection.entries) == 0:
@@ -102,15 +138,9 @@ class AdCrmDataSource(ICrmDataSource):
         return domain_map
 
     def resolve_domains(self) -> List[str]:
-        try:
-            import ldap3
-        except ModuleNotFoundError:
-            raise CommandError('', 'LDAP3 client is not installed.\npip install ldap3')
+        ldap3 = AdCrmDataSource._get_ldap_module()
 
-        server = ldap3.Server(self.ad_url)
-        with ldap3.Connection(server, user=self.ad_user, password=self.ad_password,
-                              authentication=ldap3.SIMPLE if server.ssl else ldap3.NTLM) as connection:
-            connection.bind()
+        with self.get_ldap_connection() as connection:
             if not connection.search('', '(class=*)', search_scope=ldap3.BASE, attributes=["*"]):
                 return []
             if len(connection.entries) == 0:
@@ -148,16 +178,9 @@ class AdCrmDataSource(ICrmDataSource):
             return list(domains)
 
     def populate(self):
-        try:
-            import ldap3
-            from ldap3.utils.conv import escape_filter_chars
-        except ModuleNotFoundError:
-            raise CommandError('', 'LDAP3 client is not installed.\npip install ldap3')
-
-        server = ldap3.Server(self.ad_url)
-        with ldap3.Connection(server, user=self.ad_user, password=self.ad_password,
-                              authentication=ldap3.SIMPLE if server.ssl else ldap3.NTLM) as connection:
-            connection.bind()
+        ldap3 = AdCrmDataSource._get_ldap_module()
+        from ldap3.utils.conv import escape_filter_chars
+        with self.get_ldap_connection() as connection:
             if not connection.search('', '(class=*)', search_scope=ldap3.BASE, attributes=["*"]):
                 raise CommandError('', 'Active Directory: cannot query Root DSE')
             if len(connection.entries) == 0:
