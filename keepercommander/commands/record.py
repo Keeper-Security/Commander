@@ -144,8 +144,8 @@ search_parser = argparse.ArgumentParser(prog='search', description='Search the v
 search_parser.add_argument('pattern', nargs='*', type=str, action='store', help='search terms (space-separated, order independent)')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='append',
-                           help='Category to search — repeatable: "r" = records, "s" = Classic shared folders, '
-                                '"t" = teams, "d" = KeeperDrive folders. '
+                           help='Category to search — repeatable: "r" = records, "s" = shared folders, '
+                                '"t" = teams, "d" = Nested Share folders. '
                                 'Pass multiple times (e.g. -c s -c d) or combine letters (e.g. -c sd). '
                                 'Default when omitted: all categories (rstd).')
 search_parser.add_argument('--regex', dest='regex', action='store_true',
