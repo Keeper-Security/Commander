@@ -119,6 +119,7 @@ def show_brief_help():
     print('  --password, -kp PASSWORD Master password for the account')
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
+    print('  --silent                 Turn off all logging statements')    
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --proxy PROXY            Proxy server')
     print('  --new-login              Force full login (bypass persistent login)')
