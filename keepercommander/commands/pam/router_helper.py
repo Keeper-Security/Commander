@@ -105,6 +105,15 @@ def router_configure_universal_sync(params, proto_request, transmission_key=None
     return rs
 
 
+def router_universal_sync_pre_check(params, proto_request, transmission_key=None,
+                                    encrypted_transmission_key=None, encrypted_session_token=None):
+    return _post_request_to_router(params, 'universal_sync_pre_check_folders', proto_request,
+                                   rs_type=pam_pb2.PAMUniversalSyncPreCheckResponse,
+                                   transmission_key=transmission_key,
+                                   encrypted_transmission_key=encrypted_transmission_key,
+                                   encrypted_session_token=encrypted_session_token)
+
+
 def router_get_rotation_schedules(params, proto_request):
     return _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request, rs_type=pam_pb2.PAMRotationSchedulesResponse)
 

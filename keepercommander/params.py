@@ -182,6 +182,7 @@ class KeeperParams:
         self.record_rotation_cache = {}
         self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
         self.key_cache = {}            # type: Dict[str, PublicKeys]
+        self.uss_config_cache = {}     # type: Dict[str, dict]  # record_uid -> USS config data
         self.available_team_cache = None
         self.user_cache = {}
         self.subfolder_cache = {}
@@ -264,6 +265,7 @@ class KeeperParams:
         self.key_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
+        self.uss_config_cache.clear()
         if self.folder_cache:
             self.folder_cache.clear()
         self.user_cache.clear()

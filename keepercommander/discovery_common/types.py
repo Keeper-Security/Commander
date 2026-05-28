@@ -283,6 +283,11 @@ class UserRelEnum(BaseEnum):
     INACTIVE = "inactive"
 
 
+class ControllerStatus(BaseEnum):
+    ONLINE = 0
+    OFFLINE = 1
+
+
 class RecordStatus(BaseEnum):
     NONE = "none"
     EXISTS = "exists"
