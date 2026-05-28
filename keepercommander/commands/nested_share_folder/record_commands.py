@@ -179,6 +179,26 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
     def get_parser(self):
         return nested_share_record_update_parser
 
+    def _resolve_field_value(self, parsed):
+        raw = parsed.value
+        if not raw:
+            return raw
+
+        action_params = []
+        if self.is_json_value(raw, action_params):
+            return action_params[0] if action_params else None
+        action_params.clear()
+        if self.is_generate_value(raw, action_params):
+            if parsed.type == 'password':
+                return self.generate_password(action_params)
+            if parsed.type in ('oneTimeCode', 'otp'):
+                return self.generate_totp_url()
+            return raw
+        action_params.clear()
+        if self.is_base64_value(raw, action_params):
+            return action_params[0] if action_params else None
+        return raw
+
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
             print(record_fields_description)
@@ -198,14 +218,23 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
         for spec in [f.strip() for f in kwargs.get('fields', []) if f.strip()]:
             try:
                 parsed = RecordEditMixin.parse_field(spec)
+                value = self._resolve_field_value(parsed)
+                if value is None:
+                    continue
                 if parsed.type in fields:
                     existing = fields[parsed.type]
                     fields[parsed.type] = ([existing] if not isinstance(existing, list)
-                                           else existing) + [parsed.value]
+                                           else existing) + [value]
                 else:
-                    fields[parsed.type] = parsed.value
+                    fields[parsed.type] = value
             except ValueError as e:
                 raise CommandError('nsf-record-update', f'Invalid field specification: {e}')
+
+        if self.warnings:
+            for w in self.warnings:
+                logging.warning(w)
+            if not kwargs.get('force'):
+                return
 
         with command_error_handler('nsf-record-update'):
             for identifier in record_uids:
