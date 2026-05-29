@@ -104,12 +104,6 @@ class NestedShareFolderMkdirCommand(Command):
     @staticmethod
     def _parse_path(folder_path):
         """Split *folder_path* into a list of segment names.
-
-        ``//`` inside a segment is treated as a literal ``/`` in the
-        folder name (same escaping convention as legacy ``mkdir``).
-        A single ``/`` is the path separator.
-
-        Returns a list with at least one non-empty segment.
         """
         sentinel = '\x00'
         collapsed = folder_path.replace('//', sentinel)
@@ -128,13 +122,6 @@ class NestedShareFolderMkdirCommand(Command):
         """Insert a just-created folder into the local NSF cache so that
         subsequent segments in the same path can discover it as a parent
         without requiring a full sync round-trip.
-
-        ``folder_key`` is the unencrypted folder key returned by the
-        creation API; caching it under ``folder_key_unencrypted`` lets
-        ``get_folder_key`` find it when encrypting the child segment's
-        key, avoiding the "Parent folder key not found" fallback that
-        would otherwise encrypt the child key with the user data key
-        instead of the parent's key.
         """
         nsf = getattr(params, 'nested_share_folders', None)
         if nsf is None:
@@ -151,13 +138,6 @@ class NestedShareFolderMkdirCommand(Command):
     def _find_existing_child(params, folder_name, parent_uid):
         """Find an existing NSF folder named *folder_name* whose parent matches
         *parent_uid*. ``parent_uid=None`` means "root level".
-
-        A folder is considered at root level when its ``parent_uid`` is empty,
-        is the well-known root sentinel (``ROOT_FOLDER_UID`` / ``'root'``), or
-        points to a UID that is not itself a known NSF folder (the per-account
-        vault-drive container UID — e.g. ``AAAAAAAAAAAAAAAAAUIpTQ`` — which
-        ``normalize_parent_uid`` does not recognise but which behaves as root
-        in every other folder traversal in the codebase).
         """
         nsf_folders = getattr(params, 'nested_share_folders', {})
         name_lower = folder_name.lower()

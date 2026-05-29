@@ -578,12 +578,6 @@ class NestedShareRecordRemoveCommand(Command):
             print('\nOne or more records could not be previewed. Aborting.')
             return
 
-        # The impact summary uses pre-action ("will be …") tense and contains a
-        # "Warning:" line. Printing it unconditionally caused Service Mode's
-        # response parser to classify successful --force deletions as HTTP 400
-        # status="warning". Match classic `rm -f`: stay silent when --force is
-        # used and the preview is clean. Still print for interactive (no force)
-        # confirmation and for explicit --dry-run.
         if dry_run or not force:
             for line in info_lines:
                 print(line)
