@@ -110,7 +110,7 @@ def _get_plugin(url):  # type: (str) -> SecureStorageBase
     if not par.scheme:
         raise SecureStorageException(f'Configuration file error: "{CONFIG_STORAGE_URL}" is not URL')
 
-    plugin_name = par.scheme
+    plugin_name = par.scheme.replace('-', '_')
     if not any(x for x in pkgutil.iter_modules(config_storage.__path__) if x.name == plugin_name):
         raise SecureStorageException(f'Protected storage "{plugin_name}" is not supported')
 
