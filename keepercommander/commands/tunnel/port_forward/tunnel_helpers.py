@@ -1797,6 +1797,25 @@ class TunnelSignalHandler:
 
             elif new_state == "closed":
                 logging.debug(f"Connection closed for tube {tube_id}")
+                # The WebRTC peer connection reached "closed" state. This can happen
+                # without a preceding channel_closed signal (e.g. ICE timeout, network
+                # drop). If we don't clean up here the Rust tube keeps running and any
+                # active forwarded TCP sessions (SSH, MySQL, etc.) keep flowing while
+                # Commander stops reporting the tunnel entirely.
+                if tube_id and self.tube_registry:
+                    try:
+                        self.tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                    except Exception:
+                        pass  # Already closed — idempotent
+                if tube_id:
+                    session = get_tunnel_session(tube_id)
+                    if session:
+                        if hasattr(session, 'signal_handler') and session.signal_handler:
+                            session.signal_handler.cleanup()
+                        if session.websocket_stop_event and session.websocket_thread:
+                            session.websocket_stop_event.set()
+                            session.websocket_thread.join(timeout=5.0)
+                    unregister_tunnel_session(tube_id)
 
             else:
                 logging.debug(f"Connection state for tube {tube_id}: {new_state}")
