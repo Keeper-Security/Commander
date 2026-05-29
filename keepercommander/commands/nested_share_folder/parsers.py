@@ -36,7 +36,9 @@ nested_share_folder_mkdir_parser = _make_parser(
     'nsf-mkdir', 'Create a new Nested Share Folder using v3 API')
 nested_share_folder_mkdir_parser.add_argument(
     'folder', type=str,
-    help='Folder name to create (use "//" to embed a literal "/" in the name)')
+    help='Folder name or path (e.g. "Parent/Child/Grand") to create. '
+         'Intermediate folders are created automatically. '
+         'Use "//" to embed a literal "/" in a segment name.')
 nested_share_folder_mkdir_parser.add_argument(
     '--color', type=str,
     choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'gray'],

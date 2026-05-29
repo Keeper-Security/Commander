@@ -151,7 +151,9 @@ def update_record_v3(params, record_uid, data=None, title=None,
         if 'data_unencrypted' in rec:
             raw = rec['data_unencrypted']
             if isinstance(raw, bytes):
-                existing = json.loads(raw.decode())
+                existing = json.loads(raw.decode('utf-8'))
+            elif isinstance(raw, str):
+                existing = json.loads(raw)
         data = existing.copy() if existing else {'fields': []}
         if title is not None:
             data['title'] = title
