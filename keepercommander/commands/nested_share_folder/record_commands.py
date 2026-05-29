@@ -553,28 +553,41 @@ class NestedShareRecordRemoveCommand(Command):
     def _preview_and_confirm(self, params, removals, operation, force, dry_run):
         result = _nsf.remove_record_v3(params, removals, dry_run=True)
         any_error = False
-        summary_lines = []
+        error_lines = []
+        info_lines = []
 
         for pr in result['preview_results']:
             title = self._record_title(params, pr['record_uid'])
             if pr.get('error'):
                 any_error = True
                 err = pr['error']
-                summary_lines.append(
+                error_lines.append(
                     f"  {title} [{pr['record_uid']}]: "
                     f"{err.get('code', '')} — {err.get('message', '')}"
                 )
             else:
-                summary_lines.extend(
+                info_lines.extend(
                     self._impact_summary(pr['record_uid'], title, operation, pr.get('impact'))
                 )
 
-        for line in summary_lines:
-            print(line)
-
+        # Errors must always surface, even in --force mode, so the caller (or
+        # Service Mode HTTP layer) can see why the operation aborted.
         if any_error:
+            for line in error_lines:
+                print(line)
             print('\nOne or more records could not be previewed. Aborting.')
             return
+
+        # The impact summary uses pre-action ("will be …") tense and contains a
+        # "Warning:" line. Printing it unconditionally caused Service Mode's
+        # response parser to classify successful --force deletions as HTTP 400
+        # status="warning". Match classic `rm -f`: stay silent when --force is
+        # used and the preview is clean. Still print for interactive (no force)
+        # confirmation and for explicit --dry-run.
+        if dry_run or not force:
+            for line in info_lines:
+                print(line)
+
         if dry_run:
             print('\n[Dry-run] No records were deleted.')
             return

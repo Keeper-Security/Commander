@@ -529,7 +529,7 @@ class NestedShareFolderRemoveCommand(Command):
                     self._impact_summary(pr['folder_uid'], name, operation, pr.get('impact'), quiet)
                 )
 
-        if summary_lines:
+        if summary_lines and (dry_run or not force):
             for line in summary_lines:
                 print(line)
 
