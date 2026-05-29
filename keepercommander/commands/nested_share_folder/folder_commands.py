@@ -61,52 +61,102 @@ class NestedShareFolderMkdirCommand(Command):
         if current and current in getattr(params, 'nested_share_folders', {}):
             base_folder_uid = current
 
-        folder_name = self._parse_path(folder_path)
+        segments = self._parse_path(folder_path)
 
-        existing_uid = self._find_existing_child(params, folder_name, base_folder_uid)
-        if existing_uid:
-            logging.warning('nsf-mkdir: Folder "%s" already exists', folder_name)
-            return existing_uid
+        parent_uid = base_folder_uid
+        last_idx = len(segments) - 1
+        created_uid = None
 
-        with command_error_handler('nsf-mkdir'):
-            result = _nsf.create_folder_v3(
-                params=params, folder_name=folder_name,
-                parent_uid=base_folder_uid,
-                color=color,
-                inherit_permissions=inherit_permissions,
-            )
-            check_result(result, 'nsf-mkdir')
+        for idx, segment in enumerate(segments):
+            is_leaf = (idx == last_idx)
+            existing_uid = self._find_existing_child(params, segment, parent_uid)
+            if existing_uid:
+                if is_leaf:
+                    logging.warning('nsf-mkdir: Folder "%s" already exists', segment)
+                    return existing_uid
+                parent_uid = existing_uid
+                continue
+
+            seg_color = color if is_leaf else None
+            seg_inherit = inherit_permissions if is_leaf else True
+
+            with command_error_handler('nsf-mkdir'):
+                result = _nsf.create_folder_v3(
+                    params=params, folder_name=segment,
+                    parent_uid=parent_uid,
+                    color=seg_color,
+                    inherit_permissions=seg_inherit,
+                )
+                check_result(result, 'nsf-mkdir')
+
+            created_uid = result['folder_uid']
+            self._cache_new_folder(
+                params, created_uid, segment, parent_uid,
+                folder_key=result.get('folder_key_unencrypted'))
+
+            if not is_leaf:
+                logging.debug('nsf-mkdir: Created intermediate folder "%s"', segment)
+            parent_uid = created_uid
 
         params.sync_data = True
-        return result['folder_uid']
+        return created_uid
 
     @staticmethod
     def _parse_path(folder_path):
-        # Collapse escaped slashes (//) to a sentinel so we can detect any
-        # stray path separator and refuse it — nsf-mkdir creates a single
-        # folder, not a nested hierarchy.
-        collapsed = folder_path.replace('//', '\x00')
-        if '/' in collapsed:
-            raise CommandError('nsf-mkdir',
-                               'Character "/" is reserved. Use "//" inside folder name')
-        name = collapsed.replace('\x00', '/').strip()
-        if not name:
+        """Split *folder_path* into a list of segment names.
+        """
+        sentinel = '\x00'
+        collapsed = folder_path.replace('//', sentinel)
+        raw_segments = collapsed.split('/')
+        segments = []
+        for raw in raw_segments:
+            name = raw.replace(sentinel, '/').strip()
+            if name:
+                segments.append(name)
+        if not segments:
             raise CommandError('nsf-mkdir', 'Invalid folder name')
-        return name
+        return segments
+
+    @staticmethod
+    def _cache_new_folder(params, folder_uid, name, parent_uid, folder_key=None):
+        """Insert a just-created folder into the local NSF cache so that
+        subsequent segments in the same path can discover it as a parent
+        without requiring a full sync round-trip.
+        """
+        nsf = getattr(params, 'nested_share_folders', None)
+        if nsf is None:
+            return
+        entry = {
+            'name': name,
+            'parent_uid': parent_uid or '',
+        }
+        if folder_key:
+            entry['folder_key_unencrypted'] = folder_key
+        nsf[folder_uid] = entry
 
     @staticmethod
     def _find_existing_child(params, folder_name, parent_uid):
+        """Find an existing NSF folder named *folder_name* whose parent matches
+        *parent_uid*. ``parent_uid=None`` means "root level".
+        """
         nsf_folders = getattr(params, 'nested_share_folders', {})
         name_lower = folder_name.lower()
-        expected_parent = parent_uid or ''
+        looking_for_root = not parent_uid
         for fuid, fobj in nsf_folders.items():
             if fobj.get('name', '').lower() != name_lower:
                 continue
-            existing_parent = normalize_parent_uid(fobj.get('parent_uid', ''))
-            if existing_parent == 'root':
-                existing_parent = ''
-            if existing_parent == expected_parent:
-                return fuid
+            raw_parent = fobj.get('parent_uid') or ''
+            normalized = normalize_parent_uid(raw_parent)
+            is_root_child = (
+                normalized in ('', 'root')
+                or (raw_parent and raw_parent not in nsf_folders)
+            )
+            if looking_for_root:
+                if is_root_child:
+                    return fuid
+            else:
+                if raw_parent == parent_uid:
+                    return fuid
         return None
 
 
@@ -459,7 +509,7 @@ class NestedShareFolderRemoveCommand(Command):
                     self._impact_summary(pr['folder_uid'], name, operation, pr.get('impact'), quiet)
                 )
 
-        if summary_lines:
+        if summary_lines and (dry_run or not force):
             for line in summary_lines:
                 print(line)
 
