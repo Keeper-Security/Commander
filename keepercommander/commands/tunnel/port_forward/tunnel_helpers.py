@@ -129,20 +129,6 @@ def _version_at_least(version, min_version):
         return False
 
 
-# Minimum keeper-pam-webrtc-rs version that exposes force_close_tube. Both the
-# local Rust crate AND the remote peer must satisfy this gate before Commander
-# escalates a soft close to a force close. Local check uses hasattr (the binding
-# attribute is missing on older crates), remote check uses the SDP-advertised
-# version string.
-FORCE_CLOSE_MIN_VERSION = "2.1.18"
-
-# Default delay between the soft close and the force-close escalation. Matches
-# the consumer-side budget agreed with the gateway (gateway-side
-# KEEPER_GATEWAY_FORCE_CLOSE_TIMEOUT is 6s; we run faster on the consumer because
-# at lease expiry there is no reason to wait long).
-FORCE_CLOSE_DELAY_SECONDS = 3.0
-
-
 def print_above_keeper_prompt(msg):
     """Print ``msg`` so the keeper-shell prompt redraws itself underneath it.
 
@@ -179,66 +165,6 @@ def print_above_keeper_prompt(msg):
             app.invalidate()
         except Exception:
             pass
-
-
-def escalate_close(
-    tube_registry,
-    tube_id,
-    *,
-    remote_webrtc_version=None,
-    reason=None,
-    hard_after_seconds=FORCE_CLOSE_DELAY_SECONDS,
-    log_prefix="",
-):
-    """
-    Soft-close a tube now, then escalate to force_close_tube after
-    `hard_after_seconds` if both endpoints support it.
-
-    The soft close stops new channel creation and emits CloseConnection control
-    frames; the force close (when available) drops the local TCP listener,
-    severs in-flight forwarded TCP streams (SSH, MySQL, etc.) and tears down
-    the peer connection on a short bounded budget.
-
-    Returns the scheduled `threading.Timer` (or None if escalation is not
-    available) so callers can cancel it on a clean exit.
-    """
-    if reason is None:
-        reason = CloseConnectionReasons.AdminClosed
-
-    try:
-        tube_registry.close_tube(tube_id, reason=reason)
-    except Exception as e:
-        logging.debug(f"{log_prefix}soft close_tube failed: {e}")
-
-    has_local = hasattr(tube_registry, "force_close_tube")
-    has_remote = _version_at_least(remote_webrtc_version, FORCE_CLOSE_MIN_VERSION)
-    if not has_local:
-        logging.debug(
-            f"{log_prefix}force_close_tube unavailable in local keeper_pam_webrtc_rs - "
-            f"soft close only"
-        )
-        return None
-    if not has_remote:
-        logging.debug(
-            f"{log_prefix}remote keeper-pam-webrtc {remote_webrtc_version!r} < "
-            f"{FORCE_CLOSE_MIN_VERSION} - soft close only"
-        )
-        return None
-
-    def _do_force_close():
-        try:
-            logging.debug(
-                f"{log_prefix}escalating to force_close_tube({tube_id}) after "
-                f"{hard_after_seconds}s"
-            )
-            tube_registry.force_close_tube(tube_id, reason=reason)
-        except Exception as e:
-            logging.debug(f"{log_prefix}force_close_tube failed: {e}")
-
-    timer = threading.Timer(hard_after_seconds, _do_force_close)
-    timer.daemon = True
-    timer.start()
-    return timer
 
 
 # Constants

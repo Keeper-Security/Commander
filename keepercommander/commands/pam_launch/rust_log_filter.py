@@ -191,23 +191,9 @@ def enter_pam_launch_terminal_rust_logging():
 # the channel is torn down, or TURN ``fail to refresh permissions`` warnings
 # from the relay-conn task as it observes the deallocated allocation.
 #
-# The window must outlive both:
-#   1. The soft→hard close escalation in ``escalate_close``
-#      (``FORCE_CLOSE_DELAY_SECONDS`` = 3 s)
-#   2. A brief TURN refresh-task latency after the PeerConnection drop cascade
-#
-# Imported lazily below to avoid a top-level cycle (this module is imported
-# during pam_launch init, before the tunnel helpers are loaded for some
-# callers).
-def _force_close_delay_seconds():
-    try:
-        from ..tunnel.port_forward.tunnel_helpers import FORCE_CLOSE_DELAY_SECONDS
-        return FORCE_CLOSE_DELAY_SECONDS
-    except Exception:
-        return 3.0
-
-
-_DEFAULT_RUST_LOG_FILTER_GRACE_SEC = _force_close_delay_seconds() + 1.5
+# The window must outlive both the tube close + teardown cascade (~3 s) and a
+# brief TURN refresh-task latency after the PeerConnection drop cascade.
+_DEFAULT_RUST_LOG_FILTER_GRACE_SEC = 4
 
 # Refcount of active pam-launch sessions that have rust-log filtering installed.
 # Incremented in enter_*, decremented at the END of the grace timer in
@@ -282,7 +268,8 @@ def _do_exit_rust_logging(token):
 def exit_pam_launch_terminal_rust_logging(token, grace_sec=_DEFAULT_RUST_LOG_FILTER_GRACE_SEC):
     """Restore Rust/webrtc logger state after pam launch terminal session.
 
-    The filter is removed after ``grace_sec`` seconds (default 2.5s) so that
+    The filter is removed after ``grace_sec`` seconds (default
+    ``_DEFAULT_RUST_LOG_FILTER_GRACE_SEC``) so that
     late records from the Rust runtime (e.g. ``webrtc-sctp`` stream teardown
     messages that arrive just after session exit) are still caught by the
     filter and do not leak to the console in front of the subsequent
