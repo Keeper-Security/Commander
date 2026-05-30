@@ -33,7 +33,7 @@ from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, 
     get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
-    wait_for_tunnel_connection, create_rust_webrtc_settings, escalate_close, \
+    wait_for_tunnel_connection, create_rust_webrtc_settings, \
     print_above_keeper_prompt
 from .pam.router_helper import get_dag_leafs
 from .tunnel_registry import (
@@ -1015,13 +1015,9 @@ class PAMTunnelStartCommand(Command):
                 self._print_keeperdb_proxy_banner(host, port, db_type_for_banner)
             # Workflow lease expiry handling.
             #
-            # At expiresOn we soft-close the tube (stops new channels, sends
-            # CloseConnection control frames) and, after a short delay, escalate
-            # to force_close_tube which drops the local TCP listener and severs
-            # any active forwarded streams (SSH, MySQL, etc.). The escalation
-            # only fires when both the local Rust crate and the remote peer
-            # advertise FORCE_CLOSE_MIN_VERSION; older peers get the soft close
-            # only and the in-flight session lingers until natural disconnect.
+            # At expiresOn we close the tube (stops new channels, sends
+            # CloseConnection control frames); the connection-closed cleanup
+            # path then stops the websocket and unregisters the tunnel session.
             if workflow_expires_on_ms and workflow_expires_on_ms > 0:
                 seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - time.time()
                 tube_id = result.get('tube_id')
@@ -1046,15 +1042,15 @@ class PAMTunnelStartCommand(Command):
                                 f"forwarded connections will be terminated."
                                 f"{bcolors.ENDC}"
                             )
-                            sess = get_tunnel_session(_tube_id)
-                            remote_ver = getattr(sess, 'remote_webrtc_version', None) if sess else None
-                            escalate_close(
-                                tube_registry,
-                                _tube_id,
-                                remote_webrtc_version=remote_ver,
-                                reason=CloseConnectionReasons.AdminClosed,
-                                log_prefix=f"[lease-expiry tunnel record={_record_uid}] ",
-                            )
+                            try:
+                                tube_registry.close_tube(
+                                    _tube_id, reason=CloseConnectionReasons.AdminClosed,
+                                )
+                            except Exception as e:
+                                logging.debug(
+                                    f"[lease-expiry tunnel record={_record_uid}] "
+                                    f"close_tube failed: {e}"
+                                )
                             # Wake any --foreground / --run blocking wait so the
                             # process self-terminates. Default interactive mode
                             # does not register an event here.
