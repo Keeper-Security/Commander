@@ -62,7 +62,6 @@ from ..tunnel.port_forward.tunnel_helpers import (
     unregister_tunnel_session,
     unregister_conversation_key,
     get_keeper_tokens,
-    escalate_close,
     CloseConnectionReasons,
 )
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
@@ -1570,17 +1569,13 @@ class PAMLaunchCommand(Command):
 
         original_handler = signal.signal(signal.SIGINT, signal_handler_fn)
 
-        # Workflow lease expiry: schedule a hard kill at expiresOn matching
+        # Workflow lease expiry: schedule teardown at expiresOn matching
         # the web vault (immediate teardown, no grace period, no reconnect).
         # The "Access expired" line is printed AFTER terminal reset in finally
         # so the message survives reset_local_terminal_after_pam_session().
-        # On expiry we soft-close the tube and escalate to force_close_tube
-        # after FORCE_CLOSE_DELAY_SECONDS so any in-flight forwarded streams
-        # (SSH bytes etc.) are severed instead of lingering until the user
-        # disconnects manually. Escalation is gated on local hasattr +
-        # remote SDP version (FORCE_CLOSE_MIN_VERSION).
+        # On expiry we close the tube; the connection-closed cleanup path then
+        # stops the websocket and unregisters the tunnel session.
         lease_timer = None
-        force_close_timer_holder = {}  # mutable holder so cleanup can cancel
         if workflow_expires_on_ms and workflow_expires_on_ms > 0:
             seconds_until_expiry = (workflow_expires_on_ms / 1000.0) - time.time()
             _lease_tube_id = tunnel_result['tunnel'].get('tube_id')
@@ -1591,27 +1586,20 @@ class PAMLaunchCommand(Command):
                 lease_expired = True
                 shutdown_requested = True
                 if _lease_tube_id and _lease_tube_registry is not None:
-                    # Fetch remote version lazily: the SDP answer arrives
-                    # asynchronously; capturing eagerly at schedule time
-                    # would race for short leases scheduled before SDP.
-                    remote_ver = tunnel_result['tunnel'].get('remote_webrtc_version')
-                    if not remote_ver:
-                        sess = get_tunnel_session(_lease_tube_id)
-                        remote_ver = (
-                            getattr(sess, 'remote_webrtc_version', None)
-                            if sess else None
+                    try:
+                        _lease_tube_registry.close_tube(
+                            _lease_tube_id,
+                            reason=CloseConnectionReasons.AdminClosed,
                         )
-                    force_close_timer_holder['t'] = escalate_close(
-                        _lease_tube_registry,
-                        _lease_tube_id,
-                        remote_webrtc_version=remote_ver,
-                        reason=CloseConnectionReasons.AdminClosed,
-                        log_prefix=f"[lease-expiry launch tube={_lease_tube_id[:8]}] ",
-                    )
+                    except Exception as e:
+                        logging.debug(
+                            f"[lease-expiry launch tube={_lease_tube_id[:8]}] "
+                            f"close_tube failed: {e}"
+                        )
 
             if seconds_until_expiry <= 0:
-                # Already expired at session start: run the close-and-escalate
-                # path immediately so cleanup goes through the same flow as a
+                # Already expired at session start: run the close path
+                # immediately so cleanup goes through the same flow as a
                 # mid-session expiry.
                 _on_lease_expired()
             else:
