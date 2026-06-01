@@ -376,6 +376,7 @@ class RecordGetUidCommand(Command):
                     'folder_uid': f.uid,
                     'type': folder_type,
                     'name': f.name,
+                    'path': get_folder_path(params, f.uid),
                     'parent_uid': parent_uid,
                     'folder': {
                         'uid': parent_uid,
@@ -385,7 +386,6 @@ class RecordGetUidCommand(Command):
                 if isinstance(f, subfolder.SharedFolderFolderNode):
                     fo['shared_folder_uid'] = f.shared_folder_uid
                 if f.type == BaseFolderNode.UserFolderType:
-                    fo['path'] = get_folder_path(params, f.uid)
                     record_uids = params.subfolder_record_cache.get(f.uid, set())
                     records_list = []
                     for r_uid in record_uids:
