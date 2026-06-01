@@ -264,15 +264,17 @@ class FolderListCommand(Command, RecordMixin):
                     
                     if len(folders) > 0:
                         for f in folders:
+                            # Check if folder is from Nested Share Folder
                             is_nested_share = hasattr(params, 'nested_share_folders') and f.uid in params.nested_share_folders
-                            folder_type = 'nested_share_folder' if is_nested_share else f.type
-                            row = ['folder', f.uid, f.name, f'Flags: {folder_flags(f)}, Parent: {f.parent_uid or "/"}', folder_type]
+                            source = 'nested_share_folder' if is_nested_share else 'classic_folder'
+                            row = ['folder', f.uid, f.name, f'Flags: {folder_flags(f)}, Parent: {f.parent_uid or "/"}', source]
                             combined_table.append(row)
                     
                     if len(records) > 0:
                         for record in records:
+                            # Check if record is from Nested Share Folder
                             is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
-                            source = 'nested_share_folder' if is_nested_share else 'legacy'
+                            source = 'nested_share_folder' if is_nested_share else 'classic'
                             row = ['record', record.record_uid, record.title, 
                                    f'Type: {record.record_type}, Description: {vault_extensions.get_record_description(record)}', source]
                             combined_table.append(row)
@@ -288,9 +290,10 @@ class FolderListCommand(Command, RecordMixin):
                         for f in folders:
                             if f.color:
                                 colors[f.name] = f.color
+                            # Check if folder is from Nested Share Folder
                             is_nested_share = hasattr(params, 'nested_share_folders') and f.uid in params.nested_share_folders
-                            folder_type = 'nested_share_folder' if is_nested_share else f.type
-                            row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/', folder_type]
+                            source = 'nested_share_folder' if is_nested_share else 'classic_folder'
+                            row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/', source]
                             table.append(row)
                         table.sort(key=lambda x: (x[1] or '').lower())
                         # Only apply colorization if not JSON format
@@ -305,8 +308,9 @@ class FolderListCommand(Command, RecordMixin):
                         table = []
                         headers = ['record_uid', 'type', 'title', 'description', 'source']
                         for record in records:
+                            # Check if record is from Nested Share Folder
                             is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
-                            source = 'nested_share_folder' if is_nested_share else 'legacy'
+                            source = 'nested_share_folder' if is_nested_share else 'classic'
                             row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record), source]
                             table.append(row)
                         table.sort(key=lambda x: (x[2] or '').lower())
