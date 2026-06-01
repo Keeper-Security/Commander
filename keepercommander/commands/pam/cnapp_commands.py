@@ -38,7 +38,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
+from keeper_secrets_manager_core.utils import bytes_to_base64
 
 from . import cnapp_helper
 from ..base import Command, GroupCommand, dump_report_data
@@ -46,9 +46,8 @@ from ... import vault
 from ...display import bcolors
 from ...error import CommandError
 
-# Mirror of CnappQueueStatus enum from CnappModels.kt (and keeper.cnapp_queue_status).
-# Local copy so we can convert status ids/names without a round-trip; new statuses must
-# be added here AND on the server side in sync.
+# Mirror of CnappQueueStatus in krouter CnappModels.kt (and keeper.cnapp_queue_status in
+# vault). TODO(KC-1290): lift into cnapp.proto like CnappProvider so Commander cannot drift.
 QUEUE_STATUS_BY_NAME = {
     'pending': 1,
     'in_progress': 2,
@@ -78,7 +77,7 @@ def _decode_aes_key(raw):  # type: (str) -> bytes|None
             data = decoder(candidate + padding)
         except (binascii.Error, ValueError):
             continue
-        if len(data) in (16, 32):
+        if len(data) == 32:
             return data
     return None
 
@@ -97,19 +96,27 @@ def _load_encrypter_key(params, config_record_uid):
     if not isinstance(record, vault.TypedRecord):
         return None
     # Match vault/cloudSecurityUtils.ts: prefer `secret` then `note` labeled "Encryption Key",
-    # then the first `note` field, then any record-level `note`.
-    candidates = []
+    # then the first unlabeled `note` field only when no labeled key field exists.
+    labeled_raws = []
     secret_field = record.get_typed_field('secret', CNAPP_ENCRYPTION_KEY_LABEL)
     if secret_field and secret_field.value:
-        candidates.append(secret_field.value[0])
+        labeled_raws.append(secret_field.value[0])
     note_labeled = record.get_typed_field('note', CNAPP_ENCRYPTION_KEY_LABEL)
     if note_labeled and note_labeled.value:
-        candidates.append(note_labeled.value[0])
+        labeled_raws.append(note_labeled.value[0])
+    for raw in labeled_raws:
+        key = _decode_aes_key(raw)
+        if key:
+            return key
+        logging.warning(
+            'CNAPP: "%s" field is present on encrypter record %s but is not a valid AES-256 key; '
+            'not using other note fields.',
+            CNAPP_ENCRYPTION_KEY_LABEL, config_record_uid,
+        )
+        return None
     first_note = record.get_typed_field('note')
     if first_note and first_note.value:
-        candidates.append(first_note.value[0])
-    for raw in candidates:
-        key = _decode_aes_key(raw)
+        key = _decode_aes_key(first_note.value[0])
         if key:
             return key
     return None
@@ -130,8 +137,9 @@ def _decrypt_cnapp_payload(payload_bytes, key):
     envelope_b64 = payload_bytes.decode('utf-8')
     envelope_json = base64.urlsafe_b64decode(envelope_b64 + '=' * (-len(envelope_b64) % 4))
     envelope = json.loads(envelope_json)
-    if envelope.get('alg') and envelope['alg'] != 'AES-256-GCM':
-        raise ValueError(f"Unsupported CNAPP payload algorithm: {envelope['alg']}")
+    alg = envelope.get('alg')
+    if alg != 'AES-256-GCM':
+        raise ValueError(f"Unsupported or missing CNAPP payload algorithm: {alg!r}")
     ciphertext_b64 = envelope.get('encrypted_payload') or ''
     ciphertext = base64.urlsafe_b64decode(ciphertext_b64 + '=' * (-len(ciphertext_b64) % 4))
     if len(ciphertext) < 12 + 16:
@@ -141,18 +149,33 @@ def _decrypt_cnapp_payload(payload_bytes, key):
     return json.loads(plaintext.decode('utf-8'))
 
 
-def _resolve_status(value):  # type: (str) -> int
+def _resolve_status(value, allow_all=True):  # type: (str|int|None, bool) -> int
     """Accept either the numeric status id or its case-insensitive name."""
     if value is None or value == '':
-        return 0
-    if isinstance(value, int):
-        return value
-    s = str(value).strip().lower()
-    if s.isdigit():
-        return int(s)
-    if s in QUEUE_STATUS_BY_NAME:
-        return QUEUE_STATUS_BY_NAME[s]
-    raise CommandError('pam cnapp', f"Unknown status '{value}'. Valid: {', '.join(QUEUE_STATUS_BY_NAME)} or 0 for ALL.")
+        status_id = 0
+    elif isinstance(value, int):
+        status_id = value
+    else:
+        s = str(value).strip().lower()
+        if s.lstrip('-').isdigit():
+            status_id = int(s)
+        elif s in QUEUE_STATUS_BY_NAME:
+            status_id = QUEUE_STATUS_BY_NAME[s]
+        else:
+            raise CommandError(
+                'pam cnapp',
+                f"Unknown status '{value}'. Valid: {', '.join(QUEUE_STATUS_BY_NAME)} or 0 for ALL.",
+            )
+    if status_id == 0:
+        if allow_all:
+            return 0
+        raise CommandError('pam cnapp', 'A specific status is required (cannot be 0/ALL).')
+    if status_id not in QUEUE_STATUS_BY_ID:
+        raise CommandError(
+            'pam cnapp',
+            f"Unknown status id {status_id}. Valid ids: {', '.join(str(i) for i in sorted(QUEUE_STATUS_BY_ID))}.",
+        )
+    return status_id
 
 
 def _format_timestamp(epoch_ms):
@@ -162,7 +185,7 @@ def _format_timestamp(epoch_ms):
     try:
         return datetime.fromtimestamp(int(epoch_ms) / 1000, tz=timezone.utc).isoformat()
     except (ValueError, TypeError, OSError):
-        return str(epoch_ms)
+        return f'<invalid timestamp: {epoch_ms}>'
 
 
 class PAMCnappCommand(GroupCommand):
@@ -195,25 +218,31 @@ class PAMCnappConfigCommand(GroupCommand):
                               'Read the persisted CNAPP configuration for a network')
         self.register_command('delete', PAMCnappConfigDeleteCommand(),
                               'Delete the CNAPP configuration on a network')
-        self.default_verb = 'read'
+        self.default_verb = ''
 
 
-def _add_configuration_args(parser, require_secret=True):
+def _add_configuration_args(parser, require_secret=True, optional_secret_on_set=False):
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
     parser.add_argument('--provider', '-p', required=True, dest='provider',
                         help='CNAPP provider keyword: wiz (case-insensitive).')
     parser.add_argument('--client-id', required=True, dest='client_id',
                         help='Provider API client ID / app ID.')
-    parser.add_argument('--client-secret', required=require_secret, dest='client_secret',
-                        help='Provider API client secret. Pass empty on `config set` to keep the existing secret.')
+    if optional_secret_on_set:
+        parser.add_argument('--client-secret', required=False, default=None, dest='client_secret',
+                            help='Provider API client secret. Omit on `config set` to keep the existing secret.')
+    else:
+        parser.add_argument('--client-secret', required=require_secret, dest='client_secret',
+                            help='Provider API client secret.')
     parser.add_argument('--api-endpoint', required=True, dest='api_endpoint_url',
                         help='Provider API endpoint URL (e.g. https://api.us1.app.wiz.io/graphql).')
+    parser.add_argument('--auth-endpoint', required=True, dest='auth_endpoint_url',
+                        help='Provider OAuth2 token endpoint URL (e.g. https://auth.app.wiz.io/oauth/token).')
 
 
 class PAMCnappConfigSetCommand(Command):
     parser = argparse.ArgumentParser(prog='pam cnapp config set')
-    _add_configuration_args(parser, require_secret=True)
+    _add_configuration_args(parser, optional_secret_on_set=True)
     parser.add_argument('--config-record', required=True, dest='cnapp_config_record_uid',
                         help='UID of the vault record holding the Encrypter URL + key.')
 
@@ -227,9 +256,10 @@ class PAMCnappConfigSetCommand(Command):
             network_uid=kwargs.get('network_uid'),
             provider=provider,
             client_id=kwargs.get('client_id'),
-            client_secret=kwargs.get('client_secret') or '',
+            client_secret='' if kwargs.get('client_secret') is None else kwargs.get('client_secret'),
             api_endpoint_url=kwargs.get('api_endpoint_url'),
             cnapp_config_record_uid=kwargs.get('cnapp_config_record_uid'),
+            auth_endpoint_url=kwargs.get('auth_endpoint_url'),
         )
         print(f"{bcolors.OKGREEN}CNAPP configuration saved.{bcolors.ENDC}")
         if response is not None:
@@ -253,6 +283,7 @@ class PAMCnappConfigTestCommand(Command):
             client_id=kwargs.get('client_id'),
             client_secret=kwargs.get('client_secret'),
             api_endpoint_url=kwargs.get('api_endpoint_url'),
+            auth_endpoint_url=kwargs.get('auth_endpoint_url'),
         )
         print(f"{bcolors.OKGREEN}CNAPP credentials validated successfully.{bcolors.ENDC}")
 
@@ -402,7 +433,7 @@ class PAMCnappQueueListCommand(Command):
 
         encrypter_key, encrypter_uid = self._resolve_encrypter_key(params, kwargs)
         decrypted_by_id = {}
-        decrypt_errors = []
+        decrypt_errors = {}  # type: dict[int, str]
         if encrypter_key:
             for item in items:
                 if not item.payload:
@@ -410,7 +441,7 @@ class PAMCnappQueueListCommand(Command):
                 try:
                     decrypted_by_id[item.cnappQueueId] = _decrypt_cnapp_payload(item.payload, encrypter_key)
                 except Exception as e:
-                    decrypt_errors.append((item.cnappQueueId, str(e)))
+                    decrypt_errors[item.cnappQueueId] = str(e)
 
         if kwargs.get('format') == 'json':
             json_items = []
@@ -419,6 +450,8 @@ class PAMCnappQueueListCommand(Command):
                 d.pop('payload', None)
                 if item.cnappQueueId in decrypted_by_id:
                     d['decryptedPayload'] = decrypted_by_id[item.cnappQueueId]
+                elif item.cnappQueueId in decrypt_errors:
+                    d['decryptError'] = decrypt_errors[item.cnappQueueId]
                 json_items.append(d)
             payload = {'items': json_items, 'hasMore': has_more}
             print(json.dumps(payload, indent=2, default=str))
@@ -439,6 +472,8 @@ class PAMCnappQueueListCommand(Command):
                 issue_cell = self._decrypted_summary(decrypted_by_id[item.cnappQueueId])
             elif not item.payload:
                 issue_cell = ''
+            elif kwargs.get('no_decrypt'):
+                issue_cell = '<skipped>'
             else:
                 issue_cell = f"{bcolors.WARNING}<encrypted>{bcolors.ENDC}"
             rows.append([
@@ -451,10 +486,11 @@ class PAMCnappQueueListCommand(Command):
                 issue_cell,
             ])
         dump_report_data(rows, headers, fmt='table', filename='', row_number=False)
-        for queue_id, msg in decrypt_errors:
+        for queue_id, msg in decrypt_errors.items():
             print(f"{bcolors.WARNING}Queue item {queue_id}: failed to decrypt payload ({msg}).{bcolors.ENDC}")
         if has_more:
-            print(f"{bcolors.WARNING}More items available — narrow with --status to page.{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}More queue items exist (hasMore=true). "
+                  f"CLI paging is not available yet — resolve or delete returned items to see more.{bcolors.ENDC}")
         return None
 
 
@@ -544,9 +580,7 @@ class PAMCnappQueueSetStatusCommand(Command):
         return PAMCnappQueueSetStatusCommand.parser
 
     def execute(self, params, **kwargs):
-        status_id = _resolve_status(kwargs.get('status'))
-        if status_id == 0:
-            raise CommandError('pam cnapp queue set-status', 'A specific status is required (cannot be 0/ALL).')
+        status_id = _resolve_status(kwargs.get('status'), allow_all=False)
         response = cnapp_helper.set_cnapp_queue_status(
             params,
             cnapp_queue_id=kwargs.get('cnapp_queue_id'),
@@ -581,6 +615,7 @@ def _configuration_to_dict(config):
         'provider': cnapp_helper.CnappProvider.Name(config.provider),
         'clientId': config.clientId,
         'apiEndpointUrl': config.apiEndpointUrl,
+        'authEndpointUrl': config.authEndpointUrl,
         'cnappConfigRecordUid': bytes_to_base64(config.cnappConfigRecordUid) if config.cnappConfigRecordUid else '',
     }
 
@@ -598,11 +633,15 @@ def _queue_item_to_dict(item):
     }
 
 
+def _uid_display(uid_bytes):
+    return bytes_to_base64(uid_bytes) if uid_bytes else '(none)'
+
+
 def _print_configuration(config):
     print(f"{bcolors.OKBLUE}CNAPP Configuration{bcolors.ENDC}")
-    print(f"  Network UID    : {bytes_to_base64(config.networkUid) if config.networkUid else ''}")
+    print(f"  Network UID    : {_uid_display(config.networkUid)}")
     print(f"  Provider       : {cnapp_helper.CnappProvider.Name(config.provider)}")
-    print(f"  Client ID      : {config.clientId}")
-    print(f"  API Endpoint   : {config.apiEndpointUrl}")
-    if config.cnappConfigRecordUid:
-        print(f"  Config Record  : {bytes_to_base64(config.cnappConfigRecordUid)}")
+    print(f"  Client ID      : {config.clientId or '(none)'}")
+    print(f"  API Endpoint   : {config.apiEndpointUrl or '(none)'}")
+    print(f"  Auth Endpoint  : {config.authEndpointUrl or '(none)'}")
+    print(f"  Config Record  : {_uid_display(config.cnappConfigRecordUid)}")

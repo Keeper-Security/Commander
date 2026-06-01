@@ -49,7 +49,7 @@ from ...proto import cnapp_pb2
 #         -> commands.record -> commands.ksm  (ksm still partially loaded — crash)
 # That `record <-> ksm` cycle is pre-existing and only works because production
 # code paths load `record` first. Tests that import `cnapp_helper` cold hit the
-# cycle directly. Keep the indirection — do not "inline" this import.
+# cycle directly. TODO(KC-1290): break the record↔ksm cycle so this wrapper can be removed.
 def _post_request_to_router(params, endpoint, **kwargs):
     """Lazy proxy to `router_helper._post_request_to_router`.
 
@@ -114,8 +114,9 @@ def action_from_name(name):  # type: (str) -> int
 # ---------------------------------------------------------------------------
 
 def _build_configuration(network_uid, provider, client_id=None, client_secret=None,
-                         api_endpoint_url=None, cnapp_config_record_uid=None):
-    # type: (str, int, Optional[str], Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappConfiguration
+                         api_endpoint_url=None, cnapp_config_record_uid=None,
+                         auth_endpoint_url=None):
+    # type: (str, int, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappConfiguration
     rq = cnapp_pb2.CnappConfiguration()
     rq.networkUid = _to_uid_bytes(network_uid)
     rq.provider = provider
@@ -127,32 +128,38 @@ def _build_configuration(network_uid, provider, client_id=None, client_secret=No
         rq.apiEndpointUrl = api_endpoint_url
     if cnapp_config_record_uid:
         rq.cnappConfigRecordUid = _to_uid_bytes(cnapp_config_record_uid)
+    if auth_endpoint_url:
+        rq.authEndpointUrl = auth_endpoint_url
     return rq
 
 
 def set_cnapp_configuration(params, network_uid, provider, client_id, client_secret,
-                            api_endpoint_url, cnapp_config_record_uid):
-    # type: (KeeperParams, str, int, str, str, str, str) -> cnapp_pb2.CnappConfiguration
+                            api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url=None):
+    # type: (KeeperParams, str, int, str, str, str, str, Optional[str]) -> cnapp_pb2.CnappConfiguration
     """Create or update the CNAPP provider configuration on a network.
 
     krouter validates the credentials against the provider before persisting; an empty
     `client_secret` tells krouter to keep the previously stored value (useful for edits
-    that only change the endpoint or record UID)."""
+    that only change the endpoint or record UID).
+
+    `auth_endpoint_url` is the provider's OAuth2 token endpoint, letting customers point
+    at their own tenant/region (e.g. EU vs US Wiz auth host) without a code change."""
     rq = _build_configuration(network_uid, provider, client_id, client_secret,
-                              api_endpoint_url, cnapp_config_record_uid)
+                              api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url)
     return _post_request_to_router(params, 'cnapp/configuration/set', rq_proto=rq,
                                    rs_type=cnapp_pb2.CnappConfiguration)
 
 
 def test_cnapp_configuration(params, network_uid, provider, client_id, client_secret,
-                             api_endpoint_url):
-    # type: (KeeperParams, str, int, str, str, str) -> None
+                             api_endpoint_url, auth_endpoint_url=None):
+    # type: (KeeperParams, str, int, str, str, str, Optional[str]) -> None
     """Probe the provider with the supplied credentials without persisting anything.
 
     Returns None on success; raises on validation failure (RRC_BAD_REQUEST with the
     provider's reason in the message)."""
     rq = _build_configuration(network_uid, provider, client_id, client_secret,
-                              api_endpoint_url, cnapp_config_record_uid=None)
+                              api_endpoint_url, cnapp_config_record_uid=None,
+                              auth_endpoint_url=auth_endpoint_url)
     return _post_request_to_router(params, 'cnapp/configuration/test', rq_proto=rq)
 
 

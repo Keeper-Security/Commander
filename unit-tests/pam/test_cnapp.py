@@ -14,12 +14,11 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
 
-# Pre-load `keepercommander.commands.record` before anything else from the
-# `keepercommander.commands` package. There is a pre-existing record <-> ksm
-# circular import that only resolves when `record` is loaded first; running this
-# file in isolation (e.g. `pytest unit-tests/pam/test_cnapp.py`) would otherwise
-# hit the cycle via `discoveryrotation -> ksm -> record -> ksm`.
-import keepercommander.commands.record  # noqa: F401, E402 - intentional import-order guard
+# isort: off
+# Pre-load `record` before cnapp modules (record↔ksm cycle). Pytest also loads it via
+# unit-tests/conftest.py; keep this guard for `python unit-tests/pam/test_cnapp.py`.
+import keepercommander.commands.record  # noqa: F401
+# isort: on
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 from keeper_secrets_manager_core.utils import bytes_to_base64  # noqa: E402
@@ -115,6 +114,7 @@ class TestConfigurationHelpers(unittest.TestCase):
                 client_secret='secret',
                 api_endpoint_url='https://api.wiz.io',
                 cnapp_config_record_uid=CONFIG_RECORD_UID,
+                auth_endpoint_url='https://auth.wiz.io/oauth/token',
             )
         self.assertIs(result, expected_response)
         args, kwargs = post.call_args
@@ -124,6 +124,7 @@ class TestConfigurationHelpers(unittest.TestCase):
         self.assertEqual(rq.clientId, 'abc')
         self.assertEqual(rq.clientSecret, 'secret')
         self.assertEqual(rq.apiEndpointUrl, 'https://api.wiz.io')
+        self.assertEqual(rq.authEndpointUrl, 'https://auth.wiz.io/oauth/token')
         self.assertEqual(len(rq.networkUid), 16)
         self.assertEqual(len(rq.cnappConfigRecordUid), 16)
         self.assertIs(kwargs['rs_type'], cnapp_pb2.CnappConfiguration)
@@ -153,8 +154,10 @@ class TestConfigurationHelpers(unittest.TestCase):
                 client_id='abc',
                 client_secret='secret',
                 api_endpoint_url='https://api.wiz.io',
+                auth_endpoint_url='https://auth.wiz.io/oauth/token',
             )
         self.assertEqual(post.call_args.args[1], 'cnapp/configuration/test')
+        self.assertEqual(post.call_args.kwargs['rq_proto'].authEndpointUrl, 'https://auth.wiz.io/oauth/token')
         # test endpoint never persists, so it must not require / send config record UID
         self.assertEqual(post.call_args.kwargs['rq_proto'].cnappConfigRecordUid, b'')
 
@@ -298,6 +301,10 @@ class TestStatusResolver(unittest.TestCase):
         self.assertEqual(cnapp_commands._resolve_status('1'), 1)
         self.assertEqual(cnapp_commands._resolve_status(2), 2)
 
+    def test_unknown_numeric_id_raises(self):
+        with self.assertRaises(CommandError):
+            cnapp_commands._resolve_status(99)
+
     def test_zero_is_all(self):
         self.assertEqual(cnapp_commands._resolve_status('0'), 0)
         self.assertEqual(cnapp_commands._resolve_status(None), 0)
@@ -340,11 +347,13 @@ class TestConfigCommands(unittest.TestCase):
                     client_secret='secret',
                     api_endpoint_url='https://api.wiz.io',
                     cnapp_config_record_uid=CONFIG_RECORD_UID,
+                    auth_endpoint_url='https://auth.wiz.io/oauth/token',
                 )
         helper.assert_called_once()
         kwargs = helper.call_args.kwargs
         self.assertEqual(kwargs['provider'], cnapp_pb2.CNAPP_PROVIDER_WIZ)
         self.assertEqual(kwargs['client_secret'], 'secret')
+        self.assertEqual(kwargs['auth_endpoint_url'], 'https://auth.wiz.io/oauth/token')
         self.assertIn('saved', buf.getvalue().lower())
 
     def test_config_set_blank_secret_passes_through(self):
@@ -364,6 +373,21 @@ class TestConfigCommands(unittest.TestCase):
                 )
         self.assertEqual(helper.call_args.kwargs['client_secret'], '')
 
+    def test_config_set_omitted_secret_keeps_existing(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'set_cnapp_configuration',
+                          return_value=cnapp_pb2.CnappConfiguration()) as helper:
+            with redirect_stdout(io.StringIO()):
+                cnapp_commands.PAMCnappConfigSetCommand().execute(
+                    self.params,
+                    network_uid=NETWORK_UID,
+                    provider='wiz',
+                    client_id='abc',
+                    client_secret=None,
+                    api_endpoint_url='https://api.wiz.io',
+                    cnapp_config_record_uid=CONFIG_RECORD_UID,
+                )
+        self.assertEqual(helper.call_args.kwargs['client_secret'], '')
+
     def test_config_set_invalid_provider_raises(self):
         with self.assertRaises(ValueError):
             cnapp_commands.PAMCnappConfigSetCommand().execute(
@@ -377,7 +401,7 @@ class TestConfigCommands(unittest.TestCase):
             )
 
     def test_config_test_prints_success(self):
-        with patch.object(cnapp_commands.cnapp_helper, 'test_cnapp_configuration', return_value=None):
+        with patch.object(cnapp_commands.cnapp_helper, 'test_cnapp_configuration', return_value=None) as helper:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cnapp_commands.PAMCnappConfigTestCommand().execute(
@@ -387,7 +411,9 @@ class TestConfigCommands(unittest.TestCase):
                     client_id='abc',
                     client_secret='secret',
                     api_endpoint_url='https://api.wiz.io',
+                    auth_endpoint_url='https://auth.wiz.io/oauth/token',
                 )
+            self.assertEqual(helper.call_args.kwargs['auth_endpoint_url'], 'https://auth.wiz.io/oauth/token')
             self.assertIn('validated', buf.getvalue().lower())
 
     def test_config_test_propagates_helper_error(self):
@@ -416,6 +442,7 @@ class TestConfigCommands(unittest.TestCase):
         config = cnapp_pb2.CnappConfiguration(
             clientId='abc',
             apiEndpointUrl='https://api.wiz.io',
+            authEndpointUrl='https://auth.wiz.io/oauth/token',
             provider=cnapp_pb2.CNAPP_PROVIDER_WIZ,
         )
         with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=config):
@@ -426,11 +453,13 @@ class TestConfigCommands(unittest.TestCase):
             output = buf.getvalue()
             self.assertIn('CNAPP Configuration', output)
             self.assertIn('https://api.wiz.io', output)
+            self.assertIn('https://auth.wiz.io/oauth/token', output)
 
     def test_config_read_json_format(self):
         config = cnapp_pb2.CnappConfiguration(
             clientId='abc',
             apiEndpointUrl='https://api.wiz.io',
+            authEndpointUrl='https://auth.wiz.io/oauth/token',
             provider=cnapp_pb2.CNAPP_PROVIDER_WIZ,
         )
         with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=config):
@@ -442,6 +471,7 @@ class TestConfigCommands(unittest.TestCase):
             self.assertEqual(payload['clientId'], 'abc')
             self.assertEqual(payload['provider'], 'CNAPP_PROVIDER_WIZ')
             self.assertEqual(payload['apiEndpointUrl'], 'https://api.wiz.io')
+            self.assertEqual(payload['authEndpointUrl'], 'https://auth.wiz.io/oauth/token')
             self.assertIsNone(result, 'JSON output is the channel — no value returned to the REPL')
 
     def test_config_read_handles_none_response(self):
@@ -538,7 +568,7 @@ class TestQueueCommands(unittest.TestCase):
                 cnapp_commands.PAMCnappQueueListCommand().execute(
                     self.params, network_uid=NETWORK_UID, status=0, format='table',
                     no_decrypt=True)
-            self.assertIn('More items', buf.getvalue())
+            self.assertIn('hasMore=true', buf.getvalue())
 
     def test_queue_associate_success(self):
         with patch.object(cnapp_commands.cnapp_helper, 'associate_cnapp_record', return_value=None) as helper:
@@ -695,6 +725,13 @@ class TestPayloadDecryption(unittest.TestCase):
         with self.assertRaises(ValueError):
             cnapp_commands._decrypt_cnapp_payload(payload, self.key)
 
+    def test_missing_alg_raises(self):
+        envelope = json.dumps({'encrypted_payload': '', 'version': '1'}).encode('utf-8')
+        payload = base64.urlsafe_b64encode(envelope).rstrip(b'=')
+        with self.assertRaises(ValueError) as ctx:
+            cnapp_commands._decrypt_cnapp_payload(payload, self.key)
+        self.assertIn('missing', str(ctx.exception).lower())
+
     def test_short_ciphertext_raises(self):
         envelope = json.dumps({
             'encrypted_payload': base64.urlsafe_b64encode(b'abc').rstrip(b'=').decode('ascii'),
@@ -804,11 +841,11 @@ class TestQueueListDecryptionIntegration(unittest.TestCase):
             self.assertNotIn('payload', payload['items'][0])
 
     def test_decrypt_failure_keeps_other_rows_and_reports(self):
-        # Payload shape matters: `_decrypted_summary` picks `control.name` over
-        # `issue.id`, so to assert the good row was rendered we use a payload where
-        # the marker we look for is actually what surfaces in the table cell.
-        good = self._make_item(1, {'issue': {'id': 'wiz-good'},
-                                   'resource': {'name': 'good-resource'}})
+        good = self._make_item(1, {
+            'issue': {'id': 'wiz-good-should-not-show'},
+            'control': {'name': 'Open SSH'},
+            'resource': {'name': 'good-resource'},
+        })
         bad = cnapp_pb2.CnappQueueItem(
             cnappQueueId=2,
             cnappProviderId=cnapp_pb2.CNAPP_PROVIDER_WIZ,
@@ -827,10 +864,35 @@ class TestQueueListDecryptionIntegration(unittest.TestCase):
                     self.params, network_uid=NETWORK_UID, status=0, format='table',
                     provider='wiz', no_decrypt=False)
             output = buf.getvalue()
-            self.assertIn('wiz-good', output)
+            self.assertIn('Open SSH', output)
+            self.assertNotIn('wiz-good-should-not-show', output)
             self.assertIn('good-resource', output)
             self.assertIn('<encrypted>', output)
             self.assertIn('failed to decrypt payload', output)
+
+    def test_json_reports_decrypt_error(self):
+        good = self._make_item(1, {'issue': {'id': 'wiz-1'}})
+        bad = cnapp_pb2.CnappQueueItem(
+            cnappQueueId=2,
+            cnappProviderId=cnapp_pb2.CNAPP_PROVIDER_WIZ,
+            cnappQueueStatusId=1,
+            payload=b'not-valid',
+        )
+        response = cnapp_pb2.CnappQueueListResponse(items=[good, bad])
+        config = cnapp_pb2.CnappConfiguration(cnappConfigRecordUid=b'\xef' * 16,
+                                              provider=cnapp_pb2.CNAPP_PROVIDER_WIZ)
+        with patch.object(cnapp_commands.cnapp_helper, 'list_cnapp_queue', return_value=response), \
+             patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=config), \
+             patch.object(cnapp_commands, '_load_encrypter_key', return_value=self.key):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappQueueListCommand().execute(
+                    self.params, network_uid=NETWORK_UID, status=0, format='json',
+                    provider='wiz', no_decrypt=False)
+            items = json.loads(buf.getvalue())['items']
+            self.assertIn('decryptedPayload', items[0])
+            self.assertIn('decryptError', items[1])
+            self.assertNotIn('decryptedPayload', items[1])
 
     def test_no_decrypt_flag_skips_key_lookup(self):
         items = [self._make_item(11, {'issue': {'id': 'x'}})]
@@ -844,6 +906,7 @@ class TestQueueListDecryptionIntegration(unittest.TestCase):
                     no_decrypt=True)
             key_loader.assert_not_called()
             self.assertNotIn('No encrypter key', buf.getvalue())
+            self.assertIn('<skipped>', buf.getvalue())
 
 
 if __name__ == '__main__':
