@@ -20,8 +20,10 @@ import json
 import logging
 
 from ..base import Command
+from ..record import RecordGetUidCommand
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ... import vault
 from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
     get_access_role_label, format_role_display,
@@ -280,8 +282,6 @@ class NestedShareGetCommand(Command):
 
         if include_dag:
             try:
-                from ..record import RecordGetUidCommand
-                from ... import vault
                 r = vault.KeeperRecord.load(params, record_uid)
                 if r:
                     RecordGetUidCommand().include_dag(params, ro, r)
@@ -475,7 +475,6 @@ class NestedShareGetCommand(Command):
             logger.debug('Could not retrieve folder access: %s', e)
 
         try:
-            from ... import vault
             record_uids = collect_records_in_folder(params, folder_uid, recursive=False)
             records_list = []
             for r_uid in record_uids:

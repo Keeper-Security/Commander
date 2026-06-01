@@ -252,7 +252,7 @@ class FolderListCommand(Command, RecordMixin):
             if show_detail:
                 # Helper function to get folder flags
                 def folder_flags(f):
-                    if f.type == 'shared_folder':
+                    if f.type == BaseFolderNode.SharedFolderType:
                         flags = 'S'
                     else:
                         flags = ''
@@ -1269,7 +1269,7 @@ class ArrangeFolderCommand(Command):
         for f_uid in params.root_folder.subfolders:
             if folder_uid:
                 f = params.folder_cache[folder_uid]
-                if f.type != 'user_folder':
+                if f.type != BaseFolderNode.UserFolderType:
                     raise CommandError(self.get_parser().prog, f'\"{f.name}\" cannot be shared folder')
                 break
             if f_uid == folder:
