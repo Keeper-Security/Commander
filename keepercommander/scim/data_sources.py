@@ -5,7 +5,7 @@ import os
 import ssl
 from collections import namedtuple
 from contextlib import contextmanager
-from typing import Iterable, Union, Callable, Dict, List, Optional, Set, Any
+from typing import Iterable, Union, Callable, Dict, List, Optional, Set, Any, Tuple
 
 import requests
 
@@ -575,12 +575,16 @@ AZURE_CLOUD_URLS = {
 
 
 class AzureAdCrmDataSource(ICrmDataSource):
-    def __init__(self, tenant_id, client_id, client_secret, azure_cloud=None):  # type: (str, str, str, Optional[str]) -> None
+    def __init__(self, tenant_id, client_id, client_secret, azure_cloud=None, resolve_membership=False):
+        # type: (str, str, str, Optional[str], bool) -> None
         super().__init__()
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
         self.azure_cloud = azure_cloud or AZURE_GLOBAL_CLOUD
+        # Group membership resolution is opt-in: it is the slowest stage and is
+        # not consumed by every caller. Enable it only when membership is needed.
+        self.resolve_membership = resolve_membership
 
     def populate(self) -> Iterable[Union[ScimGroup, ScimUser]]:
         endpoints = self._resolve_cloud(self.azure_cloud)
@@ -588,6 +592,7 @@ class AzureAdCrmDataSource(ICrmDataSource):
         token = self._get_token(endpoints)
         headers = {'Authorization': f'Bearer {token}'}
 
+        # 1. Load all groups
         groups = {}  # type: Dict[str, ScimGroup]
         for group in self._paged_get(f'{graph_base}/v1.0/groups?$select=id,displayName', headers):
             group_id = group.get('id')
@@ -599,44 +604,59 @@ class AzureAdCrmDataSource(ICrmDataSource):
             sg.external_id = group_id
             sg.name = display_name
             groups[group_id] = sg
+        self.debug_logger(f'Loaded {len(groups)} Azure AD group(s)')
 
+        # 2. Load all users
         users = {}  # type: Dict[str, ScimUser]
-        for group_id in groups:
-            for member in self._paged_get(
-                    f'{graph_base}/v1.0/groups/{group_id}/members?$select=id,userPrincipalName,mail,displayName,givenName,surname,accountEnabled',
-                    headers):
-                if member.get('@odata.type') != '#microsoft.graph.user':
-                    continue
+        for member in self._paged_get(
+                f'{graph_base}/v1.0/users?$select=id,userPrincipalName,mail,displayName,givenName,surname,accountEnabled,userType&$top=999',
+                headers):
+            su = self._parse_user(member)
+            if su:
+                users[su.id] = su
+        self.debug_logger(f'Loaded {len(users)} Azure AD user(s)')
+
+        # 3. Resolve group membership (in batches), when requested.
+        # Only the member "id" is selected here - the user objects are already
+        # loaded in step 2, so membership is just a mapping from member id to group id.
+        if self.resolve_membership:
+            member_requests = [(group_id, f'/v1.0/groups/{group_id}/members?$select=id&$top=999')
+                               for group_id in groups]
+            for group_id, member in self._batch_get(graph_base, headers, member_requests):
                 user_id = member.get('id')
                 if not user_id:
                     continue
-                if str(member.get('userType') or '').lower() == 'guest':
-                    continue
                 su = users.get(user_id)
-                if not su:
-                    su = ScimUser()
-                    su.id = user_id
-                    su.external_id = user_id
-                    upn = member.get('userPrincipalName') or ''
-                    if '#EXT#' in upn:
-                        continue
-                    su.email = member.get('mail') or upn or ''
-                    if upn:
-                        if '@' in upn:
-                            su.login = upn.split('@', 1)[0]
-                            su.domain = upn.split('@', 1)[1]
-                        else:
-                            su.login = upn
-                    su.first_name = member.get('givenName') or ''
-                    su.last_name = member.get('surname') or ''
-                    display_name = member.get('displayName') or ''
-                    su.full_name = display_name or f'{su.first_name} {su.last_name}'.strip()
-                    su.active = member.get('accountEnabled') is True
-                    users[user_id] = su
-                su.groups.append(group_id)
+                if su:
+                    # non-user members (nested groups, devices, etc.) are not in `users`
+                    su.groups.append(group_id)
+        else:
+            self.debug_logger('Skipping Azure AD group membership resolution')
 
         yield from groups.values()
         yield from users.values()
+
+    @staticmethod
+    def _parse_user(member):   # type: (dict) -> Optional[ScimUser]
+        user_id = member.get('id')
+        if not user_id:
+            return None
+        if str(member.get('userType') or '').lower() == 'guest':
+            return None
+        upn = member.get('userPrincipalName') or ''
+        if '#EXT#' in upn:
+            return None
+        su = ScimUser()
+        su.id = user_id
+        su.external_id = user_id
+        su.login = upn
+        su.email = member.get('mail') or ''
+        su.first_name = member.get('givenName') or ''
+        su.last_name = member.get('surname') or ''
+        display_name = member.get('displayName') or ''
+        su.full_name = display_name or f'{su.first_name} {su.last_name}'.strip()
+        su.active = member.get('accountEnabled') is True
+        return su
 
     def _get_token(self, endpoints) -> str:
         url = f'{endpoints.activeDirectory}/{self.tenant_id}/oauth2/v2.0/token'
@@ -665,6 +685,73 @@ class AzureAdCrmDataSource(ICrmDataSource):
             for item in body.get('value', []):
                 yield item
             next_url = body.get('@odata.nextLink')
+
+    # Microsoft Graph JSON batching allows up to 20 sub-requests per HTTP call.
+    BATCH_SIZE = 20
+
+    @classmethod
+    def _batch_get(cls, graph_base, headers, requests_map):
+        # type: (str, dict, List[Tuple[str, str]]) -> Iterable[Tuple[str, dict]]
+        """Execute many GET requests using Microsoft Graph JSON batching.
+
+        Combines up to BATCH_SIZE requests into a single call to /$batch, which
+        dramatically reduces round-trips compared to issuing one request per group.
+
+        :param graph_base: Graph resource base, e.g. 'https://graph.microsoft.com'
+        :param headers: auth headers (Authorization)
+        :param requests_map: list of (tag, relative_url) tuples. The relative URL is
+            rooted at the version segment, e.g. '/v1.0/groups/{id}/members?...'.
+        :return: iterator of (tag, item) pairs, where item is one element of the
+            'value' array of the corresponding response. Paged responses
+            (@odata.nextLink) and throttled requests (429) are re-queued.
+        """
+        import time
+
+        batch_url = f'{graph_base}/v1.0/$batch'
+        batch_headers = dict(headers)
+        batch_headers['Content-Type'] = 'application/json'
+
+        pending = list(requests_map)   # type: List[Tuple[str, str]]
+        while pending:
+            chunk = pending[:cls.BATCH_SIZE]
+            pending = pending[cls.BATCH_SIZE:]
+
+            payload = {'requests': [{'id': str(idx), 'method': 'GET', 'url': url}
+                                    for idx, (_, url) in enumerate(chunk)]}
+            rs = requests.post(batch_url, headers=batch_headers, json=payload)
+            if rs.status_code != 200:
+                raise CommandError('', f'Azure AD batch request failed: {rs.status_code}')
+
+            responses = {r.get('id'): r for r in rs.json().get('responses', [])}
+            retry_after = 0
+            for idx, (tag, url) in enumerate(chunk):
+                resp = responses.get(str(idx))
+                if not resp:
+                    continue
+                status = resp.get('status')
+                if status == 429:
+                    # Throttled - re-queue and honor the largest Retry-After in the batch.
+                    resp_headers = resp.get('headers') or {}
+                    try:
+                        retry_after = max(retry_after, int(resp_headers.get('Retry-After', 0)))
+                    except (TypeError, ValueError):
+                        pass
+                    pending.append((tag, url))
+                    continue
+                if status != 200:
+                    continue
+                body = resp.get('body') or {}
+                for item in body.get('value', []):
+                    yield tag, item
+                next_link = body.get('@odata.nextLink')
+                if next_link:
+                    # Re-queue the next page as a relative URL for a subsequent batch.
+                    if next_link.startswith(graph_base):
+                        next_link = next_link[len(graph_base):]
+                    pending.append((tag, next_link))
+
+            if retry_after:
+                time.sleep(retry_after)
 
     @staticmethod
     def _resolve_cloud(azure_cloud):
