@@ -465,9 +465,11 @@ class RecordGetUidCommand(Command):
             if r:
                 params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
-
+                    is_nsf_record = (hasattr(params, 'nested_share_records')
+                                     and uid in getattr(params, 'nested_share_records', {}))
                     ro = {
                         'record_uid': uid,
+                        'source': 'nested_share_folder' if is_nsf_record else 'classic',
                     }
                     if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
