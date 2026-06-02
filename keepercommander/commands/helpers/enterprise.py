@@ -1,6 +1,55 @@
 import logging
+import re
 from ... import utils, crypto
 from ...params import KeeperParams
+
+
+MAX_ENTERPRISE_NAME_LENGTH = 255
+_NAME_PREVIEW_LENGTH = 40
+
+# Backend length-violation responses look like: ``max=185, length=255, value=<bad>``
+_BACKEND_LENGTH_ERROR_RE = re.compile(
+    r'max\s*=\s*(\d+)\s*,\s*length\s*=\s*(\d+)(?:\s*,\s*value\s*=.*)?',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_valid_name_length(name, field_label, command_label):
+    """Return True if name fits within the enterprise name length limit; otherwise warn and return False."""
+    if name is None:
+        return True
+    name = str(name)
+    if len(name) <= MAX_ENTERPRISE_NAME_LENGTH:
+        return True
+    preview = name[:_NAME_PREVIEW_LENGTH]
+    if len(name) > _NAME_PREVIEW_LENGTH:
+        preview += '...'
+    logging.warning(
+        '%s: %s \'%s\' is %d characters long. Maximum allowed is %d. Skipping.',
+        command_label, field_label, preview, len(name), MAX_ENTERPRISE_NAME_LENGTH,
+    )
+    return False
+
+
+def simplify_backend_message(message):
+    """Rewrite the backend's ``max=N, length=N, value=...`` length error into a friendlier sentence."""
+    if not message or not isinstance(message, str):
+        return message
+    match = _BACKEND_LENGTH_ERROR_RE.search(message)
+    if not match:
+        return message
+    actual_len = int(match.group(2))
+    max_len = int(match.group(1))
+    return 'value is {0} characters but the maximum allowed is {1}'.format(actual_len, max_len)
+
+
+def simplify_batch_responses(responses):
+    """Rewrite known noisy server validation messages in place on each response dict."""
+    if not responses:
+        return
+    for rs in responses:
+        if isinstance(rs, dict) and rs.get('message'):
+            rs['message'] = simplify_backend_message(rs['message'])
 
 
 def is_addon_enabled(params, addon_name):    # type: (KeeperParams, Dict[str, ]) -> Boolean
