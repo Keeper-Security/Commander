@@ -7,7 +7,7 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class SecurityBenchmark(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     SB_INVALID: _ClassVar[SecurityBenchmark]
     SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION: _ClassVar[SecurityBenchmark]
     SB_PREVENT_INSTALLATION_OF_UNTRUSTED_EXTENSIONS: _ClassVar[SecurityBenchmark]
@@ -26,7 +26,7 @@ class SecurityBenchmark(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SB_ENFORCE_LEAST_PRIVILEGE_POLICY: _ClassVar[SecurityBenchmark]
 
 class SecurityBenchmarkStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     INVALID: _ClassVar[SecurityBenchmarkStatus]
     RESOLVED: _ClassVar[SecurityBenchmarkStatus]
     IGNORED: _ClassVar[SecurityBenchmarkStatus]
@@ -53,7 +53,7 @@ IGNORED: SecurityBenchmarkStatus
 UNRESOLVED: SecurityBenchmarkStatus
 
 class EnterpriseStat(_message.Message):
-    __slots__ = ["usersLoggedRecent", "usersHasRecords"]
+    __slots__ = ("usersLoggedRecent", "usersHasRecords")
     USERSLOGGEDRECENT_FIELD_NUMBER: _ClassVar[int]
     USERSHASRECORDS_FIELD_NUMBER: _ClassVar[int]
     usersLoggedRecent: int
@@ -61,7 +61,7 @@ class EnterpriseStat(_message.Message):
     def __init__(self, usersLoggedRecent: _Optional[int] = ..., usersHasRecords: _Optional[int] = ...) -> None: ...
 
 class EnterpriseStatDetail(_message.Message):
-    __slots__ = ["enterpriseUserId", "lastLoggedIn", "hasRecords"]
+    __slots__ = ("enterpriseUserId", "lastLoggedIn", "hasRecords")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     LASTLOGGEDIN_FIELD_NUMBER: _ClassVar[int]
     HASRECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -71,7 +71,7 @@ class EnterpriseStatDetail(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., lastLoggedIn: _Optional[int] = ..., hasRecords: bool = ...) -> None: ...
 
 class EnterpriseStatContinuationToken(_message.Message):
-    __slots__ = ["lastUpdated", "enterpriseUserId"]
+    __slots__ = ("lastUpdated", "enterpriseUserId")
     LASTUPDATED_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     lastUpdated: int
@@ -79,7 +79,7 @@ class EnterpriseStatContinuationToken(_message.Message):
     def __init__(self, lastUpdated: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ...) -> None: ...
 
 class EnterpriseStatDetailsRequest(_message.Message):
-    __slots__ = ["lastUpdated", "continuationToken"]
+    __slots__ = ("lastUpdated", "continuationToken")
     LASTUPDATED_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     lastUpdated: int
@@ -87,7 +87,7 @@ class EnterpriseStatDetailsRequest(_message.Message):
     def __init__(self, lastUpdated: _Optional[int] = ..., continuationToken: _Optional[_Union[EnterpriseStatContinuationToken, _Mapping]] = ...) -> None: ...
 
 class EnterpriseStatDetailsResponse(_message.Message):
-    __slots__ = ["enterpriseStatDetails", "lastUpdated", "continuationToken", "hasMore"]
+    __slots__ = ("enterpriseStatDetails", "lastUpdated", "continuationToken", "hasMore")
     ENTERPRISESTATDETAILS_FIELD_NUMBER: _ClassVar[int]
     LASTUPDATED_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -99,7 +99,7 @@ class EnterpriseStatDetailsResponse(_message.Message):
     def __init__(self, enterpriseStatDetails: _Optional[_Iterable[_Union[EnterpriseStatDetail, _Mapping]]] = ..., lastUpdated: _Optional[int] = ..., continuationToken: _Optional[_Union[EnterpriseStatContinuationToken, _Mapping]] = ..., hasMore: bool = ...) -> None: ...
 
 class SecurityAlertsSummary(_message.Message):
-    __slots__ = ["auditEventTypeId", "currentCount", "currentUserCount", "previousCount", "previousUserCount"]
+    __slots__ = ("auditEventTypeId", "currentCount", "currentUserCount", "previousCount", "previousUserCount")
     AUDITEVENTTYPEID_FIELD_NUMBER: _ClassVar[int]
     CURRENTCOUNT_FIELD_NUMBER: _ClassVar[int]
     CURRENTUSERCOUNT_FIELD_NUMBER: _ClassVar[int]
@@ -113,13 +113,13 @@ class SecurityAlertsSummary(_message.Message):
     def __init__(self, auditEventTypeId: _Optional[int] = ..., currentCount: _Optional[int] = ..., currentUserCount: _Optional[int] = ..., previousCount: _Optional[int] = ..., previousUserCount: _Optional[int] = ...) -> None: ...
 
 class SecurityAlertsSummaryResponse(_message.Message):
-    __slots__ = ["securityAlertsSummary"]
+    __slots__ = ("securityAlertsSummary",)
     SECURITYALERTSSUMMARY_FIELD_NUMBER: _ClassVar[int]
     securityAlertsSummary: _containers.RepeatedCompositeFieldContainer[SecurityAlertsSummary]
     def __init__(self, securityAlertsSummary: _Optional[_Iterable[_Union[SecurityAlertsSummary, _Mapping]]] = ...) -> None: ...
 
 class SecurityAlertsDetailRequest(_message.Message):
-    __slots__ = ["auditEventTypeId", "continuationToken"]
+    __slots__ = ("auditEventTypeId", "continuationToken")
     AUDITEVENTTYPEID_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     auditEventTypeId: int
@@ -127,7 +127,7 @@ class SecurityAlertsDetailRequest(_message.Message):
     def __init__(self, auditEventTypeId: _Optional[int] = ..., continuationToken: _Optional[int] = ...) -> None: ...
 
 class SecurityAlertsDetail(_message.Message):
-    __slots__ = ["enterpriseUserId", "currentCount", "previousCount", "lastOccurrence"]
+    __slots__ = ("enterpriseUserId", "currentCount", "previousCount", "lastOccurrence")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     CURRENTCOUNT_FIELD_NUMBER: _ClassVar[int]
     PREVIOUSCOUNT_FIELD_NUMBER: _ClassVar[int]
@@ -139,7 +139,7 @@ class SecurityAlertsDetail(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., currentCount: _Optional[int] = ..., previousCount: _Optional[int] = ..., lastOccurrence: _Optional[int] = ...) -> None: ...
 
 class SecurityAlertsDetailResponse(_message.Message):
-    __slots__ = ["securityAlertDetails", "hasMore", "continuationToken"]
+    __slots__ = ("securityAlertDetails", "hasMore", "continuationToken")
     SECURITYALERTDETAILS_FIELD_NUMBER: _ClassVar[int]
     HASMORE_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -149,7 +149,7 @@ class SecurityAlertsDetailResponse(_message.Message):
     def __init__(self, securityAlertDetails: _Optional[_Iterable[_Union[SecurityAlertsDetail, _Mapping]]] = ..., hasMore: bool = ..., continuationToken: _Optional[int] = ...) -> None: ...
 
 class EnterpriseSecurityBenchmark(_message.Message):
-    __slots__ = ["securityBenchmark", "securityBenchmarkStatus", "lastUpdated", "autoResolve"]
+    __slots__ = ("securityBenchmark", "securityBenchmarkStatus", "lastUpdated", "autoResolve")
     SECURITYBENCHMARK_FIELD_NUMBER: _ClassVar[int]
     SECURITYBENCHMARKSTATUS_FIELD_NUMBER: _ClassVar[int]
     LASTUPDATED_FIELD_NUMBER: _ClassVar[int]
@@ -161,13 +161,13 @@ class EnterpriseSecurityBenchmark(_message.Message):
     def __init__(self, securityBenchmark: _Optional[_Union[SecurityBenchmark, str]] = ..., securityBenchmarkStatus: _Optional[_Union[SecurityBenchmarkStatus, str]] = ..., lastUpdated: _Optional[int] = ..., autoResolve: bool = ...) -> None: ...
 
 class SetSecurityBenchmarksRequest(_message.Message):
-    __slots__ = ["enterpriseSecurityBenchmarks"]
+    __slots__ = ("enterpriseSecurityBenchmarks",)
     ENTERPRISESECURITYBENCHMARKS_FIELD_NUMBER: _ClassVar[int]
     enterpriseSecurityBenchmarks: _containers.RepeatedCompositeFieldContainer[EnterpriseSecurityBenchmark]
     def __init__(self, enterpriseSecurityBenchmarks: _Optional[_Iterable[_Union[EnterpriseSecurityBenchmark, _Mapping]]] = ...) -> None: ...
 
 class GetSecurityBenchmarksResponse(_message.Message):
-    __slots__ = ["enterpriseSecurityBenchmarks"]
+    __slots__ = ("enterpriseSecurityBenchmarks",)
     ENTERPRISESECURITYBENCHMARKS_FIELD_NUMBER: _ClassVar[int]
     enterpriseSecurityBenchmarks: _containers.RepeatedCompositeFieldContainer[EnterpriseSecurityBenchmark]
     def __init__(self, enterpriseSecurityBenchmarks: _Optional[_Iterable[_Union[EnterpriseSecurityBenchmark, _Mapping]]] = ...) -> None: ...

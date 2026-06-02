@@ -4,8 +4,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -73,7 +72,7 @@ class WorkflowApprover(_message.Message):
     teamUid: bytes
     escalation: bool
     escalationAfterMs: int
-    def __init__(self, user: _Optional[str] = ..., userId: _Optional[int] = ..., teamUid: _Optional[bytes] = ..., escalation: _Optional[bool] = ..., escalationAfterMs: _Optional[int] = ...) -> None: ...
+    def __init__(self, user: _Optional[str] = ..., userId: _Optional[int] = ..., teamUid: _Optional[bytes] = ..., escalation: bool = ..., escalationAfterMs: _Optional[int] = ...) -> None: ...
 
 class WorkflowParameters(_message.Message):
     __slots__ = ("resource", "approvalsNeeded", "checkoutNeeded", "startAccessOnApproval", "requireReason", "requireTicket", "requireMFA", "accessLength", "allowedTimes")
@@ -95,7 +94,7 @@ class WorkflowParameters(_message.Message):
     requireMFA: bool
     accessLength: int
     allowedTimes: TemporalAccessFilter
-    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., approvalsNeeded: _Optional[int] = ..., checkoutNeeded: _Optional[bool] = ..., startAccessOnApproval: _Optional[bool] = ..., requireReason: _Optional[bool] = ..., requireTicket: _Optional[bool] = ..., requireMFA: _Optional[bool] = ..., accessLength: _Optional[int] = ..., allowedTimes: _Optional[_Union[TemporalAccessFilter, _Mapping]] = ...) -> None: ...
+    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., approvalsNeeded: _Optional[int] = ..., checkoutNeeded: bool = ..., startAccessOnApproval: bool = ..., requireReason: bool = ..., requireTicket: bool = ..., requireMFA: bool = ..., accessLength: _Optional[int] = ..., allowedTimes: _Optional[_Union[TemporalAccessFilter, _Mapping]] = ...) -> None: ...
 
 class WorkflowConfig(_message.Message):
     __slots__ = ("parameters", "approvers", "createdOn")
@@ -125,7 +124,7 @@ class WorkflowStatus(_message.Message):
     escalated: bool
     checkedOutBy: str
     canForceCheckIn: bool
-    def __init__(self, stage: _Optional[_Union[WorkflowStage, str]] = ..., conditions: _Optional[_Iterable[_Union[AccessCondition, str]]] = ..., approvedBy: _Optional[_Iterable[_Union[WorkflowApproval, _Mapping]]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., escalated: _Optional[bool] = ..., checkedOutBy: _Optional[str] = ..., canForceCheckIn: _Optional[bool] = ...) -> None: ...
+    def __init__(self, stage: _Optional[_Union[WorkflowStage, str]] = ..., conditions: _Optional[_Iterable[_Union[AccessCondition, str]]] = ..., approvedBy: _Optional[_Iterable[_Union[WorkflowApproval, _Mapping]]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., escalated: bool = ..., checkedOutBy: _Optional[str] = ..., canForceCheckIn: bool = ...) -> None: ...
 
 class WorkflowProcess(_message.Message):
     __slots__ = ("flowUid", "userId", "resource", "startedOn", "expiresOn", "reason", "mfaVerified", "externalRef", "user", "workflowParameters", "escalated")
@@ -151,7 +150,7 @@ class WorkflowProcess(_message.Message):
     user: str
     workflowParameters: _containers.RepeatedCompositeFieldContainer[_NotificationCenter_pb2.NotificationParameter]
     escalated: bool
-    def __init__(self, flowUid: _Optional[bytes] = ..., userId: _Optional[int] = ..., resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., reason: _Optional[bytes] = ..., mfaVerified: _Optional[bool] = ..., externalRef: _Optional[bytes] = ..., user: _Optional[str] = ..., workflowParameters: _Optional[_Iterable[_Union[_NotificationCenter_pb2.NotificationParameter, _Mapping]]] = ..., escalated: _Optional[bool] = ...) -> None: ...
+    def __init__(self, flowUid: _Optional[bytes] = ..., userId: _Optional[int] = ..., resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., startedOn: _Optional[int] = ..., expiresOn: _Optional[int] = ..., reason: _Optional[bytes] = ..., mfaVerified: bool = ..., externalRef: _Optional[bytes] = ..., user: _Optional[str] = ..., workflowParameters: _Optional[_Iterable[_Union[_NotificationCenter_pb2.NotificationParameter, _Mapping]]] = ..., escalated: bool = ...) -> None: ...
 
 class WorkflowApproval(_message.Message):
     __slots__ = ("userId", "user", "flowUid", "approvedOn")
@@ -205,7 +204,7 @@ class WorkflowApprovalOrDenial(_message.Message):
     flowUid: bytes
     deny: bool
     denialReason: bytes
-    def __init__(self, flowUid: _Optional[bytes] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, flowUid: _Optional[bytes] = ..., deny: bool = ..., denialReason: _Optional[bytes] = ...) -> None: ...
 
 class UserAccessState(_message.Message):
     __slots__ = ("workflows",)
