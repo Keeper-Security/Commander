@@ -14,6 +14,7 @@ from typing import Optional
 from .command import create_command_blueprint, create_legacy_command_blueprint
 from .onboarding import create_onboarding_blueprint
 from ..decorators.logging import logger, debug_decorator
+from ..decorators.security import limiter
 
 def _setup_queue_mode(app: Flask) -> None:
     """Setup queue mode with native v2 and synchronous v1 compatibility endpoints."""
@@ -45,7 +46,11 @@ def init_routes(app: Optional[Flask] = None) -> None:
         raise ValueError("App instance is required")
 
     # Add health check endpoint (no authentication required for Docker/orchestrators)
+    # Exempt from rate limiting: liveness/readiness probes and load balancer health
+    # checks poll this frequently and must never consume the API rate-limit budget,
+    # otherwise the limit is eventually exhausted and probes start receiving HTTP 429.
     @app.route("/health", methods=["GET"])
+    @limiter.exempt
     def health_check():
         """Health check endpoint for Docker and orchestrators."""
         return jsonify({"status": "ok"}), 200
