@@ -272,7 +272,8 @@ class CloudImportMixin:
                 'Use "list-sf" to find the correct shared folder UID, '
                 'or run "sync-down" if the folder was recently shared.'
             )
-        if not isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
+        if not (isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)) or
+                (hasattr(folder, 'type') and folder.type == 'nested_share_folder')):
             raise CommandError(
                 command_name,
                 f'"{folder_uid}" is a personal folder. '
