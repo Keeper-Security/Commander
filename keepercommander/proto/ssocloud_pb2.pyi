@@ -8,11 +8,12 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class AuthProtocolType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     SAML2: _ClassVar[AuthProtocolType]
+    JWT: _ClassVar[AuthProtocolType]
 
 class DataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     ANY: _ClassVar[DataType]
     BOOLEAN: _ClassVar[DataType]
     INTEGER: _ClassVar[DataType]
@@ -26,14 +27,14 @@ class DataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TIMESTAMP: _ClassVar[DataType]
 
 class SsoCloudSettingOperationType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     SET: _ClassVar[SsoCloudSettingOperationType]
     GET: _ClassVar[SsoCloudSettingOperationType]
     DELETE: _ClassVar[SsoCloudSettingOperationType]
     RESET_TO_DEFAULT: _ClassVar[SsoCloudSettingOperationType]
 
 class SsoIdpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     XX_UNUSED: _ClassVar[SsoIdpType]
     GENERIC: _ClassVar[SsoIdpType]
     F5: _ClassVar[SsoIdpType]
@@ -63,6 +64,7 @@ class SsoIdpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     VERIDIUM: _ClassVar[SsoIdpType]
     CAS: _ClassVar[SsoIdpType]
 SAML2: AuthProtocolType
+JWT: AuthProtocolType
 ANY: DataType
 BOOLEAN: DataType
 INTEGER: DataType
@@ -108,7 +110,7 @@ VERIDIUM: SsoIdpType
 CAS: SsoIdpType
 
 class SsoCloudSettingValue(_message.Message):
-    __slots__ = ["settingId", "settingName", "label", "value", "valueType", "lastModified", "isFromFile", "isEditable", "isRequired"]
+    __slots__ = ("settingId", "settingName", "label", "value", "valueType", "lastModified", "isFromFile", "isEditable", "isRequired")
     SETTINGID_FIELD_NUMBER: _ClassVar[int]
     SETTINGNAME_FIELD_NUMBER: _ClassVar[int]
     LABEL_FIELD_NUMBER: _ClassVar[int]
@@ -130,7 +132,7 @@ class SsoCloudSettingValue(_message.Message):
     def __init__(self, settingId: _Optional[int] = ..., settingName: _Optional[str] = ..., label: _Optional[str] = ..., value: _Optional[str] = ..., valueType: _Optional[_Union[DataType, str]] = ..., lastModified: _Optional[str] = ..., isFromFile: bool = ..., isEditable: bool = ..., isRequired: bool = ...) -> None: ...
 
 class SsoCloudSettingAction(_message.Message):
-    __slots__ = ["settingId", "settingName", "operation", "value"]
+    __slots__ = ("settingId", "settingName", "operation", "value")
     SETTINGID_FIELD_NUMBER: _ClassVar[int]
     SETTINGNAME_FIELD_NUMBER: _ClassVar[int]
     OPERATION_FIELD_NUMBER: _ClassVar[int]
@@ -142,7 +144,7 @@ class SsoCloudSettingAction(_message.Message):
     def __init__(self, settingId: _Optional[int] = ..., settingName: _Optional[str] = ..., operation: _Optional[_Union[SsoCloudSettingOperationType, str]] = ..., value: _Optional[str] = ...) -> None: ...
 
 class SsoCloudConfigurationRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "ssoSpConfigurationId", "name", "ssoAuthProtocolType", "ssoCloudSettingAction"]
+    __slots__ = ("ssoServiceProviderId", "ssoSpConfigurationId", "name", "ssoAuthProtocolType", "ssoCloudSettingAction")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -156,7 +158,7 @@ class SsoCloudConfigurationRequest(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., ssoSpConfigurationId: _Optional[int] = ..., name: _Optional[str] = ..., ssoAuthProtocolType: _Optional[_Union[AuthProtocolType, str]] = ..., ssoCloudSettingAction: _Optional[_Iterable[_Union[SsoCloudSettingAction, _Mapping]]] = ...) -> None: ...
 
 class SsoSharedConfigItem(_message.Message):
-    __slots__ = ["ssoSpConfigurationId", "ssoServiceProviderId", "ssoNodeId"]
+    __slots__ = ("ssoSpConfigurationId", "ssoServiceProviderId", "ssoNodeId")
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SSONODEID_FIELD_NUMBER: _ClassVar[int]
@@ -166,7 +168,7 @@ class SsoSharedConfigItem(_message.Message):
     def __init__(self, ssoSpConfigurationId: _Optional[int] = ..., ssoServiceProviderId: _Optional[int] = ..., ssoNodeId: _Optional[int] = ...) -> None: ...
 
 class SsoCloudConfigurationResponse(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "ssoSpConfigurationId", "enterpriseId", "name", "protocol", "lastModified", "ssoCloudSettingValue", "isShared", "sharedConfigs"]
+    __slots__ = ("ssoServiceProviderId", "ssoSpConfigurationId", "enterpriseId", "name", "protocol", "lastModified", "ssoCloudSettingValue", "isShared", "sharedConfigs")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
@@ -188,7 +190,7 @@ class SsoCloudConfigurationResponse(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., ssoSpConfigurationId: _Optional[int] = ..., enterpriseId: _Optional[int] = ..., name: _Optional[str] = ..., protocol: _Optional[str] = ..., lastModified: _Optional[str] = ..., ssoCloudSettingValue: _Optional[_Iterable[_Union[SsoCloudSettingValue, _Mapping]]] = ..., isShared: bool = ..., sharedConfigs: _Optional[_Iterable[_Union[SsoSharedConfigItem, _Mapping]]] = ...) -> None: ...
 
 class SsoIdpTypeRequest(_message.Message):
-    __slots__ = ["ssoIdpTypeId", "tag", "label"]
+    __slots__ = ("ssoIdpTypeId", "tag", "label")
     SSOIDPTYPEID_FIELD_NUMBER: _ClassVar[int]
     TAG_FIELD_NUMBER: _ClassVar[int]
     LABEL_FIELD_NUMBER: _ClassVar[int]
@@ -198,7 +200,7 @@ class SsoIdpTypeRequest(_message.Message):
     def __init__(self, ssoIdpTypeId: _Optional[int] = ..., tag: _Optional[str] = ..., label: _Optional[str] = ...) -> None: ...
 
 class SsoIdpTypeResponse(_message.Message):
-    __slots__ = ["ssoIdpTypeId", "tag", "label"]
+    __slots__ = ("ssoIdpTypeId", "tag", "label")
     SSOIDPTYPEID_FIELD_NUMBER: _ClassVar[int]
     TAG_FIELD_NUMBER: _ClassVar[int]
     LABEL_FIELD_NUMBER: _ClassVar[int]
@@ -208,13 +210,13 @@ class SsoIdpTypeResponse(_message.Message):
     def __init__(self, ssoIdpTypeId: _Optional[int] = ..., tag: _Optional[int] = ..., label: _Optional[int] = ...) -> None: ...
 
 class SsoCloudSAMLLogRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId"]
+    __slots__ = ("ssoServiceProviderId",)
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     ssoServiceProviderId: int
     def __init__(self, ssoServiceProviderId: _Optional[int] = ...) -> None: ...
 
 class SsoCloudSAMLLogEntry(_message.Message):
-    __slots__ = ["serverTime", "direction", "messageType", "messageIssued", "fromEntityId", "samlStatus", "relayState", "samlContent", "isSigned", "isOK"]
+    __slots__ = ("serverTime", "direction", "messageType", "messageIssued", "fromEntityId", "samlStatus", "relayState", "samlContent", "isSigned", "isOK")
     SERVERTIME_FIELD_NUMBER: _ClassVar[int]
     DIRECTION_FIELD_NUMBER: _ClassVar[int]
     MESSAGETYPE_FIELD_NUMBER: _ClassVar[int]
@@ -238,7 +240,7 @@ class SsoCloudSAMLLogEntry(_message.Message):
     def __init__(self, serverTime: _Optional[str] = ..., direction: _Optional[str] = ..., messageType: _Optional[str] = ..., messageIssued: _Optional[str] = ..., fromEntityId: _Optional[str] = ..., samlStatus: _Optional[str] = ..., relayState: _Optional[str] = ..., samlContent: _Optional[str] = ..., isSigned: bool = ..., isOK: bool = ...) -> None: ...
 
 class SsoCloudSAMLLogResponse(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "entry"]
+    __slots__ = ("ssoServiceProviderId", "entry")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_FIELD_NUMBER: _ClassVar[int]
     ssoServiceProviderId: int
@@ -246,7 +248,7 @@ class SsoCloudSAMLLogResponse(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., entry: _Optional[_Iterable[_Union[SsoCloudSAMLLogEntry, _Mapping]]] = ...) -> None: ...
 
 class SsoCloudServiceProviderUpdateRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "ssoSpConfigurationId"]
+    __slots__ = ("ssoServiceProviderId", "ssoSpConfigurationId")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     ssoServiceProviderId: int
@@ -254,7 +256,7 @@ class SsoCloudServiceProviderUpdateRequest(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., ssoSpConfigurationId: _Optional[int] = ...) -> None: ...
 
 class SsoCloudIdpMetadataRequest(_message.Message):
-    __slots__ = ["ssoSpConfigurationId", "filename", "content"]
+    __slots__ = ("ssoSpConfigurationId", "filename", "content")
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     FILENAME_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
@@ -264,7 +266,7 @@ class SsoCloudIdpMetadataRequest(_message.Message):
     def __init__(self, ssoSpConfigurationId: _Optional[int] = ..., filename: _Optional[str] = ..., content: _Optional[bytes] = ...) -> None: ...
 
 class SsoCloudIdpMetadataSupportRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "ssoSpConfigurationId", "ssoEnterpriseId", "filename", "content"]
+    __slots__ = ("ssoServiceProviderId", "ssoSpConfigurationId", "ssoEnterpriseId", "filename", "content")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     SSOENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
@@ -278,13 +280,13 @@ class SsoCloudIdpMetadataSupportRequest(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., ssoSpConfigurationId: _Optional[int] = ..., ssoEnterpriseId: _Optional[int] = ..., filename: _Optional[str] = ..., content: _Optional[bytes] = ...) -> None: ...
 
 class SsoCloudConfigurationValidationRequest(_message.Message):
-    __slots__ = ["ssoSpConfigurationId"]
+    __slots__ = ("ssoSpConfigurationId",)
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     ssoSpConfigurationId: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, ssoSpConfigurationId: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class ValidationContent(_message.Message):
-    __slots__ = ["ssoSpConfigurationId", "isSuccessful", "errorMessage"]
+    __slots__ = ("ssoSpConfigurationId", "isSuccessful", "errorMessage")
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     ISSUCCESSFUL_FIELD_NUMBER: _ClassVar[int]
     ERRORMESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -294,19 +296,19 @@ class ValidationContent(_message.Message):
     def __init__(self, ssoSpConfigurationId: _Optional[int] = ..., isSuccessful: bool = ..., errorMessage: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class SsoCloudConfigurationValidationResponse(_message.Message):
-    __slots__ = ["validationContent"]
+    __slots__ = ("validationContent",)
     VALIDATIONCONTENT_FIELD_NUMBER: _ClassVar[int]
     validationContent: _containers.RepeatedCompositeFieldContainer[ValidationContent]
     def __init__(self, validationContent: _Optional[_Iterable[_Union[ValidationContent, _Mapping]]] = ...) -> None: ...
 
 class SsoCloudServiceProviderConfigurationListRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId"]
+    __slots__ = ("ssoServiceProviderId",)
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     ssoServiceProviderId: int
     def __init__(self, ssoServiceProviderId: _Optional[int] = ...) -> None: ...
 
 class ConfigurationListItem(_message.Message):
-    __slots__ = ["ssoSpConfigurationId", "name", "isSelected", "ssoServiceProviderId"]
+    __slots__ = ("ssoSpConfigurationId", "name", "isSelected", "ssoServiceProviderId")
     SSOSPCONFIGURATIONID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     ISSELECTED_FIELD_NUMBER: _ClassVar[int]
@@ -318,13 +320,13 @@ class ConfigurationListItem(_message.Message):
     def __init__(self, ssoSpConfigurationId: _Optional[int] = ..., name: _Optional[str] = ..., isSelected: bool = ..., ssoServiceProviderId: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class SsoCloudServiceProviderConfigurationListResponse(_message.Message):
-    __slots__ = ["configurationItem"]
+    __slots__ = ("configurationItem",)
     CONFIGURATIONITEM_FIELD_NUMBER: _ClassVar[int]
     configurationItem: _containers.RepeatedCompositeFieldContainer[ConfigurationListItem]
     def __init__(self, configurationItem: _Optional[_Iterable[_Union[ConfigurationListItem, _Mapping]]] = ...) -> None: ...
 
 class SsoCloudRequest(_message.Message):
-    __slots__ = ["messageSessionUid", "clientVersion", "embedded", "json", "dest", "idpSessionId", "forceLogin", "username", "detached"]
+    __slots__ = ("messageSessionUid", "clientVersion", "embedded", "json", "dest", "idpSessionId", "forceLogin", "username", "detached")
     MESSAGESESSIONUID_FIELD_NUMBER: _ClassVar[int]
     CLIENTVERSION_FIELD_NUMBER: _ClassVar[int]
     EMBEDDED_FIELD_NUMBER: _ClassVar[int]
@@ -346,7 +348,7 @@ class SsoCloudRequest(_message.Message):
     def __init__(self, messageSessionUid: _Optional[bytes] = ..., clientVersion: _Optional[str] = ..., embedded: bool = ..., json: bool = ..., dest: _Optional[str] = ..., idpSessionId: _Optional[str] = ..., forceLogin: bool = ..., username: _Optional[str] = ..., detached: bool = ...) -> None: ...
 
 class SsoCloudResponse(_message.Message):
-    __slots__ = ["command", "messageSessionUid", "email", "encryptedLoginToken", "providerName", "idpSessionId", "encryptedSessionToken", "errorToken"]
+    __slots__ = ("command", "messageSessionUid", "email", "encryptedLoginToken", "providerName", "idpSessionId", "encryptedSessionToken", "errorToken")
     COMMAND_FIELD_NUMBER: _ClassVar[int]
     MESSAGESESSIONUID_FIELD_NUMBER: _ClassVar[int]
     EMAIL_FIELD_NUMBER: _ClassVar[int]
@@ -366,7 +368,7 @@ class SsoCloudResponse(_message.Message):
     def __init__(self, command: _Optional[str] = ..., messageSessionUid: _Optional[bytes] = ..., email: _Optional[str] = ..., encryptedLoginToken: _Optional[bytes] = ..., providerName: _Optional[str] = ..., idpSessionId: _Optional[str] = ..., encryptedSessionToken: _Optional[bytes] = ..., errorToken: _Optional[str] = ...) -> None: ...
 
 class SsoCloudLogRequest(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "serviceName", "serviceId"]
+    __slots__ = ("ssoServiceProviderId", "serviceName", "serviceId")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     SERVICENAME_FIELD_NUMBER: _ClassVar[int]
     SERVICEID_FIELD_NUMBER: _ClassVar[int]
@@ -376,7 +378,7 @@ class SsoCloudLogRequest(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., serviceName: _Optional[str] = ..., serviceId: _Optional[int] = ...) -> None: ...
 
 class SamlRelayState(_message.Message):
-    __slots__ = ["messageSessionUid", "username", "embedded", "json", "destId", "keyId", "supportedLanguage", "checksum", "isGeneratedUid", "deviceId", "detached"]
+    __slots__ = ("messageSessionUid", "username", "embedded", "json", "destId", "keyId", "supportedLanguage", "checksum", "isGeneratedUid", "deviceId", "detached")
     MESSAGESESSIONUID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     EMBEDDED_FIELD_NUMBER: _ClassVar[int]
@@ -402,7 +404,7 @@ class SamlRelayState(_message.Message):
     def __init__(self, messageSessionUid: _Optional[bytes] = ..., username: _Optional[str] = ..., embedded: bool = ..., json: bool = ..., destId: _Optional[int] = ..., keyId: _Optional[int] = ..., supportedLanguage: _Optional[_Union[_APIRequest_pb2.SupportedLanguage, str]] = ..., checksum: _Optional[int] = ..., isGeneratedUid: bool = ..., deviceId: _Optional[int] = ..., detached: bool = ...) -> None: ...
 
 class SsoCloudMigrationStatusRequest(_message.Message):
-    __slots__ = ["nodeId", "fullStatus", "includeMigratedUsers", "limit"]
+    __slots__ = ("nodeId", "fullStatus", "includeMigratedUsers", "limit")
     NODEID_FIELD_NUMBER: _ClassVar[int]
     FULLSTATUS_FIELD_NUMBER: _ClassVar[int]
     INCLUDEMIGRATEDUSERS_FIELD_NUMBER: _ClassVar[int]
@@ -414,7 +416,7 @@ class SsoCloudMigrationStatusRequest(_message.Message):
     def __init__(self, nodeId: _Optional[int] = ..., fullStatus: bool = ..., includeMigratedUsers: bool = ..., limit: _Optional[int] = ...) -> None: ...
 
 class SsoCloudMigrationStatusResponse(_message.Message):
-    __slots__ = ["success", "message", "nodeId", "ssoConnectId", "ssoConnectName", "ssoConnectCloudId", "ssoConnectCloudName", "totalUsersCount", "usersMigratedCount", "migratedUsers", "unmigratedUsers"]
+    __slots__ = ("success", "message", "nodeId", "ssoConnectId", "ssoConnectName", "ssoConnectCloudId", "ssoConnectCloudName", "totalUsersCount", "usersMigratedCount", "migratedUsers", "unmigratedUsers")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
@@ -440,7 +442,7 @@ class SsoCloudMigrationStatusResponse(_message.Message):
     def __init__(self, success: bool = ..., message: _Optional[str] = ..., nodeId: _Optional[int] = ..., ssoConnectId: _Optional[int] = ..., ssoConnectName: _Optional[str] = ..., ssoConnectCloudId: _Optional[int] = ..., ssoConnectCloudName: _Optional[str] = ..., totalUsersCount: _Optional[int] = ..., usersMigratedCount: _Optional[int] = ..., migratedUsers: _Optional[_Iterable[_Union[SsoCloudMigrationUserInfo, _Mapping]]] = ..., unmigratedUsers: _Optional[_Iterable[_Union[SsoCloudMigrationUserInfo, _Mapping]]] = ...) -> None: ...
 
 class SsoCloudMigrationUserInfo(_message.Message):
-    __slots__ = ["userId", "email", "fullName", "isMigrated"]
+    __slots__ = ("userId", "email", "fullName", "isMigrated")
     USERID_FIELD_NUMBER: _ClassVar[int]
     EMAIL_FIELD_NUMBER: _ClassVar[int]
     FULLNAME_FIELD_NUMBER: _ClassVar[int]

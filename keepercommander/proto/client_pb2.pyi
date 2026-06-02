@@ -7,12 +7,12 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class BreachWatchInfoType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RECORD: _ClassVar[BreachWatchInfoType]
     ALTERNATE_PASSWORD: _ClassVar[BreachWatchInfoType]
 
 class BWStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     GOOD: _ClassVar[BWStatus]
     CHANGED: _ClassVar[BWStatus]
     WEAK: _ClassVar[BWStatus]
@@ -27,7 +27,7 @@ BREACHED: BWStatus
 IGNORE: BWStatus
 
 class BreachWatchUpdateRequest(_message.Message):
-    __slots__ = ["breachWatchRecordRequest", "encryptedData"]
+    __slots__ = ("breachWatchRecordRequest", "encryptedData")
     BREACHWATCHRECORDREQUEST_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
     breachWatchRecordRequest: _containers.RepeatedCompositeFieldContainer[BreachWatchRecordRequest]
@@ -35,7 +35,7 @@ class BreachWatchUpdateRequest(_message.Message):
     def __init__(self, breachWatchRecordRequest: _Optional[_Iterable[_Union[BreachWatchRecordRequest, _Mapping]]] = ..., encryptedData: _Optional[bytes] = ...) -> None: ...
 
 class BreachWatchRecordRequest(_message.Message):
-    __slots__ = ["recordUid", "encryptedData", "breachWatchInfoType", "updateUserWhoScanned"]
+    __slots__ = ("recordUid", "encryptedData", "breachWatchInfoType", "updateUserWhoScanned")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
     BREACHWATCHINFOTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -47,7 +47,7 @@ class BreachWatchRecordRequest(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., breachWatchInfoType: _Optional[_Union[BreachWatchInfoType, str]] = ..., updateUserWhoScanned: bool = ...) -> None: ...
 
 class BreachWatchData(_message.Message):
-    __slots__ = ["passwords", "emails", "domains"]
+    __slots__ = ("passwords", "emails", "domains")
     PASSWORDS_FIELD_NUMBER: _ClassVar[int]
     EMAILS_FIELD_NUMBER: _ClassVar[int]
     DOMAINS_FIELD_NUMBER: _ClassVar[int]
@@ -57,7 +57,7 @@ class BreachWatchData(_message.Message):
     def __init__(self, passwords: _Optional[_Iterable[_Union[BWPassword, _Mapping]]] = ..., emails: _Optional[_Iterable[_Union[BWPassword, _Mapping]]] = ..., domains: _Optional[_Iterable[_Union[BWPassword, _Mapping]]] = ...) -> None: ...
 
 class BWPassword(_message.Message):
-    __slots__ = ["value", "resolved", "status", "euid"]
+    __slots__ = ("value", "resolved", "status", "euid")
     VALUE_FIELD_NUMBER: _ClassVar[int]
     RESOLVED_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]

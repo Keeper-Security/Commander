@@ -1,11 +1,11 @@
 import pam_pb2 as _pam_pb2
 import APIRequest_pb2 as _APIRequest_pb2
+import folder_pb2 as _folder_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -91,7 +91,7 @@ class RouterControllerMessage(_message.Message):
     streamResponse: bool
     payload: bytes
     timeout: int
-    def __init__(self, messageType: _Optional[_Union[_pam_pb2.ControllerMessageType, str]] = ..., messageUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., streamResponse: _Optional[bool] = ..., payload: _Optional[bytes] = ..., timeout: _Optional[int] = ...) -> None: ...
+    def __init__(self, messageType: _Optional[_Union[_pam_pb2.ControllerMessageType, str]] = ..., messageUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., streamResponse: bool = ..., payload: _Optional[bytes] = ..., timeout: _Optional[int] = ...) -> None: ...
 
 class RouterUserAuth(_message.Message):
     __slots__ = ("transmissionKey", "sessionToken", "userId", "enterpriseUserId", "deviceName", "deviceToken", "clientVersionId", "needUsername", "username", "mspEnterpriseId", "isPedmAdmin", "mcEnterpriseId")
@@ -119,7 +119,7 @@ class RouterUserAuth(_message.Message):
     mspEnterpriseId: int
     isPedmAdmin: bool
     mcEnterpriseId: int
-    def __init__(self, transmissionKey: _Optional[bytes] = ..., sessionToken: _Optional[bytes] = ..., userId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., deviceName: _Optional[str] = ..., deviceToken: _Optional[bytes] = ..., clientVersionId: _Optional[int] = ..., needUsername: _Optional[bool] = ..., username: _Optional[str] = ..., mspEnterpriseId: _Optional[int] = ..., isPedmAdmin: _Optional[bool] = ..., mcEnterpriseId: _Optional[int] = ...) -> None: ...
+    def __init__(self, transmissionKey: _Optional[bytes] = ..., sessionToken: _Optional[bytes] = ..., userId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., deviceName: _Optional[str] = ..., deviceToken: _Optional[bytes] = ..., clientVersionId: _Optional[int] = ..., needUsername: bool = ..., username: _Optional[str] = ..., mspEnterpriseId: _Optional[int] = ..., isPedmAdmin: bool = ..., mcEnterpriseId: _Optional[int] = ...) -> None: ...
 
 class RouterDeviceAuth(_message.Message):
     __slots__ = ("clientId", "clientVersion", "signature", "enterpriseId", "nodeId", "deviceName", "deviceToken", "controllerName", "controllerUid", "ownerUser", "challenge", "ownerId", "maxInstanceCount")
@@ -163,7 +163,7 @@ class RouterRecordRotation(_message.Message):
     controllerUid: bytes
     resourceUid: bytes
     noSchedule: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., configurationUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., noSchedule: _Optional[bool] = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., configurationUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., noSchedule: bool = ...) -> None: ...
 
 class RouterRecordRotationsRequest(_message.Message):
     __slots__ = ("enterpriseId", "records")
@@ -179,7 +179,7 @@ class RouterRecordRotationsResponse(_message.Message):
     HASMORE_FIELD_NUMBER: _ClassVar[int]
     rotations: _containers.RepeatedCompositeFieldContainer[RouterRecordRotation]
     hasMore: bool
-    def __init__(self, rotations: _Optional[_Iterable[_Union[RouterRecordRotation, _Mapping]]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
+    def __init__(self, rotations: _Optional[_Iterable[_Union[RouterRecordRotation, _Mapping]]] = ..., hasMore: bool = ...) -> None: ...
 
 class RouterRotationInfo(_message.Message):
     __slots__ = ("status", "configurationUid", "resourceUid", "nodeId", "controllerUid", "controllerName", "scriptName", "pwdComplexity", "disabled")
@@ -201,10 +201,10 @@ class RouterRotationInfo(_message.Message):
     scriptName: str
     pwdComplexity: str
     disabled: bool
-    def __init__(self, status: _Optional[_Union[RouterRotationStatus, str]] = ..., configurationUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., nodeId: _Optional[int] = ..., controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., scriptName: _Optional[str] = ..., pwdComplexity: _Optional[str] = ..., disabled: _Optional[bool] = ...) -> None: ...
+    def __init__(self, status: _Optional[_Union[RouterRotationStatus, str]] = ..., configurationUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., nodeId: _Optional[int] = ..., controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., scriptName: _Optional[str] = ..., pwdComplexity: _Optional[str] = ..., disabled: bool = ...) -> None: ...
 
 class RouterRecordRotationRequest(_message.Message):
-    __slots__ = ("recordUid", "revision", "configurationUid", "resourceUid", "schedule", "enterpriseUserId", "pwdComplexity", "disabled", "remoteAddress", "clientVersionId", "noop", "saasConfiguration")
+    __slots__ = ("recordUid", "revision", "configurationUid", "resourceUid", "schedule", "enterpriseUserId", "pwdComplexity", "disabled", "remoteAddress", "clientVersionId", "noop", "saasConfiguration", "updateServices", "serviceResources")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     CONFIGURATIONUID_FIELD_NUMBER: _ClassVar[int]
@@ -217,6 +217,8 @@ class RouterRecordRotationRequest(_message.Message):
     CLIENTVERSIONID_FIELD_NUMBER: _ClassVar[int]
     NOOP_FIELD_NUMBER: _ClassVar[int]
     SAASCONFIGURATION_FIELD_NUMBER: _ClassVar[int]
+    UPDATESERVICES_FIELD_NUMBER: _ClassVar[int]
+    SERVICERESOURCES_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
     revision: int
     configurationUid: bytes
@@ -229,7 +231,9 @@ class RouterRecordRotationRequest(_message.Message):
     clientVersionId: int
     noop: bool
     saasConfiguration: bytes
-    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., configurationUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., schedule: _Optional[str] = ..., enterpriseUserId: _Optional[int] = ..., pwdComplexity: _Optional[bytes] = ..., disabled: _Optional[bool] = ..., remoteAddress: _Optional[str] = ..., clientVersionId: _Optional[int] = ..., noop: _Optional[bool] = ..., saasConfiguration: _Optional[bytes] = ...) -> None: ...
+    updateServices: bool
+    serviceResources: _pam_pb2.UidList
+    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., configurationUid: _Optional[bytes] = ..., resourceUid: _Optional[bytes] = ..., schedule: _Optional[str] = ..., enterpriseUserId: _Optional[int] = ..., pwdComplexity: _Optional[bytes] = ..., disabled: bool = ..., remoteAddress: _Optional[str] = ..., clientVersionId: _Optional[int] = ..., noop: bool = ..., saasConfiguration: _Optional[bytes] = ..., updateServices: bool = ..., serviceResources: _Optional[_Union[_pam_pb2.UidList, _Mapping]] = ...) -> None: ...
 
 class UserRecordAccessRequest(_message.Message):
     __slots__ = ("userId", "recordUid")
@@ -240,12 +244,14 @@ class UserRecordAccessRequest(_message.Message):
     def __init__(self, userId: _Optional[int] = ..., recordUid: _Optional[bytes] = ...) -> None: ...
 
 class UserRecordAccessResponse(_message.Message):
-    __slots__ = ("recordUid", "accessLevel")
+    __slots__ = ("recordUid", "accessLevel", "isShareAdmin")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSLEVEL_FIELD_NUMBER: _ClassVar[int]
+    ISSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
     accessLevel: UserRecordAccessLevel
-    def __init__(self, recordUid: _Optional[bytes] = ..., accessLevel: _Optional[_Union[UserRecordAccessLevel, str]] = ...) -> None: ...
+    isShareAdmin: bool
+    def __init__(self, recordUid: _Optional[bytes] = ..., accessLevel: _Optional[_Union[UserRecordAccessLevel, str]] = ..., isShareAdmin: bool = ...) -> None: ...
 
 class UserRecordAccessRequests(_message.Message):
     __slots__ = ("requests",)
@@ -258,6 +264,50 @@ class UserRecordAccessResponses(_message.Message):
     RESPONSES_FIELD_NUMBER: _ClassVar[int]
     responses: _containers.RepeatedCompositeFieldContainer[UserRecordAccessResponse]
     def __init__(self, responses: _Optional[_Iterable[_Union[UserRecordAccessResponse, _Mapping]]] = ...) -> None: ...
+
+class UserSharedFolderAccessRequest(_message.Message):
+    __slots__ = ("userId", "sharedFolderUid")
+    USERID_FIELD_NUMBER: _ClassVar[int]
+    SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    userId: int
+    sharedFolderUid: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, userId: _Optional[int] = ..., sharedFolderUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class UserSharedFolderAccessResponse(_message.Message):
+    __slots__ = ("sharedFolderUid", "accessRoleType")
+    SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSROLETYPE_FIELD_NUMBER: _ClassVar[int]
+    sharedFolderUid: bytes
+    accessRoleType: _folder_pb2.AccessRoleType
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., accessRoleType: _Optional[_Union[_folder_pb2.AccessRoleType, str]] = ...) -> None: ...
+
+class UserSharedFolderAccessResponses(_message.Message):
+    __slots__ = ("responses",)
+    RESPONSES_FIELD_NUMBER: _ClassVar[int]
+    responses: _containers.RepeatedCompositeFieldContainer[UserSharedFolderAccessResponse]
+    def __init__(self, responses: _Optional[_Iterable[_Union[UserSharedFolderAccessResponse, _Mapping]]] = ...) -> None: ...
+
+class UserFolderPermissionsRequest(_message.Message):
+    __slots__ = ("userId", "folderUid")
+    USERID_FIELD_NUMBER: _ClassVar[int]
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    userId: int
+    folderUid: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, userId: _Optional[int] = ..., folderUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class UserFolderPermissionsResponse(_message.Message):
+    __slots__ = ("folderUid", "permissions")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    permissions: _folder_pb2.FolderPermissions
+    def __init__(self, folderUid: _Optional[bytes] = ..., permissions: _Optional[_Union[_folder_pb2.FolderPermissions, _Mapping]] = ...) -> None: ...
+
+class UserFolderPermissionsResponses(_message.Message):
+    __slots__ = ("responses",)
+    RESPONSES_FIELD_NUMBER: _ClassVar[int]
+    responses: _containers.RepeatedCompositeFieldContainer[UserFolderPermissionsResponse]
+    def __init__(self, responses: _Optional[_Iterable[_Union[UserFolderPermissionsResponse, _Mapping]]] = ...) -> None: ...
 
 class RotationSchedule(_message.Message):
     __slots__ = ("record_uid", "schedule")
@@ -357,7 +407,7 @@ class GetEnforcementResponse(_message.Message):
     enforcementTypes: _containers.RepeatedCompositeFieldContainer[EnforcementType]
     addOnIds: _containers.RepeatedScalarFieldContainer[int]
     isInTrial: bool
-    def __init__(self, enforcementTypes: _Optional[_Iterable[_Union[EnforcementType, _Mapping]]] = ..., addOnIds: _Optional[_Iterable[int]] = ..., isInTrial: _Optional[bool] = ...) -> None: ...
+    def __init__(self, enforcementTypes: _Optional[_Iterable[_Union[EnforcementType, _Mapping]]] = ..., addOnIds: _Optional[_Iterable[int]] = ..., isInTrial: bool = ...) -> None: ...
 
 class PEDMTOTPValidateRequest(_message.Message):
     __slots__ = ("username", "enterpriseId", "code")
@@ -375,13 +425,17 @@ class GetPEDMAdminInfoResponse(_message.Message):
     PEDMADDONACTIVE_FIELD_NUMBER: _ClassVar[int]
     isPedmAdmin: bool
     pedmAddonActive: bool
-    def __init__(self, isPedmAdmin: _Optional[bool] = ..., pedmAddonActive: _Optional[bool] = ...) -> None: ...
+    def __init__(self, isPedmAdmin: bool = ..., pedmAddonActive: bool = ...) -> None: ...
 
 class PAMNetworkSettings(_message.Message):
-    __slots__ = ("allowedSettings",)
+    __slots__ = ("allowedSettings", "idpConfigUid", "adminUid")
     ALLOWEDSETTINGS_FIELD_NUMBER: _ClassVar[int]
+    IDPCONFIGUID_FIELD_NUMBER: _ClassVar[int]
+    ADMINUID_FIELD_NUMBER: _ClassVar[int]
     allowedSettings: bytes
-    def __init__(self, allowedSettings: _Optional[bytes] = ...) -> None: ...
+    idpConfigUid: bytes
+    adminUid: bytes
+    def __init__(self, allowedSettings: _Optional[bytes] = ..., idpConfigUid: _Optional[bytes] = ..., adminUid: _Optional[bytes] = ...) -> None: ...
 
 class PAMNetworkConfigurationRequest(_message.Message):
     __slots__ = ("recordUid", "networkSettings", "resources", "rotations")
@@ -440,3 +494,13 @@ class Router2FAGetWebAuthnChallengeResponse(_message.Message):
     challenge: str
     capabilities: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, challenge: _Optional[str] = ..., capabilities: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class CreateEphemeralSecretRequest(_message.Message):
+    __slots__ = ("encryptedSecret", "secretKeyHash", "ttl")
+    ENCRYPTEDSECRET_FIELD_NUMBER: _ClassVar[int]
+    SECRETKEYHASH_FIELD_NUMBER: _ClassVar[int]
+    TTL_FIELD_NUMBER: _ClassVar[int]
+    encryptedSecret: bytes
+    secretKeyHash: bytes
+    ttl: int
+    def __init__(self, encryptedSecret: _Optional[bytes] = ..., secretKeyHash: _Optional[bytes] = ..., ttl: _Optional[int] = ...) -> None: ...
