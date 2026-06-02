@@ -40,6 +40,7 @@ from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
     report_output_parser
 from .enterprise_common import EnterpriseCommand
+from .helpers.enterprise import is_valid_name_length, simplify_batch_responses
 from .automator import AutomatorListCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -811,10 +812,6 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                         role_ids.update(team_roles[team_uid])
                             if column == 'role_count':
                                 row.append(len(role_ids))
-                            elif kwargs.get('format') == 'json':
-                                role_info = [{'role_id': rid, 'role_name': roles[rid]['name']}
-                                             for rid in role_ids if rid in roles]
-                                row.append(role_info)
                             else:
                                 role_names = [roles[role_id]['name'] for role_id in role_ids if role_id in roles]
                                 row.append(role_names)
@@ -1170,7 +1167,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
             if not node_name or not node_name.strip():
                 logging.warning('Empty node name provided. Skipping.')
                 continue
-                
+
+            if not is_valid_name_length(node_name, 'Node name', 'enterprise-node'):
+                continue
+
             n = node_lookup.get(node_name)
             if not n:
                 n = node_lookup.get(node_name.lower())
@@ -1497,6 +1497,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     return
             elif parent_id or kwargs.get('displayname'):
                 display_name = kwargs.get('displayname')
+                if display_name and not is_valid_name_length(display_name, 'Node display name', 'enterprise-node'):
+                    display_name = None
                 def is_in_chain(node_id, parent_id):
                     if node_id == parent_id:
                         return True
@@ -1506,8 +1508,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     return is_in_chain(nn['parent_id'], parent_id)
 
                 if display_name and len(matched_nodes) > 1:
-                    logging.warning('Cannot assign the same name to % nodes', len(matched_nodes))
+                    logging.warning('Cannot assign the same name to %s nodes', len(matched_nodes))
                     display_name = None
+                if not parent_id and not display_name:
+                    return
                 if not parent_id or not display_name:
                     for node in matched_nodes:
                         encrypted_data = node['encrypted_data']
@@ -1531,6 +1535,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 if command == 'node_add':
@@ -2000,6 +2005,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         results = None
         if request_batch:
             results = api.execute_batch(params, request_batch)
+            simplify_batch_responses(results)
             for rq, rs in zip(request_batch, results):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
@@ -2306,6 +2312,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             # Collect role_ids for newly created roles
             new_role_ids = []
             for role_name in role_names:
+                if not is_valid_name_length(role_name, 'Role name', 'enterprise-role'):
+                    continue
                 data = json.dumps({ "displayname": role_name }).encode('utf-8')
                 role_id = self.get_enterprise_id(params)
                 new_role_ids.append(role_id)
@@ -2821,6 +2829,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 role = matched_roles[0]
                 if not role_name:
                     role_name = role['data'].get('displayname')
+                if not is_valid_name_length(role_name, 'Role name', 'enterprise-role'):
+                    return
                 if not node_id:
                     node_id = role['node_id']
                 dt = json.dumps({ "displayname": role_name })
@@ -2832,7 +2842,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     "encrypted_data": utils.base64_url_encode(
                         crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key'])),
                     "visible_below": role.get('visible_below') or False,
-                    "new_user_inherit": role.get('new_user_inherit') or False
+                    "new_user_inherit": role.get('new_user_inherit') or False,
+                    "role_name": role_name,
                 }
                 request_batch.append(rq)
                 if 'role_enforcements' in params.enterprise:
@@ -2889,6 +2900,12 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     logging.warning('Cannot assign the same name to %s roles', len(matched_roles))
                     kwargs['name'] = None
 
+                if kwargs.get('name') and not is_valid_name_length(kwargs.get('name'), 'Role name', 'enterprise-role'):
+                    kwargs['name'] = None
+
+                if not (node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name')):
+                    return
+
                 for role in matched_roles:
                     encrypted_data = role['encrypted_data']
                     if kwargs.get('name'):
@@ -2910,11 +2927,12 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 if command == 'role_add':
                     if rs['result'] == 'success':
-                        logging.info('%s Role created with Role ID : %s', rq['role_name'], rq['role_id'])
+                        logging.info('%s Role created with Role ID : %s', rq.get('role_name') or rq.get('role_id'), rq['role_id'])
                     else:
                         logging.warning('Failed to create role: %s', rs['message'])
                 else:
@@ -3403,6 +3421,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             for item in queue:
                 is_new_team = type(item) == str
                 team_name = item if is_new_team else item['name']
+                if is_new_team and not is_valid_name_length(team_name, 'Team name', 'enterprise-team'):
+                    continue
                 team_node_id = node_id if is_new_team else item['node_id']
                 team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
@@ -3608,6 +3628,12 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     logging.warning('Cannot set same name to %s teams', len(matched_teams))
                     kwargs['name'] = None
 
+                if kwargs.get('name') and not is_valid_name_length(kwargs.get('name'), 'Team name', 'enterprise-team'):
+                    kwargs['name'] = None
+
+                if not (node_id or kwargs.get('name') or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view')):
+                    return
+
                 for team in matched_teams:
                     rq = {
                         'command': 'team_update',
@@ -3622,6 +3648,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 team_name = None
@@ -4014,6 +4041,7 @@ class TeamApproveCommand(EnterpriseCommand):
         if request_batch:
             if not kwargs.get('dry_run'):
                 rs = api.execute_batch(params, request_batch)
+                simplify_batch_responses(rs)
                 if rs:
                     team_add_success = 0
                     team_add_failure = 0
