@@ -118,8 +118,10 @@ class NestedShareGetCommand(Command):
                     "sensitive field values will be displayed on stdout only.",
                     resolved,
                 )
-            (self._record_json if fmt == 'json' else self._record_detail)(
-                params, resolved, verbose, unmask, include_dag=include_dag)
+            if fmt == 'json':
+                self._record_json(params, resolved, verbose, unmask, include_dag=include_dag)
+            else:
+                self._record_detail(params, resolved, verbose, unmask)
             return
 
         raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')

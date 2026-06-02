@@ -545,6 +545,17 @@ class RecordGetUidCommand(Command):
                     if version == 3 and kwargs.get('include_dag') is True:
                         self.include_dag(params, ro, r)
 
+                    if is_nsf_record:
+                        from .nested_share_folder.helpers import find_folder_location
+                        folder_loc = find_folder_location(params, uid)
+                        ro['folder'] = folder_loc if folder_loc else {'uid': None, 'path': '/'}
+                    else:
+                        folder_uid = next(find_folders(params, uid), None)
+                        ro['folder'] = {
+                            'uid': folder_uid,
+                            'path': get_folder_path(params, folder_uid) if folder_uid else '/'
+                        }
+
                     print(json.dumps(ro, indent=2))
                 elif fmt == 'password':
                     if r.password:
