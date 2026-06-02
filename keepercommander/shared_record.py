@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 from typing import Dict, List
 
@@ -176,9 +177,10 @@ class SharedRecord:
         ordered = list(self.permissions.values())
         for user_perms in self.user_permissions.values():
             if user_perms.to_uid:
-                ordered.remove(user_perms)
                 team_perms = self.team_permissions.get(user_perms.to_uid)
-                ordered.insert(ordered.index(team_perms) + 1, user_perms)
+                if team_perms in ordered and user_perms in ordered:
+                    ordered.remove(user_perms)
+                    ordered.insert(ordered.index(team_perms) + 1, user_perms)
         return ordered
 
     def merge_permissions(self, share_target, perms_to_merge, sp_type):
@@ -274,6 +276,54 @@ class SharedRecord:
             load_user_permissions(user_perms)
 
         sf_perms = shares.get('shared_folder_permissions', [])
+        is_nested_share_record = self.uid in getattr(params, 'nested_share_records', {})
+        if is_nested_share_record and not user_perms and not sf_perms:
+            try:
+                from . import nested_share_folder as _nsf
+                nested_accesses = _nsf.get_record_accesses_v3(params, [self.uid]).get('record_accesses', [])
+                for access in nested_accesses:
+                    if access.get('record_uid') != self.uid:
+                        continue
+
+                    share_target = access.get('accessor_name') or access.get('access_type_uid') or ''
+                    if not share_target:
+                        continue
+
+                    if access.get('owner'):
+                        self.owner = share_target
+
+                    share_info = {
+                        'editable': access.get('can_edit', False),
+                        'shareable': access.get('can_update_access', False) or access.get('can_approve_access', False),
+                        'view': access.get('can_view', True),
+                    }
+                    inherited = access.get('inherited', False)
+                    access_type = access.get('access_type')
+                    if access_type == 'AT_TEAM':
+                        team_uid = access.get('access_type_uid')
+                        if inherited:
+                            team_usernames = team_members.get(team_uid, set())
+                            for folder_uid in self.folder_uids:
+                                update_sf_shares(share_target, folder_uid)
+                                for username in team_usernames:
+                                    update_sf_shares(username, folder_uid)
+                        share_info['team_uid'] = access.get('access_type_uid')
+                        share_info['name'] = share_target
+                        load_team_permissions([share_info], None)
+                    else:
+                        if inherited:
+                            for folder_uid in self.folder_uids:
+                                update_sf_shares(share_target, folder_uid)
+                        share_info['username'] = share_target
+                        share_type = SharePermissions.SharePermissionsType.SF_USER if inherited \
+                            else SharePermissions.SharePermissionsType.USER
+                        load_user_permissions([share_info], None, share_type)
+
+                apply_role_restrictions()
+                return
+            except Exception as e:
+                logging.debug('Could not load Nested Share Folder permissions for %s: %s', self.uid, e)
+
         SF_UID = 'shared_folder_uid'
         sf_cache = params.shared_folder_cache
         shared_folders = {sfp.get(SF_UID): sf_cache.get(sfp.get(SF_UID)) for sfp in sf_perms}
