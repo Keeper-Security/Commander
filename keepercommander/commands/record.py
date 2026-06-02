@@ -307,10 +307,18 @@ class RecordGetUidCommand(Command):
             sf = api.get_shared_folder(params, uid)
             if fmt == 'json':
                 path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep) if sf.shared_folder_uid else ''
+                sf_node = params.folder_cache.get(sf.shared_folder_uid) if sf.shared_folder_uid else None
+                parent_uid = sf_node.parent_uid if sf_node and sf_node.parent_uid else None
                 sfo = {
-                    "shared_folder_uid": sf.shared_folder_uid,
+                    "folder_uid": sf.shared_folder_uid,
+                    "type": "classic_folder",
                     "name": sf.name,
                     "path": path,
+                    "parent_uid": parent_uid,
+                    "folder": {
+                        "uid": parent_uid,
+                        "path": get_folder_path(params, parent_uid) if parent_uid else "/"
+                    },
                     "manage_users": sf.default_manage_users,
                     "manage_records": sf.default_manage_records,
                     "can_edit": sf.default_can_edit,
@@ -364,20 +372,31 @@ class RecordGetUidCommand(Command):
         if uid in params.folder_cache:
             f = params.folder_cache[uid]
             if fmt == 'json':
+                folder_type = 'nested_share_folder' if f.type == BaseFolderNode.NestedShareFolderType else 'classic_folder'
+                parent_uid = f.parent_uid or None
                 fo = {
                     'folder_uid': f.uid,
-                    'type': f.type,
-                    'name': f.name
+                    'type': folder_type,
+                    'name': f.name,
+                    'path': get_folder_path(params, f.uid),
+                    'parent_uid': parent_uid,
+                    'folder': {
+                        'uid': parent_uid,
+                        'path': get_folder_path(params, parent_uid) if parent_uid else '/'
+                    }
                 }
-                if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                    fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
-                        else f.uid
-                if f.parent_uid:
-                    fo['parent_folder_uid'] = f.parent_uid
+                if isinstance(f, subfolder.SharedFolderFolderNode):
+                    fo['shared_folder_uid'] = f.shared_folder_uid
                 if f.type == BaseFolderNode.UserFolderType:
-                    fo['path'] = get_folder_path(params, f.uid)
                     record_uids = params.subfolder_record_cache.get(f.uid, set())
-                    fo['records'] = [{'record_uid': r} for r in record_uids]
+                    records_list = []
+                    for r_uid in record_uids:
+                        entry = {'record_uid': r_uid}
+                        rec = vault.KeeperRecord.load(params, r_uid)
+                        if rec:
+                            entry['record_name'] = rec.title
+                        records_list.append(entry)
+                    fo['records'] = records_list
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
@@ -448,9 +467,11 @@ class RecordGetUidCommand(Command):
             if r:
                 params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
-
+                    is_nsf_record = (hasattr(params, 'nested_share_records')
+                                     and uid in getattr(params, 'nested_share_records', {}))
                     ro = {
                         'record_uid': uid,
+                        'source': 'nested_share_folder' if is_nsf_record else 'classic',
                     }
                     if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
