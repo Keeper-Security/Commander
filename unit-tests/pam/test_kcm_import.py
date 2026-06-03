@@ -11,7 +11,6 @@
 
 import json
 import os
-import platform
 import sys
 import tempfile
 import unittest
@@ -1282,17 +1281,7 @@ class TestOutputFilePermissions(unittest.TestCase):
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
            return_value='pass')
     def test_output_file_owner_only(self, mock_getpass, MockConnector):
-        """--output file must be locked to owner-only access.
-
-        POSIX: verifies `os.stat().st_mode & 0o777 == 0o600` (the kernel honors
-        the mode passed to `os.open`).
-
-        Windows: Python's `os.stat().st_mode` reflects DOS attributes, not the
-        NTFS DACL, so a POSIX-style mode comparison can't see the icacls
-        hardening. Instead, verify via the `icacls` CLI that the principals
-        `set_file_permissions` strips (NT AUTHORITY\\SYSTEM, BUILTIN\\Administrators)
-        are absent — the inheritance-r + remove + owner-only-grant chain ran.
-        """
+        """--output file must have 0o600 permissions (owner read/write only)."""
         mock_conn = MockConnector.return_value
         mock_conn.extract_groups.return_value = []
         mock_conn.extract_connections.return_value = ([
@@ -1301,6 +1290,7 @@ class TestOutputFilePermissions(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
+        import stat
         tmp_dir = tempfile.mkdtemp()
         output_path = os.path.join(tmp_dir, 'test_output.json')
         try:
@@ -1308,24 +1298,9 @@ class TestOutputFilePermissions(unittest.TestCase):
                         db_host='127.0.0.1',
                         output=output_path)
 
-            if platform.system() == 'Windows':
-                import subprocess
-                acl_dump = subprocess.run(
-                    ['icacls', output_path],
-                    capture_output=True, text=True, check=True,
-                ).stdout
-                self.assertNotIn(
-                    'NT AUTHORITY\\SYSTEM', acl_dump,
-                    f'SYSTEM should have been removed but is still in the ACL:\n{acl_dump}',
-                )
-                self.assertNotIn(
-                    'BUILTIN\\Administrators', acl_dump,
-                    f'Administrators should have been removed but is still in the ACL:\n{acl_dump}',
-                )
-            else:
-                file_mode = os.stat(output_path).st_mode & 0o777
-                self.assertEqual(file_mode, 0o600,
-                                 f'Expected 0o600, got {oct(file_mode)}')
+            file_mode = os.stat(output_path).st_mode & 0o777
+            self.assertEqual(file_mode, 0o600,
+                             f'Expected 0o600, got {oct(file_mode)}')
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
@@ -2316,6 +2291,7 @@ class TestLiveExecutePipeline(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
+        import stat
         tmp_dir = tempfile.mkdtemp()
         output_path = os.path.join(tmp_dir, 'kcm_export.json')
         try:
