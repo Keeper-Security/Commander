@@ -27,9 +27,6 @@ import requests
 
 from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
-from .ksm import KSMCommand
-from .pam import gateway_helper
-from .pam.router_helper import router_get_connected_gateways
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, record_types
 from ..breachwatch import BreachWatch
 from ..display import bcolors
@@ -1347,6 +1344,8 @@ class RecordGetUidCommand(Command):
 
 
 def _resolve_gateways_by_pattern(params, pattern):
+    from .pam import gateway_helper
+    from .pam.router_helper import router_get_connected_gateways
     """Resolve a `--device` pattern to a list of Gateway controller objects.
 
     Matches both: exact controllerUid AND case-insensitive substring on
@@ -1417,6 +1416,7 @@ def _find_pam_configs_for_gateway(params, gateway_uid_str):
 
 
 def _build_gateway_info(c, connected_instances, params, is_router_down, is_verbose):
+    from .ksm import KSMCommand
     """Build a dict describing one Gateway, suitable for table or JSON rendering."""
     gateway_uid_str = utils.base64_url_encode(c.controllerUid)
     ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
