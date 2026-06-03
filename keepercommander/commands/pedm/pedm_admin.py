@@ -228,9 +228,9 @@ class PedmScimCommand(base.ArgparseCommand):
                                   help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
 
         ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
-        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<dc-fqdn>)')
-        ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (userPrincipalName or DOMAIN\\username)')
-        ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
+        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='DC hostname, IP or LDAP URL (<dc-ip>, ldap(s)://<dc-fqdn>)')
+        ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (userPrincipalName or DOMAIN\\\\username)')
+        ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password. Will be prompted if not set.')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
         ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
                               help='Use NetBIOS domain names (e.g., TEST) or DNS names (e.g., test.local)')
