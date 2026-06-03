@@ -20,13 +20,15 @@ import json
 import logging
 
 from ..base import Command
+from ..record import RecordGetUidCommand
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ... import vault
 from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
     get_access_role_label, format_role_display,
     format_timestamp, load_record_metadata, command_error_handler,
-    ensure_nested_share_record,
+    ensure_nested_share_record, collect_records_in_folder, ROOT_FOLDER_UID,
 )
 from .parsers import (
     nested_share_record_get_details_parser,
@@ -91,10 +93,11 @@ class NestedShareGetCommand(Command):
         return nested_share_get_parser
 
     def execute(self, params, **kwargs):
-        uid     = (kwargs.get('uid') or '').strip()
-        fmt     = kwargs.get('format') or 'detail'
-        verbose = kwargs.get('verbose', False)
-        unmask  = kwargs.get('unmask', False)
+        uid         = (kwargs.get('uid') or '').strip()
+        fmt         = kwargs.get('format') or 'detail'
+        verbose     = kwargs.get('verbose', False)
+        unmask      = kwargs.get('unmask', False)
+        include_dag = kwargs.get('include_dag', False)
 
         if not uid:
             raise CommandError('nsf-get', 'UID parameter is required')
@@ -115,8 +118,10 @@ class NestedShareGetCommand(Command):
                     "sensitive field values will be displayed on stdout only.",
                     resolved,
                 )
-            (self._record_json if fmt == 'json' else self._record_detail)(
-                params, resolved, verbose, unmask)
+            if fmt == 'json':
+                self._record_json(params, resolved, verbose, unmask, include_dag=include_dag)
+            else:
+                self._record_detail(params, resolved, verbose, unmask)
             return
 
         raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
@@ -231,7 +236,7 @@ class NestedShareGetCommand(Command):
                             ', '.join(f'{k}: {v}' for k, v in val.items() if v)
         return ''
 
-    def _record_json(self, params, record_uid, verbose, _unmask=False):
+    def _record_json(self, params, record_uid, verbose, _unmask=False, include_dag=False):
         meta = load_record_metadata(params, record_uid)
         ro = {
             'record_uid': record_uid, 'title': meta['title'],
@@ -275,7 +280,15 @@ class NestedShareGetCommand(Command):
             if share_admins:
                 ro['share_admins'] = share_admins
         except Exception as e:
-            logger.debug('Could not retrieve share admins: %s', e)
+            logger.error('Could not retrieve share admins: %s', e)
+
+        if include_dag:
+            try:
+                r = vault.KeeperRecord.load(params, record_uid)
+                if r:
+                    RecordGetUidCommand().include_dag(params, ro, r)
+            except Exception as e:
+                logger.error('Could not retrieve DAG info for record %s: %s', record_uid, e)
 
         print(json.dumps(ro, indent=2))
 
@@ -391,7 +404,34 @@ class NestedShareGetCommand(Command):
         owner_username = fobj.get('owner_username')
         owner_account_uid = fobj.get('owner_account_uid')
 
-        fo = {'nested_share_folder_uid': folder_uid, 'name': name}
+        nsf_folders = getattr(params, 'nested_share_folders', {})
+        raw_parent = fobj.get('parent_uid') or ''
+        # Treat the parent as root if it is absent, a known root sentinel, or not
+        # a real NSF folder entry (some vaults use server-specific root UIDs).
+        is_root_parent = not raw_parent or raw_parent == ROOT_FOLDER_UID or raw_parent not in nsf_folders
+        parent_uid = None if is_root_parent else raw_parent
+
+        def _nsf_folder_path(uid):
+            """Build display path for an NSF folder by walking up the hierarchy."""
+            parts = []
+            cur = uid
+            while cur and cur in nsf_folders:
+                obj = nsf_folders[cur]
+                parts.append(obj.get('name', cur))
+                p = obj.get('parent_uid') or ''
+                cur = None if (not p or p not in nsf_folders) else p
+            return '/'.join(reversed(parts))
+
+        fo = {
+            'folder_uid': folder_uid,
+            'type': 'nested_share_folder',
+            'name': name,
+            'parent_uid': parent_uid,
+            'folder': {
+                'uid': parent_uid,
+                'path': _nsf_folder_path(parent_uid) if parent_uid else '/'
+            }
+        }
         if owner_username:
             fo['owner'] = owner_username
 
@@ -435,6 +475,19 @@ class NestedShareGetCommand(Command):
                     fo['share_admins'] = share_admins
         except Exception as e:
             logger.debug('Could not retrieve folder access: %s', e)
+
+        try:
+            record_uids = collect_records_in_folder(params, folder_uid, recursive=False)
+            records_list = []
+            for r_uid in record_uids:
+                entry = {'record_uid': r_uid}
+                rec = vault.KeeperRecord.load(params, r_uid)
+                if rec:
+                    entry['record_name'] = rec.title
+                records_list.append(entry)
+            fo['records'] = records_list
+        except Exception as e:
+            logger.debug('Could not retrieve records for NSF folder %s: %s', folder_uid, e)
 
         print(json.dumps(fo, indent=2))
 

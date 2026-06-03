@@ -241,17 +241,26 @@ def classify_share_recipient(params, recipient):
 
 
 def find_folder_location(params, record_uid):
-    """Return the display name of the first folder containing *record_uid*."""
+    """Return a {uid, path} dict for the first NSF folder containing *record_uid*."""
     nsf_folder_records = getattr(params, 'nested_share_folder_records', {})
     nsf_folders = getattr(params, 'nested_share_folders', {})
+
+    def _build_path(fuid):
+        parts = []
+        cur = fuid
+        while cur and cur in nsf_folders and cur != ROOT_FOLDER_UID:
+            obj = nsf_folders[cur]
+            parts.append(obj.get('name', cur))
+            p = obj.get('parent_uid') or ''
+            cur = None if (not p or p not in nsf_folders) else p
+        return '/'.join(reversed(parts))
+
     for fuid, rec_set in nsf_folder_records.items():
         if record_uid in rec_set:
-            if fuid == ROOT_FOLDER_UID:
-                return 'root'
-            if fuid in nsf_folders:
-                return nsf_folders[fuid].get('name', fuid)
-            return fuid
-    return ''
+            if fuid == ROOT_FOLDER_UID or fuid not in nsf_folders:
+                return {'uid': None, 'path': '/'}
+            return {'uid': fuid, 'path': _build_path(fuid)}
+    return None
 
 
 def collect_records_in_folder(params, folder_uid, recursive=False):
