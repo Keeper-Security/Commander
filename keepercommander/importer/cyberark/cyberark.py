@@ -19,10 +19,6 @@ from typing import List
 from urllib.parse import parse_qsl
 from urllib3.exceptions import InsecureRequestWarning
 
-# Self-hosted PVWAs often use a private CA; verify=False is intentional there.
-warnings.simplefilter("ignore", InsecureRequestWarning)
-
-
 from ... import api, crypto, utils
 from ...commands.enterprise_common import EnterpriseCommand
 from ...constants import EMAIL_PATTERN
@@ -290,6 +286,16 @@ class CyberArkImporter(BaseImporter):
     def get_url(cls, pvwa_host, endpoint):
         return f"https://{pvwa_host}/PasswordVault/API/{cls.ENDPOINTS[endpoint]}"
 
+    @staticmethod
+    def _request(method, url, **kwargs):
+        """Send a request, scoping private-CA TLS warning suppression per call."""
+        if kwargs.get("verify") is False:
+            # Self-hosted PVWAs often use a private CA; verify=False is intentional there.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                return requests.request(method, url, **kwargs)
+        return requests.request(method, url, **kwargs)
+
     def _load_p12_client_cert(self, p12_path, p12_password):
         """Convert a PKCS#12 bundle to a temporary PEM cert+key pair for ``requests``.
 
@@ -445,7 +451,8 @@ class CyberArkImporter(BaseImporter):
         a non-200 response and stop processing.
         """
         try:
-            return requests.get(
+            return self._request(
+                "GET",
                 url,
                 headers={
                     "Authorization": authorization_token,
@@ -737,7 +744,8 @@ class CyberArkImporter(BaseImporter):
             )
             token_url = f"https://{id_tenant}.cyberark.cloud/oauth2/platformtoken"
             try:
-                response = requests.post(
+                response = self._request(
+                    "POST",
                     token_url,
                     data={
                         "grant_type": "client_credentials",
@@ -789,7 +797,8 @@ class CyberArkImporter(BaseImporter):
             username = environ.get("_CYBERARK_USERNAME") or prompt("CyberArk username: ")
             password = environ.get("_CYBERARK_PASSWORD") or prompt("CyberArk password: ", is_password=True)
             try:
-                response = requests.post(
+                response = self._request(
+                    "POST",
                     self.get_url(pvwa_host, "logon").format(type=login_type),
                     json={"username": username, "password": password},
                     timeout=self.TIMEOUT,
@@ -875,11 +884,18 @@ class CyberArkImporter(BaseImporter):
                     )
                 )
                 continue
-            count = response.json().get("count", 0)
+            try:
+                payload = response.json()
+            except ValueError:
+                print_formatted_text(
+                    HTML(f"<ansiyellow>Skipping safe {safe}: accounts response was not valid JSON</ansiyellow>")
+                )
+                continue
+            count = payload.get("count", 0)
             if count == 0:
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {safe}</ansiyellow>"))
                 continue
-            accounts = response.json().get("value", [])
+            accounts = payload.get("value", [])
             print_formatted_text(
                 HTML(f"Importing <b>{len(accounts)}</b> accounts from safe {safe}:\n"),
                 tabulate([{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts], headers="keys"),
@@ -910,13 +926,14 @@ class CyberArkImporter(BaseImporter):
                     retry = True
                     while retry is True:
                         try:
-                            response = requests.post(
+                            response = self._request(
+                                "POST",
                                 self.get_url(pvwa_host, "account_password").format(account_id=r["id"]),
                                 headers={
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": " Commander Import"},
+                                json={"reason": "Keeper Commander Import"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
@@ -1152,7 +1169,12 @@ class CyberArkImporter(BaseImporter):
                     {"includeMembers": "True"},
                 )
                 if detail is not None and detail.status_code == 200:
-                    members = detail.json().get("members") or []
+                    try:
+                        detail_payload = detail.json()
+                    except ValueError:
+                        detail_payload = {}
+                    members = detail_payload.get("members") or []
+                    g["members"] = members
 
             
             member_names = [
@@ -1585,7 +1607,11 @@ class CyberArkImporter(BaseImporter):
                     HTML(f"\n<ansired>Failed to allocate user ids:</ansired> {e}")
                 )
                 return
-            if not new_user_ids or any(uid is None for uid in new_user_ids[: len(users_to_invite)]):
+            if (
+                not new_user_ids
+                or len(new_user_ids) < len(users_to_invite)
+                or any(uid is None for uid in new_user_ids[: len(users_to_invite)])
+            ):
                 print_formatted_text(
                     HTML(
                         "\n<ansired>Could not allocate enterprise ids for all users.</ansired> "
@@ -2031,7 +2057,12 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
                         {"includeMembers": "True"},
                     )
                     if detail is not None and detail.status_code == 200:
-                        members = detail.json().get("members") or []
+                        try:
+                            detail_payload = detail.json()
+                        except ValueError:
+                            detail_payload = {}
+                        members = detail_payload.get("members") or []
+                        g["members"] = members
 
                 emails = []
                 for m in members:
