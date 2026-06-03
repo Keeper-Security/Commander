@@ -2521,9 +2521,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
         shared_folder_uid = None  # type: Optional[str]
         folder_name = kwargs.get('shared_folder_uid')  # type: Optional[str]
         if folder_name:
-            if folder_name in params.shared_folder_cache:
-                shared_folder_uid = folder_name
-            else:
+            from .pam.vault_target import resolve_pam_folder_uid
+            shared_folder_uid = resolve_pam_folder_uid(params, folder_name)
+            if not shared_folder_uid:
                 for sf_uid in params.shared_folder_cache:
                     sf = api.get_shared_folder(params, sf_uid)
                     if sf and sf.name.casefold() == folder_name.casefold():
@@ -2897,7 +2897,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         # Moving v6 record into the folder
         api.sync_down(params)
-        FolderMoveCommand().execute(params, src=record.record_uid, dst=shared_folder_uid, force=True)
+        from .pam.vault_target import place_record_in_folder
+        place_record_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
 
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
         params.sync_data = True
@@ -3028,7 +3029,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 api.communicate_rest(params, pcc, 'pam/set_configuration_controller')
             shared_folder_uid = value.get('folderUid') or ''
             if shared_folder_uid != orig_shared_folder_uid:
-                FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
+                from .pam.vault_target import place_record_in_folder
+                place_record_in_folder(params, configuration.record_uid, shared_folder_uid, command='pam-config-edit')
             if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin',
                                                                                       False) is True:
                 # pamUser must exist or "403 Insufficient PAM access to perform this operation"
