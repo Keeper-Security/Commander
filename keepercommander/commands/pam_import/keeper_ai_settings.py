@@ -19,8 +19,11 @@ from ...keeper_dag.types import PamEndpoints
 from ...vault import PasswordRecord
 from ... import vault
 from ...display import bcolors
-from ..tunnel.port_forward.tunnel_helpers import get_config_uid, generate_random_bytes, get_keeper_tokens
+from ...proto import pam_pb2
+from ..pam._layer_b import should_fallback_on_layer_b_error, is_layer_b_feature_disabled
+from ..tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from ...keeper_dag.crypto import encrypt_aes
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 
 def list_resource_data_edges(
@@ -80,6 +83,7 @@ def list_resource_data_edges(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
 
@@ -88,6 +92,7 @@ def list_resource_data_edges(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM
         )
         linking_dag.load()
@@ -179,6 +184,7 @@ def get_resource_settings(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
 
@@ -187,6 +193,7 @@ def get_resource_settings(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM
         )
         linking_dag.load()
@@ -388,15 +395,17 @@ def set_resource_keeper_ai_settings(
     config_uid: Optional[str] = None
 ) -> bool:
     """
-    Save KeeperAI settings to the DAG DATA edge with path 'ai_settings' for a resource.
+    Save KeeperAI settings on a PAM resource.
 
-    The settings are stored as encrypted JSON in a DATA edge on the resource vertex
-    with path 'ai_settings'. This function:
-    1. Loads the DAG for the resource
-    2. Finds and deactivates any existing 'ai_settings' DATA edge
-    3. Adds a new DATA edge with the provided settings
-    4. Encrypts the content using the record key
-    5. Saves the DAG
+    Primary path: POSTs the encrypted settings to krouter's
+    `/api/user/configure_resource` (Layer-B, permission-checked). krouter
+    validates caller access then writes the `ai_settings` DAG DATA edge on the
+    resource server-side.
+
+    Fallback (env var `KEEPER_DAG_LB_FALLBACK=1`, default ON): on
+    `RRC_NOT_ALLOWED*` from krouter, fall back to the legacy direct
+    DAG-write path (`_set_resource_keeper_ai_settings_legacy`). Gateway then
+    enforces at runtime. Set the env var to `0` for strict mode (denials propagate).
 
     Args:
         params: KeeperParams instance
@@ -407,102 +416,145 @@ def set_resource_keeper_ai_settings(
     Returns:
         True if settings were saved successfully, False otherwise.
     """
-    try:
-        # Get the record to access the record key
-        record = vault.KeeperRecord.load(params, resource_uid)
-        if not record:
-            logging.warning(f"Record {resource_uid} not found")
-            return False
+    # Common setup — needed by both the new and legacy paths.
+    common = _resolve_resource_settings_inputs(params, resource_uid, settings, config_uid)
+    if common is None:
+        return False
+    record_key, resolved_config_uid = common
 
-        # Get record key for encryption
-        record_key = None
-        if resource_uid in params.record_cache:
-            record_data = params.record_cache[resource_uid]
-            record_key = record_data.get('record_key_unencrypted')
+    encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
 
-        if not record_key:
-            logging.warning(f"Record key not available for {resource_uid}")
-            return False
+    # Primary: Layer-B configure_resource (permission-checked).
+    from ..pam.router_helper import router_configure_resource, get_router_url
+    host = get_router_url(params)
+    endpoint = 'configure_resource'
+    if not is_layer_b_feature_disabled(host, endpoint):
+        rq = pam_pb2.PAMResourceConfig(
+            recordUid=url_safe_str_to_bytes(resource_uid),
+            networkUid=url_safe_str_to_bytes(resolved_config_uid),
+            keeperAiSettings=encrypted_content,
+        )
+        try:
+            router_configure_resource(params, rq)
+            logging.debug(f"Saved KeeperAI settings via configure_resource for {resource_uid}")
+            return True
+        except Exception as err:
+            if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                return False
+            logging.warning(
+                f"configure_resource denied/unavailable for {resource_uid}; falling back to legacy "
+                f"DAG-write (KEEPER_DAG_LB_FALLBACK enabled): {err}"
+            )
 
-        # Validate settings structure
-        if not isinstance(settings, dict):
-            logging.warning("Settings must be a dictionary")
-            return False
+    # Fallback: legacy direct DAG-write path.
+    return _set_resource_keeper_ai_settings_legacy(
+        params, resource_uid, settings, resolved_config_uid, record_key, encrypted_content
+    )
 
-        # Get config UID if not provided
+
+def _resolve_resource_settings_inputs(
+    params: KeeperParams,
+    resource_uid: str,
+    settings: Dict[str, Any],
+    config_uid: Optional[str],
+):
+    """Validate inputs and resolve record_key + config_uid. Returns (record_key, config_uid) or None on failure.
+
+    Shared by the new and legacy paths so behavior on bad input (missing record,
+    bad settings dict, etc.) stays identical.
+    """
+    record = vault.KeeperRecord.load(params, resource_uid)
+    if not record:
+        logging.warning(f"Record {resource_uid} not found")
+        return None
+
+    record_key = None
+    if resource_uid in params.record_cache:
+        record_data = params.record_cache[resource_uid]
+        record_key = record_data.get('record_key_unencrypted')
+    if not record_key:
+        logging.warning(f"Record key not available for {resource_uid}")
+        return None
+
+    if not isinstance(settings, dict):
+        logging.warning("Settings must be a dictionary")
+        return None
+
+    if not config_uid:
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
         if not config_uid:
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
-            if not config_uid:
-                config_uid = resource_uid
+            config_uid = resource_uid
 
-        # Create DAG connection
+    return record_key, config_uid
+
+
+def _set_resource_keeper_ai_settings_legacy(
+    params: KeeperParams,
+    resource_uid: str,
+    settings: Dict[str, Any],
+    config_uid: str,
+    record_key: bytes,
+    encrypted_content: bytes,
+) -> bool:
+    """Legacy direct DAG-write path. Used as fallback when configure_resource is denied.
+
+    Loads the resource's DAG, deactivates any prior `ai_settings` edge, writes a new
+    one with the pre-encrypted content, and saves. Pre-Phase-2 behavior, preserved verbatim.
+    """
+    try:
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
-        # Create a dummy record for DAG (uses config UID as record UID)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use actual record key for encryption
+        dag_record.record_key = record_key
 
         conn = Connection(
             params=params,
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_write_protobuf=True
+            use_read_protobuf=True,
+            use_write_protobuf=True,
         )
 
-        # Load the DAG with decryption enabled
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
-            decrypt=True  # Enable decryption so we can encrypt on save
+            decrypt=True,
         )
         linking_dag.load()
 
-        # Get the resource vertex
         resource_vertex = linking_dag.get_vertex(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
 
         # Find and deactivate existing 'ai_settings' edge for proper versioning
-        existing_edge = None
         for edge in resource_vertex.edges:
             if edge and (edge.edge_type == EdgeType.DATA and
                          edge.path == 'ai_settings' and
                          edge.active):
-                existing_edge = edge
+                edge.active = False
+                logging.debug(f"Deactivated existing 'ai_settings' edge (version {edge.version})")
                 break
 
-        if existing_edge:
-            # Deactivate the existing edge
-            existing_edge.active = False
-            logging.debug(f"Deactivated existing 'ai_settings' edge (version {existing_edge.version})")
-
-        # Pre-encrypt content with record key (matches Web Vault: encrypted=True, needs_encryption=False)
-        content_bytes = json.dumps(settings).encode()
-        encrypted_content = encrypt_aes(content_bytes, record_key)
-
-        # Add new DATA edge with pre-encrypted content
         resource_vertex.add_data(
             content=encrypted_content,
             path='ai_settings',
             needs_encryption=False,
             is_encrypted=True,
-            modified=True
+            modified=True,
         )
-
-        # Save the DAG
         linking_dag.save()
 
-        logging.debug(f"Successfully saved KeeperAI settings for resource {resource_uid}")
+        logging.debug(f"Saved KeeperAI settings via legacy DAG-write for {resource_uid}")
         return True
-
     except Exception as e:
-        logging.error(f"Error saving KeeperAI settings for {resource_uid}: {e}", exc_info=True)
+        logging.error(f"Error saving KeeperAI settings (legacy path) for {resource_uid}: {e}", exc_info=True)
         return False
 
 
@@ -514,123 +566,116 @@ def set_resource_jit_settings(
     allow_empty: bool = False
 ) -> bool:
     """
-    Save JIT settings to the DAG DATA edge with path 'jit_settings' for a resource.
+    Save JIT settings on a PAM resource.
 
-    The settings are stored as encrypted JSON in a DATA edge on the resource vertex
-    with path 'jit_settings'. This function:
-    1. Loads the DAG for the resource
-    2. Finds and deactivates any existing 'jit_settings' DATA edge
-    3. Adds a new DATA edge with the provided settings
-    4. Encrypts the content using the record key
-    5. Saves the DAG
-
-    Args:
-        params: KeeperParams instance
-        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory)
-        settings: Dictionary containing JIT settings to save
-        config_uid: Optional PAM config UID. If not provided, will be looked up.
-
-    Returns:
-        True if settings were saved successfully, False otherwise.
+    Primary path: POSTs the encrypted settings to krouter's
+    `/api/user/configure_resource` (Layer-B, permission-checked). Fallback
+    behavior matches `set_resource_keeper_ai_settings` — see its docstring
+    and `KEEPER_DAG_LB_FALLBACK`. Same shape, `jit_settings` instead of
+    `ai_settings`.
     """
+    # Empty-settings short-circuit retains the legacy semantics.
+    if not isinstance(settings, dict):
+        logging.debug(f"JIT settings invalid for {resource_uid}, skipping")
+        return False
+    if not settings and not allow_empty:
+        logging.debug(f"JIT settings empty for {resource_uid}, skipping")
+        return False
+
+    common = _resolve_resource_settings_inputs(params, resource_uid, settings, config_uid)
+    if common is None:
+        return False
+    record_key, resolved_config_uid = common
+
+    encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
+
+    # Primary: Layer-B configure_resource (permission-checked).
+    from ..pam.router_helper import router_configure_resource, get_router_url
+    host = get_router_url(params)
+    endpoint = 'configure_resource'
+    if not is_layer_b_feature_disabled(host, endpoint):
+        rq = pam_pb2.PAMResourceConfig(
+            recordUid=url_safe_str_to_bytes(resource_uid),
+            networkUid=url_safe_str_to_bytes(resolved_config_uid),
+            jitSettings=encrypted_content,
+        )
+        try:
+            router_configure_resource(params, rq)
+            logging.debug(f"Saved JIT settings via configure_resource for {resource_uid}")
+            return True
+        except Exception as err:
+            if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                return False
+            logging.warning(
+                f"configure_resource denied/unavailable for {resource_uid}; falling back to legacy "
+                f"DAG-write (KEEPER_DAG_LB_FALLBACK enabled): {err}"
+            )
+
+    return _set_resource_jit_settings_legacy(
+        params, resource_uid, resolved_config_uid, record_key, encrypted_content
+    )
+
+
+def _set_resource_jit_settings_legacy(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: str,
+    record_key: bytes,
+    encrypted_content: bytes,
+) -> bool:
+    """Legacy direct DAG-write path for JIT settings. See AI-settings analog for shape."""
     try:
-        if not isinstance(settings, dict):
-            logging.debug(f"JIT settings invalid for {resource_uid}, skipping")
-            return False
-        if not settings and not allow_empty:
-            logging.debug(f"JIT settings empty for {resource_uid}, skipping")
-            return False
-
-        # Get the record to access the record key
-        record = vault.KeeperRecord.load(params, resource_uid)
-        if not record:
-            logging.warning(f"Record {resource_uid} not found")
-            return False
-
-        # Get record key for encryption
-        record_key = None
-        if resource_uid in params.record_cache:
-            record_data = params.record_cache[resource_uid]
-            record_key = record_data.get('record_key_unencrypted')
-
-        if not record_key:
-            logging.warning(f"Record key not available for {resource_uid}")
-            return False
-
-        # Get config UID if not provided
-        if not config_uid:
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
-            if not config_uid:
-                config_uid = resource_uid
-
-        # Create DAG connection
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
-        # Create a dummy record for DAG (uses config UID as record UID)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use actual record key for encryption
+        dag_record.record_key = record_key
 
         conn = Connection(
             params=params,
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_write_protobuf=True
+            use_read_protobuf=True,
+            use_write_protobuf=True,
         )
 
-        # Load the DAG with decryption enabled
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
-            decrypt=True  # Enable decryption so we can encrypt on save
+            decrypt=True,
         )
         linking_dag.load()
 
-        # Get the resource vertex
         resource_vertex = linking_dag.get_vertex(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
 
-        # Find and deactivate existing 'jit_settings' edge for proper versioning
-        existing_edge = None
         for edge in resource_vertex.edges:
             if edge and (edge.edge_type == EdgeType.DATA and
                          edge.path == 'jit_settings' and
                          edge.active):
-                existing_edge = edge
+                edge.active = False
+                logging.debug(f"Deactivated existing 'jit_settings' edge (version {edge.version})")
                 break
 
-        if existing_edge:
-            # Deactivate the existing edge
-            existing_edge.active = False
-            logging.debug(f"Deactivated existing 'jit_settings' edge (version {existing_edge.version})")
-
-        # Pre-encrypt content with record key (matches Web Vault: encrypted=True, needs_encryption=False)
-        content_bytes = json.dumps(settings).encode()
-        encrypted_content = encrypt_aes(content_bytes, record_key)
-
-        # Add new DATA edge with pre-encrypted content
         resource_vertex.add_data(
             content=encrypted_content,
             path='jit_settings',
             needs_encryption=False,
             is_encrypted=True,
-            modified=True
+            modified=True,
         )
-
-        # Save the DAG
         linking_dag.save()
 
-        logging.debug(f"Successfully saved JIT settings for resource {resource_uid}")
+        logging.debug(f"Saved JIT settings via legacy DAG-write for {resource_uid}")
         return True
-
     except Exception as e:
-        logging.error(f"Error saving JIT settings for {resource_uid}: {e}", exc_info=True)
+        logging.error(f"Error saving JIT settings (legacy path) for {resource_uid}: {e}", exc_info=True)
         return False
 
 
@@ -668,12 +713,14 @@ def refresh_meta_to_latest(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
             decrypt=True
         )
@@ -736,12 +783,14 @@ def refresh_link_to_config_to_latest(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
             decrypt=True
         )
@@ -872,12 +921,14 @@ def inspect_resource_in_graph(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
             decrypt=not show_raw_content
         )
@@ -972,12 +1023,14 @@ def get_resource_domain_dir_uid(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
+            use_read_protobuf=True,
             use_write_protobuf=True
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
             graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM
         )
         linking_dag.load()
@@ -1005,28 +1058,57 @@ def set_resource_domain_dir(
     config_uid: Optional[str] = None
 ) -> bool:
     """
-    Add or replace the LINK edge from resource to pamDirectory with path 'domain'.
-    If a domain LINK to a different pamDirectory already exists, it is disconnected first.
+    Add or replace the LINK edge from resource to pamDirectory.
+
+    Primary path: POSTs a `PAMResourceConfig` with `domainUid` set to krouter's
+    `/api/user/configure_resource`. krouter handles "replace existing domain link"
+    server-side (so the legacy disconnect-old-first dance is no longer needed).
+
+    Fallback: same `KEEPER_DAG_LB_FALLBACK` policy as the AI/JIT helpers (see
+    `set_resource_keeper_ai_settings`).
     """
+    common = _resolve_resource_settings_inputs(params, resource_uid, {}, config_uid)
+    if common is None:
+        return False
+    record_key, resolved_config_uid = common
+
+    # Primary: Layer-B configure_resource (permission-checked).
+    from ..pam.router_helper import router_configure_resource, get_router_url
+    host = get_router_url(params)
+    endpoint = 'configure_resource'
+    if not is_layer_b_feature_disabled(host, endpoint):
+        rq = pam_pb2.PAMResourceConfig(
+            recordUid=url_safe_str_to_bytes(resource_uid),
+            networkUid=url_safe_str_to_bytes(resolved_config_uid),
+            domainUid=url_safe_str_to_bytes(dir_uid),
+        )
+        try:
+            router_configure_resource(params, rq)
+            logging.debug(f"Set domain dir link {resource_uid} -> {dir_uid} via configure_resource")
+            return True
+        except Exception as err:
+            if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                return False
+            logging.warning(
+                f"configure_resource denied/unavailable for {resource_uid}; falling back to legacy "
+                f"DAG-write (KEEPER_DAG_LB_FALLBACK enabled): {err}"
+            )
+
+    return _set_resource_domain_dir_legacy(
+        params, resource_uid, dir_uid, resolved_config_uid, record_key
+    )
+
+
+def _set_resource_domain_dir_legacy(
+    params: KeeperParams,
+    resource_uid: str,
+    dir_uid: str,
+    config_uid: str,
+    record_key: bytes,
+) -> bool:
+    """Legacy direct DAG-write path: disconnect-old-then-link. Used as fallback only."""
     try:
-        record = vault.KeeperRecord.load(params, resource_uid)
-        if not record:
-            logging.warning(f"Record {resource_uid} not found")
-            return False
-
-        record_key = None
-        if resource_uid in params.record_cache:
-            record_key = params.record_cache[resource_uid].get('record_key_unencrypted')
-        if not record_key:
-            logging.warning(f"Record key not available for {resource_uid}")
-            return False
-
-        if not config_uid:
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
-            if not config_uid:
-                config_uid = resource_uid
-
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
@@ -1037,14 +1119,15 @@ def set_resource_domain_dir(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_write_protobuf=True
+            use_read_protobuf=True,
+            use_write_protobuf=True,
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
+            read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM,
-            decrypt=True
+            decrypt=True,
         )
         linking_dag.load()
 
@@ -1053,14 +1136,13 @@ def set_resource_domain_dir(
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
 
-        # If a domain LINK to a different pamDirectory exists, disconnect it first
+        # If a domain LINK to a different pamDirectory exists, disconnect it first.
         old_dir_uid = None
         for edge in resource_vertex.edges:
             if (edge and edge.edge_type == EdgeType.LINK and
                     edge.path == 'domain' and edge.active):
                 old_dir_uid = edge.head_uid
                 break
-
         if old_dir_uid and old_dir_uid != dir_uid:
             old_dir_vertex = linking_dag.get_vertex(old_dir_uid)
             if old_dir_vertex:
@@ -1075,11 +1157,10 @@ def set_resource_domain_dir(
         resource_vertex.belongs_to(dir_vertex, EdgeType.LINK, path="domain", content={})
         linking_dag.save()
 
-        logging.debug(f"Successfully set domain dir link for resource {resource_uid} -> {dir_uid}")
+        logging.debug(f"Set domain dir link {resource_uid} -> {dir_uid} via legacy DAG-write")
         return True
-
     except Exception as e:
-        logging.error(f"Error setting domain dir for {resource_uid}: {e}", exc_info=True)
+        logging.error(f"Error setting domain dir (legacy path) for {resource_uid}: {e}", exc_info=True)
         return False
 
 

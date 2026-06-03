@@ -3,18 +3,16 @@ import argparse
 import logging
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import router_get_connected_gateways
-from ... import vault_extensions
 from ...display import bcolors
 from ...discovery_common.jobs import Jobs
 from ...discovery_common.infrastructure import Infrastructure
-from ...discovery_common.constants import DIS_INFRA_GRAPH_ID
+from ...keeper_dag.types import PamEndpoints
 from ...discovery_common.types import DiscoveryDelta, DiscoveryObject
 from ...keeper_dag.dag import DAG
 from typing import Optional, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
-    from ...discovery_common.jobs import JobItem
 
 
 def _h(text):
@@ -148,7 +146,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                 print(_f(f"  pam action discover status -j {job_id}"))
             print("")
             if len(failed_jobs) == 1:
-                print(f"To remove the job, use the following command.")
+                print("To remove the job, use the following command.")
             else:
                 print(f"To remove the {_f('FAILED')} job, use one of the following commands.")
             for job_id in failed_jobs:
@@ -162,7 +160,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                          job_id: str):
 
         def _find_job(configuration_record) -> Optional[Dict]:
-            jobs_obj = Jobs(record=configuration_record, params=params)
+            jobs_obj = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=True)
             job_item = jobs_obj.get_job(job_id)
             if job_item is not None:
                 return {
@@ -177,7 +175,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         if gateway_context is not None:
             jobs = payload["jobs"]
             job = jobs.get_job(job_id)  # type: JobItem
-            infra = Infrastructure(record=gateway_context.configuration, params=params)
+            infra = Infrastructure(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
 
             color = bcolors.OKBLUE
             status = "RUNNING"
@@ -242,7 +240,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                             discovery_object = DiscoveryObject.get_discovery_object(vertex)
                             print(f"  * {discovery_object.description}")
                             if item.changes is None:
-                                print(f"    no changed, may be a object not added in prior discoveries.")
+                                print("    no changed, may be a object not added in prior discoveries.")
                             else:
                                 for key, value in item.changes.items():
                                     print(f"    - {key} = {value}")
@@ -258,7 +256,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                     print(f"{_f('Could not load delta from infrastructure: ' + str(err))}")
                     print("Fall back to raw graph.")
                     print("")
-                    dag = DAG(conn=infra.conn, record=infra.record, graph_id=DIS_INFRA_GRAPH_ID)
+                    dag = DAG(conn=infra.conn, record=infra.record,
+                              read_endpoint=PamEndpoints.INFRASTRUCTURE,
+                              write_endpoint=PamEndpoints.INFRASTRUCTURE)
                     print(dag.to_dot_raw(sync_point=job.sync_point, rank_dir="RL"))
 
         else:
@@ -325,7 +325,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                 if len(gateway_context.gateway_name) > max_gateway_name:
                     max_gateway_name = len(gateway_context.gateway_name)
 
-                jobs = Jobs(record=configuration_record, params=params)
+                jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=True)
                 if show_history is True:
                     job_list = reversed(jobs.history)
                 else:

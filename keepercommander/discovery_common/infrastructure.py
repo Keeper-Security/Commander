@@ -4,7 +4,7 @@ from .utils import get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGVertexException
 from ..keeper_dag.crypto import urlsafe_str_to_bytes
-from ..keeper_dag.types import PamGraphId
+from ..keeper_dag.types import PamEndpoints, PamGraphId
 from .types import DiscoveryObject
 import os
 import importlib
@@ -36,7 +36,16 @@ class Infrastructure:
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Infrastructure",
                  save_batch_count: int = 200, agent: Optional[str] = None,
+                 use_per_graph_endpoints: bool = False,
                  **kwargs):
+        """
+        :param use_per_graph_endpoints: If True, use the per-graph URL transport
+            (`/api/user/graph-sync/infrastructure/...`) via `read_endpoint` /
+            `write_endpoint`. If False (default), use the legacy single-endpoint
+            transport via `graph_id=PamGraphId.INFRASTRUCTURE`. The legacy
+            default is preserved for backward compatibility; it will be removed
+            in a future major version once all consumers have migrated.
+        """
 
         # This will either be a KSM Record, or Commander KeeperRecord
         self.record = record
@@ -49,6 +58,7 @@ class Infrastructure:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
+        self.use_per_graph_endpoints = use_per_graph_endpoints
 
         self.auto_save = False
         self.delta_graph = True
@@ -66,22 +76,38 @@ class Infrastructure:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self.logger.debug(f"loading the dag graph {PamGraphId.INFRASTRUCTURE.value}")
+            self.logger.debug("loading the dag graph "
+                              + (PamEndpoints.INFRASTRUCTURE.value if self.use_per_graph_endpoints
+                                 else str(PamGraphId.INFRASTRUCTURE.value)))
             self.logger.debug(f"setting graph save batch count to {self.save_batch_count}")
 
-            self._dag = DAG(conn=self.conn,
-                            record=self.record,
-                            # endpoint=PamEndpoints.INFRASTRUCTURE,
-                            graph_id=PamGraphId.INFRASTRUCTURE,
-                            auto_save=self.auto_save,
-                            logger=self.logger,
-                            history_level=self.history_level,
-                            debug_level=self.debug_level,
-                            name="Discovery Infrastructure",
-                            fail_on_corrupt=self.fail_on_corrupt,
-                            log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count,
-                            agent=self.agent)
+            if self.use_per_graph_endpoints:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                read_endpoint=PamEndpoints.INFRASTRUCTURE,
+                                write_endpoint=PamEndpoints.INFRASTRUCTURE,
+                                auto_save=self.auto_save,
+                                logger=self.logger,
+                                history_level=self.history_level,
+                                debug_level=self.debug_level,
+                                name="Discovery Infrastructure",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
+            else:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                graph_id=PamGraphId.INFRASTRUCTURE,
+                                auto_save=self.auto_save,
+                                logger=self.logger,
+                                history_level=self.history_level,
+                                debug_level=self.debug_level,
+                                name="Discovery Infrastructure",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
             # Do not load the DAG here.
             # We don't know if we are using a sync point yet.
 

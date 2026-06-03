@@ -34,13 +34,15 @@ class BaseEnum(Enum):
 
 
 class CredentialBase(BaseModel):
-    # Use Any because it might be a str or Secret, but Secret is defined to discover-and_rotation.
+    # Use Any because it might be a str or Secret, but Secret is defined to discover-and-rotation-kdnrm.
     user: Optional[Any] = None
     dn: Optional[Any] = None
     password: Optional[Any] = None
     private_key: Optional[Any] = None
+    public_key: Optional[Any] = None
     private_key_passphrase: Optional[Any] = None
     database: Optional[Any] = None
+    mode: Optional[Any] = None
 
 
 class Settings(BaseModel):

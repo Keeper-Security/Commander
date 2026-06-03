@@ -15,7 +15,7 @@ import json
 import importlib
 import traceback
 import sys
-from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .connection import ConnectionBase
@@ -93,7 +93,12 @@ class DAG:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
-        self.debug_level = int(os.environ.get("GS_DEBUG_LEVEL", os.environ.get("DAG_DEBUG_LEVEL", debug_level)))
+        self.debug_level = os.environ.get("GS_DEBUG_LEVEL", os.environ.get("DAG_DEBUG_LEVEL", debug_level))
+        try:
+            self.debug_level = int(self.debug_level)
+        except (Exception,):
+            self.debug_level = 0
+
 
         # Prevent duplicate edges to be added.
         # The goal is to prevent unneeded edges.
@@ -302,12 +307,12 @@ class DAG:
         ret += f"  python instance id: {id(self)}\n"
         ret += f"  name: {self.name}\n"
         ret += f"  key: {self.key}\n"
-        ret += f"  vertices:\n"
+        ret += "  vertices:\n"
         for v in self.all_vertices:
             ret += f"    * {v.uid}, Keys: {v.keychain}, Active: {v.active}\n"
             for e in v.edges:
                 if e.edge_type == EdgeType.DATA:
-                    ret += f"      + has a DATA edge"
+                    ret += "      + has a DATA edge"
                     if e.content is not None:
                         ret += ", has content"
                 else:
@@ -479,6 +484,23 @@ class DAG:
         return results
 
     def _sync(self, sync_point: int = 0) -> Tuple[List[DAGData], int]:
+        """Dispatch to legacy single-stream sync or per-graph multi-stream sync.
+
+        When `read_endpoint` is set, the server uses the per-graph URL pattern
+        (`/api/user/graph-sync/<name>/...`). That model splits the graph across
+        multiple streams, so a single-stream `sync` returns only a fragment.
+        Web Vault uses `get_leafs` -> `multi_sync` to read the full graph;
+        this client follows the same pattern.
+
+        When only `graph_id` is set (legacy single-endpoint transport), the
+        single-stream sync remains correct.
+        """
+        if self.read_endpoint is not None:
+            return self._sync_per_graph(sync_point)
+        return self._sync_legacy(sync_point)
+
+    def _sync_legacy(self, sync_point: int = 0) -> Tuple[List[DAGData], int]:
+        """Single-stream sync against the legacy `/sync` endpoint."""
 
         # The web service will send 500 items, if there is more the 'has_more' flag is set to True.
         has_more = True
@@ -512,6 +534,61 @@ class DAG:
             sync_point = results.syncPoint
 
         return all_data, sync_point
+
+    def _sync_per_graph(self, sync_point: int = 0) -> Tuple[List[DAGData], int]:
+        """Multi-stream read against the per-graph endpoints.
+
+        The graph's data lives in a single stream keyed by the graph's origin
+        (e.g. the PAM Configuration record's UID for TunnelDAG). We multi_sync
+        that stream directly — no `get_leafs` discovery step needed for this
+        caller pattern. (`Connection.get_leafs` remains available for callers
+        that start from leaf vertices and need to discover stream roots.)
+
+        Returns aggregated (data, max_sync_point) just like `_sync_legacy`.
+        """
+
+        origin_bytes = urlsafe_str_to_bytes(self.uid)
+
+        # Stream keyed by the graph's origin (e.g. config_uid for PAM linking).
+        per_stream_sync_point: Dict[bytes, int] = {origin_bytes: sync_point}
+        all_data: List[DAGData] = []
+        max_sync_point = sync_point
+
+        while per_stream_sync_point:
+            stream_ids = list(per_stream_sync_point.keys())
+            multi_query = self.read_struct_obj.multi_sync_query(
+                stream_ids=stream_ids,
+                origin=origin_bytes,
+                sync_point=sync_point,
+            )
+            # Per-stream syncPoint adjustment so each stream advances
+            # independently across pagination rounds (proto variant only;
+            # JSON variant builds via SyncQuery which already carries syncPoint).
+            try:
+                for inner, sid in zip(multi_query.queries, stream_ids):
+                    inner.syncPoint = per_stream_sync_point[sid]
+            except Exception:  # pragma: no cover - JSON variant has no .queries
+                pass
+
+            multi_response = self.conn.multi_sync(
+                multi_query=multi_query,
+                graph_id=self.graph_id,
+                endpoint=self.read_endpoint,
+                agent=self.agent,
+            )
+            multi_results = self.read_struct_obj.get_multi_sync_result(multi_response)
+
+            next_per_stream: Dict[bytes, int] = {}
+            for result in multi_results:
+                all_data += result.data
+                if result.syncPoint and result.syncPoint > max_sync_point:
+                    max_sync_point = result.syncPoint
+                if result.hasMore and result.streamId is not None:
+                    next_per_stream[bytes(result.streamId)] = result.syncPoint
+
+            per_stream_sync_point = next_per_stream
+
+        return all_data, max_sync_point
 
     def _load(self, sync_point: int = 0):
 
@@ -689,7 +766,7 @@ class DAG:
 
             # If the vertex belongs to no vertex, and it not the root, then flag it for deletion.
             if found_edge_to_another_vertex is False and vertex.uid != self.uid:
-                self.debug(f"  * vertex is deleted", level=3)
+                self.debug("  * vertex is deleted", level=3)
                 vertex.active = False
 
         self.debug("", level=1)
@@ -746,7 +823,7 @@ class DAG:
                             found_key_edge = True
                             break
                         except (Exception,):
-                            self.debug(f"      !! this is not the key", level=3)
+                            self.debug("      !! this is not the key", level=3)
 
                     if not was_able_to_decrypt:
 
@@ -820,7 +897,7 @@ class DAG:
                         self.debug(f"  * content {edge.content}", level=3)
                         break
                     except (Exception,):
-                        self.debug(f"      !! this is not the key", level=3)
+                        self.debug("      !! this is not the key", level=3)
 
                 if not able_to_decrypt:
 
@@ -831,7 +908,7 @@ class DAG:
 
                     edge.content = content
                     edge.needs_encryption = False
-                    self.debug(f"  * edge is not encrypted or key is incorrect.", level=3)
+                    self.debug("  * edge is not encrypted or key is incorrect.", level=3)
 
                 # Change the flag indicating that the content is in decrypted state.
                 edge.is_encrypted = False
@@ -909,7 +986,7 @@ class DAG:
 
             self.debug(f"check vertex {v.uid}", level=3)
             if v.uid == self.uid:
-                self.debug(f"  FOUND ROOT", level=3)
+                self.debug("  FOUND ROOT", level=3)
                 return True
 
             # Check if we have any of these edges in this order.
@@ -929,7 +1006,7 @@ class DAG:
                             version, highest_edge = v.get_highest_edge_version(next_vertex.uid)
                             is_deletion = highest_edge.edge_type == EdgeType.DELETION
                             if is_deletion:
-                                self.debug(f"    highest deletion edge. will not mark any edges as modified",
+                                self.debug("    highest deletion edge. will not mark any edges as modified",
                                            level=3)
 
                         found_path = _flag(next_vertex)
@@ -1020,7 +1097,7 @@ class DAG:
 
                 # If this edge is not modified, don't add to the data list to save.
                 if not edge.modified:
-                    self.debug(f"    not modified, not saving.", level=3)
+                    self.debug("    not modified, not saving.", level=3)
                     continue
 
                 content = edge.content
@@ -1043,7 +1120,7 @@ class DAG:
 
                         self.debug(f"    enc safe content {content}", level=3)
                     elif edge.edge_type == EdgeType.KEY:
-                        self.debug(f"    edge is key or acl, encrypt key", level=3)
+                        self.debug("    edge is key or acl, encrypt key", level=3)
                         head_vertex = self.get_vertex(edge.head_uid)
                         key = head_vertex.key
                         if key is None:

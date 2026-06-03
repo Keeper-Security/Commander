@@ -22,6 +22,12 @@ from ...proto import pam_pb2, router_pb2
 VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 
 
+# `RouterResponseError` lives in `_layer_b` to avoid the pre-existing circular
+# import chain (gateway_helper -> commands.utils -> ksm -> record). It's raised
+# below from `_post_request_to_router` on non-OK RouterResponseCode.
+from ._layer_b import RouterResponseError
+
+
 def get_router_url(params: KeeperParams):
     krouter_env_var_name = "KROUTER_URL"
     if os.getenv(krouter_env_var_name):
@@ -90,6 +96,15 @@ def router_set_record_rotation_information(params, proto_request, transmission_k
 def router_configure_resource(params, proto_request, transmission_key=None,
                               encrypted_transmission_key=None, encrypted_session_token=None):
     rs = _post_request_to_router(params, 'configure_resource', proto_request, transmission_key=transmission_key,
+                                 encrypted_transmission_key=encrypted_transmission_key,
+                                 encrypted_session_token=encrypted_session_token)
+
+    return rs
+
+
+def router_configure_network_graph(params, proto_request, transmission_key=None,
+                                   encrypted_transmission_key=None, encrypted_session_token=None):
+    rs = _post_request_to_router(params, 'configure_network_graph', proto_request, transmission_key=transmission_key,
                                  encrypted_transmission_key=encrypted_transmission_key,
                                  encrypted_session_token=encrypted_session_token)
 
@@ -166,7 +181,7 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
 
             rrc = router_pb2.RouterResponseCode.Name(router_response.responseCode)
             if router_response.responseCode != router_pb2.RRC_OK:
-                raise Exception(router_response.errorMessage + ' Response code: ' + rrc)
+                raise RouterResponseError(router_response.responseCode, rrc, router_response.errorMessage)
 
             if router_response.encryptedPayload:
                 payload_encrypted = router_response.encryptedPayload
@@ -203,7 +218,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         router_enterprise_controllers_connected = \
             [x.controllerUid for x in router_get_connected_gateways(params).controllers]
 
-    except requests.exceptions.ConnectionError as errc:
+    except requests.exceptions.ConnectionError:
         logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_host}]{bcolors.ENDC}")
         return
     except Exception as e:
@@ -452,7 +467,7 @@ def print_router_response(router_response, response_type, original_conversation_
         exec_status = job_info.get('status')
         exec_exception = job_info.get('execException')
 
-        print(f'Execution Details\n-------------------------')
+        print('Execution Details\n-------------------------')
 
         if exec_status == 'finished':
             font_color = bcolors.OKGREEN
@@ -478,7 +493,7 @@ def print_router_response(router_response, response_type, original_conversation_
                     print(f'\t\t{font_color}stdout:\n---\n{bcolors.OKBLUE}{el.get("stdout")}{font_color}\n---{bcolors.ENDC}')
                 if el.get("stderr"):
                     print(f'\t\t{font_color}stderr:\n---\n{bcolors.WARNING}{el.get("stderr")}{font_color}\n---{bcolors.ENDC}')
-                print(f'\n')
+                print()
 
         if exec_exception:
             print(f'\t{font_color}Execution Exception : {exec_exception}{bcolors.ENDC}')

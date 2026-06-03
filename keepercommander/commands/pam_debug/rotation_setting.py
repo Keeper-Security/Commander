@@ -164,7 +164,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                       f"It's a {resource_record.record_type}.{bcolors.ENDC}")
                 return
 
-        record_link = RecordLink(record=configuration_record, params=params)
+        record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=True)
 
         parent_uid = resource_record_uid or configuration_record_uid
         parent_vertex = record_link.get_record_link(parent_uid)

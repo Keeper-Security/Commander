@@ -58,23 +58,16 @@ class DataStruct(DataStructBase):
         )
 
     @staticmethod
-    def get_sync_result(results: bytes) -> SyncData:
-
-        try:
-            result = gs_pb2.GraphSyncResult()
-            result.ParseFromString(results)
-        except Exception as err:
-            raise Exception(f"Could not parse the GraphSyncResult message: {err}")
-
-        message = gs_pb2.GraphSyncResult()
-        message.ParseFromString(results)
-
+    def _sync_data_from_result(message: gs_pb2.GraphSyncResult) -> SyncData:
+        """Convert a single GraphSyncResult protobuf into a SyncData pydantic
+        model. Extracted so both single-`sync` and multi_sync code paths share
+        identical per-result decoding.
+        """
         data_list: List[SyncDataItem] = []
         for item in message.data:
             data_list.append(
                 SyncDataItem(
                     type=DataStruct.PB_TO_DATA_MAP.get(item.data.type),
-                    # content=bytes_to_str(item.data.content),
                     content=item.data.content,
                     content_is_base64=False,
                     ref=Ref(
@@ -92,8 +85,20 @@ class DataStruct(DataStructBase):
         return SyncData(
             syncPoint=message.syncPoint,
             data=data_list,
-            hasMore=message.hasMore
+            hasMore=message.hasMore,
+            streamId=bytes(message.streamId) if message.streamId else None,
         )
+
+    @staticmethod
+    def get_sync_result(results: bytes) -> SyncData:
+
+        try:
+            message = gs_pb2.GraphSyncResult()
+            message.ParseFromString(results)
+        except Exception as err:
+            raise Exception(f"Could not parse the GraphSyncResult message: {err}")
+
+        return DataStruct._sync_data_from_result(message)
 
     @staticmethod
     def origin_ref(origin_ref_value: bytes,
@@ -149,3 +154,49 @@ class DataStruct(DataStructBase):
         return gs_pb2.GraphSyncAddDataRequest(
             origin=origin_ref,
             data=data_list)
+
+    # --- Per-graph multi-stream read transport ---------------------------
+
+    def leafs_query(self, vertices: List[str]) -> gs_pb2.GraphSyncLeafsQuery:
+        return gs_pb2.GraphSyncLeafsQuery(
+            vertices=[urlsafe_str_to_bytes(v) for v in vertices]
+        )
+
+    @staticmethod
+    def get_leafs_result(results: bytes) -> List[Ref]:
+        msg = gs_pb2.GraphSyncRefsResult()
+        try:
+            msg.ParseFromString(results)
+        except Exception as err:
+            raise Exception(f"Could not parse the GraphSyncRefsResult message: {err}")
+        return [
+            Ref(
+                type=DataStruct.PB_TO_REF_MAP.get(r.type),
+                value=bytes_to_urlsafe_str(r.value),
+                name=r.name or None,
+            )
+            for r in msg.refs
+        ]
+
+    def multi_sync_query(self,
+                         stream_ids: List[bytes],
+                         origin: bytes,
+                         sync_point: int = 0) -> gs_pb2.GraphSyncMultiQuery:
+        return gs_pb2.GraphSyncMultiQuery(queries=[
+            gs_pb2.GraphSyncQuery(
+                streamId=sid,
+                origin=origin,
+                syncPoint=sync_point,
+                maxCount=0,    # let krouter default (currently 500)
+            )
+            for sid in stream_ids
+        ])
+
+    @staticmethod
+    def get_multi_sync_result(results: bytes) -> List[SyncData]:
+        msg = gs_pb2.GraphSyncMultiResult()
+        try:
+            msg.ParseFromString(results)
+        except Exception as err:
+            raise Exception(f"Could not parse the GraphSyncMultiResult message: {err}")
+        return [DataStruct._sync_data_from_result(r) for r in msg.results]

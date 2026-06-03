@@ -18,13 +18,12 @@ from ...discovery_common.dag_sort import sort_infra_vertices
 from ...keeper_dag import DAG
 from ...keeper_dag.connection.commander import Connection as CommanderConnection
 from ...keeper_dag.connection.local import Connection as LocalConnection
+from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamEndpoints
 from ...keeper_dag.vertex import DAGVertex
-from ...keeper_dag.edge import DAGEdge
 from typing import Optional, Union, TYPE_CHECKING
 
 Connection = Union[CommanderConnection, LocalConnection]
 if TYPE_CHECKING:
-    from ...vault import TypedRecord
     from ...params import KeeperParams
 
 
@@ -79,7 +78,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                             indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level)
+                               debug_level=debug_level, use_per_graph_endpoints=True)
         infra.load(sync_point=0)
 
         try:
@@ -165,7 +164,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
                                  logger=logging,
-                                 debug_level=debug_level)
+                                 debug_level=debug_level, use_per_graph_endpoints=True)
         configuration = record_link.dag.get_root
         
         record = vault.KeeperRecord.load(params, configuration.uid)  # type: Optional[TypedRecord]
@@ -317,7 +316,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                               indent: int = 0):
 
         user_service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                                   debug_level=debug_level)
+                                   debug_level=debug_level, use_per_graph_endpoints=True)
         configuration = user_service.dag.get_root
 
         def _handle(current_vertex: DAGVertex, parent_vertex: Optional[DAGVertex] = None, indent: int = 0):
@@ -365,7 +364,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                            indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level, fail_on_corrupt=False)
+                               debug_level=debug_level, fail_on_corrupt=False, use_per_graph_endpoints=True)
         infra.load(sync_point=0)
 
         pad = ""
@@ -374,22 +373,23 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
         conn = get_connection(params)
         graph_sync = DAG(conn=conn, record=gateway_context.configuration, logger=logging, debug_level=debug_level,
-                         graph_id=DIS_JOBS_GRAPH_ID)
+                         read_endpoint=PamEndpoints.DISCOVERY_JOBS,
+                         write_endpoint=PamEndpoints.DISCOVERY_JOBS)
         graph_sync.load(0)
         configuration = graph_sync.get_root
         vertices = configuration.has_vertices()
         if len(vertices) == 0:
-            print(self._f(f"The jobs graph has not been initialized. Only has root vertex."))
+            print(self._f("The jobs graph has not been initialized. Only has root vertex."))
             return
 
         vertex = vertices[0]
         if not vertex.has_data:
-            print(self._f(f"The job vertex does not contain any data"))
+            print(self._f("The job vertex does not contain any data"))
             return
 
         current_json = vertex.content_as_str
         if current_json is None:
-            print(self._f(f"The current job vertex content is None"))
+            print(self._f("The current job vertex content is None"))
             return
 
         content = JobContent.model_validate_json(current_json)
@@ -461,7 +461,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                          debug_level: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level)
+                               debug_level=debug_level, use_per_graph_endpoints=True)
         infra.load(sync_point=0)
 
         print("")
@@ -487,7 +487,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         rl = RecordLink(record=gateway_context.configuration,
                         params=params,
                         logger=logging,
-                        debug_level=debug_level)
+                        debug_level=debug_level, use_per_graph_endpoints=True)
 
         print("")
         dot_instance = rl.to_dot(
@@ -510,7 +510,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                            graph_format: str, debug_level: int = 0):
 
         service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                              debug_level=debug_level)
+                              debug_level=debug_level, use_per_graph_endpoints=True)
 
         print("")
         dot_instance = service.to_dot(
@@ -532,7 +532,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def _do_render_jobs(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
                         graph_format: str, debug_level: int = 0):
 
-        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level)
+        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level, use_per_graph_endpoints=True)
 
         print("")
         dot_instance = jobs.dag.to_dot()
@@ -553,8 +553,10 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         logging.debug(f"loading graph id {graph_id}, for record uid {gateway_context.configuration.record_uid}")
 
         conn = get_connection(params=params)
-        dag = DAG(conn=conn, record=gateway_context.configuration, graph_id=graph_id, fail_on_corrupt=False,
-                  logger=logging, debug_level=debug_level)
+        endpoint = GRAPH_ID_TO_ENDPOINT[graph_id]
+        dag = DAG(conn=conn, record=gateway_context.configuration,
+                  read_endpoint=endpoint, write_endpoint=endpoint,
+                  fail_on_corrupt=False, logger=logging, debug_level=debug_level)
         dag.load(sync_point=0)
         print("")
         if dag.is_corrupt is True:
@@ -626,8 +628,10 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                              graph_format: str, graph_id: int = 0, debug_level: int = 0):
 
         conn = get_connection(params=params)
-        dag = DAG(conn=conn, record=gateway_context.configuration, graph_id=graph_id, fail_on_corrupt=False,
-                  logger=logging, debug_level=debug_level)
+        endpoint = GRAPH_ID_TO_ENDPOINT[graph_id]
+        dag = DAG(conn=conn, record=gateway_context.configuration,
+                  read_endpoint=endpoint, write_endpoint=endpoint,
+                  fail_on_corrupt=False, logger=logging, debug_level=debug_level)
         dag.load(sync_point=0)
         dot = dag.to_dot(graph_format=graph_format)
         if graph_format == "raw":

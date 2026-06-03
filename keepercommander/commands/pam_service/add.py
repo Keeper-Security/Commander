@@ -60,9 +60,9 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
-                                   agent=f"Cmdr/{__version__}")
+                                   agent=f"Cmdr/{__version__}", use_per_graph_endpoints=True)
         record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
-                                 agent=f"Cmdr/{__version__}")
+                                 agent=f"Cmdr/{__version__}", use_per_graph_endpoints=True)
 
         ###############
 
