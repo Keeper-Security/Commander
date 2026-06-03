@@ -7,6 +7,7 @@ from ..utils import set_file_permissions, value_to_boolean
 import json
 import os
 import logging
+import uuid
 from enum import Enum
 from tabulate import tabulate
 
@@ -33,6 +34,20 @@ class Connection(ConnectionBase):
 
     DB_FILE = "local_dag.db"
 
+    @staticmethod
+    def filename():
+        current = os.environ.get("PYTEST_XDIST_WORKER")
+        if current is None:
+            current = os.environ.get("PYTEST_CURRENT_TEST")
+            if current is None:
+                current = str(os.getpid())
+        if current is None:
+            raise Exception("Cannot get a unique identifier for the test")
+
+        current = uuid.uuid5(uuid.NAMESPACE_DNS, current).hex
+
+        return current + "_" + Connection.DB_FILE
+
     def __init__(self,
                  limit: int = 100,
                  db_file: Optional[str] = None,
@@ -51,9 +66,10 @@ class Connection(ConnectionBase):
                          use_write_protobuf=use_write_protobuf)
 
         if db_file is None:
-            db_file = os.environ.get("LOCAL_DAG_DB_FILE", Connection.DB_FILE)
+            db_file = os.environ.get("LOCAL_DAG_DB_FILE", Connection.filename())
         if db_dir is None:
-            db_dir = os.environ.get("LOCAL_DAG_DIR", os.environ.get("HOME", os.environ.get("USERPROFILE", "./")))
+            db_dir = os.environ.get("LOCAL_DAG_DIR", os.environ.get("HOME",
+                                                                    os.environ.get("USERPROFILE", "./")))
 
         self.allow_debug = value_to_boolean(os.environ.get("GS_CONN_DEBUG", False))
         if self.allow_debug is True:
@@ -61,6 +77,8 @@ class Connection(ConnectionBase):
 
         self.db_file = os.path.join(db_dir, db_file)
         self.limit = limit
+
+        self.debug(f"local db files = {self.db_file}")
 
         self.create_database()
 
@@ -220,7 +238,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                         res = cursor.execute(sql, (current_stream_id, graph_id, EdgeType.DATA.value))
                         row = res.fetchone()
                         if row is None:
-                            self.debug(f"    no edge found")
+                            self.debug("    no edge found")
                             if current_stream_id == item_stream_id:
                                 current_stream_id = None
                             break
@@ -241,7 +259,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                             res = cursor.execute(sql, (current_stream_id, graph_id, EdgeType.DATA.value))
                             row = res.fetchone()
                             if row is None:
-                                self.debug(f"    no edge found")
+                                self.debug("    no edge found")
                                 if current_stream_id == item_stream_id:
                                     current_stream_id = None
                                 break
@@ -443,16 +461,6 @@ CREATE TABLE IF NOT EXISTS dag_streams (
             is_protobuf = True
             sync_query = self._sync_pb_to_pydantic(sync_query)
 
-        edge_type_map = {
-            EdgeType.DATA.value: "data",
-            EdgeType.KEY.value: "key",
-            EdgeType.LINK.value: "link",
-            EdgeType.ACL.value: "acl",
-            EdgeType.DELETION.value: "deletion",
-            EdgeType.DENIAL.value: "denial",
-            EdgeType.UNDENIAL.value: "undenial",
-        }
-
         stream_id = sync_query.streamId
         graph_id = sync_query.graphId
         sync_point = sync_query.syncPoint
@@ -573,6 +581,41 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                 data=data,
                 hasMore=has_more
             ).model_dump_json().encode()
+
+    def multi_sync(self,
+                   multi_query: Union[gs_pb2.GraphSyncMultiQuery, Any],
+                   graph_id: Optional[int] = None,
+                   endpoint: Optional[str] = None,
+                   agent: Optional[str] = None) -> bytes:
+        """Local mirror of the network per-graph ``multi_sync``.
+
+        The local SQLite store has no per-graph URL routing, so each sub-query
+        in the ``GraphSyncMultiQuery`` is run through this connection's own
+        ``sync()`` — identical stream / sync-point / graph-id semantics as the
+        single-stream read and the save path — and the per-stream results are
+        assembled into the same multi-stream envelope the network endpoint
+        returns: ``GraphSyncMultiResult`` (protobuf) or ``{"results": [...]}``
+        (JSON).
+        """
+        is_protobuf = isinstance(multi_query, gs_pb2.GraphSyncMultiQuery)
+        queries = list(multi_query.queries)
+
+        if is_protobuf:
+            multi = gs_pb2.GraphSyncMultiResult()
+            for sub_query in queries:
+                single = self.sync(sub_query, graph_id=graph_id,
+                                   endpoint=endpoint, agent=agent)
+                result = gs_pb2.GraphSyncResult()
+                result.ParseFromString(single)
+                multi.results.add().CopyFrom(result)
+            return multi.SerializeToString()
+
+        results = []
+        for sub_query in queries:
+            single = self.sync(sub_query, graph_id=graph_id,
+                               endpoint=endpoint, agent=agent)
+            results.append(json.loads(single))
+        return json.dumps({"results": results}).encode()
 
     def debug_dump(self) -> str:
 
