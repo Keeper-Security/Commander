@@ -826,49 +826,165 @@ class CyberArkImporter(BaseImporter):
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return pvwa_host, authorization_token, query_params
 
+    def _resolve_safes(self, pvwa_host, authorization_token):
+        """Resolve the list of safe names to import.
+        """
+        safes_file = environ.get("_CYBERARK_SAFES_PATH", "safes.txt")
+        if path.isfile(safes_file):
+            with open(safes_file, "r", encoding="utf-8") as f:
+                safes = [line.strip() for line in f if line.strip()]
+            if len(safes) == 0:
+                print_formatted_text(HTML(f"Safes file <ansired>{safes_file}</ansired> is empty"))
+                return None
+            print_formatted_text(HTML(f"Safes from file <i>{safes_file}</i>: <b>{', '.join(safes)}</b>"))
+            return safes
+        if "_CYBERARK_SAFES" in environ:
+            safes = [x.strip() for x in environ.get("_CYBERARK_SAFES").split(",") if x.strip()]
+            print_formatted_text(HTML(f"Safes from environment variable _CYBERARK_SAFES: <b>{', '.join(safes)}</b>"))
+            return safes
+        safes = [
+            x.strip()
+            for x in prompt(
+                "CyberArk safes as a comma-separated list (leave empty to get safes from the server): "
+            ).split(",")
+            if x.strip()
+        ]
+        if len(safes) > 0:
+            return safes
+        print_formatted_text(HTML("Getting safes from the server..."))
+        response = self.get_response(self.get_url(pvwa_host, "safes"), authorization_token, {})
+        if response is None:
+            return None
+        if response.status_code != 200:
+            print_formatted_text(
+                HTML(
+                    f"Getting safes from server {pvwa_host} <ansired>failed</ansired> with status <b>{response.status_code}</b>"
+                )
+            )
+            return None
+        safes = [x["safeName"] for x in response.json().get("value", [])]
+        if len(safes) == 0:
+            print_formatted_text(HTML(f"No Safes on server <ansired>{pvwa_host}</ansired>"))
+            return None
+        print_formatted_text(HTML(f"Safes: <b>{', '.join(safes)}</b>"))
+        return safes
+
+    def _preview_user_group_names(self, pvwa_host, authorization_token):
+        """Return the CyberArk user-group names that would become Keeper Teams/Roles.
+
+        Read-only preview helper that honors the same ``_CYBERARK_GROUPS`` /
+        ``_CYBERARK_GROUPS_PATH`` filter as :meth:`import_user_groups`. Returns
+        an empty list on any error.
+        """
+        groups_filter = None
+        groups_file = environ.get("_CYBERARK_GROUPS_PATH", "groups.txt")
+        if path.isfile(groups_file):
+            with open(groups_file, "r", encoding="utf-8") as f:
+                groups_filter = {line.strip() for line in f if line.strip()}
+        elif "_CYBERARK_GROUPS" in environ:
+            groups_filter = {x.strip() for x in environ.get("_CYBERARK_GROUPS").split(",") if x.strip()}
+        sleep(self.DELAY)
+        response = self.get_response(self.get_url(pvwa_host, "user_groups"), authorization_token, {})
+        if response is None or response.status_code != 200:
+            return []
+        try:
+            groups = response.json().get("value", [])
+        except ValueError:
+            return []
+        names = []
+        for g in groups:
+            name = g.get("groupName") or g.get("name")
+            if not name:
+                continue
+            if groups_filter and name not in groups_filter:
+                continue
+            names.append(name)
+        return names
+
+    def _eligible_user_previews(self, cyberark_users):
+        """Return ``[{"Username", "Email"}]`` for users eligible for Keeper provisioning.
+        """
+        accepted = []
+        seen = set()
+        for u in cyberark_users or []:
+            email = (u.get("email") or "").strip()
+            if not self._is_valid_cyberark_user_email(email):
+                continue
+            key = email.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            accepted.append({"Username": u.get("username") or "", "Email": email})
+        return accepted
+
+    @staticmethod
+    def _enterprise_existing(params):
+        """Return ``(team_names, role_names, user_status)`` already in the enterprise.
+
+        ``team_names`` / ``role_names`` are sets of lowercase names; ``user_status``
+        maps lowercase email -> Keeper status (e.g. ``"active"`` / ``"invited"``).
+        All are empty when enterprise data is unavailable.
+        """
+        teams, roles, users = set(), set(), {}
+        if not (params and getattr(params, "enterprise", None)):
+            return teams, roles, users
+        try:
+            api.query_enterprise(params)
+        except Exception as e:
+            logging.debug("Preview enterprise refresh failed: %s", e)
+        for t in (params.enterprise.get("teams") or []):
+            if t.get("name"):
+                teams.add(t["name"].lower())
+        for t in (params.enterprise.get("queued_teams") or []):
+            if t.get("name"):
+                teams.add(t["name"].lower())
+        for r in (params.enterprise.get("roles") or []):
+            display = (r.get("data") or {}).get("displayname") or ""
+            if display:
+                roles.add(display.lower())
+        for u in (params.enterprise.get("users") or []):
+            uname = (u.get("username") or "").lower()
+            if uname:
+                users[uname] = u.get("status") or "active"
+        return teams, roles, users
+
+    @staticmethod
+    def _confirm_import(pvwa_host, summary=None, question="Proceed with the import? (yes/no): "):
+        """Ask the user to confirm before reading/importing CyberArk data into Keeper.
+
+        Returns ``True`` to proceed, ``False`` to cancel. The prompt can be
+        bypassed for non-interactive runs by setting ``_CYBERARK_ASSUME_YES``
+        to a truthy value (``1``/``true``/``yes``).
+        """
+        if environ.get("_CYBERARK_ASSUME_YES", "").lower() in ("1", "true", "yes"):
+            return True
+
+        if summary is None:
+            summary = (
+                f"\nYou are about to import data from CyberArk PVWA <b>{pvwa_host}</b> into Keeper.\n"
+                "This will create Keeper <b>records</b>, and (unless skipped) <b>teams</b>, "
+                "<b>roles</b> and <b>users</b>."
+            )
+        print_formatted_text(HTML(summary))
+        try:
+            answer = prompt(question).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
     def _do_import_inner(self, filename, **kwargs):
         auth = self._authenticate_pvwa(filename)
         if auth is None:
             return
         pvwa_host, authorization_token, query_params = auth
-        # Get a list of safes, either from a file, the environment variable _CYBERARK_SAFES, or from the API
-        safes_file = environ.get("_CYBERARK_SAFES_PATH", "safes.txt")
-        if path.isfile(safes_file):
-            with open(safes_file, "r", encoding="utf-8") as f:
-                safes = [line.strip() for line in f if line.strip()]
-                if len(safes) == 0:
-                    print_formatted_text(HTML(f"Safes file <ansired>{safes_file}</ansired> is empty"))
-                    return
-                print_formatted_text(HTML(f"Safes from file <i>{safes_file}</i>: <b>{', '.join(safes)}</b>"))
-        elif "_CYBERARK_SAFES" in environ:
-            safes = [x.strip() for x in environ.get("_CYBERARK_SAFES").split(",") if x.strip()]
-            print_formatted_text(HTML(f"Safes from environment variable _CYBERARK_SAFES: <b>{', '.join(safes)}</b>"))
-        else:
-            safes = [
-                x.strip()
-                for x in prompt(
-                    "CyberArk safes as a comma-separated list (leave empty to get safes from the server): "
-                ).split(",")
-                if x.strip()
-            ]
-            if len(safes) == 0:
-                print_formatted_text(HTML("Getting safes from the server..."))
-                response = self.get_response(self.get_url(pvwa_host, "safes"), authorization_token, {})
-                if response is None:
-                    return
-                if response.status_code != 200:
-                    print_formatted_text(
-                        HTML(
-                            f"Getting safes from server {pvwa_host} <ansired>failed</ansired> with status <b>{response.status_code}</b>"
-                        )
-                    )
-                    return
-                safes = [x["safeName"] for x in response.json().get("value", [])]
-                if len(safes) == 0:
-                    print_formatted_text(HTML(f"No Safes on server <ansired>{pvwa_host}</ansired>"))
-                    return
-                print_formatted_text(HTML(f"Safes: <b>{', '.join(safes)}</b>"))
-        # Get the accounts out of each safe
+
+        safes = self._resolve_safes(pvwa_host, authorization_token)
+        if not safes:
+            return
+
+        
+        print_formatted_text(HTML("\nScanning CyberArk safes for accounts to migrate..."))
+        safe_accounts = {}
         for safe in safes:
             sleep(self.DELAY)
             response = self.get_response(
@@ -891,11 +1007,95 @@ class CyberArkImporter(BaseImporter):
                     HTML(f"<ansiyellow>Skipping safe {safe}: accounts response was not valid JSON</ansiyellow>")
                 )
                 continue
-            count = payload.get("count", 0)
-            if count == 0:
+            accounts = payload.get("value", [])
+            if not accounts:
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {safe}</ansiyellow>"))
                 continue
-            accounts = payload.get("value", [])
+            safe_accounts[safe] = accounts
+
+        params = kwargs.get("params")
+        will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
+        will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
+        will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
+
+        # Gather the CyberArk identities (groups + users) that will become Keeper
+        # teams, roles and users so they can be previewed before the import. The
+        # fetched users are reused after the import (no second fetch).
+        group_names = self._preview_user_group_names(pvwa_host, authorization_token) if will_teams else []
+        cyberark_users = []
+        if will_print_users or will_create_users:
+            print_formatted_text(HTML("\nFetching CyberArk Users..."))
+            cyberark_users = self.fetch_cyberark_users(
+                pvwa_host, authorization_token,
+                fetch_groups_membership=will_create_users,
+            )
+        eligible_users = self._eligible_user_previews(cyberark_users) if will_create_users else []
+        existing_teams, existing_roles, existing_users = self._enterprise_existing(params)
+
+        total_accounts = sum(len(a) for a in safe_accounts.values())
+        if total_accounts == 0 and not group_names and not eligible_users:
+            print_formatted_text(HTML("\n<ansiyellow>Nothing to migrate from CyberArk.</ansiyellow>"))
+            return
+
+        # Show exactly what will be migrated (records, teams, roles, users), then confirm.
+        if safe_accounts:
+            account_rows = []
+            for safe, accounts in safe_accounts.items():
+                for x in accounts:
+                    account_rows.append({"ID": x.get("id"), "Safe": x.get("safeName") or safe, "Account": x.get("name")})
+            print_formatted_text(
+                HTML("\nCyberArk accounts to import as Keeper <b>records</b>:\n"),
+                tabulate(account_rows, headers="keys"),
+                end="\n\n",
+            )
+        if group_names:
+            team_rows = [
+                {"Team": g, "Status": "exists" if g.lower() in existing_teams else "new"}
+                for g in group_names
+            ]
+            print_formatted_text(
+                HTML("\nCyberArk user groups to import as Keeper <b>teams</b>:\n"),
+                tabulate(team_rows, headers="keys"),
+                end="\n\n",
+            )
+            role_rows = [
+                {"Role": g, "Status": "exists" if g.lower() in existing_roles else "new"}
+                for g in group_names
+            ]
+            print_formatted_text(
+                HTML("\nCyberArk user groups to import as Keeper <b>roles</b>:\n"),
+                tabulate(role_rows, headers="keys"),
+                end="\n\n",
+            )
+        if eligible_users:
+            user_rows = [
+                {
+                    "Username": a["Username"],
+                    "Email": a["Email"],
+                    "Status": existing_users.get(a["Email"].lower(), "new"),
+                }
+                for a in eligible_users
+            ]
+            print_formatted_text(
+                HTML("\nCyberArk users to provision as Keeper <b>users</b>:\n"),
+                tabulate(user_rows, headers="keys"),
+                end="\n\n",
+            )
+
+        summary_lines = [
+            f"\nYou are about to import data from CyberArk PVWA <b>{pvwa_host}</b> into Keeper:",
+            f"  - <b>{total_accounts}</b> account(s) across <b>{len(safe_accounts)}</b> safe(s) as Keeper records",
+        ]
+        if group_names:
+            summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams and roles")
+        if eligible_users:
+            summary_lines.append(f"  - <b>{len(eligible_users)}</b> user(s) provisioned as Keeper users")
+        if not self._confirm_import(pvwa_host, summary="\n".join(summary_lines)):
+            print_formatted_text(HTML("\nImport <ansiyellow>cancelled</ansiyellow> by user"))
+            return
+
+        # Import the accounts we already gathered above.
+        for safe, accounts in safe_accounts.items():
             print_formatted_text(
                 HTML(f"Importing <b>{len(accounts)}</b> accounts from safe {safe}:\n"),
                 tabulate([{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts], headers="keys"),
@@ -1002,28 +1202,17 @@ class CyberArkImporter(BaseImporter):
                         end="\n\n"
                     )
 
-        # Fetch CyberArk users once and reuse them for printing AND user creation later.
-        cyberark_users = []
-        will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
-        will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
-        if will_print_users or will_create_users:
-            print_formatted_text(HTML("\nFetching CyberArk Users..."))
-           
-            cyberark_users = self.fetch_cyberark_users(
-                pvwa_host, authorization_token,
-                fetch_groups_membership=will_create_users,
-            )
-
-        # Print CyberArk users with their usernames and emails (no Keeper users are created here).
-        if environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes"):
+        # Print CyberArk users with their usernames and emails (already fetched for the
+        # preview above; no Keeper users are created here).
+        if will_print_users:
             self.print_cyberark_users(pvwa_host, authorization_token, users=cyberark_users)
 
         # Import CyberArk User Groups as Keeper Enterprise Teams + Roles, then optionally
         # create Keeper users (using their real CyberArk business emails) and
         # assign them to the matching Keeper Roles.
-        if environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes"):
+        if will_teams:
             self.import_user_groups(
-                pvwa_host, authorization_token, kwargs.get("params"),
+                pvwa_host, authorization_token, params,
                 cyberark_users=cyberark_users,
             )
 
@@ -1918,6 +2107,20 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
             if auth is None:
                 return
             pvwa_host, authorization_token, _query_params = auth
+
+            # Confirm before downloading CyberArk membership into Keeper.
+            if not self._confirm_import(
+                pvwa_host,
+                summary=(
+                    f"\nYou are about to download membership data from CyberArk PVWA "
+                    f"<b>{pvwa_host}</b> into Keeper.\n"
+                    "This maps CyberArk <b>safes</b> to Keeper shared folders and "
+                    "<b>user groups</b> to Keeper teams."
+                ),
+                question="Proceed with the membership download? (yes/no): ",
+            ):
+                print_formatted_text(HTML("\nMembership download <ansiyellow>cancelled</ansiyellow> by user"))
+                return
 
             print_formatted_text(HTML("\nFetching CyberArk users for email resolution..."))
             cyberark_users = self.fetch_cyberark_users(pvwa_host, authorization_token)
