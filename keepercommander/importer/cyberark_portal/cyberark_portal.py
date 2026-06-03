@@ -1,7 +1,5 @@
 import base64
 import hashlib
-import json
-import os
 import re
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -17,9 +15,92 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Record, RecordField, Folder
+from ..importer import BaseImporter, Folder, Record, RecordField
 import secrets
 import string
+
+
+_SHARING_FIELD_NAMES = (
+    "IsShared",
+    "Shared",
+    "IsOwner",
+    "Owner",
+    "OwnerLogin",
+    "OwnerEmail",
+    "OwnerDisplayName",
+    "SharedBy",
+    "SharedByName",
+    "SharedByDisplayName",
+    "SharedWith",
+    "SharedWithCount",
+    "SharingCount",
+    "ShareCount",
+    "AdminTag",
+    "IsAdminCreated",
+    "IsAdminAssigned",
+    "Permission",
+    "Permissions",
+    "EffectivePermissions",
+    "ItemPermissions",
+    "AccessLevel",
+    "AccessRights",
+    "Role",
+    "Roles",
+    "AssignedRoles",
+    "StartTime",
+    "EndTime",
+)
+
+
+def _format_sharing_value(value):
+    """Render a sharing/access value for display in a Keeper text field."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple)):
+        parts = []
+        for v in value:
+            if isinstance(v, dict):
+                # Prefer human-readable names if available
+                name = (v.get("Name") or v.get("DisplayName") or v.get("PrincipalName")
+                        or v.get("UserName") or v.get("Login") or v.get("Email")
+                        or v.get("ID") or "")
+                perm = v.get("Permission") or v.get("Right") or v.get("AccessLevel") or ""
+                if name and perm:
+                    parts.append(f"{name} ({perm})")
+                elif name:
+                    parts.append(str(name))
+                else:
+                    parts.append(str(v))
+            elif v is not None and v != "":
+                parts.append(str(v))
+        return ", ".join(parts)
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items() if v not in (None, "", False))
+    return str(value)
+
+
+def _collect_sharing_fields(item, prefix=""):
+    """Return a list of (label, value) tuples for sharing/access metadata
+    present on the given item dict. ``prefix`` is prepended to labels for
+    nested contexts (e.g. folder-level sharing on a record).
+    """
+    out = []
+    if not isinstance(item, dict):
+        return out
+    for key in _SHARING_FIELD_NAMES:
+        if key not in item:
+            continue
+        v = item.get(key)
+        if v in (None, "", [], {}):
+            continue
+        formatted = _format_sharing_value(v)
+        if not formatted or formatted in ("no", "0"):
+            # Skip explicit false/empty signals so we don't clutter records
+            # with negative facts.
+            continue
+        label = f"{prefix}{key}" if prefix else key
+        out.append((label, formatted))
+    return out
 
 
 class CyberArkPortalImporter(BaseImporter):
@@ -43,6 +124,231 @@ class CyberArkPortalImporter(BaseImporter):
     @staticmethod
     def get_url(identity_base_url, endpoint):
         return f'{identity_base_url.rstrip("/")}/{endpoint.lstrip("/").rstrip("/")}'
+
+    def _try_get_json(self, identity_base_url, endpoint, authentication_token, *,
+                      params=None, payload=None, method="POST",
+                      missing_endpoint_cache=None, quiet_statuses=(404, 403, 501)):
+        """Best-effort call to a CyberArk Identity endpoint that may or may
+        not be available on a given tenant.
+
+        """
+        url = self.get_url(identity_base_url, endpoint)
+        if missing_endpoint_cache is not None and endpoint in missing_endpoint_cache:
+            return None
+        try:
+            if method == "GET":
+                response = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    params=params,
+                    timeout=self.TIMEOUT,
+                )
+            else:
+                response = requests.post(
+                    url,
+                    headers={"Authorization": f"Bearer {authentication_token}"},
+                    params=params,
+                    json=payload if payload is not None else {},
+                    timeout=self.TIMEOUT,
+                )
+        except requests.RequestException as e:
+            logging.debug(f"Sharing endpoint {endpoint} request failed: {e}")
+            return None
+
+        if response.status_code in quiet_statuses:
+            if missing_endpoint_cache is not None and endpoint not in missing_endpoint_cache:
+                missing_endpoint_cache.add(endpoint)
+                logging.debug(
+                    f"CyberArk Identity endpoint {endpoint} not available on this tenant "
+                    f"(HTTP {response.status_code}); skipping sharing details for this resource type."
+                )
+            return None
+        if response.status_code != HTTPStatus.OK:
+            logging.debug(
+                f"Sharing endpoint {endpoint} returned HTTP {response.status_code}: {response.text[:200]}"
+            )
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if isinstance(body, dict) and body.get("success") is False:
+            logging.debug(
+                f"Sharing endpoint {endpoint} reported failure: {body.get('Message') or body.get('MessageID')}"
+            )
+            return None
+        if isinstance(body, dict) and "Result" in body:
+            return body.get("Result")
+        return body
+
+    def _fetch_app_sharing(self, identity_base_url, authentication_token, app_key,
+                           missing_endpoint_cache):
+        """Try several CyberArk Identity endpoints that may surface app
+        sharing info. Returns a dict (possibly empty) of sharing metadata.
+        """
+        if not app_key:
+            return {}
+        # /UPRest/GetAppByKey returns the same record as in GetUPData but
+        # some tenants include extra sharing/owner fields here.
+        result = self._try_get_json(
+            identity_base_url,
+            f"/UPRest/GetAppByKey?appkey={app_key}",
+            authentication_token,
+            missing_endpoint_cache=missing_endpoint_cache,
+        )
+        if isinstance(result, dict):
+            return result
+        return {}
+
+    def _fetch_secured_item_sharing(self, identity_base_url, authentication_token,
+                                    item_key, missing_endpoint_cache):
+        """Best-effort fetch of per-secured-item sharing details.
+        """
+        if not item_key:
+            return {}
+        candidates = (
+            f"/UPRest/GetSecuredItemShareInfo?sItemKey={item_key}",
+            f"/UPRest/GetSecuredItem?sItemKey={item_key}",
+        )
+        for endpoint in candidates:
+            result = self._try_get_json(
+                identity_base_url, endpoint, authentication_token,
+                missing_endpoint_cache=missing_endpoint_cache,
+            )
+            if isinstance(result, dict) and result:
+                return result
+        return {}
+
+    def _fetch_folders(self, identity_base_url, authentication_token,
+                       missing_endpoint_cache):
+        """Fetch the user's CyberArk Identity folders (a.k.a. Collections).
+        """
+        candidates = (
+            "/UPRest/GetCollectionList",
+            "/UPRest/GetCollections",
+            "/UPRest/GetFolders",
+        )
+        for endpoint in candidates:
+            result = self._try_get_json(
+                identity_base_url, endpoint, authentication_token,
+                missing_endpoint_cache=missing_endpoint_cache,
+            )
+            if result is None:
+                continue
+            # Different endpoints can return slightly different shapes; we
+            # normalize a few common ones.
+            if isinstance(result, list):
+                return [f for f in result if isinstance(f, dict)]
+            if isinstance(result, dict):
+                for key in ("Collections", "Folders", "Results"):
+                    items = result.get(key)
+                    if isinstance(items, list):
+                        return [f for f in items if isinstance(f, dict)]
+        return []
+
+    @staticmethod
+    def _build_folder_index(folders):
+        """Build a mapping item_key -> list[folder_dict] for every secured
+        item / app that's listed as a member of any folder.
+        """
+        index = {}
+        for folder in folders:
+            if not isinstance(folder, dict):
+                continue
+            member_keys = []
+            for k in ("AppKeys", "SecuredItemKeys", "ItemKeys"):
+                v = folder.get(k)
+                if isinstance(v, list):
+                    member_keys.extend(str(x) for x in v if x)
+            for k in ("Items", "Members"):
+                v = folder.get(k)
+                if isinstance(v, list):
+                    for member in v:
+                        if isinstance(member, dict):
+                            mk = (member.get("AppKey") or member.get("ItemKey")
+                                  or member.get("Key") or member.get("ID")
+                                  or member.get("_RowKey"))
+                            if mk:
+                                member_keys.append(str(mk))
+                        elif member:
+                            member_keys.append(str(member))
+            for mk in member_keys:
+                index.setdefault(mk, []).append(folder)
+        return index
+
+    @staticmethod
+    def _folder_display_name(folder):
+        return (folder.get("Name") or folder.get("DisplayName")
+                or folder.get("Title") or folder.get("CollectionName")
+                or folder.get("ID") or "")
+
+    def _apply_sharing_and_folders(self, *, record, item, item_key, folder_index,
+                                   identity_base_url, authentication_token,
+                                   missing_endpoint_cache, item_kind):
+        """Attach sharing/access metadata and folder placement to ``record``.
+        """
+        # 1) Surface sharing fields already on the bulk-response item.
+        for label, value in _collect_sharing_fields(item):
+            record.fields.append(RecordField(type="text", label=f"CyberArk {label}", value=value))
+
+        # 2) Best-effort per-item fetch for richer sharing details.
+        detail = {}
+        if item_kind == "app":
+            detail = self._fetch_app_sharing(
+                identity_base_url, authentication_token, item_key, missing_endpoint_cache,
+            )
+        elif item_kind == "secured_item":
+            detail = self._fetch_secured_item_sharing(
+                identity_base_url, authentication_token, item_key, missing_endpoint_cache,
+            )
+        if detail:
+            # Avoid duplicating labels we already wrote from the bulk response.
+            already = {f.label for f in record.fields if f.label}
+            for label, value in _collect_sharing_fields(detail):
+                full_label = f"CyberArk {label}"
+                if full_label in already:
+                    continue
+                record.fields.append(RecordField(type="text", label=full_label, value=value))
+                already.add(full_label)
+
+        # 3) Folder placement + folder-level sharing.
+        if folder_index and item_key:
+            owning_folders = folder_index.get(str(item_key)) or []
+            if owning_folders:
+                record.folders = []
+                folder_share_lines = []
+                for f in owning_folders:
+                    fname = self._folder_display_name(f)
+                    if not fname:
+                        continue
+                    rec_folder = Folder()
+                    rec_folder.path = fname
+                    # Map CyberArk's coarse folder permissions onto Keeper's
+                    perm = (f.get("Permission") or f.get("AccessLevel")
+                            or f.get("EffectivePermission") or "")
+                    perm_lower = str(perm).lower()
+                    if perm_lower in ("owner", "manage"):
+                        rec_folder.can_edit = True
+                        rec_folder.can_share = True
+                    elif perm_lower in ("edit", "modify", "write"):
+                        rec_folder.can_edit = True
+                        rec_folder.can_share = False
+                    elif perm_lower in ("view", "read"):
+                        rec_folder.can_edit = False
+                        rec_folder.can_share = False
+                    record.folders.append(rec_folder)
+
+                    fshare = _collect_sharing_fields(f, prefix=f"Folder[{fname}] ")
+                    folder_share_lines.extend(f"{label}: {value}" for label, value in fshare)
+
+                if folder_share_lines:
+                    record.fields.append(
+                        RecordField(
+                            type="text",
+                            label="CyberArk Folder Sharing",
+                            value="\n".join(folder_share_lines),
+                        )
+                    )
 
     @staticmethod
     def discover_identity_url(tenant_name):
@@ -89,63 +395,7 @@ class CyberArkPortalImporter(BaseImporter):
         )
         return default_url
 
-    @staticmethod
-    def _create_empty_keeper_folder(params, folder_name, is_shared):
-        """Create an empty folder directly in the user's Keeper vault.
-
-        The Keeper importer pipeline creates user folders only implicitly when a record is placed
-        inside them, so a CyberArk folder with zero items would otherwise never appear in Keeper.
-        We bypass that limitation by calling the folder_add Keeper API directly.  If `params` is
-        not available (e.g. the importer is being exercised in dry-run mode or a context that does
-        not forward params), we silently skip the creation instead of failing.
-        """
-        if not params or not folder_name:
-            return
-        try:
-            from ... import api, crypto, utils
-        except Exception as e:
-            logging.debug(f"Unable to import Keeper api helpers for folder creation: {e}")
-            return
-
-        try:
-            # Skip if a top-level folder with the same name already exists to avoid duplicates
-            # on repeated imports.
-            existing_names = set()
-            root_subfolders = getattr(params.root_folder, "subfolders", None) or []
-            for sub_uid in root_subfolders:
-                sub = params.folder_cache.get(sub_uid)
-                if sub and sub.name:
-                    existing_names.add(sub.name.lower())
-            if folder_name.lower() in existing_names:
-                logging.debug(f"Folder '{folder_name}' already exists in vault; skipping creation.")
-                return
-
-            folder_uid = api.generate_record_uid()
-            folder_key = os.urandom(32)
-            request = {
-                "command": "folder_add",
-                "folder_uid": folder_uid,
-                "folder_type": "shared_folder" if is_shared else "user_folder",
-                "key": utils.base64_url_encode(crypto.encrypt_aes_v1(folder_key, params.data_key)),
-            }
-
-            data = json.dumps({"name": folder_name})
-            request["data"] = utils.base64_url_encode(
-                crypto.encrypt_aes_v1(data.encode("utf-8"), folder_key)
-            )
-            if is_shared:
-                request["name"] = utils.base64_url_encode(
-                    crypto.encrypt_aes_v1(folder_name.encode("utf-8"), folder_key)
-                )
-
-            api.communicate(params, request)
-            params.sync_data = True
-            logging.info(f"Created empty Keeper folder '{folder_name}' (is_shared={is_shared}).")
-        except Exception as e:
-            logging.warning(f"Failed to create empty folder '{folder_name}': {e}")
-
     def do_import(self, filename, **kwargs):
-        params = kwargs.get("params")
         name = filename.removeprefix("https://").removeprefix("http://")
         host_part = name.split("/")[0]
 
@@ -450,103 +700,10 @@ class CyberArkPortalImporter(BaseImporter):
 
         print_formatted_text(HTML("Authentication <ansigreen>successful</ansigreen>"))
 
-        auth_headers = {"Authorization": f"Bearer {authentication_token}"}
-
-        
-        app_folder_map = {}       # type: dict
-        item_folder_map = {}      # type: dict
-
-        folders_response = requests.post(
-            self.get_url(identity_base_url, "/Folder/GetFolders"),
-            headers=auth_headers,
-            json={},
-            timeout=self.TIMEOUT,
-        )
-
-        if folders_response.status_code == HTTPStatus.OK:
-            folders_result = folders_response.json().get("Result") or []
-            logging.debug(f"Folders: {folders_result}")
-            for folder in folders_result:
-                folder_uuid = folder.get("FolderUuid")
-                folder_name = (folder.get("Name") or "").strip()
-                if not folder_name:
-                    continue
-                share_option = folder.get("ShareOption", "NotShared")
-                is_shared = share_option != "NotShared"
-                folder_meta = {
-                    "uuid": folder_uuid,
-                    "name": folder_name,
-                    "is_shared": is_shared,
-                }
-
-                app_keys = set(folder.get("Apps") or [])
-                item_keys = set(folder.get("SecuredItems") or [])
-
-                if folder_uuid:
-                    items_response = requests.post(
-                        self.get_url(
-                            identity_base_url,
-                            f"/Folder/GetFolderItems?folderUuid={folder_uuid}",
-                        ),
-                        headers=auth_headers,
-                        json={},
-                        timeout=self.TIMEOUT,
-                    )
-                    if items_response.status_code == HTTPStatus.OK:
-                        items_result = items_response.json().get("Result") or {}
-                        app_keys.update(items_result.get("Apps") or [])
-                        item_keys.update(items_result.get("SecuredItems") or [])
-                        for it in items_result.get("Items") or []:
-                            key = it.get("ItemKey") or it.get("_RowKey")
-                            if not key:
-                                continue
-                            it_type = it.get("Type") or ""
-                            if it_type == "App" or "AppType" in it:
-                                app_keys.add(key)
-                            else:
-                                item_keys.add(key)
-                    else:
-                        logging.warning(
-                            f"HTTP {items_response.status_code} getting items for folder "
-                            f"{folder_name} ({folder_uuid}): {items_response.text[:200]}"
-                        )
-
-                for k in app_keys:
-                    app_folder_map[k] = folder_meta
-                for k in item_keys:
-                    item_folder_map[k] = folder_meta
-
-               
-                if not app_keys and not item_keys:
-                    self._create_empty_keeper_folder(
-                        params, folder_meta["name"], folder_meta["is_shared"]
-                    )
-        else:
-            logging.warning(
-                f"HTTP {folders_response.status_code} getting folders: {folders_response.text[:200]}; "
-                f"records will be imported at the vault root."
-            )
-
-        def _attach_folder(record, folder_meta):
-            """Attach a single Folder reference to the record if the item lives inside a CyberArk folder.
-
-            - Shared folder -> Folder.domain = folder name (Keeper creates a Shared Folder)
-            - Personal folder -> Folder.path = folder name (Keeper creates a user folder)
-            - No mapping -> no folder is attached, record goes to the vault root
-            """
-            if not folder_meta or not folder_meta.get("name"):
-                return
-            f = Folder()
-            if folder_meta["is_shared"]:
-                f.domain = folder_meta["name"]
-            else:
-                f.path = folder_meta["name"]
-            record.folders = [f]
-
         # Get all the application data (except the password, of course) in one API call
         response = requests.post(
             self.get_url(identity_base_url, "/UPRest/GetUPData"),
-            headers=auth_headers,
+            headers={"Authorization": f"Bearer {authentication_token}"},
             json={},
             timeout=self.TIMEOUT,
         )
@@ -555,6 +712,16 @@ class CyberArkPortalImporter(BaseImporter):
             logging.error(f"HTTP {HTTPStatus(response.status_code).phrase} error getting UP data: {response.text}")
             return
         apps = response.json()["Result"]["Apps"]
+
+       
+        missing_endpoint_cache = set()
+        folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
+        folder_index = self._build_folder_index(folders) if folders else {}
+        if folders:
+            print_formatted_text(
+                HTML(f"Discovered <b>{len(folders)}</b> CyberArk folder(s) for the current user."),
+                end="\n\n",
+            )
 
         if len(apps) > 0:
             print_formatted_text(
@@ -576,7 +743,6 @@ class CyberArkPortalImporter(BaseImporter):
                 record.login = app.get("Username", "")
                 record.login_url = app.get("Url", "")
                 record.notes = app.get("Notes", "")
-                _attach_folder(record, app_folder_map.get(app_key))
 
                 if app.get("IsTotpSet"):
                     record.notes += "The CyberArk Application had a TOTP that Keeper could not access to import."
@@ -586,9 +752,20 @@ class CyberArkPortalImporter(BaseImporter):
                         RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in app["Tags"]))
                     )
 
+                self._apply_sharing_and_folders(
+                    record=record,
+                    item=app,
+                    item_key=app_key,
+                    folder_index=folder_index,
+                    identity_base_url=identity_base_url,
+                    authentication_token=authentication_token,
+                    missing_endpoint_cache=missing_endpoint_cache,
+                    item_kind="app",
+                )
+
                 response = requests.post(
                     self.get_url(identity_base_url, f"/UPRest/GetMCFA?appkey={app_key}"),
-                    headers=auth_headers,
+                    headers={"Authorization": f"Bearer {authentication_token}"},
                     json={},
                     timeout=self.TIMEOUT,
                 )
@@ -602,19 +779,12 @@ class CyberArkPortalImporter(BaseImporter):
                     logging.warning(f"No password found for app {app_key}; response: {response.text}")
                 else:
                     record.password = response.json()["Result"].get("p", "")
-                    record.username = response.json()["Result"].get("u", "")
-                    record.notes = response.json()["Result"].get("n", "")
-                    record.fields.append(RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in response.json()["Result"].get("t", []))))
-                    record.fields.append(RecordField(type="text", label="Category", value=response.json()["Result"].get("c", "")))
-                    record.fields.append(RecordField(type="text", label="Description", value=response.json()["Result"].get("d", "")))
-                    record.fields.append(RecordField(type="text", label="Registration Message", value=response.json()["Result"].get("rm", "")))
-                    record.fields.append(RecordField(type="text", label="Registration Link Message", value=response.json()["Result"].get("rrm", "")))
 
                 yield record
 
         response = requests.post(
             self.get_url(identity_base_url, "/UPRest/GetSecuredItemsData"),
-            headers=auth_headers,
+            headers={"Authorization": f"Bearer {authentication_token}"},
             json={},
             timeout=self.TIMEOUT,
         )
@@ -638,17 +808,26 @@ class CyberArkPortalImporter(BaseImporter):
                 item_key = item["ItemKey"]
                 record = Record()
                 record.title = item["Name"]
-                _attach_folder(record, item_folder_map.get(item_key))
 
                 if item.get("Tags"):
                     record.fields.append(
                         RecordField(type="text", label="Tags", value=", ".join(str(tag) for tag in item["Tags"]))
                     )
-                    
+
+                self._apply_sharing_and_folders(
+                    record=record,
+                    item=item,
+                    item_key=item_key,
+                    folder_index=folder_index,
+                    identity_base_url=identity_base_url,
+                    authentication_token=authentication_token,
+                    missing_endpoint_cache=missing_endpoint_cache,
+                    item_kind="secured_item",
+                )
 
                 response = requests.post(
                     self.get_url(identity_base_url, f"/UPRest/GetCredsForSecuredItem?sItemKey={item_key}"),
-                    headers=auth_headers,
+                    headers={"Authorization": f"Bearer {authentication_token}"},
                     json={},
                     timeout=self.TIMEOUT,
                 )
