@@ -116,6 +116,7 @@ def show_brief_help():
     print('  --password, -kp PASSWORD Master password for the account')
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
+    print('  --silent                 Turn off all logging statements')    
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --proxy PROXY            Proxy server')
     print('  --new-login              Force full login (bypass persistent login)')
@@ -149,6 +150,7 @@ parser.add_argument('--password', '-kp', dest='password', action='store', help='
 parser.add_argument('--version', dest='version', action='store_true', help='Display version')
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
+parser.add_argument('--silent', dest='silent', action='store_true', help='Turn off all logging statements')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
@@ -223,7 +225,7 @@ def main(from_package=False):
                 value_main_parser_args = ['--config', '--server', '--user', '--password',
                                           '--launched-with-shortcut', '--proxy',
                                           '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
-                bool_main_parser_args = ['--version', '--debug', '--batch-mode',
+                bool_main_parser_args = ['--version', '--debug', '--silent', '--batch-mode',
                                          '--unmask-all', '--fail-on-throttle',
                                          '--new-login', '--config-file']
                 main_parser_args = value_main_parser_args + bool_main_parser_args
@@ -249,6 +251,9 @@ def main(from_package=False):
         original_args_after_command = []
     if opts.launched_with_shortcut:
         os.chdir(Path.home())
+
+    if opts.silent:
+        logging.disable(logging.CRITICAL)
 
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
