@@ -5,7 +5,7 @@ from typing import Sequence, Optional, List
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from ... import api, utils
-from ...commands.utils import KSMCommand
+from ...commands.ksm import KSMCommand
 from ...loginv3 import CommonHelperMethods
 from ...params import KeeperParams
 from ...proto import pam_pb2, enterprise_pb2
