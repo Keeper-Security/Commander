@@ -27,6 +27,8 @@ import tempfile
 import threading
 import time
 
+from typing import Dict, List, Tuple
+
 from ..base import Command
 from ...display import bcolors
 from ...error import CommandError
@@ -1365,10 +1367,6 @@ Examples:
             fd = os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, 'w') as f:
                 json.dump(out_data, f, indent=2)
-            # On Windows os.open() ignores POSIX mode bits; apply the cross-platform
-            # owner-only helper (POSIX chmod 0o600 / Windows icacls grant owner:RW).
-            from ... import utils as _ku
-            _ku.set_file_permissions(output_file)
             redact_note = '' if include_creds else ' (credentials redacted)'
             logging.warning('JSON written to %s (%d resources, %d users)%s',
                             output_file, num_resources, num_users, redact_note)
@@ -1425,9 +1423,9 @@ Examples:
                                     gw_label, existing_project)
                 else:
                     print(f'\n{gw_label} belongs to project "{existing_project}".')
-                    print('  [1] Create a NEW project with its own folders and gateway (recommended)')
+                    print(f'  [1] Create a NEW project with its own folders and gateway (recommended)')
                     print(f'  [2] Add records into "{existing_project}" existing folders')
-                    print('  [3] Cancel import')
+                    print(f'  [3] Cancel import')
                     choice = input('\n  Select [1]: ').strip()
                     if choice == '2':
                         config_uid = resolved_config
@@ -1766,6 +1764,8 @@ Examples:
         """
         from .extend import PAMProjectExtendCommand
 
+        pre_cache = set(params.record_cache.keys())
+
         stdout_trap = io.StringIO()
         with _STDOUT_LOCK:
             original_stdout = sys.stdout
@@ -1786,6 +1786,9 @@ Examples:
                 print(batch_output, end='')
             except (BrokenPipeError, OSError):
                 pass
+
+        post_cache = set(params.record_cache.keys())
+        new_uids = post_cache - pre_cache
 
         # Parse output for per-record info
         # Common patterns from extend.py output:
@@ -2011,7 +2014,7 @@ Examples:
         total_res = len(resources)
         total_usr = len(users)
         print(f'\n  Total: {total_res} resources, {total_usr} users')
-        print('\n  [A] Import ALL groups')
+        print(f'\n  [A] Import ALL groups')
         print()
 
         try:
@@ -2527,8 +2530,8 @@ Examples:
                 f'matching vault record was found (the KSM shared folder may '
                 f'not be accessible to your account):\n' + '\n'.join(
                     f'      - {line}' for line in unresolved_lines) +
-                '\n      Action: add passwords to these records after import, '
-                'or share the KSM app folder with your vault and re-import.')
+                f'\n      Action: add passwords to these records after import, '
+                f'or share the KSM app folder with your vault and re-import.')
 
         return warnings, resolved_details, unresolved_details
 
@@ -3437,7 +3440,7 @@ Examples:
             for i, g in enumerate(online, 1):
                 uid_str = utils.base64_url_encode(g.controllerUid)
                 print(f'  [{i}] {g.controllerName}  ({uid_str})')
-            print('\n  [N] Create a new gateway')
+            print(f'\n  [N] Create a new gateway')
             print()
             choice = input('  Select gateway [N]: ').strip()
             if choice and choice.upper() != 'N':
@@ -3669,7 +3672,7 @@ Examples:
                 for i, (rec, title) in enumerate(candidates, 1):
                     uid = rec.record_uid if hasattr(rec, 'record_uid') else '?'
                     print(f'  [{i}] {title}  ({uid})')
-                print('\n  [M] Enter password manually')
+                print(f'\n  [M] Enter password manually')
                 print()
                 choice = input('  Select [M]: ').strip()
                 if choice and choice.upper() != 'M':
