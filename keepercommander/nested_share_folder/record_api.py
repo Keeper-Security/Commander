@@ -77,6 +77,20 @@ def record_add_v3(params, records, client_time=None, security_data_key_type=None
                                 rs_type=record_pb2.RecordsModifyResponse)
 
 
+def pam_configuration_add_v3(params, records, client_time=None, security_data_key_type=None):
+    """Drive-specific PAM configuration create (record_version PAM_CONFIGURATION)."""
+    if not records or len(records) > 1000:
+        raise ValueError("Provide 1..1000 records")
+    rq = record_endpoints_pb2.RecordsAddRequest()
+    rq.records.extend(records)
+    if client_time:
+        rq.clientTime = client_time
+    if security_data_key_type:
+        rq.securityDataKeyType = security_data_key_type
+    return api.communicate_rest(params, rq, 'vault/records/v3/add_pam_configuration',
+                                rs_type=record_pb2.RecordsModifyResponse)
+
+
 def record_update_v3(params, records, client_time=None, security_data_key_type=None):
     if not records or len(records) > 1000:
         raise ValueError("Provide 1..1000 records")

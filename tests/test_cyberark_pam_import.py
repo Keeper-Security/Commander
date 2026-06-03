@@ -697,6 +697,7 @@ class TestCyberArkPAMImportCommandParser:
             "--exclude-safes", "Test-*",
             "--list-safes",
             "--dry-run",
+            "--nsf",
             "--output", "output.json",
             "--include-credentials",
             "--estimate",
@@ -721,6 +722,7 @@ class TestCyberArkPAMImportCommandParser:
         assert args.exclude_safes == "Test-*"
         assert args.list_safes is True
         assert args.dry_run is True
+        assert args.use_nsf is True
         assert args.output == "output.json"
         assert args.include_credentials is True
         assert args.estimate is True

@@ -4,6 +4,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+import keepercommander.commands.record  # noqa: F401
 from keepercommander.commands.pam.pam_dto import (
     GatewayActionIdpInputs,
     GatewayActionIdpCreateUser,

@@ -60,6 +60,7 @@ from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
 from ..pam.config_helper import configuration_controller_get
+from ..pam.vault_target import is_nested_share_folder
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
@@ -70,7 +71,7 @@ from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import APIRequest_pb2, enterprise_pb2, pam_pb2, record_pb2
 from ...recordv3 import RecordV3
-from ...subfolder import BaseFolderNode
+from ...subfolder import BaseFolderNode, find_folders as find_record_folders
 
 def split_folder_path(path: str) -> list[str]:
     """Split folder path using path deilmiter / (escape: / -> //)"""
@@ -478,7 +479,7 @@ class PAMProjectExtendCommand(Command):
             raise CommandError("pam project extend", f"""PAM KSM Application record not found: "{ksmapp_uid}" """)
 
         # Find KSM Application shared folders
-        ksm_shared_folders = self.get_app_shared_folders(params, ksmapp_uid)
+        ksm_shared_folders = self.get_app_shared_folders(params, ksmapp_uid, configuration.record_uid)
         if not ksm_shared_folders:
             raise CommandError("pam project extend", f""" No shared folders found for KSM Application: "{ksmapp_uid}" """)
 
@@ -559,7 +560,7 @@ class PAMProjectExtendCommand(Command):
             return
         self.process_data(params, project)
 
-    def get_app_shared_folders(self, params, ksm_app_uid: str) -> list[dict]:
+    def get_app_shared_folders(self, params, ksm_app_uid: str, configuration_uid: Optional[str]=None) -> list[dict]:
         ksm_shared_folders = []
 
         try:
@@ -583,7 +584,51 @@ class PAMProjectExtendCommand(Command):
         except Exception as e:
             logging.error(f"Could not retrieve KSM application shares: {e}")
 
+        if not ksm_shared_folders and configuration_uid:
+            ksm_shared_folders.extend(self.get_nsf_project_folders(params, configuration_uid))
+
         return ksm_shared_folders
+
+    @staticmethod
+    def get_nsf_project_folders(params, configuration_uid: str) -> list[dict]:
+        folder_uids = []
+        for folder_uid in find_record_folders(params, configuration_uid):
+            if folder_uid and is_nested_share_folder(params, folder_uid):
+                folder_uids.append(folder_uid)
+
+        if not folder_uids:
+            return []
+
+        project_folder_uids = []
+        for folder_uid in folder_uids:
+            folder = params.folder_cache.get(folder_uid)
+            if not folder:
+                continue
+            parent_uid = folder.parent_uid
+            if parent_uid:
+                for uid, candidate in params.folder_cache.items():
+                    if candidate.parent_uid == parent_uid and is_nested_share_folder(params, uid):
+                        project_folder_uids.append(uid)
+            else:
+                project_folder_uids.append(folder_uid)
+
+        result = []
+        seen = set()
+        for folder_uid in project_folder_uids:
+            if folder_uid in seen:
+                continue
+            seen.add(folder_uid)
+            folder = params.folder_cache.get(folder_uid)
+            if not folder:
+                continue
+            result.append({
+                'uid': folder_uid,
+                'name': folder.name or folder_uid,
+                'editable': True,
+                'permissions': 'Editable',
+                'source': 'nested_share_folder',
+            })
+        return result
 
     def process_folders(self, params, project: dict) -> dict:
         """Step 1: Parse folder_paths from pam_data, build tree, process paths, optionally create new folders.
@@ -1189,6 +1234,18 @@ class PAMProjectExtendCommand(Command):
         # folder_uid: if provided, create folder with this UID (same as records with pre-generated uid).
 
         name = str(folder_name or "").strip()
+        if is_nested_share_folder(params, parent_uid):
+            from ...nested_share_folder.folder_api import create_folder_v3
+            result = create_folder_v3(params, name, parent_uid=parent_uid)
+            if isinstance(result, dict) and result.get('success') is False:
+                raise CommandError("pam project extend", result.get('message') or 'Failed to create Nested Share Folder')
+            new_uid = result.get('folder_uid') if isinstance(result, dict) else None
+            if not new_uid:
+                raise CommandError("pam project extend", f'Nested Share Folder creation did not return UID: {name}')
+            api.sync_down(params)
+            params.environment_variables[LAST_FOLDER_UID] = new_uid
+            return new_uid
+
         base_folder = params.folder_cache.get(parent_uid, None) or params.root_folder
 
         shared_folder = True if permissions else False
@@ -1255,6 +1312,17 @@ class PAMProjectExtendCommand(Command):
         result = [v for k, v in matches.items() if
                   (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
+        if not is_shared_folder:
+            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
+                if nsf.get('parent_uid') == puid and nsf.get('name') == folder:
+                    result.append(SimpleNamespace(
+                        uid=uid,
+                        name=nsf.get('name'),
+                        parent_uid=nsf.get('parent_uid'),
+                        type=BaseFolderNode.UserFolderType,
+                        UserFolderType=BaseFolderNode.UserFolderType,
+                        SharedFolderType=BaseFolderNode.SharedFolderType,
+                    ))
         return result
 
     def create_ksm_app(self, params, app_name) -> str:
@@ -1585,4 +1653,3 @@ class PAMProjectExtendCommand(Command):
                 add_pam_scripts(params, pam_cfg_uid, refs)
         logging.debug("Done processing project data.")
         return
-

@@ -4172,7 +4172,10 @@ class PAMSplitCommand(Command):
             print(f"{bcolors.FAIL}Please provide a valid PAM Configuration.{bcolors.ENDC}")
             return
 
-        folder_uid = resolve_folder(params, folder)
+        folder_uid = ''
+        if folder:
+            from .pam.vault_target import resolve_pam_folder_uid
+            folder_uid = resolve_pam_folder_uid(params, folder, allow_legacy_user=True) or resolve_folder(params, folder)
         if folder and not folder_uid:
             print(f"{bcolors.WARNING}Unable to find destination folder '{folder}' "
                   "(Note: folder names/paths are case sensitive) "
@@ -4243,7 +4246,8 @@ class PAMSplitCommand(Command):
                       f"and PAM User record will be created in folder '{folders[0]}'.{bcolors.ENDC}")
             folder_uid = folders[0] if folders else ''  # '' means root folder
 
-        record_management.add_record_to_folder(params, user_rec, folder_uid)
+        from .pam.vault_target import create_record_in_folder
+        create_record_in_folder(params, user_rec, folder_uid, command='pam-split')
         pam_user_uid = params.environment_variables.get(LAST_RECORD_UID, '')
         api.sync_down(params)
 

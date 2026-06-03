@@ -8,8 +8,10 @@ from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 from ..folder import FolderMoveCommand
 from ..record import RecordRemoveCommand
 from ... import api, crypto, utils, vault, vault_extensions
+from ...error import CommandError
 from ...params import KeeperParams
-from ...proto import pam_pb2, router_pb2
+from ...proto import pam_pb2, record_pb2, router_pb2
+from .vault_target import is_nested_share_folder
 
 
 def pam_decrypt_configuration_data(pam_config_v6_record):
@@ -68,6 +70,10 @@ def pam_configuration_get_field(unencrypted_record, field_identifier):
 
 def pam_configuration_create_record_v6(params, record, folder_uid):
     # type: (KeeperParams, vault.TypedRecord, str, str) -> None
+    if folder_uid and is_nested_share_folder(params, folder_uid):
+        _pam_configuration_create_in_nsf_folder(params, record, folder_uid)
+        return
+
     if not record.record_uid:
         record.record_uid = utils.generate_uid()
 
@@ -83,6 +89,49 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
     car.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
     api.communicate_rest(params, car, 'pam/add_configuration_record')
+
+
+def _pam_configuration_create_in_nsf_folder(params, record, folder_uid):
+    """Create a PAM Configuration v6 record inside a Nested Share Folder.
+
+    Uses ``vault/records/v3/add_pam_configuration`` so the server stamps the
+    record with ``record_version PAM_CONFIGURATION`` and runs Drive persistence
+    (folder_record link, RecordAccessData, DAG edges) in one step.
+    """
+    from ...nested_share_folder.common import get_folder_key
+    from ...nested_share_folder.record_api import create_record_data_v3, pam_configuration_add_v3
+
+    if not folder_uid:
+        raise CommandError('pam-config-new', 'Nested Share Folder UID is required')
+
+    if not record.record_uid:
+        record.record_uid = utils.generate_uid()
+
+    if not record.record_key:
+        record.record_key = utils.generate_aes_key()
+
+    record_data = vault_extensions.extract_typed_record_data(record)
+    folder_key = get_folder_key(params, folder_uid, raise_on_missing=True)
+    record_add = create_record_data_v3(
+        record_uid=record.record_uid,
+        record_key=record.record_key,
+        data=record_data,
+        folder_uid=folder_uid,
+        folder_key=folder_key,
+        client_modified_time=utils.current_milli_time(),
+    )
+    response = pam_configuration_add_v3(params, [record_add])
+    if not response.records:
+        raise CommandError('pam-config-new', 'No response from add_pam_configuration')
+
+    status = response.records[0]
+    if status.status != record_pb2.RS_SUCCESS:
+        raise CommandError(
+            'pam-config-new',
+            status.message or 'Failed to create PAM configuration in Nested Share Folder',
+        )
+
+    api.sync_down(params)
 
 
 def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):

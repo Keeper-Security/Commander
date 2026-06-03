@@ -16,6 +16,7 @@ import logging
 import os.path
 
 from itertools import chain
+from types import SimpleNamespace
 from typing import Any, Dict, Optional, List, Union
 
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
@@ -50,7 +51,7 @@ from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
 from ..pam.config_helper import pam_configurations_get_all
-from ..recordv3 import RecordAddCommand
+from ..pam.vault_target import execute_record_v3_add_in_folder, grant_pam_folder_permissions, is_nested_share_folder
 from ..record_edit import RecordUploadAttachmentCommand
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
@@ -76,6 +77,7 @@ class PAMProjectImportCommand(Command):
     parser.add_argument("--dry-run", "-d", required=False, dest="dry_run", action="store_true", default=False, help="Test import without modifying vault.")
     parser.add_argument("--sample-data", "-s", required=False, dest="sample_data", action="store_true", default=False, help="Generate sample data.")
     parser.add_argument("--show-template", "-t", required=False, dest="show_template", action="store_true", default=False, help="Print JSON template required for manual import.")
+    parser.add_argument("--nsf", required=False, dest="use_nsf", action="store_true", default=False, help="Create project folders and records in Nested Share Folders.")
     # parser.add_argument("--force", "-e", required=False, dest="force", action="store_true", default=False, help="Force data import (re/configure later)")
     parser.add_argument("--output", "-o", required=False, dest="output", action="store", choices=["token", "base64", "json", "k8s"], default="base64", help="Output format (token: one-time token, config: base64/json/k8s)")
 
@@ -112,6 +114,7 @@ class PAMProjectImportCommand(Command):
         project["options"]["dry_run"] = kwargs.get("dry_run", False)
         project["options"]["sample_data"] = kwargs.get("sample_data", False)
         project["options"]["show_template"] = kwargs.get("show_template", False)
+        project["options"]["use_nsf"] = kwargs.get("use_nsf", False)
         project["options"]["force"] = kwargs.get("force", False)
         project["options"]["output"] = kwargs.get("output", "") or ""
 
@@ -130,7 +133,7 @@ class PAMProjectImportCommand(Command):
                 project["options"]["project_name"] = "Discovery Playground"
             project["options"]["file_name"] = ""
             # project["options"]["dry_run"] = False  # dry-run is allowed
-            extra = self.get_extra_args(["sample_data", "dry_run"], **kwargs)
+            extra = self.get_extra_args(["sample_data", "dry_run", "use_nsf"], **kwargs)
             if extra: 
                 logging.warning(f"{bcolors.WARNING}Warning: --sample-data|-s overrides other options {extra}{bcolors.ENDC}")
 
@@ -277,10 +280,15 @@ class PAMProjectImportCommand(Command):
         )
 
         # FolderListCommand().execute(params, folders_only=True, pattern="/")
+        use_nsf = project["options"].get("use_nsf", False) is True
         folders = self.find_folders(params, "", res["root_folder_target"], False)
         if folders:
             # select first non-root non-shared sub/folder
             folders = [x for x in folders if x.type == x.UserFolderType]
+            if use_nsf:
+                folders = [x for x in folders if is_nested_share_folder(params, x.uid)]
+            else:
+                folders = [x for x in folders if not is_nested_share_folder(params, x.uid)]
             if len(folders) > 1:
                 logging.warning(f"""Multiple user folders ({len(folders)}) match folder name "{res["root_folder_target"]}" """
                                 f" using first match with UID: {bcolors.OKGREEN}{folders[0].uid}{bcolors.ENDC}")
@@ -290,7 +298,7 @@ class PAMProjectImportCommand(Command):
             res["root_folder_uid"] = str(folders[0].uid)
         elif project["options"].get("dry_run", False) is not True:
             # FolderMakeCommand().execute(params, user_folder=True, folder=f"""/{res["root_folder_target"]}""")
-            fuid = self.create_subfolder(params, res["root_folder_target"])
+            fuid = self.create_subfolder(params, res["root_folder_target"], use_nsf=use_nsf)
             res["root_folder_uid"] = fuid
 
         # find available project folder - incr. numeric suffix until distinct name found
@@ -302,34 +310,37 @@ class PAMProjectImportCommand(Command):
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
                 folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
                 folders = [x for x in folders if x.type == x.UserFolderType]
+                if use_nsf:
+                    folders = [x for x in folders if is_nested_share_folder(params, x.uid)]
+                else:
+                    folders = [x for x in folders if not is_nested_share_folder(params, x.uid)]
                 n += 1
                 if len(folders) > 0:
                     continue
                 res["project_folder"] = folder_name
                 if project["options"].get("dry_run", False) is not True:
                     # FolderMakeCommand().execute(params, shared_folder=True, folder=f"""/{res["root_folder"]}/{res["project_folder"]}""")
-                    fuid = self.create_subfolder(params, folder_name=res["project_folder"], parent_uid=res["root_folder_uid"])
+                    fuid = self.create_subfolder(params, folder_name=res["project_folder"], parent_uid=res["root_folder_uid"], use_nsf=use_nsf)
                     res["project_folder_uid"] = fuid
 
                     puid = res["project_folder_uid"]
                     if use_safe_layout:
-                        self._create_safe_folders(params, project, puid, res, safe_folders_def)
+                        self._create_safe_folders(params, project, puid, res, safe_folders_def, use_nsf=use_nsf)
                     else:
                         sfn = project["data"].get("shared_folder_resources", None)
                         fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
                         fname = fname.strip() or f"""{res["project_folder"]} - Resources"""
                         fperm, rperm = self.get_folder_permissions(users_folder=False, data=project["data"])
-                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm)
+                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
                         res["resources_folder_uid"] = fuid
 
                         sfn = project["data"].get("shared_folder_users", None)
                         fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
                         fname = fname.strip() or f"""{res["project_folder"]} - Users"""
                         fperm, uperm = self.get_folder_permissions(users_folder=True, data=project["data"])
-                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm)
+                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
                         res["users_folder_uid"] = fuid
 
-                        # add users and teams
                         self.verify_users_and_teams(params, rperm + uperm)
                         self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
                         self.add_folder_permissions(params, res["users_folder_uid"], uperm)
@@ -349,13 +360,16 @@ class PAMProjectImportCommand(Command):
                       f"(one per safe + 1 admin Config folder)")
                 for n in safe_names:
                     print(f"  • {n}")
+                print(f"""Will create new {"NSF " if use_nsf else ""}PAM root folder: {res["root_folder_target"]}""")
+            print(f"""Will create new {"NSF " if use_nsf else ""}Project folder: {res["project_folder"]}""")
         else:
             api.sync_down(params)
 
         return res
 
     def _create_safe_folders(self, params, project: dict, project_folder_uid: str,
-                             res: dict, safe_folders_def: list) -> None:
+                             res: dict, safe_folders_def: list,
+                             use_nsf: bool = False) -> None:
         """Create the per-safe shared folders + the admin-only Config folder.
 
         Populates ``res["safe_folder_map"]`` with ``{folder_name: folder_uid}``
@@ -426,6 +440,7 @@ class PAMProjectImportCommand(Command):
         config_uid = self.create_subfolder(
             params, folder_name=config_folder_name,
             parent_uid=project_folder_uid, permissions=dict(default_fperm),
+            use_nsf=use_nsf,
         )
         res["resources_folder"] = config_folder_name
         res["users_folder"] = config_folder_name
@@ -454,6 +469,7 @@ class PAMProjectImportCommand(Command):
             folder_uid = self.create_subfolder(
                 params, folder_name=record["name"],
                 parent_uid=project_folder_uid, permissions=record["fperm"],
+                use_nsf=use_nsf,
             )
             # Top-level lookup key (no slash) maps to the safe folder
             # itself for callers that still emit ``folder_path = "<safe>"``
@@ -464,9 +480,11 @@ class PAMProjectImportCommand(Command):
             usr_sub_name = f"{record['name']} - Users"
             res_sub_uid = self.create_subfolder(
                 params, folder_name=res_sub_name, parent_uid=folder_uid,
+                use_nsf=use_nsf,
             )
             usr_sub_uid = self.create_subfolder(
                 params, folder_name=usr_sub_name, parent_uid=folder_uid,
+                use_nsf=use_nsf,
             )
             safe_folder_map[f"{record['name']}/{res_sub_name}"] = res_sub_uid
             safe_folder_map[f"{record['name']}/{usr_sub_name}"] = usr_sub_uid
@@ -550,6 +568,16 @@ class PAMProjectImportCommand(Command):
                                  command=("secret", "add"),
                                  app=res["app_uid"],
                                  secret=[sf_uid], editable=True)
+        for sf_uid in [project["folders"].get("resources_folder_uid", ""),
+                       project["folders"].get("users_folder_uid", "")]:
+            if sf_uid.strip():
+                if is_nested_share_folder(params, sf_uid):
+                    logging.info("Skipping KSM application share for Nested Share Folder %s", sf_uid)
+                    continue
+                KSMCommand().execute(params,
+                                     command=("secret", "add"),
+                                     app=res["app_uid"],
+                                     secret=[sf_uid], editable=True)
 
         api.sync_down(params)
         return res
@@ -821,7 +849,17 @@ class PAMProjectImportCommand(Command):
         # Fix: Rotation is disabled by the PAM configuration.
         tdag.set_resource_allowed(pam_config_uid, is_config=True, rotation=True, connections=True, tunneling=True, session_recording=True, typescript_recording=True, remote_browser_isolation=True)
 
-        command = RecordAddCommand()
+        class PamProjectRecordAddCommand:
+            @staticmethod
+            def execute(params, **kwargs):
+                return execute_record_v3_add_in_folder(
+                    params,
+                    kwargs,
+                    kwargs.get('folder'),
+                    command='pam-project-import'
+                )
+
+        command = PamProjectRecordAddCommand()
         pte = PAMTunnelEditCommand()
 
         # when NOOP rotation is added to PAMCreateRecordRotationCommand...
@@ -1409,6 +1447,11 @@ class PAMProjectImportCommand(Command):
 
     def add_folder_permissions(self, params, folder_uid: str, permissions: list):
         if permissions:
+            if is_nested_share_folder(params, folder_uid):
+                grant_pam_folder_permissions(params, folder_uid, permissions, command='pam-project-import')
+                api.sync_down(params)
+                return
+
             shf = SharedFolder()
             shf.uid = folder_uid # type: ignore
             shf.path = imp_exp.get_folder_path(params, folder_uid) # type: ignore
@@ -1444,7 +1487,8 @@ class PAMProjectImportCommand(Command):
             # args["manage_users"] = True if manage_users == False else False
             # ShareFolderCommand().execute(params, **args)
 
-    def create_subfolder(self, params, folder_name:str, parent_uid:str="", permissions:Optional[Dict]=None):
+    def create_subfolder(self, params, folder_name:str, parent_uid:str="", permissions:Optional[Dict]=None,
+                         use_nsf: bool=False):
         """ Creates subfolder inside parent folder:
         either `user folder`, `shared folder` or `shared folder folder`.
         If `parent_uid == ""` then creates subfolder in root folder.
@@ -1455,6 +1499,18 @@ class PAMProjectImportCommand(Command):
         """
 
         name = str(folder_name or "").strip()
+        if use_nsf or is_nested_share_folder(params, parent_uid):
+            from ...nested_share_folder.folder_api import create_folder_v3
+            result = create_folder_v3(params, name, parent_uid=parent_uid or None)
+            if isinstance(result, dict) and result.get('success') is False:
+                raise CommandError("pam", result.get('message') or 'Failed to create Nested Share Folder')
+            folder_uid = result.get('folder_uid') if isinstance(result, dict) else None
+            if not folder_uid:
+                raise CommandError("pam", f'Nested Share Folder creation did not return UID: {name}')
+            api.sync_down(params)
+            params.environment_variables[LAST_FOLDER_UID] = folder_uid
+            return folder_uid
+
         base_folder = params.folder_cache.get(parent_uid, None) or params.root_folder
 
         shared_folder = True if permissions else False
@@ -1526,6 +1582,17 @@ class PAMProjectImportCommand(Command):
         result = [v for k, v in matches.items() if
                   (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
+        if not is_shared_folder:
+            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
+                if nsf.get('parent_uid') == puid and nsf.get('name') == folder:
+                    result.append(SimpleNamespace(
+                        uid=uid,
+                        name=nsf.get('name'),
+                        parent_uid=nsf.get('parent_uid'),
+                        type=BaseFolderNode.UserFolderType,
+                        UserFolderType=BaseFolderNode.UserFolderType,
+                        SharedFolderType=BaseFolderNode.SharedFolderType,
+                    ))
         return result
 
     def create_ksm_app(self, params, app_name) -> str:

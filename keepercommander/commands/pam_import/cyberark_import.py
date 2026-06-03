@@ -133,6 +133,7 @@ class ImportRunOptions:
     gateway_name: str
     folder_mode: str
     dry_run: bool
+    use_nsf: bool
     output_file: str
     include_creds: bool
     estimate_only: bool
@@ -841,7 +842,10 @@ class CyberArkImportOrchestrator:
         if opts.config_uid:
             print(f"Extending existing PAM configuration: {opts.config_uid}")
         else:
-            print("A new PAM project will be created.")
+            if opts.use_nsf:
+                print("A new PAM project will be created in Nested Share Folders.")
+            else:
+                print("A new PAM project will be created.")
         # Surface the create / update / unchanged breakdown so the
         # operator knows exactly what will happen before we touch the
         # vault.  Without this a re-run against an existing project
@@ -872,6 +876,7 @@ class CyberArkImportOrchestrator:
                 self.params, import_data, opts.project_name, opts.config_uid,
                 opts.batch_size, opts.batch_delay,
                 mapped.pam_resources, mapped.pam_users,
+                use_nsf=opts.use_nsf,
             )
         except Exception as e:
             logging.error("Import failed: %s", type(e).__name__)
@@ -1045,6 +1050,14 @@ class CyberArkImportOrchestrator:
         wrapper_uids = self._find_project_wrapper_uids(opts.project_name)
         if not wrapper_uids:
             return
+        if opts.use_nsf:
+            from ..pam.vault_target import is_nested_share_folder
+            if not any(is_nested_share_folder(self.params, uid) for uid in wrapper_uids):
+                print_formatted_text(HTML(
+                    f"<ansiyellow>Existing project '{_esc(opts.project_name)}' is not in "
+                    f"Nested Share Folders — creating a new NSF project instead.</ansiyellow>"
+                ))
+                return
         resolved = self._cmd._find_config_uid(self.params, opts.project_name)
         if not resolved:
             logging.debug(
@@ -1787,6 +1800,9 @@ Examples:
 
   # Self-hosted with SSL verification disabled
   pam project cyberark-import pvwa.internal.com --no-verify-ssl --name "Internal"
+
+  # Create project folders and records in Nested Share Folders
+  pam project cyberark-import tenant.cyberark.cloud --nsf --name "NSF Migration"
         ''')
     parser.add_argument("server", action="store", help="CyberArk PVWA host (e.g. mycompany.cyberark.cloud or pvwa.example.com)")
     parser.add_argument("--name", "-n", required=False, dest="project_name", action="store",
@@ -1812,6 +1828,8 @@ Examples:
                         default=False, help="List Safes with account counts and exit")
     parser.add_argument("--dry-run", "-d", required=False, dest="dry_run", action="store_true",
                         default=False, help="Preview import without modifying vault")
+    parser.add_argument("--nsf", required=False, dest="use_nsf", action="store_true", default=False,
+                        help="Create project folders and records in Nested Share Folders.")
     parser.add_argument("--output", "-o", required=False, dest="output", action="store",
                         default="", help="Save generated import JSON to file")
     parser.add_argument("--include-credentials", required=False, dest="include_credentials",
@@ -1867,6 +1885,7 @@ Examples:
         safe_exclude = kwargs.get("exclude_safes", "")
         list_safes = kwargs.get("list_safes", False)
         dry_run = kwargs.get("dry_run", False)
+        use_nsf = kwargs.get("use_nsf", False)
         output_file = kwargs.get("output", "")
         include_creds = kwargs.get("include_credentials", False)
         estimate_only = kwargs.get("estimate", False)
@@ -1945,6 +1964,7 @@ Examples:
                 gateway_name=gateway_name,
                 folder_mode=folder_mode,
                 dry_run=dry_run,
+                use_nsf=use_nsf,
                 output_file=output_file,
                 include_creds=include_creds,
                 estimate_only=estimate_only,
@@ -1971,7 +1991,8 @@ Examples:
 
     def _execute_import(self, params, import_data: dict, project_name: str,
                         config_uid: str, batch_size: int, batch_delay: float,
-                        resources: List[dict], users: List[dict]) -> Optional[dict]:
+                        resources: List[dict], users: List[dict],
+                        use_nsf: bool = False) -> Optional[dict]:
         """Execute the vault import using pam project import/extend commands."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -1982,17 +2003,19 @@ Examples:
         if total_records <= batch_size:
             # Single batch — use import or extend directly
             return self._single_batch_import(
-                params, import_data, project_name, config_uid
+                params, import_data, project_name, config_uid, use_nsf=use_nsf,
             )
         else:
             # Multi-batch: first batch creates project, remaining extend
             return self._multi_batch_import(
                 params, import_data, project_name, config_uid,
                 resources, users, batch_size, batch_delay,
+                use_nsf=use_nsf,
             )
 
     def _single_batch_import(self, params, import_data: dict,
-                             project_name: str, config_uid: str) -> dict:
+                             project_name: str, config_uid: str,
+                             use_nsf: bool = False) -> dict:
         """Import all records in a single batch."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2005,7 +2028,8 @@ Examples:
                 )
             else:
                 PAMProjectImportCommand().execute(
-                    params, project_name=project_name, file_name=tmp_path, dry_run=False
+                    params, project_name=project_name, file_name=tmp_path,
+                    dry_run=False, use_nsf=use_nsf,
                 )
         finally:
             _temp_store.remove(tmp_path)
@@ -2016,7 +2040,8 @@ Examples:
     def _multi_batch_import(self, params, import_data: dict,
                             project_name: str, config_uid: str,
                             resources: List[dict], users: List[dict],
-                            batch_size: int, batch_delay: float) -> dict:
+                            batch_size: int, batch_delay: float,
+                            use_nsf: bool = False) -> dict:
         """Import records in multiple batches with adaptive throttling."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2044,7 +2069,8 @@ Examples:
                 tmp_path = _temp_store.write_json(first_batch_data)
                 try:
                     PAMProjectImportCommand().execute(
-                        params, project_name=project_name, file_name=tmp_path, dry_run=False
+                        params, project_name=project_name, file_name=tmp_path,
+                        dry_run=False, use_nsf=use_nsf,
                     )
                 finally:
                     _temp_store.remove(tmp_path)

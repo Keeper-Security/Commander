@@ -1043,7 +1043,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         # Moving v6 record into the folder
         api.sync_down(params)
-        FolderMoveCommand().execute(params, src=record.record_uid, dst=shared_folder_uid, force=True)
+        from .pam.vault_target import place_pam_configuration_in_folder
+        place_pam_configuration_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
 
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
         params.sync_data = True

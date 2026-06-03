@@ -310,6 +310,7 @@ class PAMAccessUserProvisionCommand(Command):
                 if shared_folders:
                     sf = shared_folders[0]
                     folder_uid = sf.parent_uid if sf.parent_uid else sf.uid
+
             record_management.add_record_to_folder(params, record, folder_uid)
             params.sync_data = True
 
