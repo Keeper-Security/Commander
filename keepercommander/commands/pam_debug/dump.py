@@ -11,7 +11,7 @@ from ..base import Command, FolderMixin
 from ...subfolder import get_folder_uids
 from ... import vault, api
 from ...keeper_dag import DAG, EdgeType
-from ...keeper_dag.types import PamGraphId
+from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamGraphId
 from ..pam_import.keeper_ai_settings import get_resource_settings
 from ...keeper_dag.crypto import decrypt_aes
 from . import get_connection
@@ -28,7 +28,7 @@ _EXCLUDE_EDGE_TYPES = frozenset({EdgeType.DELETION, EdgeType.UNDENIAL})
 
 
 class PAMDebugDumpCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam action debug dump')
+    parser = argparse.ArgumentParser(prog=':')
     parser.add_argument('folder_uid', action='store',
                         help='Folder UID or path. Use empty string for the root folder.')
     parser.add_argument('--recursive', '-r', required=False, dest='recursive', action='store_true',
@@ -125,14 +125,30 @@ class PAMDebugDumpCommand(Command):
                 continue
 
             rotation = params.record_rotation_cache.get(rec_uid)
-            if rotation is not None:
-                config_uid = rotation.get('configuration_uid')
-                if config_uid:
-                    config_to_records.setdefault(config_uid, []).append(rec_uid)
-                    record_config_map[rec_uid] = config_uid
-                    continue
+            config_uid = rotation.get('configuration_uid') if rotation else None
 
-            logging.debug('Record %s not found in rotation cache; rotation config unavailable, ', rec_uid)
+            # Two fallback tiers when rotation cache has no entry (e.g. records that
+            # are only linked via launch-credential / ACL, never rotated):
+            #   1. Local vault scan of `pamResources.resourceRef`.
+            #   2. krouter `/api/user/graph-sync/pam/get_leafs` — same call WV uses;
+            #      finds the stream root even when the local resourceRef is missing.
+            if not config_uid:
+                from ..tunnel.port_forward.tunnel_helpers import (
+                    get_config_uid_from_local_vault,
+                    get_config_uid_from_krouter,
+                )
+                config_uid = (
+                    get_config_uid_from_local_vault(params, rec_uid)
+                    or get_config_uid_from_krouter(params, rec_uid)
+                )
+
+            if config_uid:
+                config_to_records.setdefault(config_uid, []).append(rec_uid)
+                record_config_map[rec_uid] = config_uid
+                continue
+
+            logging.debug('Record %s: no rotation entry, no local vault config, '
+                          'no krouter leafs match; graph data unavailable.', rec_uid)
             record_config_map[rec_uid] = None
 
         if not valid_uids:
@@ -154,7 +170,9 @@ class PAMDebugDumpCommand(Command):
 
             for graph_id in ALL_GRAPH_IDS:
                 try:
-                    dag = DAG(conn=conn, record=config_record, graph_id=graph_id,
+                    endpoint = GRAPH_ID_TO_ENDPOINT[graph_id]
+                    dag = DAG(conn=conn, record=config_record,
+                              read_endpoint=endpoint, write_endpoint=endpoint,
                               fail_on_corrupt=False, logger=logging)
                     dag.load(sync_point=0)
                     dag_cache[(config_uid, graph_id)] = dag

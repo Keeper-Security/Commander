@@ -21,9 +21,20 @@ class RecordLink:
                  log_prefix: str = "GS Record Linking",
                  save_batch_count: int = 200,
                  agent: Optional[str] = None,
-                 use_read_protobuf: bool = False,
+                 use_read_protobuf: bool = True,
                  use_write_protobuf: bool = True,
+                 use_per_graph_endpoints: bool = False,
                  **kwargs):
+        """
+        :param use_per_graph_endpoints: If True, force the per-graph URL transport
+            (`/api/user/graph-sync/pam/...`) by setting both `read_endpoint` and
+            `write_endpoint` to `PamEndpoints.PAM`, regardless of the protobuf
+            flags. If False (default), the endpoints are still set when the
+            connection itself has protobuf enabled (preserving existing
+            behavior). The `use_per_graph_endpoints` opt-in lets callers
+            decouple from the protobuf flags and migrate to the new transport
+            on their own schedule.
+        """
 
         self.conn = get_connection(logger=logger,
                                    use_read_protobuf=use_read_protobuf,
@@ -39,16 +50,19 @@ class RecordLink:
         self.log_prefix = log_prefix
         self.debug_level = debug_level
         self.save_batch_count = save_batch_count
+        self.use_per_graph_endpoints = use_per_graph_endpoints
 
         # Based on the connection type, use_write_protobuf might be set to False is True was passed.
         # Use self.conn.use_write_protobuf; don't use passed in use_write_protobuf.
         # If using protobuf to write, then use the endpoint.
+        # `use_per_graph_endpoints=True` also forces the endpoints on, independent
+        # of the protobuf flags.
         self.write_endpoint = None
-        if self.conn.use_write_protobuf:
+        if use_per_graph_endpoints or self.conn.use_write_protobuf:
             self.write_endpoint = PamEndpoints.PAM
 
         self.read_endpoint = None
-        if self.conn.use_read_protobuf:
+        if use_per_graph_endpoints or self.conn.use_read_protobuf:
             self.read_endpoint = PamEndpoints.PAM
 
         self.agent = make_agent("record_linking")

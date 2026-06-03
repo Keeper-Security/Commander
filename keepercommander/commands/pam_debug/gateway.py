@@ -49,11 +49,11 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
             multi_conf_msg(gateway, err)
             return
 
-        infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False, use_per_graph_endpoints=True)
         infra.load()
 
-        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
-        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False, use_per_graph_endpoints=True)
+        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False, use_per_graph_endpoints=True)
 
         if gateway_context is None:
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")

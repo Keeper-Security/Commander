@@ -1,7 +1,7 @@
 import os
 import json
 from collections import Counter
-from unittest import TestCase
+from unittest import TestCase, skipUnless
 
 import pytest
 
@@ -14,7 +14,25 @@ from keepercommander.utils import is_pw_fair, is_pw_strong, is_pw_weak
 from keepercommander import vault
 
 
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _security_audit_config_path():
+    name = os.environ.get('KEEPER_CONFIG', '../config.json')
+    if os.path.isabs(name):
+        return name
+    return os.path.normpath(os.path.join(_TESTS_DIR, name))
+
+
+_SECURITY_AUDIT_CONFIG = _security_audit_config_path()
+
+
 @pytest.mark.integration
+@skipUnless(
+    os.path.isfile(_SECURITY_AUDIT_CONFIG),
+    'Set KEEPER_CONFIG or add config.json to enable security-audit integration tests '
+    f'(looked for {_SECURITY_AUDIT_CONFIG})',
+)
 class TestSecurityAuditRefresh(TestCase):
     params = None  # type: KeeperParams
 

@@ -134,7 +134,7 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
                 return
 
             # If the rule passes its validation, then add control DAG
-            rules = Rules(record=gateway_context.configuration, params=params)
+            rules = Rules(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
             new_rule = ActionRuleItem(
                 name=kwargs.get("name"),
                 action=kwargs.get("rule_action"),

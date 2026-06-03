@@ -1,3 +1,5 @@
+import json
+import logging
 from .tunnel_helpers import generate_random_bytes, get_config_uid
 from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
@@ -5,6 +7,9 @@ from ....keeper_dag.types import RefType, PamEndpoints
 from ....keeper_dag.vertex import DAGVertex
 from ....display import bcolors
 from ....vault import PasswordRecord
+from ....proto import pam_pb2, router_pb2
+from ...pam._layer_b import should_fallback_on_layer_b_error
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 
 def get_vertex_content(vertex):
@@ -76,6 +81,7 @@ class TunnelDAG:
             config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
         if not config_uid:
             config_uid = record_uid
+        self.params = params  # retained for Layer-B router_configure_resource calls
         self.record = PasswordRecord()
         self.record.record_uid = config_uid
         self.record.record_key = generate_random_bytes(32)
@@ -86,9 +92,11 @@ class TunnelDAG:
                                encrypted_transmission_key=self.encrypted_transmission_key,
                                encrypted_session_token=self.encrypted_session_token,
                                transmission_key=self.transmission_key,
+                               use_read_protobuf=True,
                                use_write_protobuf=True
                                )
-        self.linking_dag = DAG(conn=self.conn, record=self.record, graph_id=0, write_endpoint=PamEndpoints.PAM)
+        self.linking_dag = DAG(conn=self.conn, record=self.record,
+                               read_endpoint=PamEndpoints.PAM, write_endpoint=PamEndpoints.PAM)
         try:
             self.linking_dag.load()
         except Exception as e:
@@ -250,6 +258,44 @@ class TunnelDAG:
                     allowed_settings["aiSessionTerminate"] = ai_session_terminate
 
         if dirty:
+            # Primary: Layer-B configure_network_graph (permission-checked).
+            # The configuration record's allowedSettings belong on the network
+            # endpoint, not configure_resource — the latter bypasses per-feature
+            # enforcement checks for remoteBrowserIsolation / rotation /
+            # connections that the network endpoint enforces server-side.
+            #
+            # Fallback policy matches the other Layer-B endpoints: strict by
+            # default; 404 / RRC denials fall back to legacy DAG-write only
+            # when KEEPER_DAG_LB_FALLBACK=1 (per `should_fallback_on_layer_b_error`).
+            # Transient errors (5xx, connection, timeout) always propagate.
+            from ...pam.router_helper import router_configure_network_graph, get_router_url
+            from ...pam._layer_b import is_layer_b_feature_disabled
+            host = get_router_url(self.params)
+            endpoint = 'configure_network_graph'
+            if not is_layer_b_feature_disabled(host, endpoint):
+                try:
+                    config_uid_bytes = url_safe_str_to_bytes(self.record.record_uid)
+                    rq = router_pb2.PAMNetworkConfigurationRequest(
+                        recordUid=config_uid_bytes,
+                        networkSettings=router_pb2.PAMNetworkSettings(
+                            allowedSettings=json.dumps(allowed_settings).encode()
+                        ),
+                    )
+                    router_configure_network_graph(self.params, rq)
+                    logging.debug(
+                        f"edit_tunneling_config: applied via configure_network_graph for {self.record.record_uid}"
+                    )
+                    return
+                except Exception as err:
+                    if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                        logging.error(f"configure_network_graph failed (no fallback): {err}", exc_info=True)
+                        raise
+                    logging.warning(
+                        f"configure_network_graph denied/unavailable for {self.record.record_uid}; "
+                        f"falling back to legacy DAG-write: {err}"
+                    )
+
+            # Fallback: legacy direct DAG-write.
             config_vertex.add_data(content=content, path='meta', needs_encryption=False)
             self.linking_dag.save()
 
@@ -298,14 +344,45 @@ class TunnelDAG:
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
+        # IAM-user link. Permission-check via set_record_rotation BEFORE the legacy
+        # DAG write (server-side set_record_rotation with no
+        # resource/saasConfiguration and noop=False permission-checks edit-access
+        # on the pamUser record and sets is_iam_user atomically). No legacy fallback
+        # - if the call fails, propagate so the unauthorized link is never written.
+        self._permission_check_iam_user_link(user_uid)
         self.link_user(user_uid, config_vertex, belongs_to=True, is_iam_user=True)
+
+    def _permission_check_iam_user_link(self, user_uid):
+        """Call set_record_rotation(recordUid=user_uid, noop=False) to permission-check
+        an is_iam_user link write. Raises on permission denial; no fallback. The
+        server enforces edit-access on the pamUser record at the call boundary, so 
+        the per-flag check that other Layer-B endpoints do is not needed here."""
+        from ...pam.router_helper import router_set_record_rotation_information
+        rq = router_pb2.RouterRecordRotationRequest(
+            recordUid=url_safe_str_to_bytes(user_uid),
+            noop=False,
+        )
+        router_set_record_rotation_information(self.params, rq)
+        logging.debug(
+            f"is_iam_user link permission-checked via set_record_rotation for {user_uid}"
+        )
 
     def link_user_to_config_with_options(self, user_uid, is_admin=None, belongs_to=None, is_iam_user=None):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
 
-        # self.link_user(user_uid, config_vertex, is_admin, belongs_to, is_iam_user)
+        # is_iam_user: route through set_record_rotation for the permission check.
+        # No legacy fallback for this flag — if the server rejects,
+        # propagate rather than write an unauthorized ACL edge locally.
+        # is_admin (domain-controller admin on the config vertex): in development
+        # server-side but has no new krouter API yet — legacy DAG-write only. When
+        # the new API ships, gate the local write below behind it.
+        # belongs_to: bare membership, no security-sensitive permission decision;
+        # legacy write only.
+        if is_iam_user is True:
+            self._permission_check_iam_user_link(user_uid)
+
         source_vertex = config_vertex
         user_vertex = self.linking_dag.get_vertex(user_uid)
         if user_vertex is None:
@@ -378,6 +455,39 @@ class TunnelDAG:
         if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
             print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
             return False
+
+        # Layer-B: when setting an admin credential, route through configure_resource
+        # for the permission check (addresses the "link unauthorized record as credentials"
+        # security finding). On RRC_NOT_ALLOWED* with `KEEPER_DAG_LB_FALLBACK` enabled,
+        # fall through to the legacy in-memory + save path.
+        # Other flag-only paths (belongs_to / is_launch_credential without is_admin) stay
+        # legacy because PAMResourceConfig doesn't model those flags independently.
+        if is_admin is True:
+            from ...pam.router_helper import router_configure_resource, get_router_url
+            from ...pam._layer_b import is_layer_b_feature_disabled
+            host = get_router_url(self.params)
+            endpoint = 'configure_resource'
+            if not is_layer_b_feature_disabled(host, endpoint):
+                try:
+                    rq = pam_pb2.PAMResourceConfig(
+                        recordUid=url_safe_str_to_bytes(resource_uid),
+                        networkUid=url_safe_str_to_bytes(self.record.record_uid),
+                        adminUid=url_safe_str_to_bytes(user_uid),
+                    )
+                    router_configure_resource(self.params, rq)
+                    logging.debug(
+                        f"link_user_to_resource: admin {user_uid} set on {resource_uid} via configure_resource"
+                    )
+                    return None
+                except Exception as err:
+                    if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                        logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                        raise
+                    logging.warning(
+                        f"configure_resource denied/unavailable for {resource_uid}; falling back to legacy "
+                        f"DAG-write (KEEPER_DAG_LB_FALLBACK enabled): {err}"
+                    )
+
         self.link_user(user_uid, resource_vertex, is_admin, belongs_to, is_launch_credential=is_launch_credential)
         return None
 
@@ -479,6 +589,67 @@ class TunnelDAG:
         if dirty:
             self.linking_dag.save()
 
+    def set_launch_credentials(self, resource_uid, launch_uid=None):
+        """
+        Set or clear the launch credential for a resource via Layer-B configure_resource.
+
+        krouter's connectUsers field has replacement semantics
+        (UserRest.kt:generateResourceConnectionEdges): sending [launch_uid] sets
+        is_launch_credential=true on that user AND clears it from every other user on
+        the resource; sending [] clears it from every user. The meta field carries
+        the v1 upgrade in the same call. This replaces the legacy 2-3 op sequence
+        (clear + link + meta-upgrade) with one permission-checked round-trip.
+
+        For a fresh launch_uid (no existing edge), krouter creates the new edge with
+        belongs_to=null; a follow-up local DAG-write of belongs_to=True preserves
+        legacy parity. For existing edges, krouter preserves belongs_to already so
+        the follow-up is a no-op.
+
+        Fallback on RRC_NOT_ALLOWED* (or feature-disabled) with KEEPER_DAG_LB_FALLBACK
+        enabled: legacy clear + link (if set) + meta-upgrade.
+        """
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return
+
+        upgraded_meta = ensure_resource_meta_v1(get_vertex_content(resource_vertex))
+        uids = [url_safe_str_to_bytes(launch_uid)] if launch_uid is not None else []
+
+        from ...pam.router_helper import router_configure_resource, get_router_url
+        from ...pam._layer_b import is_layer_b_feature_disabled
+        host = get_router_url(self.params)
+        endpoint = 'configure_resource'
+        if not is_layer_b_feature_disabled(host, endpoint):
+            try:
+                rq = pam_pb2.PAMResourceConfig(
+                    recordUid=url_safe_str_to_bytes(resource_uid),
+                    networkUid=url_safe_str_to_bytes(self.record.record_uid),
+                    connectUsers=pam_pb2.UidList(uids=uids),
+                    meta=json.dumps(upgraded_meta).encode(),
+                )
+                router_configure_resource(self.params, rq)
+                logging.debug(
+                    f"set_launch_credentials: resource={resource_uid} "
+                    f"launch_uid={launch_uid} via configure_resource"
+                )
+                if launch_uid is not None:
+                    self.link_user(launch_uid, resource_vertex, belongs_to=True)
+                return
+            except Exception as err:
+                if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                    logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                    raise
+                logging.warning(
+                    f"configure_resource denied/unavailable for {resource_uid}; "
+                    f"falling back to legacy DAG-write: {err}"
+                )
+
+        self.clear_launch_credential_for_resource(resource_uid, exclude_user_uid=launch_uid)
+        if launch_uid is not None:
+            self.link_user_to_resource(launch_uid, resource_uid,
+                                       is_launch_credential=True, belongs_to=True)
+        self.upgrade_resource_meta_to_v1(resource_uid)
+
     def upgrade_resource_meta_to_v1(self, resource_uid):
         """Ensure resource vertex meta has version >= 1 so vault reads ACL launch credentials."""
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
@@ -488,6 +659,38 @@ class TunnelDAG:
         if content and content.get('version', 0) >= RESOURCE_META_VERSION_V1:
             return
         upgraded = ensure_resource_meta_v1(content)
+
+        # Primary: Layer-B configure_resource (permission-checked). Same meta
+        # shape we use in set_resource_allowed(meta_version=1): the versioned
+        # payload {version, allowedSettings, rotateOnTermination} is sent as
+        # the proto's `meta` field. krouter's mergeJson honors version with the
+        # `oldMetaVersion <= newMetaVersion` upgrade check.
+        from ...pam.router_helper import router_configure_resource, get_router_url
+        from ...pam._layer_b import is_layer_b_feature_disabled
+        host = get_router_url(self.params)
+        endpoint = 'configure_resource'
+        if not is_layer_b_feature_disabled(host, endpoint):
+            try:
+                rq = pam_pb2.PAMResourceConfig(
+                    recordUid=url_safe_str_to_bytes(resource_uid),
+                    networkUid=url_safe_str_to_bytes(self.record.record_uid),
+                    meta=json.dumps(upgraded).encode(),
+                )
+                router_configure_resource(self.params, rq)
+                logging.debug(
+                    f"upgrade_resource_meta_to_v1: applied to {resource_uid} via configure_resource"
+                )
+                return
+            except Exception as err:
+                if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                    logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                    raise
+                logging.warning(
+                    f"configure_resource denied/unavailable for {resource_uid}; "
+                    f"falling back to legacy DAG-write: {err}"
+                )
+
+        # Fallback: legacy direct DAG-write.
         resource_vertex.add_data(content=upgraded, path='meta', needs_encryption=False)
         self.linking_dag.save()
 
@@ -637,13 +840,79 @@ class TunnelDAG:
                 content["rotateOnTermination"] = bool(rotate_on_termination)
 
         if dirty:
-            # Legacy: missing or meta_version=0 -> write content as-is (no version in meta)
+            # Compute the meta payload (same shape legacy would write).
             if meta_version is not None and meta_version != 0:
                 meta_payload = build_resource_meta(
                     meta_version,
                     content.get(allowed_settings_name, {}),
                     rotate_on_termination=bool(content.get("rotateOnTermination", False)),
                 )
+            else:
+                meta_payload = content
+
+            # Primary: Layer-B (permission-checked). is_config=True writes the
+            # config record's network-level allowedSettings via configure_network_graph
+            # (the same endpoint edit_tunneling_config uses). is_config=False writes
+            # a resource's meta via configure_resource(meta=...); the server's
+            # mergeJson handles any meta key (allowedSettings, pamRemoteBrowserSettings,
+            # rotation, etc.). Same fallback policy as edit_tunneling_config and
+            # link_user_to_resource: strict by default, opt INTO legacy fallback
+            # via KEEPER_DAG_LB_FALLBACK=1.
+            from ...pam.router_helper import (
+                router_configure_resource, router_configure_network_graph, get_router_url
+            )
+            from ...pam._layer_b import is_layer_b_feature_disabled
+            host = get_router_url(self.params)
+
+            if is_config:
+                endpoint = 'configure_network_graph'
+                if not is_layer_b_feature_disabled(host, endpoint):
+                    try:
+                        inner_settings = meta_payload.get(allowed_settings_name, {})
+                        rq = router_pb2.PAMNetworkConfigurationRequest(
+                            recordUid=url_safe_str_to_bytes(resource_uid),
+                            networkSettings=router_pb2.PAMNetworkSettings(
+                                allowedSettings=json.dumps(inner_settings).encode()
+                            ),
+                        )
+                        router_configure_network_graph(self.params, rq)
+                        logging.debug(
+                            f"set_resource_allowed: applied to config {resource_uid} via configure_network_graph"
+                        )
+                        return
+                    except Exception as err:
+                        if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                            logging.error(f"configure_network_graph failed (no fallback): {err}", exc_info=True)
+                            raise
+                        logging.warning(
+                            f"configure_network_graph denied/unavailable for config {resource_uid}; "
+                            f"falling back to legacy DAG-write: {err}"
+                        )
+            else:
+                endpoint = 'configure_resource'
+                if not is_layer_b_feature_disabled(host, endpoint):
+                    try:
+                        rq = pam_pb2.PAMResourceConfig(
+                            recordUid=url_safe_str_to_bytes(resource_uid),
+                            networkUid=url_safe_str_to_bytes(self.record.record_uid),
+                            meta=json.dumps(meta_payload).encode(),
+                        )
+                        router_configure_resource(self.params, rq)
+                        logging.debug(
+                            f"set_resource_allowed: applied to resource {resource_uid} via configure_resource"
+                        )
+                        return
+                    except Exception as err:
+                        if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
+                            logging.error(f"configure_resource failed (no fallback): {err}", exc_info=True)
+                            raise
+                        logging.warning(
+                            f"configure_resource denied/unavailable for resource {resource_uid}; "
+                            f"falling back to legacy DAG-write: {err}"
+                        )
+
+            # Fallback: legacy direct DAG-write.
+            if meta_version is not None and meta_version != 0:
                 resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
             else:
                 resource_vertex.add_data(content=content, path='meta', needs_encryption=False)

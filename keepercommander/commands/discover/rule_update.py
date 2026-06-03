@@ -64,7 +64,7 @@ class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandB
 
         try:
             rule_id = kwargs.get("rule_id")
-            rules = Rules(record=gateway_context.configuration, params=params)
+            rules = Rules(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
             rule_item = rules.get_rule_item(rule_type=RuleTypeEnum.ACTION, rule_id=rule_id)
             if rule_item is None:
                 raise ValueError("Rule Id does not exist.")

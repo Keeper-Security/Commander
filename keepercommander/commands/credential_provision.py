@@ -1773,7 +1773,7 @@ class CredentialProvisionCommand(Command):
             pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
 
             # Create RecordLink instance
-            record_link = RecordLink(record=pam_config_record, params=params, fail_on_corrupt=False)
+            record_link = RecordLink(record=pam_config_record, params=params, fail_on_corrupt=False, use_per_graph_endpoints=True)
 
             # Create belongs_to relationship: PAM User belongs_to PAM Configuration
             record_link.belongs_to(

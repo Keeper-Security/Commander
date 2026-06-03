@@ -61,9 +61,13 @@ class RmNewUser(BaseModel):
     desc: Optional[str] = None
     password: Optional[str] = None
     private_key: Optional[str] = None
+    public_key: Optional[str] = None
     private_key_passphrase: Optional[str] = None
     connect_database: Optional[str] = None
+    mode: Optional[str] = None
     dn: Optional[str] = None
+    uid: Optional[str] = None
+    home_dir: Optional[str] = None
 
 
 class RmRole(BaseModel):
@@ -168,7 +172,84 @@ class RmDomainUserAddMeta(RmMetaBase):
 # DATABASE
 
 
-class RmMySQLUserAddMeta(RmMetaBase):
+class RmMySQLBaseAddMeta(RmMetaBase):
+
+    """
+    Shared model for MySQL and MariaDB of the common GRANT attributes.
+    """
+
+    # MariaDB will give all expect GRANT OPTION
+    grant_all_privileges: List[str] = []
+
+    # DATA
+    grant_select: List[str] = ["*"]
+    grant_insert: List[str] = ["*"]
+    grant_update: List[str] = ["*"]
+    grant_delete: List[str] = ["*"]
+
+    # STRUCTURE
+    grant_create: List[str] = []
+    grant_alter: List[str] = []
+    grant_drop: List[str] = []
+    grant_index: List[str] = []
+    grant_create_view: List[str] = []
+    grant_show_view: List[str] = []
+    grant_create_routine: List[str] = []
+    grant_alter_routine: List[str] = []
+    grant_trigger: List[str] = []
+    grant_references: List[str] = []
+
+    # TEMP TABLE
+    grant_create_temp_tables: List[str] = []
+
+    # EVENTS AND PROCEDURES
+    grant_event: List[str] = []
+    grant_execute: List[str] = []
+
+    # LOCK
+    grant_lock_tables: List[str] = []
+
+    # ADMIN
+    grant_grant_option: List[str] = []
+    grant_create_user: List[str] = []
+    grant_reload: List[str] = []
+    grant_shutdown: List[str] = []
+    grant_process: List[str] = []
+    grant_file: List[str] = []
+    grant_show_databases: List[str] = []
+    grant_super: List[str] = []
+    grant_rep_client: List[str] = []
+    grant_rep_slave: List[str] = []
+    grant_create_tablespace: List[str] = []
+
+
+class RmMySQLUserAddMeta(RmMySQLBaseAddMeta):
+    """
+    MySQL user add meta information
+
+    engine_type: mysql
+
+    :param failed_login_attempts: Number of fail login attempts before locking the account.
+    :param password_lockout_time: Number of days to wait before unlocking the account.
+                                  Set to 0 to prevent unlock.
+                                  Set to UNBOUNDED is lock forever.
+    :param password_expire_days: Number of days before password is expired.
+    :param password_history_count: Number of prior passwords that cannot be reused.
+    :param password_history_days: Cannot reuse passwords used within N days.
+    :param password_req_current: Current password is required to change password.
+    :param password_req_ssl: Connection requires SSL.
+    :param authentication_plugin: Authentication plugin.
+    :param authentication_value: For the authentication plugin, additional required value.
+    """
+
+    failed_login_attempts: Optional[int] = None
+    # days or UNBOUNDED
+    password_lockout_time: Optional[str] = None
+    password_expire_days: Optional[int] = None
+    password_history_count: Optional[int] = None
+    password_history_days: Optional[int] = None
+    password_req_current: bool = False
+    password_req_ssl: bool = False
     authentication_plugin: Optional[str] = None
     authentication_value: Optional[str] = None
     roles: List[str] = []
@@ -179,17 +260,33 @@ class RmMySQLRoleAddMeta(RmMetaBase):
 
 
 class RmMariaDbRoleAddMeta(RmMetaBase):
+
     with_admin: str = "CURRENT_USER"
     grant_script: Optional[str] = None
 
 
-class RmMariaDbLUserAddMeta(RmMetaBase):
+class RmMariaDbUserAddMeta(RmMySQLBaseAddMeta):
     authentication_plugin: Optional[str] = None
     authentication_value: Optional[str] = None
     roles: List[str] = []
 
 
+# TODO: H
+class RmMariaDbLUserAddMeta(RmMariaDbUserAddMeta):
+    pass
+
+
 class RmPostgreSqlUserAddMeta(RmMetaBase):
+    """
+    PostgreSQL user add meta information
+
+    engine_type: postgres
+
+    :param superuser: Make the user a superuser.
+    :param create_db: Make can create databases.
+    :param create_role: Make can create roles.
+    """
+
     superuser: Optional[bool] = False
     create_db: Optional[bool] = False
     create_role: Optional[bool] = False
@@ -248,9 +345,122 @@ class RmSqlServerRoleAddMeta(RmMetaBase):
     grant_script: Optional[str] = None
 
 
+class RmOracleGrant(BaseModel):
+    """
+    For system and role grants, there is an option to have ADMIN OPTION
+    """
+
+    allow: bool = False
+    admin_option: bool = False
+
+
+class RmOracleGrantObject(BaseModel):
+    """
+    For object grants.
+    Allows object columns.
+    """
+
+    columns: List[str] = []
+    object: str
+
+
 class RmOracleUserAddMeta(RmMetaBase):
-    allow_login: bool = True
-    allow_resource: bool = True
+
+    """
+    Oracle user add meta information
+
+    :param profile: User uses this profile for resource limits and password policies.
+    :param identified_externally: User uses OS authentication (IDENTIFIED EXTERNALLY).
+    :param identified_globally: User uses directory authentication (IDENTIFIED GLOBALLY AS 'directory_DN').
+    :param identified_globally_as: The 'directory_DN' used for identified_globally.
+
+    """
+    profile: Optional[str] = None
+    identified_externally: bool = False
+    identified_globally: bool = False
+    identified_globally_as: Optional[str] = None
+
+    # SYSTEM
+    grant_create_session: RmOracleGrant = RmOracleGrant()
+    grant_create_table: RmOracleGrant = RmOracleGrant()
+    grant_create_view: RmOracleGrant = RmOracleGrant()
+    grant_create_procedure: RmOracleGrant = RmOracleGrant()
+    grant_create_sequence: RmOracleGrant = RmOracleGrant()
+    grant_create_trigger: RmOracleGrant = RmOracleGrant()
+    grant_create_synonym: RmOracleGrant = RmOracleGrant()
+    grant_create_public_synonym: RmOracleGrant = RmOracleGrant()
+    grant_create_materialized_view: RmOracleGrant = RmOracleGrant()
+    grant_create_index: RmOracleGrant = RmOracleGrant()
+    grant_create_type: RmOracleGrant = RmOracleGrant()
+    grant_create_role: RmOracleGrant = RmOracleGrant()
+    grant_create_user: RmOracleGrant = RmOracleGrant()
+    grant_alter_user: RmOracleGrant = RmOracleGrant()
+    grant_drop_user: RmOracleGrant = RmOracleGrant()
+    grant_alter_system: RmOracleGrant = RmOracleGrant()
+    grant_alter_database: RmOracleGrant = RmOracleGrant()
+    grant_create_tablespace: RmOracleGrant = RmOracleGrant()
+    grant_alter_tablespace: RmOracleGrant = RmOracleGrant()
+    grant_drop_tablespace: RmOracleGrant = RmOracleGrant()
+    grant_select_any_table: RmOracleGrant = RmOracleGrant()
+    grant_insert_any_table: RmOracleGrant = RmOracleGrant()
+    grant_update_any_table: RmOracleGrant = RmOracleGrant()
+    grant_delete_any_table: RmOracleGrant = RmOracleGrant()
+    grant_drop_any_table: RmOracleGrant = RmOracleGrant()
+    grant_create_any_table: RmOracleGrant = RmOracleGrant()
+    grant_alter_any_table: RmOracleGrant = RmOracleGrant()
+    grant_create_any_index: RmOracleGrant = RmOracleGrant()
+    grant_drop_any_index: RmOracleGrant = RmOracleGrant()
+    grant_create_any_view: RmOracleGrant = RmOracleGrant()
+    grant_drop_any_view: RmOracleGrant = RmOracleGrant()
+    grant_execute_any_procedure: RmOracleGrant = RmOracleGrant()
+    grant_create_any_procedure: RmOracleGrant = RmOracleGrant()
+    grant_drop_any_procedure: RmOracleGrant = RmOracleGrant()
+    grant_create_any_sequence: RmOracleGrant = RmOracleGrant()
+    grant_drop_any_sequence: RmOracleGrant = RmOracleGrant()
+    grant_grant_any_privilege: RmOracleGrant = RmOracleGrant()
+    grant_grant_any_role: RmOracleGrant = RmOracleGrant()
+    grant_grant_any_object_privilege: RmOracleGrant = RmOracleGrant()
+    grant_unlimited_tablespace: RmOracleGrant = RmOracleGrant()
+    grant_manage_tablespace: RmOracleGrant = RmOracleGrant()
+    grant_audit_any: RmOracleGrant = RmOracleGrant()
+    grant_analyze_any: RmOracleGrant = RmOracleGrant()
+    grant_comment_any_table: RmOracleGrant = RmOracleGrant()
+    grant_flashback_any_table: RmOracleGrant = RmOracleGrant()
+    grant_debug_any_procedure: RmOracleGrant = RmOracleGrant()
+    grant_administer_database_trigger: RmOracleGrant = RmOracleGrant()
+
+    # OBJECT
+    grant_select: List[RmOracleGrantObject] = []
+    grant_insert: List[RmOracleGrantObject] = []
+    grant_update: List[RmOracleGrantObject] = []
+    grant_delete: List[RmOracleGrantObject] = []
+    grant_alter: List[RmOracleGrantObject] = []
+    grant_index: List[RmOracleGrantObject] = []
+    grant_references: List[RmOracleGrantObject] = []
+    grant_execute: List[RmOracleGrantObject] = []
+    grant_read: List[RmOracleGrantObject] = []
+    grant_write: List[RmOracleGrantObject] = []
+    grant_debug: List[RmOracleGrantObject] = []
+    grant_flashback: List[RmOracleGrantObject] = []
+    grant_on_commit_refresh: List[RmOracleGrantObject] = []
+    grant_query_rewrite: List[RmOracleGrantObject] = []
+    grant_under: List[RmOracleGrantObject] = []
+
+    # PREDEFINED
+    grant_connect: RmOracleGrant = RmOracleGrant(allow=True)
+    grant_resource: RmOracleGrant = RmOracleGrant(allow=True)
+    grant_dba: RmOracleGrant = RmOracleGrant()
+    grant_select_catalog_role: RmOracleGrant = RmOracleGrant()
+    grant_execute_catalog_role: RmOracleGrant = RmOracleGrant()
+    grant_delete_catalog_role: RmOracleGrant = RmOracleGrant()
+    grant_exp_full_database: RmOracleGrant = RmOracleGrant()
+    grant_imp_full_database: RmOracleGrant = RmOracleGrant()
+    grant_recovery_catalog_owner: RmOracleGrant = RmOracleGrant()
+    grant_scheduler_admin: RmOracleGrant = RmOracleGrant()
+    grant_aq_administrator_role: RmOracleGrant = RmOracleGrant()
+    grant_datapump_exp_full_database: RmOracleGrant = RmOracleGrant()
+    grant_datapump_imp_full_database: RmOracleGrant = RmOracleGrant()
+
     roles: List[str] = []
 
 
@@ -294,6 +504,15 @@ class RmMachineUserAddMeta(RmMetaBase):
     private_key: Optional[str] = None
     private_key_passphrase: Optional[str] = None
     authorized_keys: List[str] = []
+
+    # SSH certificate
+    # This is used if SSH, on the machine, has a CA private key
+    key_id: Optional[str] = None
+    serial: int = 0
+    valid_principles: List[str] = ["keeper_jit"]
+    extensions: Optional[str] = None
+    critical_options: Optional[str] = None
+    expire_days: int = 30
 
 
 class RmLinuxUserAddMeta(RmMachineUserAddMeta):
@@ -379,6 +598,9 @@ class RmOpenLdapUserAddMeta(RmBaseLdapUserAddMeta):
     """
     Parameters for creating a user for OpenLDAP
 
+    object_type: directories
+    engine_type: openldap
+
     :type: directory,openldap,create,user
     :param object_class: Object classes for the entry.
     :param dn: Full distinguished name for the user.
@@ -396,7 +618,11 @@ class RmOpenLdapUserAddMeta(RmBaseLdapUserAddMeta):
 
 class RmAdUserAddMeta(RmBaseLdapUserAddMeta):
     """
-    Parameters for creating a user for Active Directory
+    Parameters for creating a user for Active Directory.
+
+    object_type: directories
+
+    engine_type: active_directory
 
     :type: directory,active_directory,create,user
     :param object_class: Object classes for the entry.

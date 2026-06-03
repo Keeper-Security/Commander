@@ -2,7 +2,7 @@ from __future__ import annotations
 from .utils import get_connection, make_agent
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
 from ..keeper_dag import DAG, EdgeType
-from ..keeper_dag.types import PamGraphId
+from ..keeper_dag.types import PamEndpoints, PamGraphId
 import logging
 import os
 import base64
@@ -36,7 +36,16 @@ class Jobs:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
                  log_prefix: str = "GS Jobs", save_batch_count: int = 200, agent: Optional[str] = None,
+                 use_per_graph_endpoints: bool = False,
                  **kwargs):
+        """
+        :param use_per_graph_endpoints: If True, use the per-graph URL transport
+            (`/api/user/graph-sync/discovery_jobs/...`) via `read_endpoint` /
+            `write_endpoint`. If False (default), use the legacy single-endpoint
+            transport via `graph_id=PamGraphId.DISCOVERY_JOBS`. The legacy
+            default is preserved for backward compatibility; it will be removed
+            in a future major version once all consumers have migrated.
+        """
 
         self.conn = get_connection(logger=logger, **kwargs)
 
@@ -51,6 +60,7 @@ class Jobs:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
+        self.use_per_graph_endpoints = use_per_graph_endpoints
 
         self.agent = make_agent("jobs")
         if agent is not None:
@@ -60,18 +70,31 @@ class Jobs:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self._dag = DAG(conn=self.conn,
-                            record=self.record,
-                            # endpoint=PamEndpoints.DISCOVERY_JOBS,
-                            graph_id=PamGraphId.DISCOVERY_JOBS,
-                            auto_save=False,
-                            logger=self.logger,
-                            debug_level=self.debug_level,
-                            name="Discovery Jobs",
-                            fail_on_corrupt=self.fail_on_corrupt,
-                            log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count,
-                            agent=self.agent)
+            if self.use_per_graph_endpoints:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                read_endpoint=PamEndpoints.DISCOVERY_JOBS,
+                                write_endpoint=PamEndpoints.DISCOVERY_JOBS,
+                                auto_save=False,
+                                logger=self.logger,
+                                debug_level=self.debug_level,
+                                name="Discovery Jobs",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
+            else:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                graph_id=PamGraphId.DISCOVERY_JOBS,
+                                auto_save=False,
+                                logger=self.logger,
+                                debug_level=self.debug_level,
+                                name="Discovery Jobs",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
 
             ts = time()
             self._dag.load()

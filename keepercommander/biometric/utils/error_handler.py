@@ -12,6 +12,7 @@
 """
 Centralized error handling utilities for biometric authentication
 """
+import importlib
 import logging
 
 from ...error import CommandError
@@ -62,7 +63,7 @@ class BiometricErrorHandler:
             return Exception(f"{platform_name} registration cancelled")
         elif ("object already exists" in error_msg or 
             ("oserror" in error_msg and "22" in error_msg and "object already exists" in error_msg)):
-            return Exception(f"A biometric credential for this account already exists")
+            return Exception("A biometric credential for this account already exists")
         elif "timeout" in error_msg:
             return Exception(f"{platform_name} registration timed out")
         elif "not available" in error_msg:
@@ -107,7 +108,7 @@ class BiometricErrorHandler:
         missing_modules = []
         for module in required_modules:
             try:
-                __import__(module)
+                importlib.import_module(module)
             except ImportError:
                 missing_modules.append(module)
         

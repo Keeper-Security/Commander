@@ -57,7 +57,7 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
                                  logger=logging,
-                                 debug_level=debug_level)
+                                 debug_level=debug_level, use_per_graph_endpoints=True)
 
         user_record = vault.KeeperRecord.load(params, user_uid)  # type: Optional[TypedRecord]
         if user_record is None:

@@ -13,10 +13,9 @@ Story 3 — Push-to-target guards:
   - logging.info line when existing_password is used (no value in log)
 """
 
-import logging
 import pytest
 from unittest import TestCase
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from keepercommander.commands.credential_provision import (
     CredentialProvisionCommand,
@@ -356,7 +355,7 @@ class TestSourceCodeRegressionGuard(TestCase):
         import os, re
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         src_path = os.path.join(repo_root, self.SOURCE_FILE)
-        with open(src_path, 'r') as f:
+        with open(src_path, 'r', encoding='utf-8') as f:
             source = f.read()
 
         # Find the line number of the execute()-level _create_pam_user call.
@@ -392,7 +391,7 @@ class TestSourceCodeRegressionGuard(TestCase):
         import os, re
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         src_path = os.path.join(repo_root, self.SOURCE_FILE)
-        with open(src_path, 'r') as f:
+        with open(src_path, 'r', encoding='utf-8') as f:
             source = f.read()
         # Find any call to _add_ad_user_to_groups_via_gateway
         pattern = re.compile(
@@ -420,7 +419,7 @@ class TestSourceCodeRegressionGuard(TestCase):
         import os
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         src_path = os.path.join(repo_root, self.SOURCE_FILE)
-        with open(src_path, 'r') as f:
+        with open(src_path, 'r', encoding='utf-8') as f:
             source = f.read()
         idx = source.find("'✅ Rotation configured'")
         self.assertGreater(idx, 0, "Could not locate the rotation-configured log line")
@@ -443,7 +442,7 @@ class TestSourceCodeRegressionGuard(TestCase):
         import os
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         src_path = os.path.join(repo_root, self.SOURCE_FILE)
-        with open(src_path, 'r') as f:
+        with open(src_path, 'r', encoding='utf-8') as f:
             source = f.read()
         idx = source.find("'✅ Password rotation submitted'")
         self.assertGreater(idx, 0, "Could not locate the success-log line")
@@ -460,7 +459,7 @@ class TestSourceCodeRegressionGuard(TestCase):
         repo_root = os.path.abspath(os.path.join(
             os.path.dirname(__file__), '..'))
         src_path = os.path.join(repo_root, self.SOURCE_FILE)
-        with open(src_path, 'r') as f:
+        with open(src_path, 'r', encoding='utf-8') as f:
             source = f.read()
         # Look for patterns like logging.X(f"... {existing_password} ...")
         # where existing_password is the VALUE, not the field name.
