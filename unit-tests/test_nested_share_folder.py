@@ -156,10 +156,16 @@ class TestCommandHelpers(TestCase):
             nested_share_folder_records={fuid: {ruid}},
             nested_share_folders={fuid: fobj},
         )
-        self.assertEqual(find_folder_location(params, ruid), 'Docs')
+        result = find_folder_location(params, ruid)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result['uid'], fuid)
+        self.assertEqual(result['path'], 'Docs')
         params2 = _make_params(nested_share_folder_records={ROOT_FOLDER_UID: {ruid}})
-        self.assertEqual(find_folder_location(params2, ruid), 'root')
-        self.assertEqual(find_folder_location(_make_params(), 'missing'), '')
+        result2 = find_folder_location(params2, ruid)
+        self.assertIsInstance(result2, dict)
+        self.assertIsNone(result2['uid'])
+        self.assertEqual(result2['path'], '/')
+        self.assertIsNone(find_folder_location(_make_params(), 'missing'))
 
     def test_load_record_metadata_from_cache(self):
         from keepercommander.commands.nested_share_folder.helpers import load_record_metadata

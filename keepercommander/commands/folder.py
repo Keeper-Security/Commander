@@ -188,6 +188,56 @@ class FolderListCommand(Command, RecordMixin):
         for i in range(0, len(l), n):
             yield l[i:i + n]
 
+    @staticmethod
+    def _collect_nsf_record_uids(params, folder_uid, recursive_search):
+        nsf_folders = getattr(params, 'nested_share_folders', {})
+        nsf_folder_records = getattr(params, 'nested_share_folder_records', {})
+        nsf_records = getattr(params, 'nested_share_records', {})
+        if not nsf_records:
+            return set()
+
+        if folder_uid in nsf_folders:
+            from .nested_share_folder.helpers import collect_records_in_folder
+            return set(collect_records_in_folder(params, folder_uid, recursive=bool(recursive_search)))
+
+        record_uids = set()
+        if recursive_search:
+            record_uids.update(nsf_records.keys())
+        elif not folder_uid:
+            for fuid, rec_set in nsf_folder_records.items():
+                if fuid not in nsf_folders:
+                    record_uids.update(rec_set)
+        return record_uids
+
+    @staticmethod
+    def _load_record_for_ls(params, uid):
+        for cache in (getattr(params, 'nested_share_records', {}), params.record_cache or {}):
+            if uid not in cache:
+                continue
+            cached = cache[uid]
+            if cached.get('version', 0) not in (2, 3):
+                continue
+            r = vault.KeeperRecord.load(params, cached)
+            if r:
+                return r
+
+        nsf_record_data = getattr(params, 'nested_share_record_data', {})
+        if uid in nsf_record_data and 'data_json' in nsf_record_data[uid]:
+            dj = nsf_record_data[uid]['data_json']
+            rec = vault.TypedRecord(version=3)
+            rec.record_uid = uid
+            rec.title = dj.get('title', uid)
+            rec.record_type = dj.get('type', '')
+            rec.load_record_data(dj, None)
+            return rec
+        return None
+
+    @staticmethod
+    def _record_source(params, record_uid):
+        if hasattr(params, 'nested_share_records') and record_uid in params.nested_share_records:
+            return 'nested'
+        return 'classic'
+
     def get_parser(self):
         return ls_parser
 
@@ -225,25 +275,20 @@ class FolderListCommand(Command, RecordMixin):
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
-        if show_records and params.record_cache:
-            if folder_uid in params.subfolder_record_cache or recursive_search:
+        if show_records:
+            record_uids = set()
+            if params.record_cache and (folder_uid in params.subfolder_record_cache or recursive_search):
                 record_uids_by_folder = get_contained_record_uids(params, folder_uid, not recursive_search)
-                record_uids = {rec_uid for recs in record_uids_by_folder.values() for rec_uid in recs}
-                for uid in record_uids:
-                    if uid not in params.record_cache:
-                        continue
-                    rec = params.record_cache[uid]
-                    rv = rec.get('version', 0)
-                    if rv not in (2, 3):
-                        continue    # skip fileRef and application records - they use file-report command
+                record_uids.update(rec for recs in record_uids_by_folder.values() for rec in recs)
+            record_uids.update(FolderListCommand._collect_nsf_record_uids(params, folder_uid, recursive_search))
 
-                    r = vault.KeeperRecord.load(params, rec)
-                    if not r:
-                        continue
-
-                    if regex and not regex(r.title):
-                        continue
-                    records.append(r)
+            for uid in record_uids:
+                r = FolderListCommand._load_record_for_ls(params, uid)
+                if not r:
+                    continue
+                if regex and not regex(r.title):
+                    continue
+                records.append(r)
 
         if len(folders) == 0 and len(records) == 0:
             if pattern:
@@ -272,9 +317,7 @@ class FolderListCommand(Command, RecordMixin):
                     
                     if len(records) > 0:
                         for record in records:
-                            # Check if record is from Nested Share Folder
-                            is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
-                            source = 'nested_share_folder' if is_nested_share else 'classic'
+                            source = FolderListCommand._record_source(params, record.record_uid)
                             row = ['record', record.record_uid, record.title, 
                                    f'Type: {record.record_type}, Description: {vault_extensions.get_record_description(record)}', source]
                             combined_table.append(row)
@@ -308,9 +351,7 @@ class FolderListCommand(Command, RecordMixin):
                         table = []
                         headers = ['record_uid', 'type', 'title', 'description', 'source']
                         for record in records:
-                            # Check if record is from Nested Share Folder
-                            is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
-                            source = 'nested_share_folder' if is_nested_share else 'classic'
+                            source = FolderListCommand._record_source(params, record.record_uid)
                             row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record), source]
                             table.append(row)
                         table.sort(key=lambda x: (x[2] or '').lower())

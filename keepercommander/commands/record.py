@@ -397,6 +397,17 @@ class RecordGetUidCommand(Command):
                             entry['record_name'] = rec.title
                         records_list.append(entry)
                     fo['records'] = records_list
+                elif f.type == BaseFolderNode.NestedShareFolderType:
+                    from .nested_share_folder.helpers import collect_records_in_folder
+                    record_uids = collect_records_in_folder(params, f.uid, recursive=False)
+                    records_list = []
+                    for r_uid in record_uids:
+                        entry = {'record_uid': r_uid}
+                        rec = vault.KeeperRecord.load(params, r_uid)
+                        if rec:
+                            entry['record_name'] = rec.title
+                        records_list.append(entry)
+                    fo['records'] = records_list
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
@@ -471,7 +482,7 @@ class RecordGetUidCommand(Command):
                                      and uid in getattr(params, 'nested_share_records', {}))
                     ro = {
                         'record_uid': uid,
-                        'source': 'nested_share_folder' if is_nsf_record else 'classic',
+                        'source': 'nested' if is_nsf_record else 'classic',
                     }
                     if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
