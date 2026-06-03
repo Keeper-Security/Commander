@@ -418,6 +418,8 @@ class PAMTunnelEditCommand(Command):
             dirty = False
 
             existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+            if not config_uid:
+                config_uid = existing_config_uid
 
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
                                 transmission_key=transmission_key)
@@ -2953,8 +2955,7 @@ class PAMConnectionEditCommand(Command):
                         f'{bcolors.FAIL}--clear-launch-user is only supported for pamMachine, pamDatabase, and '
                         f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not '
                         f'support launch credentials.{bcolors.ENDC}')
-                tdag.clear_launch_credential_for_resource(record_uid)
-                tdag.upgrade_resource_meta_to_v1(record_uid)
+                tdag.set_launch_credentials(record_uid)
             elif launch_user_name:
                 launch_rec = RecordMixin.resolve_single_record(params, launch_user_name)
                 if not launch_rec:
@@ -2965,9 +2966,7 @@ class PAMConnectionEditCommand(Command):
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
                 launch_uid = launch_rec.record_uid
                 if record_type in launch_credential_record_types:
-                    tdag.clear_launch_credential_for_resource(record_uid, exclude_user_uid=launch_uid)
-                    tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
-                    tdag.upgrade_resource_meta_to_v1(record_uid)
+                    tdag.set_launch_credentials(record_uid, launch_uid=launch_uid)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
