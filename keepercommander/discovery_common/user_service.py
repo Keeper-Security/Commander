@@ -8,7 +8,7 @@ from .types import DiscoveryObject, ServiceAcl, NormalizedRecord
 from .infrastructure import Infrastructure
 from .record_link import RecordLink
 from ..keeper_dag import DAG, EdgeType
-from ..keeper_dag.types import PamGraphId
+from ..keeper_dag.types import PamEndpoints, PamGraphId
 import importlib
 from typing import Any, Optional, List, Callable, Dict, TYPE_CHECKING
 
@@ -22,7 +22,16 @@ class UserService:
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
                  save_batch_count: int = 200, agent: Optional[str] = None,
+                 use_per_graph_endpoints: bool = False,
                  **kwargs):
+        """
+        :param use_per_graph_endpoints: If True, use the per-graph URL transport
+            (`/api/user/graph-sync/service_links/...`) via `read_endpoint` /
+            `write_endpoint`. If False (default), use the legacy single-endpoint
+            transport via `graph_id=PamGraphId.SERVICE_LINKS`. The legacy
+            default is preserved for backward compatibility; it will be removed
+            in a future major version once all consumers have migrated.
+        """
 
         # Keep these for other graphs
         self._params = kwargs.get("params")
@@ -41,6 +50,7 @@ class UserService:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
+        self.use_per_graph_endpoints = use_per_graph_endpoints
 
         self.agent = make_agent("user_service")
         if agent is not None:
@@ -73,18 +83,33 @@ class UserService:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self._dag = DAG(conn=self.conn,
-                            record=self.record,
-                            graph_id=PamGraphId.SERVICE_LINKS,
-                            auto_save=False,
-                            logger=self.logger,
-                            history_level=self.history_level,
-                            debug_level=self.debug_level,
-                            name="Discovery Services",
-                            fail_on_corrupt=self.fail_on_corrupt,
-                            log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count,
-                            agent=self.agent)
+            if self.use_per_graph_endpoints:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                read_endpoint=PamEndpoints.SERVICE_LINKS,
+                                write_endpoint=PamEndpoints.SERVICE_LINKS,
+                                auto_save=False,
+                                logger=self.logger,
+                                history_level=self.history_level,
+                                debug_level=self.debug_level,
+                                name="Discovery Services",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
+            else:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                graph_id=PamGraphId.SERVICE_LINKS,
+                                auto_save=False,
+                                logger=self.logger,
+                                history_level=self.history_level,
+                                debug_level=self.debug_level,
+                                name="Discovery Services",
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                log_prefix=self.log_prefix,
+                                save_batch_count=self.save_batch_count,
+                                agent=self.agent)
 
             self._dag.load(sync_point=0)
 

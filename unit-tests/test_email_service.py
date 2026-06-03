@@ -1,5 +1,3 @@
-import os
-import sys
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 from keepercommander.email_service import (
@@ -308,7 +306,7 @@ class TestSendGridEmailProvider(unittest.TestCase):
         """Test SendGrid raises ImportError if library not installed"""
         # This will fail if sendgrid is not installed (expected in test environment)
         try:
-            provider = SendGridEmailProvider(self.config)
+            SendGridEmailProvider(self.config)
         except ImportError as e:
             self.assertIn("SendGrid requires additional dependencies", str(e))
 
@@ -333,7 +331,7 @@ class TestSESEmailProvider(unittest.TestCase):
         """Test SES raises ImportError if boto3 not installed"""
         # This will fail if boto3 is not installed (expected in test environment)
         try:
-            provider = SESEmailProvider(self.config)
+            SESEmailProvider(self.config)
         except ImportError as e:
             self.assertIn("AWS SES requires additional dependencies", str(e))
 
@@ -464,7 +462,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertIsNone(error_message)
 
-    @patch('builtins.__import__')
+    @patch('keepercommander.email_service.importlib.import_module')
     def test_sendgrid_validation_success(self, mock_import):
         """Test SendGrid validation succeeds when library is installed"""
         # Mock successful import of sendgrid
@@ -474,7 +472,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertIsNone(error_message)
 
-    @patch('builtins.__import__', side_effect=ImportError("No module named 'sendgrid'"))
+    @patch('keepercommander.email_service.importlib.import_module', side_effect=ImportError("No module named 'sendgrid'"))
     def test_sendgrid_validation_failure(self, mock_import):
         """Test SendGrid validation fails when library is missing"""
         is_valid, error_message = validate_email_provider_dependencies('sendgrid')
@@ -483,7 +481,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertIn('sendgrid', error_message.lower())
         self.assertIn('pip install keepercommander[email-sendgrid]', error_message)
 
-    @patch('builtins.__import__')
+    @patch('keepercommander.email_service.importlib.import_module')
     def test_ses_validation_success(self, mock_import):
         """Test SES validation succeeds when boto3 is installed"""
         mock_import.return_value = MagicMock()
@@ -492,7 +490,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertIsNone(error_message)
 
-    @patch('builtins.__import__', side_effect=ImportError("No module named 'boto3'"))
+    @patch('keepercommander.email_service.importlib.import_module', side_effect=ImportError("No module named 'boto3'"))
     def test_ses_validation_failure(self, mock_import):
         """Test SES validation fails when boto3 is missing"""
         is_valid, error_message = validate_email_provider_dependencies('ses')
@@ -501,7 +499,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertIn('boto3', error_message.lower())
         self.assertIn('pip install keepercommander[email-ses]', error_message)
 
-    @patch('builtins.__import__')
+    @patch('keepercommander.email_service.importlib.import_module')
     def test_gmail_oauth_validation_success(self, mock_import):
         """Test Gmail OAuth validation succeeds when Google libraries are installed"""
         mock_import.return_value = MagicMock()
@@ -510,7 +508,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertIsNone(error_message)
 
-    @patch('builtins.__import__', side_effect=ImportError("No module named 'google.auth'"))
+    @patch('keepercommander.email_service.importlib.import_module', side_effect=ImportError("No module named 'google.auth'"))
     def test_gmail_oauth_validation_failure(self, mock_import):
         """Test Gmail OAuth validation fails when Google libraries are missing"""
         is_valid, error_message = validate_email_provider_dependencies('gmail-oauth')
@@ -520,7 +518,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertIn('pip install keepercommander[email-gmail-oauth]', error_message)
         self.assertIn('google-api-python-client', error_message)
 
-    @patch('builtins.__import__')
+    @patch('keepercommander.email_service.importlib.import_module')
     def test_microsoft_oauth_validation_success(self, mock_import):
         """Test Microsoft OAuth validation succeeds when msal is installed"""
         mock_import.return_value = MagicMock()
@@ -529,7 +527,7 @@ class TestValidateEmailProviderDependencies(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertIsNone(error_message)
 
-    @patch('builtins.__import__', side_effect=ImportError("No module named 'msal'"))
+    @patch('keepercommander.email_service.importlib.import_module', side_effect=ImportError("No module named 'msal'"))
     def test_microsoft_oauth_validation_failure(self, mock_import):
         """Test Microsoft OAuth validation fails when msal is missing"""
         is_valid, error_message = validate_email_provider_dependencies('microsoft-oauth')

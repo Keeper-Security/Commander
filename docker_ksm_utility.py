@@ -6,6 +6,7 @@ This module provides secure file operations for KSM (Keeper Secrets Manager)
 records, including config processing, file upload/download, and monitoring.
 """
 
+import importlib
 import sys
 import os
 import argparse
@@ -70,7 +71,7 @@ def check_ksm_dependency():
         bool: True if installed, False otherwise
     """
     try:
-        import keeper_secrets_manager_core  # noqa: F401
+        importlib.import_module('keeper_secrets_manager_core')
         return True
     except ImportError:
         print("ERROR: keeper_secrets_manager_core is not installed")
@@ -180,7 +181,7 @@ def _decode_and_save_config(base64_input, config_path):
         os.chmod(config_path, 0o600)
         return True
         
-    except Exception as e:
+    except Exception:
         print("ERROR: Failed to decode and save config")
         return False
 
@@ -598,7 +599,7 @@ def monitor_config(ksm_config_path, ksm_token, record_identifier, config_file_pa
             return
         ksm_config_path = validated_ksm_config_path
     
-    print(f"Monitoring config file for changes")
+    print("Monitoring config file for changes")
     
     last_hash = _get_secure_file_hash(config_file_path)
     monitor_interval = 30  # Check every 30 seconds

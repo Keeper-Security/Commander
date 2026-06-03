@@ -4,7 +4,7 @@ from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, Sched
 from .utils import value_to_boolean, get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGException
-from ..keeper_dag.types import PamGraphId
+from ..keeper_dag.types import PamEndpoints, PamGraphId
 from time import time
 import base64
 import os
@@ -82,7 +82,17 @@ class Rules:
     }
 
     def __init__(self, record: Any, logger: Optional[Any] = None,  debug_level: int = 0, fail_on_corrupt: bool = True,
-                 agent: Optional[str] = None, **kwargs):
+                 agent: Optional[str] = None,
+                 use_per_graph_endpoints: bool = False,
+                 **kwargs):
+        """
+        :param use_per_graph_endpoints: If True, use the per-graph URL transport
+            (`/api/user/graph-sync/discovery_rules/...`) via `read_endpoint` /
+            `write_endpoint`. If False (default), use the legacy single-endpoint
+            transport via `graph_id=PamGraphId.DISCOVERY_RULES`. The legacy
+            default is preserved for backward compatibility; it will be removed
+            in a future major version once all consumers have migrated.
+        """
 
         self.conn = get_connection(**kwargs)
 
@@ -92,6 +102,7 @@ class Rules:
         self.logger = logger
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
+        self.use_per_graph_endpoints = use_per_graph_endpoints
 
         self.agent = make_agent("rules")
         if agent is not None:
@@ -103,15 +114,25 @@ class Rules:
 
             # Turn auto_save on after the DAG has been created.
             # No need to call it six times in a row to initialize it.
-            self._dag = DAG(conn=self.conn,
-                            record=self.record,
-                            # endpoint=PamEndpoints.DISCOVERY_RULES,
-                            graph_id=PamGraphId.DISCOVERY_RULES,
-                            auto_save=False,
-                            logger=self.logger,
-                            debug_level=self.debug_level,
-                            fail_on_corrupt=self.fail_on_corrupt,
-                            agent=self.agent)
+            if self.use_per_graph_endpoints:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                read_endpoint=PamEndpoints.DISCOVERY_RULES,
+                                write_endpoint=PamEndpoints.DISCOVERY_RULES,
+                                auto_save=False,
+                                logger=self.logger,
+                                debug_level=self.debug_level,
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                agent=self.agent)
+            else:
+                self._dag = DAG(conn=self.conn,
+                                record=self.record,
+                                graph_id=PamGraphId.DISCOVERY_RULES,
+                                auto_save=False,
+                                logger=self.logger,
+                                debug_level=self.debug_level,
+                                fail_on_corrupt=self.fail_on_corrupt,
+                                agent=self.agent)
             self._dag.load()
 
             # Has the status been initialized?

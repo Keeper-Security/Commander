@@ -43,8 +43,10 @@ def get_connection(**kwargs):
         from ..keeper_dag.connection.local import Connection
         conn = Connection(logger=logger)
     else:
-        use_read_protobuf = kwargs.get("use_read_protobuf")
-        use_write_protobuf = kwargs.get("use_write_protobuf")
+        # New per-graph endpoints are protobuf-only; default both flags to True so reads on
+        # /api/user/graph-sync/<graph>/<verb> don't fall back to JSON (which the new routes refuse).
+        use_read_protobuf = kwargs.get("use_read_protobuf", True)
+        use_write_protobuf = kwargs.get("use_write_protobuf", True)
 
         if ksm is not None:
             from ..keeper_dag.connection.ksm import Connection

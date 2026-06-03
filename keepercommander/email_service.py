@@ -19,6 +19,7 @@ email infrastructure.
 """
 
 from __future__ import annotations
+import importlib
 import logging
 import os
 import smtplib
@@ -88,7 +89,7 @@ def check_provider_dependencies(provider: str) -> tuple:
     # Check for required packages on pip/source installations
     if provider == 'ses':
         try:
-            import boto3
+            importlib.import_module('boto3')
             return (True, '')
         except ImportError:
             return (
@@ -102,7 +103,7 @@ def check_provider_dependencies(provider: str) -> tuple:
 
     elif provider == 'sendgrid':
         try:
-            import sendgrid
+            importlib.import_module('sendgrid')
             return (True, '')
         except ImportError:
             return (
@@ -116,8 +117,8 @@ def check_provider_dependencies(provider: str) -> tuple:
 
     elif provider == 'gmail-oauth':
         try:
-            import google.auth
-            import googleapiclient
+            importlib.import_module('google.auth')
+            importlib.import_module('googleapiclient')
             return (True, '')
         except ImportError:
             return (
@@ -131,7 +132,7 @@ def check_provider_dependencies(provider: str) -> tuple:
 
     elif provider == 'microsoft-oauth':
         try:
-            import msal
+            importlib.import_module('msal')
             return (True, '')
         except ImportError:
             return (
@@ -509,7 +510,7 @@ class SendGridEmailProvider(EmailProvider):
         try:
             # SendGrid doesn't have a dedicated test endpoint
             # We can verify the API key format and try to initialize the client
-            sg = self.SendGridAPIClient(self.config.sendgrid_api_key)
+            self.SendGridAPIClient(self.config.sendgrid_api_key)
 
             # If we get here without exception, API key format is valid
             # Note: This doesn't guarantee the key is active, but it's the best we can do
@@ -667,7 +668,7 @@ class GmailOAuthProvider(EmailProvider):
 
     def _load_credentials(self):
         """Load OAuth credentials from config."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         if not self.config.oauth_access_token:
             raise ValueError("Gmail OAuth access token is required")
@@ -1152,7 +1153,7 @@ def validate_email_provider_dependencies(provider: str) -> tuple[bool, Optional[
     # SendGrid
     if provider == 'sendgrid':
         try:
-            import sendgrid  # noqa: F401
+            importlib.import_module('sendgrid')
             return True, None
         except ImportError:
             return False, (
@@ -1164,7 +1165,7 @@ def validate_email_provider_dependencies(provider: str) -> tuple[bool, Optional[
     # AWS SES
     if provider == 'ses':
         try:
-            import boto3  # noqa: F401
+            importlib.import_module('boto3')
             return True, None
         except ImportError:
             return False, (
@@ -1176,10 +1177,10 @@ def validate_email_provider_dependencies(provider: str) -> tuple[bool, Optional[
     # Gmail OAuth
     if provider == 'gmail-oauth':
         try:
-            import google.auth  # noqa: F401
-            import google.auth.transport.requests  # noqa: F401
-            import google.oauth2.credentials  # noqa: F401
-            import googleapiclient.discovery  # noqa: F401
+            importlib.import_module('google.auth')
+            importlib.import_module('google.auth.transport.requests')
+            importlib.import_module('google.oauth2.credentials')
+            importlib.import_module('googleapiclient.discovery')
             return True, None
         except ImportError:
             return False, (
@@ -1191,7 +1192,7 @@ def validate_email_provider_dependencies(provider: str) -> tuple[bool, Optional[
     # Microsoft OAuth
     if provider == 'microsoft-oauth':
         try:
-            import msal  # noqa: F401
+            importlib.import_module('msal')
             return True, None
         except ImportError:
             return False, (
