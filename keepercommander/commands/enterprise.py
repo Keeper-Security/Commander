@@ -3846,7 +3846,7 @@ class UserReportCommand(EnterpriseCommand):
 
             path = self.get_node_path(params, user['node_id'])
             teams = self.user_teams.get(user['enterprise_user_id']) or []
-            roles = self.user_roles.get(user['enterprise_user_id']) or []
+            roles = [x['role_name'] for x in self.user_roles.get(user['enterprise_user_id'],[])]
             teams.sort(key=str.lower)
             roles.sort(key=str.lower)
             ll = user.get('last_login')
