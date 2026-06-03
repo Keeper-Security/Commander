@@ -746,8 +746,54 @@ def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
         return None
 
 
+def get_config_uid_from_local_vault(params, record_uid):
+    """
+    Resolve resource_uid -> config_uid by scanning the user's local PAM
+    Configuration records (record_version=6) for one whose `pamResources.resourceRef`
+    list contains `record_uid`. Returns the config record_uid (str) on match, or
+    None if no local config owns this resource.
+
+    Web Vault parity: zero network, no gateway required. Used as the primary
+    lookup in `get_config_uid`; the legacy `get_dag_leafs` path remains as a
+    fallback (e.g. vault not yet synced).
+    """
+    if not record_uid:
+        return None
+    try:
+        from .... import vault, vault_extensions
+    except Exception as e:
+        logging.debug('local-vault config scan: imports failed: %s', e)
+        return None
+    try:
+        for kr in vault_extensions.find_records(params, record_version=6):
+            if not isinstance(kr, vault.TypedRecord):
+                continue
+            try:
+                field = kr.get_typed_field('pamResources')
+                if not field:
+                    continue
+                value = field.get_default_value(dict)
+                if not value:
+                    continue
+                refs = value.get('resourceRef') or []
+                if record_uid in refs:
+                    return kr.record_uid
+            except Exception as e:
+                logging.debug('local-vault config scan: skipping record %s: %s',
+                              getattr(kr, 'record_uid', '?'), e)
+                continue
+    except Exception as e:
+        logging.debug('local-vault config scan failed: %s', e)
+    return None
+
+
 def get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid):
-    # try to get config from dag
+    # Tier 1: local vault scan (fastest, no network) — Web Vault parity.
+    local_config_uid = get_config_uid_from_local_vault(params, record_uid)
+    if local_config_uid:
+        return local_config_uid
+
+    # Tier 2: legacy gateway-mediated lookup via the old `/api/user/get_leafs`.
     try:
         rs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
         # response: "[{\"type\":\"rec\",\"value\":\"Jagbt2dxrft_91FovB5dwg\",\"name\":null}]"

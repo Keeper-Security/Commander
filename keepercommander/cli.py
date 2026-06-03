@@ -796,6 +796,19 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
     # Mark that we're in the shell loop (used by supershell to know if it should start a shell on exit)
     params._in_shell_loop = True
 
+    # NB! USE_LOCAL_DAG=TRUE should be used only for testing. Warn here — after the
+    # login/decrypt output, right before the first prompt — so the notice isn't buried:
+    # the local test DAG engine routes PAM/DAG/discovery commands to a local SQLite
+    # graph instead of the gateway/router, so they may fail or behave incorrectly
+    # until it is disabled or removed.
+    if not params.batch_mode and not skip_init:
+        from .utils import value_to_boolean
+        if value_to_boolean(os.environ.get('USE_LOCAL_DAG', False)):
+            logging.warning(
+                f"{Fore.YELLOW}USE_LOCAL_DAG=TRUE environment variable is enabled (local test DAG engine); "
+                f"some PAM/DAG commands may fail. Unset it or set it to false to use the live gateway.{Fore.RESET}"
+            )
+
     while True:
         if params.session_token:
             ttk.TTK.update(params)
