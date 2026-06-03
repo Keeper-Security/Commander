@@ -105,7 +105,7 @@ export_parser.exit = suppress_exit
 
 
 download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to a JSON file')
-download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass', 'thycotic'], required=True, help='Shared folder membership source')
+download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass', 'thycotic', 'cyberark'], required=True, help='Shared folder membership source')
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
 download_membership_parser.add_argument('-r', '--restrictions', dest='restrictions', action='store', help='force shared folder restrictions: manage (U)sers, manage (R)ecords')
@@ -463,6 +463,9 @@ class ApplyMembershipCommand(Command):
 
     def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        if not os.path.exists(file_name):
+            logging.warning('Shared folder membership file "%s" not found', file_name)
+            return
 
         shared_folders = []  # type: List[SharedFolder]
         teams = []     # type: List[Team]
