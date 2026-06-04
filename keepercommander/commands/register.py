@@ -1088,6 +1088,128 @@ class ShareReportCommand(Command):
         return share_report_parser
 
     @staticmethod
+    def _resolve_nested_folder_name(params, folder_uid):
+        folder = getattr(params, 'nested_share_folders', {}).get(folder_uid) or {}
+        return folder.get('name') or folder_uid
+
+    @staticmethod
+    def _resolve_team_name(params, team_uid):
+        if params.enterprise:
+            teams = params.enterprise.get('teams') or []
+            team_name = next((t.get('name') for t in teams if t.get('team_uid') == team_uid), None)
+            if team_name:
+                return team_name
+        return team_uid
+
+    @staticmethod
+    def _get_team_users(params, team_uid):
+        if not params.enterprise:
+            return []
+        users = {u.get('enterprise_user_id'): u.get('username')
+                 for u in (params.enterprise.get('users') or [])}
+        team_users = []
+        for team_user in params.enterprise.get('team_users') or []:
+            if team_user.get('team_uid') != team_uid:
+                continue
+            username = users.get(team_user.get('enterprise_user_id'))
+            if username:
+                team_users.append(username)
+        return team_users
+
+    @staticmethod
+    def _is_nested_folder_owner(folder_info, accessor):
+        owner_username = folder_info.get('owner_username')
+        owner_account_uid = folder_info.get('owner_account_uid')
+        username = accessor.get('username')
+        if owner_username and username and owner_username.lower() == username.lower():
+            return True
+        accessor_uid = accessor.get('accessor_uid')
+        return bool(owner_account_uid and accessor_uid and owner_account_uid == accessor_uid)
+
+    @staticmethod
+    def _get_nested_folder_permission_label(accessor):
+        def format_permission_label(role):
+            labels = {
+                'viewer': 'Viewer',
+                'share-manager': 'Share Manager',
+                'content-manager': 'Content Manager',
+                'content-share-manager': 'Content and Share Manager',
+                'full-manager': 'Full Manager',
+                'contributor': 'Contributor',
+                'requestor': 'Requestor',
+                'navigator': 'Navigator',
+                'unresolved': 'Unresolved',
+            }
+            return labels.get(role, role.replace('-', ' ').title() if role else '')
+
+        if not isinstance(accessor, dict):
+            return ''
+        role_name = accessor.get('role')
+        if role_name:
+            from .nested_share_folder.helpers import format_role_display
+            return format_permission_label(format_role_display(role_name))
+        perms = accessor.get('permissions') or {}
+        if not perms:
+            return ''
+        from .nested_share_folder.helpers import get_access_role_label
+        return format_permission_label(get_access_role_label({
+            'can_change_ownership': perms.get('can_change_ownership', False),
+            'can_delete':           perms.get('can_delete', False),
+            'can_update_access':    perms.get('can_update_access', False),
+            'can_approve_access':   perms.get('can_approve_access', False),
+            'can_edit':             perms.get('can_edit_records', False),
+            'can_view':             perms.get('can_view_records', False),
+            'can_list_access':      perms.get('can_list_access', False),
+        }))
+
+    @staticmethod
+    def _get_nested_folder_report_rows(params, show_team_users=False):
+        rows = []
+        nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+        if not nsf_folders:
+            return rows
+
+        from .. import nested_share_folder as _nsf
+
+        sharing_states = getattr(params, 'nested_share_folder_sharing_states', {}) or {}
+        for folder_uid, folder_info in nsf_folders.items():
+            sharing_state = sharing_states.get(folder_uid)
+            if sharing_state and not sharing_state.get('shared') and sharing_state.get('count', 0) <= 0:
+                continue
+            try:
+                result = _nsf.get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
+            except Exception as e:
+                logging.debug('Could not retrieve Nested Share Folder access for %s: %s', folder_uid, e)
+                continue
+
+            folder_name = folder_info.get('name') or folder_uid
+            folder_path = get_folder_path(params, folder_uid)
+            for folder_result in result.get('results', []):
+                if not folder_result.get('success'):
+                    continue
+                for accessor in folder_result.get('accessors', []):
+                    if ShareReportCommand._is_nested_folder_owner(folder_info, accessor):
+                        continue
+                    permissions = ShareReportCommand._get_nested_folder_permission_label(accessor)
+                    access_type = accessor.get('access_type')
+                    if access_type == 'AT_TEAM':
+                        team_uid = accessor.get('accessor_uid')
+                        team_name = ShareReportCommand._resolve_team_name(params, team_uid)
+                        rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                     f'(Team) {team_name}', permissions, folder_path])
+                        if show_team_users:
+                            for username in ShareReportCommand._get_team_users(params, team_uid):
+                                rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                             f'(Team User) {username}', permissions, folder_path])
+                    else:
+                        username = accessor.get('username') or accessor.get('accessor_uid')
+                        if username:
+                            rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                         username, permissions, folder_path])
+
+        return rows
+
+    @staticmethod
     def sf_report(params, out=None, fmt=None, show_team_users=False):
         def get_share_info(share_target, name_key):  # type: (Dict[str, Any], str) -> Dict[str, str]
             manage_users = share_target.get('manage_users')
@@ -1134,13 +1256,13 @@ class ShareReportCommand(Command):
             return team_user_shares
 
         title = 'Shared folders'
-        headers = ['Folder UID', 'Folder Name', 'Shared To', 'Permissions', 'Folder Path']
+        headers = ['Folder UID', 'Folder Name', 'Type', 'Shared To', 'Permissions', 'Folder Path']
         shared_folders = {**params.shared_folder_cache}
         table = []
         for uid, props in shared_folders.items():
             path = get_folder_path(params, uid)
             name = props['name_unencrypted']
-            row = [uid, name]
+            row = [uid, name, 'Shared Folder']
             users = props.get('users') or []
             teams = props.get('teams') or []
             user_shares = [get_share_info(u, 'username') for u in users]
@@ -1150,6 +1272,7 @@ class ShareReportCommand(Command):
                 shared_to.extend(get_team_shares(ts))
             rows = [(*row, target.get('name'), target.get('permissions'), path) for target in shared_to]
             table += rows
+        table += ShareReportCommand._get_nested_folder_report_rows(params, show_team_users=show_team_users)
         return dump_report_data(table, headers, title=title, fmt=fmt, filename=out)
 
     def execute(self, params, **kwargs):
@@ -1255,7 +1378,8 @@ class ShareReportCommand(Command):
                     for user in sf_shares:
                         for shared_folder_uid in sf_shares[user]:
                             sf = api.get_shared_folder(params, shared_folder_uid)
-                            row = [user, shared_folder_uid, sf.name if sf else '']
+                            folder_name = sf.name if sf else self._resolve_nested_folder_name(params, shared_folder_uid)
+                            row = [user, shared_folder_uid, folder_name]
                             table.append(row)
 
                     if output_format == 'table':
