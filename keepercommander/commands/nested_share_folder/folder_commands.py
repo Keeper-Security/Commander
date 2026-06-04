@@ -443,7 +443,7 @@ class NestedShareFolderShareCommand(Command):
             else:
                 logging.warning("%s share '%s' failed", kind, recipient)
         except ValueError as e:
-            logging.warning("%s '%s': %s", kind, recipient, e)
+            logging.warning("nsf-share-folder: %s", e)
         except Exception as e:
             raise CommandError('nsf-share-folder', str(e))
 
