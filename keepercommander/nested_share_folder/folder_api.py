@@ -21,6 +21,7 @@ from .common import (
     resolve_uid_email, encrypt_for_recipient, load_user_public_key,
     parse_folder_access_result,
     resolve_team_identifier, get_team_keys, encrypt_for_team,
+    handle_share_invite,
 )
 from .permissions import (
     FolderUsageType, SetBooleanValue, resolve_role_name, ROLE_NAME_MAP,
@@ -339,9 +340,15 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
         user_email = user_uid if is_email else None
         if is_email:
             try:
-                user_public_key, use_ecc, actual_uid_bytes, _inv = get_user_public_key(params, user_email)
+                user_public_key, use_ecc, actual_uid_bytes, needs_invite = \
+                    get_user_public_key(params, user_email)
             except Exception as e:
                 raise ValueError(f"User '{user_email}' not found or has no public key. {e}")
+            if not user_public_key:
+                handle_share_invite(params, user_email, needs_invite)
+                raise ValueError(f"User '{user_email}' has no public key")
+            if not actual_uid_bytes:
+                raise ValueError(f"User '{user_email}' not found")
         else:
             actual_uid_bytes, user_email = resolve_uid_email(params, user_uid)
             if not actual_uid_bytes:

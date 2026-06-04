@@ -582,6 +582,52 @@ class TestNestedShareFolderSharingCommands(TestCase):
                         record=ruid, email='user@example.com',
                         action='revoke')
 
+    @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_v3')
+    def test_share_folder_invite_message_uses_command_prefix(self, mock_grant):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderShareCommand
+
+        fuid, fobj = _make_folder()
+        email = 'user@example.com'
+        mock_grant.side_effect = ValueError(
+            f"Share invitation has been sent to '{email}'. "
+            "Please repeat this command once the invitation is accepted.")
+
+        cmd = NestedShareFolderShareCommand()
+        with self.assertLogs(level='WARNING') as logs:
+            cmd.execute(_make_params(nested_share_folders={fuid: fobj}),
+                        folder=[fuid], user=[email], action='grant', role='viewer')
+
+        output = '\n'.join(logs.output)
+        self.assertIn('nsf-share-folder: Share invitation has been sent', output)
+        self.assertNotIn("User '", output)
+
+
+class TestNestedShareFolderFolderApi(TestCase):
+
+    @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
+    @patch('keepercommander.nested_share_folder.folder_api.handle_share_invite')
+    @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
+    def test_grant_folder_access_sends_invite_when_no_active_share(
+            self, mock_get_public_key, mock_handle_invite, mock_access_update):
+        from keepercommander.nested_share_folder.folder_api import grant_folder_access_v3
+
+        fuid, fobj = _make_folder()
+        params = _make_params(nested_share_folders={fuid: fobj})
+        email = 'user@example.com'
+
+        mock_get_public_key.return_value = (None, False, None, True)
+        mock_handle_invite.side_effect = ValueError(
+            f"Share invitation has been sent to '{email}'. "
+            "Please repeat this command once the invitation is accepted.")
+
+        with self.assertRaises(ValueError) as ctx:
+            grant_folder_access_v3(params, fuid, email, role='viewer')
+
+        self.assertIn('Share invitation has been sent', str(ctx.exception))
+        mock_get_public_key.assert_called_once_with(params, email)
+        mock_handle_invite.assert_called_once_with(params, email, True)
+        mock_access_update.assert_not_called()
+
 
 class TestNestedShareFolderDisplayCommands(TestCase):
 
