@@ -382,3 +382,23 @@ class GatewayActionRmDeleteUser(GatewayAction):
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionUniversalSyncRunInputs:
+
+    def __init__(self, network_uid, dry_run=False):
+        self.configurationUid = network_uid
+        self.dryRun = dry_run
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionUniversalSyncRun(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionUniversalSyncRunInputs, conversation_id=None, gateway_destination=None):
+        super().__init__('universal-secrets-sync', inputs=inputs, conversation_id=conversation_id,
+                         gateway_destination=gateway_destination, is_scheduled=True)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
