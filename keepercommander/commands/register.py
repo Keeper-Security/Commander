@@ -1128,17 +1128,31 @@ class ShareReportCommand(Command):
 
     @staticmethod
     def _get_nested_folder_permission_label(accessor):
+        def format_permission_label(role):
+            labels = {
+                'viewer': 'Viewer',
+                'share-manager': 'Share Manager',
+                'content-manager': 'Content Manager',
+                'content-share-manager': 'Content and Share Manager',
+                'full-manager': 'Full Manager',
+                'contributor': 'Contributor',
+                'requestor': 'Requestor',
+                'navigator': 'Navigator',
+                'unresolved': 'Unresolved',
+            }
+            return labels.get(role, role.replace('-', ' ').title() if role else '')
+
         if not isinstance(accessor, dict):
             return ''
         role_name = accessor.get('role')
         if role_name:
             from .nested_share_folder.helpers import format_role_display
-            return format_role_display(role_name)
+            return format_permission_label(format_role_display(role_name))
         perms = accessor.get('permissions') or {}
         if not perms:
             return ''
         from .nested_share_folder.helpers import get_access_role_label
-        return get_access_role_label({
+        return format_permission_label(get_access_role_label({
             'can_change_ownership': perms.get('can_change_ownership', False),
             'can_delete':           perms.get('can_delete', False),
             'can_update_access':    perms.get('can_update_access', False),
@@ -1146,7 +1160,7 @@ class ShareReportCommand(Command):
             'can_edit':             perms.get('can_edit_records', False),
             'can_view':             perms.get('can_view_records', False),
             'can_list_access':      perms.get('can_list_access', False),
-        })
+        }))
 
     @staticmethod
     def _get_nested_folder_report_rows(params, show_team_users=False):
@@ -1181,14 +1195,17 @@ class ShareReportCommand(Command):
                     if access_type == 'AT_TEAM':
                         team_uid = accessor.get('accessor_uid')
                         team_name = ShareReportCommand._resolve_team_name(params, team_uid)
-                        rows.append([folder_uid, folder_name, f'(Team) {team_name}', permissions, folder_path])
+                        rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                     f'(Team) {team_name}', permissions, folder_path])
                         if show_team_users:
                             for username in ShareReportCommand._get_team_users(params, team_uid):
-                                rows.append([folder_uid, folder_name, f'(Team User) {username}', permissions, folder_path])
+                                rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                             f'(Team User) {username}', permissions, folder_path])
                     else:
                         username = accessor.get('username') or accessor.get('accessor_uid')
                         if username:
-                            rows.append([folder_uid, folder_name, username, permissions, folder_path])
+                            rows.append([folder_uid, folder_name, 'Nested Share Folder',
+                                         username, permissions, folder_path])
 
         return rows
 
@@ -1239,13 +1256,13 @@ class ShareReportCommand(Command):
             return team_user_shares
 
         title = 'Shared folders'
-        headers = ['Folder UID', 'Folder Name', 'Shared To', 'Permissions', 'Folder Path']
+        headers = ['Folder UID', 'Folder Name', 'Type', 'Shared To', 'Permissions', 'Folder Path']
         shared_folders = {**params.shared_folder_cache}
         table = []
         for uid, props in shared_folders.items():
             path = get_folder_path(params, uid)
             name = props['name_unencrypted']
-            row = [uid, name]
+            row = [uid, name, 'Shared Folder']
             users = props.get('users') or []
             teams = props.get('teams') or []
             user_shares = [get_share_info(u, 'username') for u in users]

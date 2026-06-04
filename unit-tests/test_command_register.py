@@ -460,9 +460,10 @@ class TestRegister(TestCase):
         row = next((x for x in data if x['Folder UID'] == folder_uid), None)
         self.assertIsNotNone(row)
         self.assertEqual(row['Folder Name'], 'Drive')
+        self.assertEqual(row['Type'], 'Nested Share Folder')
         self.assertEqual(row['Shared To'], 'user2@keepersecurity.com')
         self.assertEqual(row['Folder Path'], 'Drive')
-        self.assertEqual(row['Permissions'], 'content-share-manager')
+        self.assertEqual(row['Permissions'], 'Content and Share Manager')
 
     @staticmethod
     def record_share_rq_rs(rq):
