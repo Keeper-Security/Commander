@@ -1,4 +1,5 @@
 import datetime
+import json
 from contextlib import contextmanager
 from unittest import TestCase, mock
 
@@ -7,6 +8,7 @@ from keepercommander.commands import register
 from keepercommander.error import CommandError
 from keepercommander.proto import APIRequest_pb2, record_pb2
 from keepercommander import utils
+from keepercommander.subfolder import NestedShareFolderNode
 
 vault_env = VaultEnvironment()
 
@@ -347,6 +349,121 @@ class TestRegister(TestCase):
             cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
                         folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
         self.assertIn('pamUser', str(ctx.exception))
+
+    @staticmethod
+    def _attach_nested_share_folder(params, record_uid, folder_name='Drive'):
+        folder_uid = utils.generate_uid()
+        folder_node = NestedShareFolderNode()
+        folder_node.uid = folder_uid
+        folder_node.name = folder_name
+        folder_node.parent_uid = None
+        params.folder_cache[folder_uid] = folder_node
+        params.root_folder.subfolders.append(folder_uid)
+
+        params.nested_share_folders[folder_uid] = {
+            'folder_uid': folder_uid,
+            'name': folder_name,
+            'owner_username': params.user,
+        }
+        params.nested_share_folder_records[folder_uid] = {record_uid}
+        params.nested_share_records[record_uid] = {
+            'record_uid': record_uid,
+            'shared': True,
+        }
+        params.subfolder_cache[folder_uid] = {
+            'folder_uid': folder_uid,
+            'type': 'user_folder',
+            'name': folder_name,
+            'source': 'nested_share_folder',
+        }
+        for record_uids in params.subfolder_record_cache.values():
+            record_uids.discard(record_uid)
+        params.subfolder_record_cache[folder_uid] = {record_uid}
+        params.record_cache[record_uid]['shared'] = True
+        params.record_cache[record_uid].pop('shares', None)
+        return folder_uid
+
+    def test_share_report_owner_supports_nested_share_records(self):
+        params = get_synced_params()
+        record_uid = next(uid for uid, rec in params.record_cache.items() if not rec.get('shared'))
+        folder_uid = self._attach_nested_share_folder(params, record_uid)
+
+        access_result = {
+            'record_accesses': [
+                {
+                    'record_uid': record_uid,
+                    'accessor_name': params.user,
+                    'access_type': 'AT_USER',
+                    'access_type_uid': utils.generate_uid(),
+                    'owner': True,
+                    'inherited': False,
+                    'can_view': True,
+                    'can_edit': True,
+                    'can_update_access': True,
+                    'can_approve_access': True,
+                },
+                {
+                    'record_uid': record_uid,
+                    'accessor_name': 'user2@keepersecurity.com',
+                    'access_type': 'AT_USER',
+                    'access_type_uid': utils.generate_uid(),
+                    'owner': False,
+                    'inherited': True,
+                    'can_view': True,
+                    'can_edit': True,
+                    'can_update_access': True,
+                    'can_approve_access': True,
+                }
+            ]
+        }
+
+        with mock.patch('keepercommander.api.get_record_shares', return_value=None), \
+                mock.patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3',
+                           return_value=access_result):
+            cmd = register.ShareReportCommand()
+            report = cmd.execute(params, format='json', owner=True, verbose=True, container=[folder_uid])
+
+        data = json.loads(report)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['record_uid'], record_uid)
+        self.assertEqual(data[0]['record_owner'], params.user)
+        self.assertEqual(data[0]['folder_path'], 'Drive')
+        self.assertIn('user2@keepersecurity.com', data[0]['shared_with'])
+
+    def test_share_report_folders_supports_nested_share_folders(self):
+        params = get_synced_params()
+        record_uid = next(uid for uid in params.record_cache)
+        folder_uid = self._attach_nested_share_folder(params, record_uid)
+        params.nested_share_folder_sharing_states[folder_uid] = {
+            'shared': True,
+            'count': 1,
+        }
+        access_result = {
+            'results': [{
+                'folder_uid': folder_uid,
+                'success': True,
+                'accessors': [{
+                    'username': 'user2@keepersecurity.com',
+                    'accessor_uid': utils.generate_uid(),
+                    'access_type': 'AT_USER',
+                    'role': 'CONTENT_SHARE_MANAGER',
+                }]
+            }]
+        }
+
+        with mock.patch('keepercommander.nested_share_folder.folder_api.get_folder_access_v3',
+                        return_value=access_result):
+            cmd = register.ShareReportCommand()
+            report = cmd.execute(params, format='json', folders=True)
+
+        data = json.loads(report)
+        row = next((x for x in data if x['Folder UID'] == folder_uid), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row['Folder Name'], 'Drive')
+        self.assertEqual(row['Type'], 'Nested Share Folder')
+        self.assertEqual(row['Shared To'], 'user2@keepersecurity.com')
+        self.assertEqual(row['Folder Path'], 'Drive')
+        self.assertEqual(row['Permissions'], 'Content and Share Manager')
 
     @staticmethod
     def record_share_rq_rs(rq):
