@@ -31,8 +31,6 @@ class ConnectionBase:
 
     ADD_DATA = "/add_data"
     SYNC = "/sync"
-    MULTI_SYNC = "/multi_sync"
-    GET_LEAFS = "/get_leafs"
 
     TIMEOUT = 30
 
@@ -101,11 +99,8 @@ class ConnectionBase:
 
     @staticmethod
     def get_router_host(server_hostname: str):
-        # Defensive: accept URL-formatted inputs (e.g. "https://keepersecurity.com")
-        # and extract the bare hostname before the GovCloud subdomain check.
-        if server_hostname and '://' in server_hostname:
+        if server_hostname and '://' in server_hostname:  # accept URL-formatted inputs
             server_hostname = server_hostname.split('://', 1)[1].split('/', 1)[0]
-
         # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
         # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
         if server_hostname == 'govcloud.keepersecurity.us':
@@ -336,135 +331,3 @@ class ConnectionBase:
                 error=str(err)
             )
             raise DAGException(f"Could not create a new DAG structure: {err}")
-
-    def multi_sync(self,
-                   multi_query: Union[BaseModel, gs_pb2.GraphSyncMultiQuery],
-                   graph_id: Optional[int] = None,
-                   endpoint: Optional[str] = None,
-                   agent: Optional[str] = None) -> bytes:
-        """POST a GraphSyncMultiQuery to <endpoint>/multi_sync.
-
-        Used by per-graph reads: after `get_leafs` discovers the stream refs
-        rooted at the graph's origin, `multi_sync` fetches sync data for all
-        those streams in one round-trip. Mirrors `sync()` in transport shape
-        (encrypt/headers, decrypt-on-read, transaction log, error handling).
-        """
-        if agent is None:
-            agent = f"keeper-dag/{__version__}"
-
-        endpoint = self._endpoint(ConnectionBase.MULTI_SYNC, endpoint)
-        self.logger.debug(f"endpoint {endpoint}")
-
-        try:
-            multi_query, headers = self.payload_and_headers(multi_query)
-            payload = self.rest_call_to_router(http_method="POST",
-                                               endpoint=endpoint,
-                                               agent=agent,
-                                               headers=headers,
-                                               payload=multi_query)
-
-            if self.use_read_protobuf:
-                try:
-                    self.logger.debug(f"decrypt payload with transmission key {kotlin_bytes(self.transmission_key)}")
-                    payload = self.get_encrypted_payload_data(payload)
-                    payload = decrypt_aes(payload, self.transmission_key)
-                except Exception as err:
-                    self.logger.error(f"Could not decrypt protobuf graph multi-sync response: {type(err)}, {err}")
-
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=multi_query,
-                response=payload,
-                agent=agent,
-                endpoint=endpoint,
-                error=None
-            )
-
-            return payload
-
-        except DAGConnectionException as err:
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=multi_query,
-                response=None,
-                agent=agent,
-                endpoint=endpoint,
-                error=str(err)
-            )
-            raise err
-        except Exception as err:
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=multi_query,
-                response=None,
-                agent=agent,
-                endpoint=endpoint,
-                error=str(err)
-            )
-            raise DAGException(f"Could not load the DAG structure (multi_sync): {err}")
-
-    def get_leafs(self,
-                  leafs_query: Union[BaseModel, gs_pb2.GraphSyncLeafsQuery],
-                  graph_id: Optional[int] = None,
-                  endpoint: Optional[str] = None,
-                  agent: Optional[str] = None) -> bytes:
-        """POST a GraphSyncLeafsQuery to <endpoint>/get_leafs.
-
-        Returns the serialized GraphSyncRefsResult — the list of stream refs
-        rooted at the queried vertices. Used as the discovery step before a
-        `multi_sync` call (per the per-graph read pattern that Web Vault
-        already uses).
-        """
-        if agent is None:
-            agent = f"keeper-dag/{__version__}"
-
-        endpoint = self._endpoint(ConnectionBase.GET_LEAFS, endpoint)
-        self.logger.debug(f"endpoint {endpoint}")
-
-        try:
-            leafs_query, headers = self.payload_and_headers(leafs_query)
-            payload = self.rest_call_to_router(http_method="POST",
-                                               endpoint=endpoint,
-                                               agent=agent,
-                                               headers=headers,
-                                               payload=leafs_query)
-
-            if self.use_read_protobuf:
-                try:
-                    self.logger.debug(f"decrypt payload with transmission key {kotlin_bytes(self.transmission_key)}")
-                    payload = self.get_encrypted_payload_data(payload)
-                    payload = decrypt_aes(payload, self.transmission_key)
-                except Exception as err:
-                    self.logger.error(f"Could not decrypt protobuf get_leafs response: {type(err)}, {err}")
-
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=leafs_query,
-                response=payload,
-                agent=agent,
-                endpoint=endpoint,
-                error=None
-            )
-
-            return payload
-
-        except DAGConnectionException as err:
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=leafs_query,
-                response=None,
-                agent=agent,
-                endpoint=endpoint,
-                error=str(err)
-            )
-            raise err
-        except Exception as err:
-            self.write_transaction_log(
-                graph_id=graph_id,
-                request=leafs_query,
-                response=None,
-                agent=agent,
-                endpoint=endpoint,
-                error=str(err)
-            )
-            raise DAGException(f"Could not get leafs: {err}")

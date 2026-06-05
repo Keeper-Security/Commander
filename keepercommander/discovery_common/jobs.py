@@ -60,7 +60,8 @@ class Jobs:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
-        self.use_per_graph_endpoints = use_per_graph_endpoints
+        # self.use_per_graph_endpoints = use_per_graph_endpoints
+        self.use_per_graph_endpoints = False
 
         self.agent = make_agent("jobs")
         if agent is not None:

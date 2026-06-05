@@ -102,7 +102,8 @@ class Rules:
         self.logger = logger
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
-        self.use_per_graph_endpoints = use_per_graph_endpoints
+        # self.use_per_graph_endpoints = use_per_graph_endpoints
+        self.use_per_graph_endpoints = False
 
         self.agent = make_agent("rules")
         if agent is not None:
