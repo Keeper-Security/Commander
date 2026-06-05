@@ -40,7 +40,7 @@ from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
     report_output_parser
 from .enterprise_common import EnterpriseCommand
-from .helpers.enterprise import is_valid_name_length, humanize_batch_responses
+from .helpers.enterprise import is_valid_name_length, simplify_batch_responses
 from .automator import AutomatorListCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -1508,7 +1508,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     return is_in_chain(nn['parent_id'], parent_id)
 
                 if display_name and len(matched_nodes) > 1:
-                    logging.warning('Cannot assign the same name to % nodes', len(matched_nodes))
+                    logging.warning('Cannot assign the same name to %s nodes', len(matched_nodes))
                     display_name = None
                 if not parent_id and not display_name:
                     return
@@ -1535,7 +1535,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
-            humanize_batch_responses(rss)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 if command == 'node_add':
@@ -2005,7 +2005,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         results = None
         if request_batch:
             results = api.execute_batch(params, request_batch)
-            humanize_batch_responses(results)
+            simplify_batch_responses(results)
             for rq, rs in zip(request_batch, results):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
@@ -2927,7 +2927,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
-            humanize_batch_responses(rss)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 if command == 'role_add':
@@ -3648,7 +3648,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
-            humanize_batch_responses(rss)
+            simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
                 team_name = None
@@ -4041,7 +4041,7 @@ class TeamApproveCommand(EnterpriseCommand):
         if request_batch:
             if not kwargs.get('dry_run'):
                 rs = api.execute_batch(params, request_batch)
-                humanize_batch_responses(rs)
+                simplify_batch_responses(rs)
                 if rs:
                     team_add_success = 0
                     team_add_failure = 0
