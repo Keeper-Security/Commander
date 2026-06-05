@@ -50,7 +50,8 @@ class UserService:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
-        self.use_per_graph_endpoints = use_per_graph_endpoints
+        # self.use_per_graph_endpoints = use_per_graph_endpoints
+        self.use_per_graph_endpoints = False
 
         self.agent = make_agent("user_service")
         if agent is not None:
@@ -429,6 +430,12 @@ class UserService:
                     if domain is not None:
                         user += "@" + domain
                     user_records[user] = record.record_uid
+                alt_user = record.get_alt_user()
+                if alt_user is not None:
+                    alt_user, domain = split_user_and_domain(alt_user.lower())
+                    if domain is not None:
+                        alt_user += "@" + domain
+                    user_records[alt_user] = record.record_uid
 
         return user_records
 
@@ -452,7 +459,8 @@ class UserService:
     def _get_directory_users_from_conf_record(self,
                                               record_linking: RecordLink,
                                               domain_name: str,
-                                              record_lookup_func: Callable) -> Dict[str, str]:
+                                              record_lookup_func: Callable,
+                                              netbios: Optional[str] = None) -> Dict[str, str]:
 
         user_records: Dict[str, str] = {}
 
@@ -465,7 +473,8 @@ class UserService:
             config_domain_name = configuration_record.get_value(label="pamdomainid")
 
             # If the domain name is not set, or it is, and we match the one that machine is joined to.
-            if config_domain_name is None or config_domain_name.lower() == domain_name:
+            if (config_domain_name is None
+                    or (config_domain_name.lower() == domain_name or config_domain_name.lower() == netbios)):
                 config_vertex = record_linking.dag.get_vertex(configuration_record.record_uid)
                 for child_vertex in config_vertex.has_vertices():
                     user_record = record_lookup_func(child_vertex.uid, allow_sm=False)  # type: NormalizedRecord
@@ -480,6 +489,14 @@ class UserService:
                         domain = domain_name
                     user += "@" + domain
                     user_records[user] = user_record.record_uid
+
+                    alt_user = user_record.get_alt_user()
+                    if alt_user is not None:
+                        alt_user, domain = split_user_and_domain(alt_user.lower())
+                        if domain is None:
+                            domain = domain_name
+                        alt_user += "@" + domain
+                        user_records[alt_user] = user_record.record_uid
             else:
                 self.debug(f"      domain name {config_domain_name} does not match {domain_name}")
         else:
@@ -490,7 +507,8 @@ class UserService:
     def _get_directory_users_from_conf_infra(self,
                                              infra: Infrastructure,
                                              domain_name: str,
-                                             record_lookup_func: Callable) -> Dict[str, str]:
+                                             record_lookup_func: Callable,
+                                             netbios: Optional[str] = None) -> Dict[str, str]:
 
         user_records: Dict[str, str] = {}
 
@@ -498,18 +516,21 @@ class UserService:
         config_context = DiscoveryObject.get_discovery_object(config_vertex)
         if config_context.record_type in DOMAIN_USER_CONFIGS:
             for config_domain_name in config_context.item.info.get("domains", []):
-                if config_domain_name != domain_name:
-                    self.debug(f"      domain name {config_domain_name} does not match {domain_name}")
+                if (config_domain_name.lower() == domain_name or
+                        (netbios is not None and config_domain_name.lower() != netbios.lower())):
+                    self.debug(f"      domain name {config_domain_name} MATCHED {domain_name}/{netbios}")
+                    for child_vertex in config_vertex.has_vertices():
+                        child_context = DiscoveryObject.get_discovery_object(child_vertex)
+                        if child_context.record_type == PAM_USER and record_lookup_func(child_context.record_uid,
+                                                                                        allow_sm=False):
+                            user, domain = split_user_and_domain(child_context.item.user.lower())
+                            if domain is None:
+                                domain = domain_name
+                            user += "@" + domain
+                            user_records[user] = child_context.record_uid
+                else:
+                    self.debug(f"      domain name {config_domain_name} does not match {domain_name}/{netbios}")
                     continue
-                for child_vertex in config_vertex.has_vertices():
-                    child_context = DiscoveryObject.get_discovery_object(child_vertex)
-                    if child_context.record_type == PAM_USER and record_lookup_func(child_context.record_uid,
-                                                                                    allow_sm=False):
-                        user, domain = split_user_and_domain(child_context.item.user.lower())
-                        if domain is None:
-                            domain = domain_name
-                        user += "@" + domain
-                        user_records[user] = child_context.record_uid
 
         return user_records
 
@@ -548,6 +569,13 @@ class UserService:
                         else:
                             self.debug(f"  ! record uid {rl_user_vertex.uid} has a blank user")
 
+                        alt_user = user_record.get_alt_user()
+                        if alt_user is not None:
+                            alt_user, domain = split_user_and_domain(alt_user.lower())
+                            if domain is not None:
+                                alt_user += "@" + domain
+                            user_records[alt_user] = user_record.record_uid
+
         return user_records
 
     @staticmethod
@@ -585,7 +613,9 @@ class UserService:
                    infra_machine_content: DiscoveryObject,
                    infra_machine_vertex: DAGVertex,
                    record_linking: RecordLink,
-                   record_lookup_func: Callable) -> Dict[str, str]:
+                   record_lookup_func: Callable,
+                   netbios: Optional[str] = None,
+                   domain_name: Optional[str] = None) -> Dict[str, str]:
 
         """
         Get local and directory users for machine.
@@ -597,14 +627,13 @@ class UserService:
 
         self.debug(f"  getting users for {infra_machine_content.name}, {infra_machine_content.record_uid}")
 
-        # Get the domain name that the machine it joined to.
-        # Only accept the first one; we are Windows, only allow one domain.
-        domain_name = None
-        for directory in infra_machine_content.item.facts.directories:
-            if directory.domain is not None:
-                domain_name = directory.domain.lower()
-                self.debug(f"  machine is joined to {domain_name}")
-                break
+        if netbios is not None:
+            netbios = netbios.lower()
+            self.debug(f"  machine is joined to {netbios} netbios")
+
+        if domain_name is not None:
+            domain_name = domain_name.lower()
+            self.debug(f"  machine is joined to {domain_name} domain name")
 
         # Keep separate dictionaries since we are going to cache the directory users by domain name.
         # { "user": "record uid", ... }
@@ -642,9 +671,10 @@ class UserService:
                 self.debug("    getting directory users from the configuration record", level=1)
                 user_records = self._get_directory_users_from_conf_record(record_linking=record_linking,
                                                                           domain_name=domain_name,
+                                                                          netbios=netbios,
                                                                           record_lookup_func=record_lookup_func)
 
-                self.debug(f"        * found {len(user_records)} directory users records from "
+                self.debug(f"      * found {len(user_records)} directory users records from "
                            "the configuration record", level=1)
                 directory_user_records = {**directory_user_records, **user_records}
 
@@ -652,7 +682,7 @@ class UserService:
                 user_records = self._get_directory_users_from_records(record_linking=record_linking,
                                                                       domain_name=domain_name,
                                                                       record_lookup_func=record_lookup_func)
-                self.debug(f"        * found {len(user_records)} directory users from records for {domain_name}",
+                self.debug(f"      * found {len(user_records)} directory users from records for {domain_name}",
                            level=1)
 
                 directory_user_records = {**directory_user_records, **user_records}
@@ -705,13 +735,26 @@ class UserService:
                                    infra_machine_vertex: DAGVertex,
                                    record_linking: RecordLink,
                                    record_lookup_func: Callable,
-                                   strict: bool = False):
+                                   strict: bool = False,
+                                   domain_name: Optional[str] = None,
+                                   netbios: Optional[str] = None):
 
-        domain_name = None
-        for directory in infra_machine_content.item.facts.directories:
-            if directory.domain is not None:
-                domain_name = directory.domain.lower()
-                break
+        if domain_name is None:
+            for directory in infra_machine_content.item.facts.directories:
+                if directory.domain is not None:
+                    domain_name = directory.domain.lower()
+                    break
+
+        # Try to get the netbios from the configuration.
+        if netbios is None:
+            configuration_vertex = infra.get_configuration
+            if configuration_vertex is None:
+                self.debug("cannot get the configuration vertex")
+                return
+            config_object = DiscoveryObject.get_discovery_object(configuration_vertex)
+            if config_object.record_type in DOMAIN_USER_CONFIGS:
+                if hasattr(config_object.item, "info"):
+                    netbios = config_object.item.info.get("netbios")
 
         # Add mapping from user to machine, that control services.
         for service_type in ["service", "task", "iis_pool"]:
@@ -726,13 +769,14 @@ class UserService:
                 user = service_user.user.lower()
                 if not strict:
                     user, domain = split_user_and_domain(user)
-                    service_users.append(user)
-                    if domain is not None and domain != ".":
-                        service_users.append(user + "@" + domain)
-                        service_users.append(user + "@" + domain.split(".")[0])
-                    if domain_name is not None:
-                        service_users.append(user + "@" + domain_name)
-                        service_users.append(user + "@" + domain_name.split(".")[0])
+                    if user is not None:
+                        service_users.append(user)
+                        if domain is not None and domain != ".":
+                            service_users.append(user + "@" + domain)
+                            service_users.append(user + "@" + domain.split(".")[0])
+                        if domain_name is not None:
+                            service_users.append(user + "@" + domain_name)
+                            service_users.append(user + "@" + domain_name.split(".")[0])
 
                 else:
                     service_users.append(user)
@@ -747,7 +791,9 @@ class UserService:
                                     infra_machine_content=infra_machine_content,
                                     infra_machine_vertex=infra_machine_vertex,
                                     record_linking=record_linking,
-                                    record_lookup_func=record_lookup_func)
+                                    record_lookup_func=record_lookup_func,
+                                    netbios=netbios,
+                                    domain_name=domain_name)
 
             if self.log_finer_level >= 2 and self.insecure_debug:
                 for k, v in users.items():
@@ -828,6 +874,8 @@ class UserService:
                  record_lookup_func: Callable,
                  infra: Optional[Infrastructure] = None,
                  record_linking: Optional[RecordLink] = None,
+                 domain_name: Optional[str] = None,
+                 netbios: Optional[str] = None,
                  **kwargs):
         """
         Map users to services on machines.
@@ -837,6 +885,8 @@ class UserService:
         :param infra: Instance of Infrastructure graph.
         :param record_linking: Instance of the Record Linking graph.
         :param record_lookup_func: A function that will return a record by record id. Returns a normalize record.
+        :param domain_name: Domain name if there is a directory (i.e. example.com)
+        :param netbios: NetBIOS of the domain controller (i.e. EXMAPLE)
         """
 
         self.debug("")
@@ -927,7 +977,9 @@ class UserService:
                     infra_machine_content=infra_machine_content,
                     infra_machine_vertex=infra_machine_vertex,
                     record_linking=record_linking,
-                    record_lookup_func=record_lookup_func)
+                    record_lookup_func=record_lookup_func,
+                    domain_name=domain_name,
+                    netbios=netbios)
                 self.debug("-" * 40)
 
             # Disconnect any users not used.

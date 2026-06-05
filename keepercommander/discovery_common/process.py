@@ -106,16 +106,16 @@ class Process:
         Releases all DAG instances and connections to prevent memory leaks.
         """
 
-        if self.jobs:
+        if hasattr(self, "jobs") and self.jobs:
             self.jobs.close()
             self.jobs = None
-        if self.infra:
+        if hasattr(self, "infra") and self.infra:
             self.infra.close()
             self.infra = None
-        if self.record_link:
+        if hasattr(self, "record_link") and self.record_link:
             self.record_link.close()
             self.record_link = None
-        if self.user_service:
+        if hasattr(self, "user_service") and self.user_service:
             self.user_service.close()
             self.user_service = None
 

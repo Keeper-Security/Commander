@@ -1,10 +1,8 @@
 from __future__ import annotations
-import json
 from . import DataStructBase
 from ..types import SyncQuery, Ref, RefType, DAGData, DataPayload, EdgeType, SyncData
-from ..crypto import generate_random_bytes, generate_uid_str, bytes_to_str, bytes_to_urlsafe_str
+from ..crypto import generate_random_bytes, generate_uid_str, bytes_to_str
 import base64
-from pydantic import BaseModel
 from typing import Optional, List
 
 
@@ -81,62 +79,3 @@ class DataStruct(DataStructBase):
             dataList=data_list,
             graphId=graph_id
         )
-
-    # --- Per-graph multi-stream read transport ---------------------------
-
-    class _LeafsQuery(BaseModel):
-        vertices: List[str]
-
-    class _MultiSyncQuery(BaseModel):
-        queries: List[SyncQuery]
-
-    def leafs_query(self, vertices: List[str]) -> 'DataStruct._LeafsQuery':
-        return DataStruct._LeafsQuery(vertices=list(vertices))
-
-    @staticmethod
-    def get_leafs_result(results: bytes) -> List[Ref]:
-        try:
-            obj = json.loads(results)
-        except Exception as err:
-            raise Exception(f"Could not parse the leafs JSON result: {err}")
-        refs_list = obj.get("refs", []) if isinstance(obj, dict) else obj
-        out: List[Ref] = []
-        for r in refs_list:
-            # Server may return either {type, value, name} or just a value str.
-            if isinstance(r, dict):
-                value = r.get("value")
-                if isinstance(value, bytes):
-                    value = bytes_to_urlsafe_str(value)
-                out.append(Ref(
-                    type=RefType(r["type"]) if r.get("type") is not None else RefType.GENERAL,
-                    value=value,
-                    name=r.get("name") or None,
-                ))
-        return out
-
-    def multi_sync_query(self,
-                         stream_ids: List[bytes],
-                         origin: bytes,
-                         sync_point: int = 0) -> 'DataStruct._MultiSyncQuery':
-        queries = [
-            SyncQuery(
-                streamId=bytes_to_urlsafe_str(sid),
-                deviceId=bytes_to_urlsafe_str(origin),
-                syncPoint=sync_point,
-                graphId=None,
-            )
-            for sid in stream_ids
-        ]
-        return DataStruct._MultiSyncQuery(queries=queries)
-
-    @staticmethod
-    def get_multi_sync_result(results: bytes) -> List[SyncData]:
-        try:
-            obj = json.loads(results)
-        except Exception as err:
-            raise Exception(f"Could not parse the multi_sync JSON result: {err}")
-        items = obj.get("results", []) if isinstance(obj, dict) else obj
-        out: List[SyncData] = []
-        for item in items:
-            out.append(SyncData.model_validate(item))
-        return out
