@@ -18,6 +18,31 @@ def _stderr(msg=''):
     print(msg, file=sys.stderr)
 
 
+_HEADLESS_AUTH_MSG_SHOWN = False
+
+
+def _is_interactive():
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _fail_headless_auth(step):
+    """In headless/service mode, persistent login often needs a follow-up prompt
+    (password, SSO, 2FA, device approval) that cannot be answered. Log once and
+    cancel so the caller exits cleanly instead of looping or spamming getpass."""
+    global _HEADLESS_AUTH_MSG_SHOWN
+    if not _HEADLESS_AUTH_MSG_SHOWN:
+        _HEADLESS_AUTH_MSG_SHOWN = True
+        logging.error(
+            'Persistent login is not working in this non-interactive environment '
+            '(possibly due to an IP/location change). '
+            'Re-run Commander/Docker setup from this network, then restart the service.'
+        )
+    step.cancel()
+
+
 class ConsoleLoginUi(login_steps.LoginUi):
     def __init__(self):
         self._show_device_approval_help = True
@@ -28,6 +53,9 @@ class ConsoleLoginUi(login_steps.LoginUi):
         self._failed_password_attempt = 0
 
     def on_device_approval(self, step):
+        if not _is_interactive():
+            _fail_headless_auth(step)
+            return
         if self._show_device_approval_help:
             _stderr(f"\n{Fore.YELLOW}Device Approval Required{Fore.RESET}\n")
             _stderr(f"{Fore.CYAN}Select an approval method:{Fore.RESET}")
@@ -123,6 +151,9 @@ class ConsoleLoginUi(login_steps.LoginUi):
             return 'Backup Codes'
 
     def on_two_factor(self, step):
+        if not _is_interactive():
+            _fail_headless_auth(step)
+            return
         channels = step.get_channels()
 
         if self._show_two_factor_help:
@@ -273,6 +304,9 @@ class ConsoleLoginUi(login_steps.LoginUi):
                 logging.warning(f'{Fore.YELLOW}Invalid 2FA code. Please try again.{Fore.RESET}')
 
     def on_password(self, step):
+        if not _is_interactive():
+            _fail_headless_auth(step)
+            return
         if self._show_password_help:
             _stderr(f'{Fore.CYAN}Enter master password for {Fore.WHITE}{step.username}{Fore.RESET}')
 
@@ -293,6 +327,9 @@ class ConsoleLoginUi(login_steps.LoginUi):
                 step.cancel()
 
     def on_sso_redirect(self, step):
+        if not _is_interactive():
+            _fail_headless_auth(step)
+            return
         try:
             wb = webbrowser.get()
             wrappers = set('xdg-open|gvfs-open|gnome-open|x-www-browser|www-browser'.split('|'))
@@ -360,6 +397,9 @@ class ConsoleLoginUi(login_steps.LoginUi):
                 break
 
     def on_sso_data_key(self, step):
+        if not _is_interactive():
+            _fail_headless_auth(step)
+            return
         if self._show_sso_data_key_help:
             _stderr(f'\n{Fore.YELLOW}Device Approval Required for SSO{Fore.RESET}\n')
             _stderr(f'{Fore.CYAN}Select an approval method:{Fore.RESET}')
