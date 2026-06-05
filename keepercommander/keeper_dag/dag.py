@@ -656,8 +656,10 @@ class DAG:
             tail_uid = data.ref.value
 
             # The parentRef is the head. It's the arrowhead on the edge. For DATA edges, it will be None.
+            # An empty parentRef.value (malformed/deletion edge) is treated as a missing head so it
+            # falls back to tail_uid below, instead of crashing add_vertex() with an empty UID.
             head_uid = None
-            if data.parentRef is not None:
+            if data.parentRef is not None and data.parentRef.value:
                 head_uid = data.parentRef.value
 
             self.debug(f"  * edge {edge_type}, tail {tail_uid} to head {head_uid}", level=3)
