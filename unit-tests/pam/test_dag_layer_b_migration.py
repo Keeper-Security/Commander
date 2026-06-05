@@ -488,10 +488,17 @@ class TestTunnelGraphLinkUserToResourceMigration:
         tg.linking_dag.get_vertex.return_value = resource_vertex
         # Mark the resource as belonging to the config so the early-out doesn't fire.
         tg.resource_belongs_to_config = MagicMock(return_value=True)
+        # No existing launch credentials by default (admin-only case).
+        tg.get_launch_credentials = MagicMock(return_value=[])
         return tg, resource_vertex
 
     def test_is_admin_true_routes_to_configure_resource(self):
-        """is_admin=True triggers a configure_resource POST with the right adminUid."""
+        """is_admin=True triggers a configure_resource POST with the right adminUid.
+
+        With no existing launch credentials (a valid pamMachine state — admin only),
+        connectUsers is sent as an EMPTY-but-present wrapper so krouter still flips
+        is_admin on the existing edge (UserRest.kt:295-318) rather than no-opping
+        (UserRest.kt:331-341)."""
         tg, _ = self._build_tg()
         captured = {}
 
@@ -513,8 +520,34 @@ class TestTunnelGraphLinkUserToResourceMigration:
         assert len(rq.recordUid) == 16
         # networkUid is the config (the TunnelGraph's record)
         assert len(rq.networkUid) == 16
+        # connectUsers wrapper must be PRESENT (so krouter takes the flip-on-existing
+        # branch) but empty here (no launch creds to preserve).
+        assert rq.HasField('connectUsers')
+        assert len(rq.connectUsers.uids) == 0
         # Critical: legacy link_user must NOT be called when configure_resource succeeded
         link_user_mock.assert_not_called()
+
+    def test_is_admin_true_preserves_existing_launch_creds_in_connect_users(self):
+        """When the resource already has launch credentials, they ride in connectUsers
+        so krouter sets is_admin WITHOUT clearing them (replacement semantics)."""
+        tg, _ = self._build_tg()
+        tg.get_launch_credentials = MagicMock(return_value=[USER_UID_STR.replace('D', 'F')])
+        captured = {}
+
+        def _capture(params, rq):
+            captured['rq'] = rq
+
+        with patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+                   side_effect=_capture), \
+             patch.object(tg, 'link_user'):
+            tg.link_user_to_resource(USER_UID_STR, TARGET_RES_UID_STR, is_admin=True)
+
+        rq = captured['rq']
+        assert len(rq.adminUid) == 16
+        assert len(rq.connectUsers.uids) == 1            # existing launch cred preserved
+        assert len(rq.connectUsers.uids[0]) == 16
+        # admin is NOT the launch cred (distinct users)
+        assert bytes(rq.adminUid) != bytes(rq.connectUsers.uids[0])
 
     def test_is_admin_true_with_fallback_invokes_legacy_link_user_on_denial(self):
         """RRC_NOT_ALLOWED with fallback ON -> legacy link_user runs."""
@@ -575,6 +608,42 @@ class TestTunnelGraphLinkUserToResourceMigration:
         assert result is False
         cr_mock.assert_not_called()
         link_user_mock.assert_not_called()
+
+
+class TestTunnelGraphGetLaunchCredentials:
+    """get_launch_credentials enumerates is_launch_credential ACL edges on a resource."""
+
+    @staticmethod
+    def _make_user_vertex(uid, acl_content):
+        uv = MagicMock()
+        uv.uid = uid
+        edge = MagicMock()
+        edge.content_as_dict = acl_content
+        uv.get_edge.return_value = edge
+        return uv
+
+    def _build_tg(self, user_vertices):
+        from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
+        tg = TunnelDAG.__new__(TunnelDAG)
+        tg.linking_dag = MagicMock()
+        resource_vertex = MagicMock()
+        resource_vertex.has_vertices.return_value = user_vertices
+        tg.linking_dag.get_vertex.return_value = resource_vertex
+        return tg
+
+    def test_returns_only_launch_credential_users(self):
+        uv_launch = self._make_user_vertex('LAUNCH_UID', {'belongs_to': True, 'is_launch_credential': True})
+        uv_admin = self._make_user_vertex('ADMIN_UID', {'is_admin': True})
+        uv_plain = self._make_user_vertex('PLAIN_UID', {'belongs_to': True})
+        tg = self._build_tg([uv_launch, uv_admin, uv_plain])
+        assert tg.get_launch_credentials('RES') == ['LAUNCH_UID']
+
+    def test_returns_empty_when_no_resource_vertex(self):
+        from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
+        tg = TunnelDAG.__new__(TunnelDAG)
+        tg.linking_dag = MagicMock()
+        tg.linking_dag.get_vertex.return_value = None
+        assert tg.get_launch_credentials('RES') == []
 
 
 # --------------------------------------------------------------------------- #
@@ -1053,7 +1122,7 @@ class TestTunnelGraphUpgradeResourceMetaToV1Migration:
 
     def test_v0_upgrade_uses_configure_resource(self):
         """No version or version=0 -> upgrade to v1 via configure_resource(meta=...).
-        The proto's meta carries the versioned JSON payload."""
+        The proto's meta carries a VERSION-ONLY payload (empty allowedSettings)."""
         from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
         from keepercommander.commands.tunnel.port_forward.TunnelGraph import RESOURCE_META_VERSION_V1
 
@@ -1075,11 +1144,12 @@ class TestTunnelGraphUpgradeResourceMetaToV1Migration:
         assert len(rq.recordUid) == 16
         assert len(rq.networkUid) == 16
         assert rq.recordUid != rq.networkUid
-        # meta carries the versioned payload
+        # meta bumps version only; allowedSettings is sent EMPTY so krouter's
+        # deep-merge preserves the server's existing flags (connections stays True)
+        # rather than re-asserting a possibly-stale in-memory snapshot.
         meta = json.loads(rq.meta.decode())
         assert meta.get('version') == RESOURCE_META_VERSION_V1
-        assert 'allowedSettings' in meta
-        assert meta['allowedSettings'].get('connections') is True
+        assert meta['allowedSettings'] == {}
 
     def test_no_resource_vertex_returns_early(self):
         """If get_vertex returns None, no write at all."""
