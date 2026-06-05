@@ -65,6 +65,28 @@ _LEASE_EXPIRY_TIMERS_BY_RECORD: Dict[str, threading.Timer] = {}
 _LEASE_SHUTDOWN_EVENTS_BY_RECORD: Dict[str, threading.Event] = {}
 
 
+def _coerce_settings_subdicts(entry, *keys):
+    """Coerce the named sub-fields of a pamSettings / pamRemoteBrowserSettings
+    entry to dicts, in place.
+
+    Discovery and the Web Vault may publish ``connection`` / ``portForward`` as an
+    empty string (``""``) or omit them entirely (e.g. ``{"portForward": ""}`` with
+    no ``connection``). Code that then indexes ``entry["connection"][...]`` /
+    ``entry["portForward"][...]`` raises ``KeyError`` (missing) or ``TypeError``
+    (string). Call this first so those writes always land on a real dict.
+
+    Returns True if anything was coerced (callers may use it to flag the record dirty).
+    """
+    changed = False
+    if not isinstance(entry, dict):
+        return changed
+    for key in keys:
+        if not isinstance(entry.get(key), dict):
+            entry[key] = {}
+            changed = True
+    return changed
+
+
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
 
@@ -466,6 +488,12 @@ class PAMTunnelEditCommand(Command):
                     tmp_dag.link_resource_to_config(record_uid)
                 if not pam_settings.value:
                     pam_settings.value.append({"connection": {}, "portForward": {}})
+                # Discovery may publish value[0] with portForward as "" (empty
+                # string) or absent; coerce to a dict before indexing, else the
+                # writes below raise TypeError (string) / KeyError (missing).
+                if not isinstance(pam_settings.value[0], dict):
+                    pam_settings.value[0] = {"connection": {}, "portForward": {}}
+                _coerce_settings_subdicts(pam_settings.value[0], "connection", "portForward")
                 if _tunneling and tunneling_override_port:
                     pam_settings.value[0]['portForward']['port'] = tunneling_override_port
                     dirty = True
@@ -2763,8 +2791,14 @@ class PAMConnectionEditCommand(Command):
             else:
                 if not pam_settings.value:
                     pam_settings.value.append({"connection": {}, "portForward": {}})
-                if not pam_settings.value[0]:
+                if not isinstance(pam_settings.value[0], dict):
                     pam_settings.value[0] = {"connection": {}, "portForward": {}}
+                # An existing pamSettings may carry only one of the two sub-dicts,
+                # or publish them as "" (empty string) instead of a dict — e.g.
+                # discovery publishes {"portForward": ""} with no usable "connection".
+                # Coerce both to dicts before indexing, otherwise -cn on -p rdp -cop
+                # raises KeyError (missing key) or TypeError (string) below.
+                _coerce_settings_subdicts(pam_settings.value[0], "connection", "portForward")
                 if _connections:
                     if connection_override_port:
                         pam_settings.value[0]["connection"]["port"] = connection_override_port
@@ -2934,13 +2968,18 @@ class PAMConnectionEditCommand(Command):
                                           typescript_recording=kwargs.get('typescriptrecording', None),
                                           rotate_on_termination=rot_bool)
 
-            # admin parameter is optional yet if not set connections may fail
+            # admin (-a) and launch (-lu / --clear-launch-user) credentials are
+            # applied together in a SINGLE configure_resource round-trip. krouter
+            # only flips is_admin on an already-existing ACL edge when adminUid is
+            # sent alongside connectUsers (UserRest.kt:295-318); a standalone
+            # adminUid call no-ops on an existing edge. So fold admin into the
+            # launch call instead of issuing two separate requests.
             admin_name = kwargs.get('admin')
             adm_rec = RecordMixin.resolve_single_record(params, admin_name)
             admin_uid = adm_rec.record_uid if adm_rec else None
-            if admin_uid and record_type in launch_credential_record_types:
-                tdag.link_user_to_resource(admin_uid, record_uid, is_admin=True, belongs_to=True)
-                # tdag.link_user_to_config(admin_uid)  # is_iam_user=True
+            # admin credential is only meaningful on launch-capable resources
+            if admin_uid and record_type not in launch_credential_record_types:
+                admin_uid = None
 
             # launch-user parameter sets the launch credential; --clear-launch-user removes it
             clear_launch_user = bool(kwargs.get('clear_launch_user'))
@@ -2949,13 +2988,16 @@ class PAMConnectionEditCommand(Command):
             if clear_launch_user and launch_user_name:
                 raise CommandError('pam connection edit',
                     f'{bcolors.FAIL}Use either --clear-launch-user or --launch-user, not both.{bcolors.ENDC}')
+
+            launch_uid = None
+            apply_launch = False
             if clear_launch_user:
                 if record_type not in launch_credential_record_types:
                     raise CommandError('pam connection edit',
                         f'{bcolors.FAIL}--clear-launch-user is only supported for pamMachine, pamDatabase, and '
                         f'pamDirectory records. Record "{record_uid}" is of type "{record_type}" and does not '
                         f'support launch credentials.{bcolors.ENDC}')
-                tdag.set_launch_credentials(record_uid)
+                apply_launch = True  # launch_uid stays None -> clears the launch credential
             elif launch_user_name:
                 launch_rec = RecordMixin.resolve_single_record(params, launch_user_name)
                 if not launch_rec:
@@ -2964,9 +3006,21 @@ class PAMConnectionEditCommand(Command):
                 if not isinstance(launch_rec, vault.TypedRecord) or launch_rec.record_type != 'pamUser':
                     raise CommandError('',
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
-                launch_uid = launch_rec.record_uid
                 if record_type in launch_credential_record_types:
-                    tdag.set_launch_credentials(record_uid, launch_uid=launch_uid)
+                    apply_launch = True
+                    launch_uid = launch_rec.record_uid
+
+            if apply_launch:
+                # set/clear launch credential and (optionally) the admin in one call
+                tdag.set_launch_credentials(record_uid, launch_uid=launch_uid, admin_uid=admin_uid)
+            elif admin_uid:
+                # admin-only: preserve the current launch credential in the same
+                # request so krouter sets is_admin on the (possibly pre-existing)
+                # edge without clearing an existing launch credential.
+                current_launch = tdag.check_if_resource_has_launch_credential(record_uid)
+                tdag.set_launch_credentials(record_uid,
+                                            launch_uid=(current_launch or None),
+                                            admin_uid=admin_uid)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
@@ -3363,6 +3417,14 @@ class PAMRbiEditCommand(Command):
         elif not rbs_fld.value:
             rbs_fld.value.append({'connection': {'protocol': 'http'}}) # type: ignore
             dirty = True
+
+        # A pre-existing pamRemoteBrowserSettings may lack a usable "connection"
+        # dict (absent, or published as ""); coerce it once so the writes below
+        # (rbs_fld.value[0]["connection"][...]) don't KeyError/TypeError.
+        if (isinstance(rbs_fld, vault.TypedField) and rbs_fld.value
+                and isinstance(rbs_fld.value[0], dict)):
+            if _coerce_settings_subdicts(rbs_fld.value[0], 'connection'):
+                dirty = True
 
         if autofill:
             af_rec = RecordMixin.resolve_single_record(params, autofill)

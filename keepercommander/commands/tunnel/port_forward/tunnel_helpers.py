@@ -793,7 +793,18 @@ def get_config_uid(params, encrypted_session_token, encrypted_transmission_key, 
     if local_config_uid:
         return local_config_uid
 
-    # Tier 2: legacy gateway-mediated lookup via the old `/api/user/get_leafs`.
+    # Tier 2: krouter per-graph PAM_LINK get_leafs (server-side, no gateway).
+    # Precise single-owner resolution — the Web Vault uses the same call. The
+    # legacy graphId=0 lookup below can return a stale/duplicate config when a
+    # resource still carries link edges under more than one PAM config; loading
+    # that graph then raises DAGPathException ("Found multiple vertex that use
+    # the path") on the next get_vertex. Resolving the owner precisely here
+    # avoids it. Mirrors the dag-api-migration resolution order.
+    link_config_uid = get_config_uid_via_pam_link(params, record_uid)
+    if link_config_uid:
+        return link_config_uid
+
+    # Tier 3: legacy gateway-mediated lookup via the old `/api/user/get_leafs`.
     try:
         rs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
         # response: "[{\"type\":\"rec\",\"value\":\"Jagbt2dxrft_91FovB5dwg\",\"name\":null}]"

@@ -73,6 +73,27 @@ def ensure_resource_meta_v1(content):
     return out
 
 
+def build_meta_version_upgrade():
+    """Meta payload that bumps a resource's meta to v1 WITHOUT re-asserting any
+    allowedSettings flags.
+
+    Used by the launch-credential / version-upgrade Layer-B calls. krouter
+    deep-merges the ``meta`` JSON edge (krouter Serialization.kt ``mergeJson``)
+    and never deletes keys absent from the new payload, so an EMPTY
+    ``allowedSettings`` preserves the server's current connections / portForwards /
+    recording flags while still bumping ``version``. ``allowedSettings`` must be
+    present (even if empty) because krouter strictly decodes the incoming meta
+    into its non-nullable ``Meta.allowedSettings`` DTO before merging.
+
+    This avoids the revert bug: ``set_resource_allowed``'s Layer-B path enables
+    ``connections`` on the server but does not refresh the in-memory vertex, so a
+    follow-up ``ensure_resource_meta_v1(get_vertex_content(...))`` would re-send a
+    STALE ``connections=false`` that deep-merges and flips connections back off —
+    making the vault hide the (still-present) connection port/protocol.
+    """
+    return {"version": int(RESOURCE_META_VERSION_V1), "allowedSettings": {}}
+
+
 class TunnelDAG:
     def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str,
                  is_config=False, transmission_key=None):
@@ -469,10 +490,19 @@ class TunnelDAG:
             endpoint = 'configure_resource'
             if not is_layer_b_feature_disabled(host, endpoint):
                 try:
+                    # adminUid must ride ALONGSIDE connectUsers: krouter only flips
+                    # is_admin on an already-existing ACL edge when connectUsers is
+                    # present (UserRest.kt:295-318); a standalone adminUid no-ops on
+                    # an existing edge (UserRest.kt:331-341). Send the resource's
+                    # CURRENT launch credentials as connectUsers so the reconciliation
+                    # sets is_admin without clearing any existing launch credential.
+                    launch_uids = self.get_launch_credentials(resource_uid)
                     rq = pam_pb2.PAMResourceConfig(
                         recordUid=url_safe_str_to_bytes(resource_uid),
                         networkUid=url_safe_str_to_bytes(self.record.record_uid),
                         adminUid=url_safe_str_to_bytes(user_uid),
+                        connectUsers=pam_pb2.UidList(
+                            uids=[url_safe_str_to_bytes(u) for u in launch_uids]),
                     )
                     router_configure_resource(self.params, rq)
                     logging.debug(
@@ -568,6 +598,20 @@ class TunnelDAG:
                     return user_vertex.uid
         return False
 
+    def get_launch_credentials(self, resource_uid):
+        """Return the list of user UIDs currently flagged is_launch_credential on the resource."""
+        result = []
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return result
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if acl_edge:
+                content = acl_edge.content_as_dict
+                if content and content.get('is_launch_credential'):
+                    result.append(user_vertex.uid)
+        return result
+
     def clear_launch_credential_for_resource(self, resource_uid, exclude_user_uid=None):
         """Remove is_launch_credential from all users on a resource except exclude_user_uid."""
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
@@ -589,9 +633,10 @@ class TunnelDAG:
         if dirty:
             self.linking_dag.save()
 
-    def set_launch_credentials(self, resource_uid, launch_uid=None):
+    def set_launch_credentials(self, resource_uid, launch_uid=None, admin_uid=None):
         """
-        Set or clear the launch credential for a resource via Layer-B configure_resource.
+        Set or clear the launch credential (and optionally the admin) for a resource
+        via a single Layer-B configure_resource round-trip.
 
         krouter's connectUsers field has replacement semantics
         (UserRest.kt:generateResourceConnectionEdges): sending [launch_uid] sets
@@ -600,19 +645,31 @@ class TunnelDAG:
         the v1 upgrade in the same call. This replaces the legacy 2-3 op sequence
         (clear + link + meta-upgrade) with one permission-checked round-trip.
 
+        admin_uid (optional): when given, adminUid is sent in the SAME request as
+        connectUsers. This is required for the admin to actually take effect on an
+        ALREADY-EXISTING ACL edge: a standalone configure_resource(adminUid) with no
+        connectUsers no-ops on an existing edge (UserRest.kt:331-341 only touches
+        is_launch_credential), whereas adminUid alongside connectUsers flips is_admin
+        on that edge (UserRest.kt:295-318). Sent on a user NOT in connectUsers so the
+        admin does not also become a launch credential.
+
         For a fresh launch_uid (no existing edge), krouter creates the new edge with
         belongs_to=null; a follow-up local DAG-write of belongs_to=True preserves
         legacy parity. For existing edges, krouter preserves belongs_to already so
         the follow-up is a no-op.
 
         Fallback on RRC_NOT_ALLOWED* (or feature-disabled) with KEEPER_DAG_LB_FALLBACK
-        enabled: legacy clear + link (if set) + meta-upgrade.
+        enabled: legacy clear + link (if set) + admin link (if set) + meta-upgrade.
         """
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None:
             return
 
-        upgraded_meta = ensure_resource_meta_v1(get_vertex_content(resource_vertex))
+        # Version-only meta: bump to v1 (so the vault reads ACL launch credentials)
+        # WITHOUT re-asserting a possibly-stale allowedSettings snapshot. See
+        # build_meta_version_upgrade() — re-sending the in-memory allowedSettings
+        # here would clobber connections that set_resource_allowed just enabled.
+        upgraded_meta = build_meta_version_upgrade()
         uids = [url_safe_str_to_bytes(launch_uid)] if launch_uid is not None else []
 
         from ...pam.router_helper import router_configure_resource, get_router_url
@@ -627,10 +684,12 @@ class TunnelDAG:
                     connectUsers=pam_pb2.UidList(uids=uids),
                     meta=json.dumps(upgraded_meta).encode(),
                 )
+                if admin_uid is not None:
+                    rq.adminUid = url_safe_str_to_bytes(admin_uid)
                 router_configure_resource(self.params, rq)
                 logging.debug(
                     f"set_launch_credentials: resource={resource_uid} "
-                    f"launch_uid={launch_uid} via configure_resource"
+                    f"launch_uid={launch_uid} admin_uid={admin_uid} via configure_resource"
                 )
                 if launch_uid is not None:
                     self.link_user(launch_uid, resource_vertex, belongs_to=True)
@@ -645,6 +704,9 @@ class TunnelDAG:
                 )
 
         self.clear_launch_credential_for_resource(resource_uid, exclude_user_uid=launch_uid)
+        if admin_uid is not None:
+            # Legacy fallback: write is_admin directly on the resource ACL edge.
+            self.link_user(admin_uid, resource_vertex, is_admin=True, belongs_to=True)
         if launch_uid is not None:
             self.link_user_to_resource(launch_uid, resource_uid,
                                        is_launch_credential=True, belongs_to=True)
@@ -660,11 +722,13 @@ class TunnelDAG:
             return
         upgraded = ensure_resource_meta_v1(content)
 
-        # Primary: Layer-B configure_resource (permission-checked). Same meta
-        # shape we use in set_resource_allowed(meta_version=1): the versioned
-        # payload {version, allowedSettings, rotateOnTermination} is sent as
-        # the proto's `meta` field. krouter's mergeJson honors version with the
-        # `oldMetaVersion <= newMetaVersion` upgrade check.
+        # Primary: Layer-B configure_resource (permission-checked). Send a
+        # version-only meta — krouter deep-merges the meta edge, so an empty
+        # allowedSettings bumps `version` (the `oldMetaVersion <= newMetaVersion`
+        # upgrade check) while preserving the server's current flags. Re-sending
+        # the in-memory `upgraded` here would clobber flags set earlier in the
+        # same command (the Layer-B set_resource_allowed does not refresh the
+        # in-memory vertex). See build_meta_version_upgrade().
         from ...pam.router_helper import router_configure_resource, get_router_url
         from ...pam._layer_b import is_layer_b_feature_disabled
         host = get_router_url(self.params)
@@ -674,7 +738,7 @@ class TunnelDAG:
                 rq = pam_pb2.PAMResourceConfig(
                     recordUid=url_safe_str_to_bytes(resource_uid),
                     networkUid=url_safe_str_to_bytes(self.record.record_uid),
-                    meta=json.dumps(upgraded).encode(),
+                    meta=json.dumps(build_meta_version_upgrade()).encode(),
                 )
                 router_configure_resource(self.params, rq)
                 logging.debug(

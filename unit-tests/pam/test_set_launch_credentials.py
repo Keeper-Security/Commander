@@ -35,6 +35,7 @@ from keepercommander.commands.pam._layer_b import RouterResponseError  # noqa: E
 RESOURCE_UID = 'AAAAAAAAAAAAAAAAAAAAAA'   # 22-char base64url, decodes to 16 bytes
 NETWORK_UID  = 'BBBBBBBBBBBBBBBBBBBBBB'
 LAUNCH_UID   = 'CCCCCCCCCCCCCCCCCCCCCC'
+ADMIN_UID    = 'DDDDDDDDDDDDDDDDDDDDDD'
 
 
 # --------------------------------------------------------------------------- #
@@ -135,16 +136,29 @@ def test_clear_path_builds_proto_with_empty_uids():
     assert len(rq.connectUsers.uids) == 0
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    assert meta['allowedSettings'] == {'connections': True}
+    # Version-only meta: empty allowedSettings so krouter's deep-merge preserves
+    # the server's current flags (connections stays True) instead of re-asserting
+    # a stale in-memory snapshot.
+    assert meta['allowedSettings'] == {}
     # CLEAR path doesn't do a belongs_to follow-up.
     tdag.link_user.assert_not_called()
 
 
-def test_set_path_preserves_existing_meta_fields():
-    """The meta-upgrade carries existing allowedSettings / rotateOnTermination."""
+def test_set_path_sends_version_only_meta_and_does_not_clobber_allowed_settings():
+    """Regression: the launch-cred meta must NOT re-assert a (possibly stale)
+    in-memory allowedSettings snapshot.
+
+    set_resource_allowed's Layer-B path enables connections on the SERVER but does
+    not refresh the in-memory vertex, so get_vertex_content here still reports the
+    pre-command flags (e.g. connections=False). If we sent those, krouter's
+    deep-merge would flip connections back off and the vault would hide the
+    connection port/protocol. The fix sends version=1 with an EMPTY allowedSettings
+    so the server's just-enabled connections survives the merge untouched.
+    """
+    # Simulate the stale in-memory snapshot (connections still off / rotation set).
     initial = {
         'version': 0,
-        'allowedSettings': {'connections': True, 'rotation': False},
+        'allowedSettings': {'connections': False, 'rotation': False},
         'rotateOnTermination': True,
     }
     tdag, _ = _make_tdag(initial_meta=initial)
@@ -162,8 +176,101 @@ def test_set_path_preserves_existing_meta_fields():
 
     meta = json.loads(captured['rq'].meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    assert meta['allowedSettings'] == {'connections': True, 'rotation': False}
-    assert meta['rotateOnTermination'] is True
+    # No stale flags re-asserted — empty allowedSettings, no rotateOnTermination.
+    assert meta['allowedSettings'] == {}
+    assert 'connections' not in meta['allowedSettings']
+    assert 'rotateOnTermination' not in meta
+
+
+# --------------------------------------------------------------------------- #
+# Admin credential — sent ALONGSIDE connectUsers in the same request           #
+# --------------------------------------------------------------------------- #
+
+
+def test_set_path_with_admin_sends_admin_uid_alongside_connect_users():
+    """Admin + launch in one configure_resource: connectUsers carries the launch
+    uid AND adminUid is set (so krouter flips is_admin even on an existing edge),
+    with admin NOT in connectUsers (so it does not also become a launch cred)."""
+    tdag, _ = _make_tdag(initial_meta={'allowedSettings': {'connections': True}})
+
+    captured = {}
+
+    def _capture(params, rq):
+        captured['rq'] = rq
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=_capture):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=LAUNCH_UID, admin_uid=ADMIN_UID)
+
+    rq = captured['rq']
+    assert len(rq.connectUsers.uids) == 1
+    assert len(rq.connectUsers.uids[0]) == 16            # launch uid present
+    assert len(rq.adminUid) == 16                        # admin uid present
+    assert bytes(rq.adminUid) != bytes(rq.connectUsers.uids[0])  # admin not the launch cred
+    meta = json.loads(rq.meta.decode())
+    assert meta['version'] == RESOURCE_META_VERSION_V1
+    assert meta['allowedSettings'] == {}
+    # belongs_to follow-up fires for the launch user only.
+    tdag.link_user.assert_called_once()
+
+
+def test_admin_only_sends_admin_uid_with_empty_connect_users():
+    """Admin-only (no launch): empty connectUsers wrapper + adminUid, so krouter
+    sets is_admin on the existing edge and there is no launch follow-up."""
+    tdag, _ = _make_tdag(initial_meta=None)
+
+    captured = {}
+
+    def _capture(params, rq):
+        captured['rq'] = rq
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=_capture):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=None, admin_uid=ADMIN_UID)
+
+    rq = captured['rq']
+    assert len(rq.connectUsers.uids) == 0
+    assert len(rq.adminUid) == 16
+    tdag.link_user.assert_not_called()
+
+
+def test_no_admin_uid_leaves_admin_field_unset():
+    """Without admin_uid the adminUid field stays empty (admin untouched)."""
+    tdag, _ = _make_tdag(initial_meta=None)
+
+    captured = {}
+
+    def _capture(params, rq):
+        captured['rq'] = rq
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=_capture):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=LAUNCH_UID)
+
+    assert len(captured['rq'].adminUid) == 0
+
+
+def test_admin_fallback_links_admin_via_legacy_when_feature_disabled():
+    """Under feature-disabled fallback, admin is written via legacy link_user(is_admin=True)."""
+    tdag, resource_vertex = _make_tdag(initial_meta=None)
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=True), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource') as mock_cr:
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=LAUNCH_UID, admin_uid=ADMIN_UID)
+        mock_cr.assert_not_called()
+
+    admin_calls = [c for c in tdag.link_user.call_args_list if c.args and c.args[0] == ADMIN_UID]
+    assert len(admin_calls) == 1
+    assert admin_calls[0].kwargs.get('is_admin') is True
+    # launch still goes through the legacy link_user_to_resource path.
+    tdag.link_user_to_resource.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #
