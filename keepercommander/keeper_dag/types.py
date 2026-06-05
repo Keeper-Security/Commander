@@ -114,7 +114,6 @@ ENDPOINT_TO_GRAPH_ID_MAP = {
     PamEndpoints.SERVICE_LINKS.value: PamGraphId.SERVICE_LINKS.value,
 }
 
-
 # Inverse map for callers that have a graph_id int and need the PamEndpoints enum
 # to address the new /api/user/graph-sync/<graph>/<verb> routes.
 GRAPH_ID_TO_ENDPOINT = {
@@ -124,7 +123,6 @@ GRAPH_ID_TO_ENDPOINT = {
     PamGraphId.INFRASTRUCTURE.value: PamEndpoints.INFRASTRUCTURE,
     PamGraphId.SERVICE_LINKS.value: PamEndpoints.SERVICE_LINKS,
 }
-
 
 class SyncQuery(BaseModel):
     streamId: Optional[str] = None    # base64 of a user's ID who is syncing.
@@ -136,10 +134,7 @@ class SyncQuery(BaseModel):
 class SyncDataItem(BaseModel):
     ref: Ref
     parentRef: Optional[Ref] = None
-    # Either a base64-encoded string (JSON wire format) or raw bytes
-    # (protobuf wire format). `content_is_base64` distinguishes them so the
-    # consumer can decode appropriately.
-    content: Optional[Union[str, bytes]] = None
+    content: Optional[str] = None
     content_is_base64: bool = True
     type: Optional[str] = None
     path: Optional[str] = None
@@ -150,9 +145,6 @@ class SyncData(BaseModel):
     syncPoint: int
     data: List[SyncDataItem]
     hasMore: bool
-    # Per-graph multi_sync: identifies which stream this result came from.
-    # None for single-stream `sync` results (backward compatible).
-    streamId: Optional[bytes] = None
 
 
 class Ref(BaseModel):

@@ -4,7 +4,6 @@ import argparse
 import json
 import sys
 import os.path
-import re
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
@@ -84,7 +83,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         "database",
         "privatePEMKey",
         "connectDatabase",
-        "operatingSystem"
+        "operatingSystem",
+
+        # This is a custom field
+        "Alternative Login"
     ]
 
     def get_parser(self):
@@ -284,7 +286,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     new_values = map(str.strip, new_value.split(','))
                     new_value = "\n".join(new_values)
                 elif type_hint == "multiline":
-                    print(_b(f"{pad}Enter multilines of text or a path, on the first line, "
+                    print(_b(f"{pad}Enter multiline of text or a path, on the first line, "
                              "to a file that contains the value."))
                     print(_b(f"{pad}To end, type 'END' at the start of a new line. You can paste text."))
                     new_value = ""
@@ -331,9 +333,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 except (Exception,):
                     pass
 
-            for edit_field in content.fields:
-                if edit_field.label == edit_label:
-                    edit_field.value = [new_value]
+            for section in ["fields", "custom"]:
+                if not hasattr(content, section):
+                    continue
+                for edit_field in getattr(content, section):
+                    if edit_field.label == edit_label:
+                        edit_field.value = [new_value]
+                        break
 
         # Else, the label they entered cannot be edited.
         else:
@@ -370,50 +376,53 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     def _prompt_display_fields(self, content: DiscoveryObject, pad: str) -> List[str]:
 
         editable = []
-        for field in content.fields:
-            has_editable = False
-            if field.label in PAMGatewayActionDiscoverResultProcessCommand.EDITABLE:
-                editable.append(field.label)
-                has_editable = True
-            value = field.value
+        for section in ["fields", "custom"]:
+            if not hasattr(content, section):
+                continue
+            for field in getattr(content, section):
+                has_editable = False
+                if field.label in PAMGatewayActionDiscoverResultProcessCommand.EDITABLE:
+                    editable.append(field.label)
+                    has_editable = True
+                value = field.value
 
-            # If there is a value, and it's not just [], also make sure the
-            if len(value) > 0 and value[0] is not None:
-                # PAM records will have only 1 item in the value array.
-                value = value[0]
-                if field.label in self.FIELD_MAPPING:
-                    type_hint = self.FIELD_MAPPING[field.label].get("type")
-                    formatted_value = []
-                    if type_hint == "dict":
-                        field_input_format = self.FIELD_MAPPING[field.label].get("field_format")
-                        for format_field in field_input_format:
-                            formatted_value.append(f"{format_field.get('label')}: "
-                                                   f"{value.get(format_field.get('key'))}")
-                    elif type_hint == "csv":
-                        formatted_value.append(", ".join(value.split("\n")))
-                    elif type_hint == "multiline":
-                        formatted_value.append(value)
-                    elif type_hint == "choice":
-                        formatted_value.append(value)
-                    value = ", ".join(formatted_value)
-            else:
-                if has_editable:
-                    value = f"{bcolors.FAIL}MISSING{bcolors.ENDC}"
+                # If there is a value, and it's not just [], also make sure the
+                if len(value) > 0 and value[0] is not None:
+                    # PAM records will have only 1 item in the value array.
+                    value = value[0]
+                    if field.label in self.FIELD_MAPPING:
+                        type_hint = self.FIELD_MAPPING[field.label].get("type")
+                        formatted_value = []
+                        if type_hint == "dict":
+                            field_input_format = self.FIELD_MAPPING[field.label].get("field_format")
+                            for format_field in field_input_format:
+                                formatted_value.append(f"{format_field.get('label')}: "
+                                                       f"{value.get(format_field.get('key'))}")
+                        elif type_hint == "csv":
+                            formatted_value.append(", ".join(value.split("\n")))
+                        elif type_hint == "multiline":
+                            formatted_value.append(value)
+                        elif type_hint == "choice":
+                            formatted_value.append(value)
+                        value = ", ".join(formatted_value)
                 else:
-                    value = f"{bcolors.OKBLUE}None{bcolors.ENDC}"
+                    if has_editable:
+                        value = f"{bcolors.FAIL}MISSING{bcolors.ENDC}"
+                    else:
+                        value = f"{bcolors.OKBLUE}None{bcolors.ENDC}"
 
-            color = bcolors.HEADER
-            if has_editable:
-                color = bcolors.OKGREEN
+                color = bcolors.HEADER
+                if has_editable:
+                    color = bcolors.OKGREEN
 
-            rows = str(value).split("\n")
-            if len(rows) > 1:
-                value = rows[0] + _b(f"... {len(rows)} rows.")
+                rows = str(value).split("\n")
+                if len(rows) > 1:
+                    value = rows[0] + _b(f"... {len(rows)} rows.")
 
-            print(f"{pad}  "
-                  f"{color}Label:{bcolors.ENDC} {field.label}, "
-                  f"{_h('Type:')} {field.type}, "
-                  f"{_h('Value:')} {value}")
+                print(f"{pad}  "
+                      f"{color}Label:{bcolors.ENDC} {field.label}, "
+                      f"{_h('Type:')} {field.type}, "
+                      f"{_h('Value:')} {value}")
 
         if len(content.notes) > 0:
             print("")
@@ -1012,11 +1021,26 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 "field_type": field.type,
                 "field_value": field.value
             }
-            if field.type != field.label:
+            if field.label is not None and field.type != field.label:
                 field_args["field_label"] = field.label
             record_field = vault.TypedField.new_field(**field_args)
             record_field.required = field.required
             record.fields.append(record_field)
+
+        # If the content has custom fields, add them.
+        # Make sure the record has a list for custom fields.
+        if hasattr(content, "custom"):
+            if record.custom is None:
+                record.custom = []
+            for field in content.custom:
+                field_args = {
+                    "field_type": field.type,
+                    "field_value": field.value,
+                    "field_label": field.label
+                }
+                record_field = vault.TypedField.new_field(**field_args)
+                record_field.required = field.required
+                record.custom.append(record_field)
 
         folder = params.folder_cache.get(content.shared_folder_uid)
         folder_key = None  # type: Optional[bytes]
@@ -1328,7 +1352,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         infra = Infrastructure(record=gateway_context.configuration,
                                params=params,
                                logger=logging,
-                               debug_level=debug_level, use_per_graph_endpoints=True)
+                               debug_level=debug_level,
+                               use_per_graph_endpoints=True)
         infra.load(sync_point)
 
         configuration = None

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import time
 import datetime
 import base64
@@ -300,6 +300,9 @@ class RecordField(BaseModel):
 
 
 class UserAclRotationSettings(BaseModel):
+    # Vault team may add attributes without telling others :(
+    model_config = ConfigDict(extra='allow')
+
     # Base64 JSON schedule
     schedule: Optional[str] = ""
 
@@ -344,6 +347,9 @@ class UserAclRotationSettings(BaseModel):
 
 
 class UserAcl(BaseModel):
+    # Vault team may add attributes without telling others :(
+    model_config = ConfigDict(extra='allow')
+
     # Is this user's password/private key managed by this resource?
     # This should be unique for all the ACL edges of this user vertex; only one ACL edge should have a True value.
     belongs_to: bool = False
@@ -355,6 +361,9 @@ class UserAcl(BaseModel):
     # Is this user a cloud-based user?
     # This will only be True if the ACL of the PAM User connects to a configuration vertex.
     is_iam_user: Optional[bool] = False
+
+    # No clue what this is. Vault team adding stuff without telling others.
+    is_launch_credential: bool = False
 
     rotation_settings: Optional[UserAclRotationSettings] = None
 
@@ -388,6 +397,7 @@ class DiscoveryConfiguration(DiscoveryItem):
 
 class DiscoveryUser(DiscoveryItem):
     user: Optional[str] = None
+    alt_user: Optional[str] = None
     dn: Optional[str] = None
     database: Optional[str] = None
     managed: bool = False
@@ -501,6 +511,7 @@ class DiscoveryObject(BaseModel):
     parent_record_uid: Optional[str] = None
     record_type: str
     fields: List[RecordField]
+    custom: List[RecordField] = []
     ignore_object: bool = False
     action_rules_result: Optional[str] = None
     admin_uid: Optional[str] = None
@@ -612,6 +623,8 @@ class DirectoryInfo(BaseModel):
 class NormalizedRecord(BaseModel):
     """
     This class attempts to normalize KeeperRecord, TypedRecord, KSM Record into a normalized record.
+
+    `fields` contains both standard and custom fields.
     """
     record_uid: str
     record_type: str
@@ -631,6 +644,7 @@ class NormalizedRecord(BaseModel):
                 return field
             if label is not None and label == field.label:
                 return field
+
         return None
 
     def find_field(self,
@@ -650,6 +664,17 @@ class NormalizedRecord(BaseModel):
 
     def get_user(self) -> Optional[str]:
         field = self._field(field_type="login")
+        if field is None:
+            return None
+        value = field.value
+        if isinstance(value, list):
+            if len(value) == 0:
+                return None
+            value = value[0]
+        return value
+
+    def get_alt_user(self) -> Optional[str]:
+        field = self._field(label="Alternative Login")
         if field is None:
             return None
         value = field.value

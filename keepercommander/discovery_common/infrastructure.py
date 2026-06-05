@@ -5,7 +5,7 @@ from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGVertexException
 from ..keeper_dag.crypto import urlsafe_str_to_bytes
 from ..keeper_dag.types import PamEndpoints, PamGraphId
-from .types import DiscoveryObject
+from ..discovery_common.types import DiscoveryObject
 import os
 import importlib
 import time
@@ -58,7 +58,8 @@ class Infrastructure:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
-        self.use_per_graph_endpoints = use_per_graph_endpoints
+        # self.use_per_graph_endpoints = use_per_graph_endpoints
+        self.use_per_graph_endpoints = False
 
         self.auto_save = False
         self.delta_graph = True

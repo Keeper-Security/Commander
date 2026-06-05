@@ -582,41 +582,6 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                 hasMore=has_more
             ).model_dump_json().encode()
 
-    def multi_sync(self,
-                   multi_query: Union[gs_pb2.GraphSyncMultiQuery, Any],
-                   graph_id: Optional[int] = None,
-                   endpoint: Optional[str] = None,
-                   agent: Optional[str] = None) -> bytes:
-        """Local mirror of the network per-graph ``multi_sync``.
-
-        The local SQLite store has no per-graph URL routing, so each sub-query
-        in the ``GraphSyncMultiQuery`` is run through this connection's own
-        ``sync()`` — identical stream / sync-point / graph-id semantics as the
-        single-stream read and the save path — and the per-stream results are
-        assembled into the same multi-stream envelope the network endpoint
-        returns: ``GraphSyncMultiResult`` (protobuf) or ``{"results": [...]}``
-        (JSON).
-        """
-        is_protobuf = isinstance(multi_query, gs_pb2.GraphSyncMultiQuery)
-        queries = list(multi_query.queries)
-
-        if is_protobuf:
-            multi = gs_pb2.GraphSyncMultiResult()
-            for sub_query in queries:
-                single = self.sync(sub_query, graph_id=graph_id,
-                                   endpoint=endpoint, agent=agent)
-                result = gs_pb2.GraphSyncResult()
-                result.ParseFromString(single)
-                multi.results.add().CopyFrom(result)
-            return multi.SerializeToString()
-
-        results = []
-        for sub_query in queries:
-            single = self.sync(sub_query, graph_id=graph_id,
-                               endpoint=endpoint, agent=agent)
-            results.append(json.loads(single))
-        return json.dumps({"results": results}).encode()
-
     def debug_dump(self) -> str:
 
         ret = ""
