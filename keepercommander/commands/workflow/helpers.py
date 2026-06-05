@@ -298,7 +298,7 @@ def prompt_for_reason_ticket(needs_reason: bool, needs_ticket: bool) -> Tuple[Op
 
 class RecordResolver:
 
-    WORKFLOW_RECORD_TYPES = {'pamMachine', 'pamDirectory', 'pamDatabase', 'pamRemoteBrowser'}
+    WORKFLOW_RECORD_TYPES = {'pamCloudResource', 'pamMachine', 'pamDirectory', 'pamDatabase', 'pamRemoteBrowser'}
 
     @staticmethod
     def resolve(params, record_input, allow_missing=False):
