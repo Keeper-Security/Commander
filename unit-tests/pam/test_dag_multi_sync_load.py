@@ -230,3 +230,41 @@ def test_per_graph_empty_response_returns_no_data():
 
     assert data == []
     assert sp == 0
+
+
+# --------------------------------------------------------------------------- #
+# _load: malformed edge with empty parentRef value                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_load_tolerates_empty_parent_ref_value():
+    """A non-DATA edge whose parentRef.value is empty must not crash _load().
+
+    In the per-graph read path `_sync_data_from_result` always constructs a
+    `Ref` for parentRef, so an empty proto parentRef.value surfaces as
+    `head_uid == ''` (not None). The original `parentRef is not None` guard
+    never falls back to tail_uid for this path, so `add_vertex(uid='')` raised
+    `ValueError: The uid  is not a 22 characters in length.` during `pam launch`.
+    The empty value must instead be treated as a missing head (fall back to
+    tail_uid -> self-edge, skipped on load), leaving no empty-UID vertex.
+    """
+    dag, conn = _make_dag(read_endpoint=PamEndpoints.PAM)
+
+    tail_uid = b'\x01' * 16
+    item = gs_pb2.GraphSyncDataPlus(data=gs_pb2.GraphSyncData(
+        type=gs_pb2.GraphSyncDataType.GSE_KEY,
+        content=b'',
+        ref=gs_pb2.GraphSyncRef(type=gs_pb2.RefType.RFT_GENERAL, value=tail_uid),
+        # Empty head — malformed/deletion edge.
+        parentRef=gs_pb2.GraphSyncRef(type=gs_pb2.RefType.RFT_GENERAL, value=b''),
+    ))
+    conn.multi_sync.return_value = _multi_sync_result([
+        (ORIGIN_BYTES, 1, False, [item]),
+    ])
+
+    # Must not raise ValueError about a non-22-char UID.
+    dag._load(sync_point=0)
+
+    # Tail vertex exists; no vertex was created for the empty head UID.
+    assert dag.get_vertex_by_uid(bytes_to_urlsafe_str(tail_uid)) is not None
+    assert dag.get_vertex_by_uid('') is None
