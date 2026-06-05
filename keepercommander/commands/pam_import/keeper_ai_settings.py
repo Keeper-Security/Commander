@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from ...params import KeeperParams
 from ...keeper_dag import DAG, EdgeType
+from ...keeper_dag.exceptions import DAGPathException
 from ...keeper_dag.connection.commander import Connection
 from ...keeper_dag.types import PamEndpoints
 from ...vault import PasswordRecord
@@ -95,7 +96,11 @@ def list_resource_data_edges(
             read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM
         )
-        linking_dag.load()
+        try:
+            linking_dag.load()
+        except DAGPathException as e:
+            logging.debug(f"Skipping DATA edge listing for {resource_uid}: ambiguous DAG path ({e})")
+            return []
 
         # Get the resource vertex
         resource_vertex = linking_dag.get_vertex(resource_uid)
@@ -196,7 +201,14 @@ def get_resource_settings(
             read_endpoint=PamEndpoints.PAM,
             write_endpoint=PamEndpoints.PAM
         )
-        linking_dag.load()
+        try:
+            linking_dag.load()
+        except DAGPathException as e:
+            # The graph has duplicate/ambiguous vertices for this path. Treat it
+            # as "no settings available" rather than aborting the caller (e.g.
+            # pam launch); there is nothing we can read for this resource.
+            logging.debug(f"Skipping {dag_path} for {resource_uid}: ambiguous DAG path ({e})")
+            return None
 
         # Get the resource vertex
         resource_vertex = linking_dag.get_vertex(resource_uid)
