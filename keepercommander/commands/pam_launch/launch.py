@@ -286,6 +286,7 @@ def _print_close_reason_notice(
     reason: Optional[str],
     *,
     pending_exit_code: Optional[int],
+    session_established: bool = False,
 ) -> Optional[int]:
     """Show a user-facing notice for an involuntary remote close.
 
@@ -294,7 +295,19 @@ def _print_close_reason_notice(
     stopped and the local terminal is back in cooked mode — the message is the
     last thing the user sees before returning to Commander, so no acknowledge
     prompt is needed.
+
+    ``session_established`` reflects whether the guac session was live (≥1 sync /
+    data flowing) at the moment of close. A guacd-initiated disconnect — the user
+    typing ``exit`` / ``logout`` — is tagged ``GuacdError`` (code 14) by the
+    gateway, and ``server_disconnect`` when guacd sends an explicit ``disconnect``
+    opcode. Neither is an error once the session was running, so both are treated
+    as a normal close to avoid the misleading "Session ended (guacd_error)." line
+    on a clean logout. A ``guacd_error`` that arrives *before* the session went
+    live is a genuine connect-time fault and is still surfaced.
     """
+    if reason == 'server_disconnect' or (reason == 'guacd_error' and session_established):
+        reason = 'normal'
+
     if not reason or reason in ('normal', 'client'):
         return pending_exit_code
 
@@ -1557,6 +1570,10 @@ class PAMLaunchCommand(Command):
         # PyCloseConnectionReason). Set asynchronously by _on_session_disconnect
         # below; consumed in the inner finally to print a user-facing notice.
         closure_reason: Optional[str] = None
+        # Whether the guac session was live (≥1 sync) at the moment of remote
+        # close. Captured in _on_session_disconnect; lets the notice treat a
+        # guacd_error after an established session as a normal logout.
+        session_established_at_close: bool = False
         # Distinct exit code for involuntary terminations (KeeperAI, admin).
         # Raised as SystemExit at the end of the method so the inner/outer
         # finally cleanup blocks run first.
@@ -1628,9 +1645,15 @@ class PAMLaunchCommand(Command):
             # admin, etc.). Runs on the rust callback thread — do not print
             # here; terminal is still in raw mode.
             def _on_session_disconnect(reason: str) -> None:
-                nonlocal closure_reason, shutdown_requested
+                nonlocal closure_reason, shutdown_requested, session_established_at_close
                 closure_reason = reason
                 shutdown_requested = True
+                # Snapshot whether data was flowing so the notice can tell a clean
+                # guacd-initiated logout from a real connect-time guacd fault.
+                try:
+                    session_established_at_close = bool(python_handler.is_data_flowing())
+                except Exception:
+                    pass
 
             python_handler.on_disconnect = _on_session_disconnect
 
@@ -2128,6 +2151,7 @@ class PAMLaunchCommand(Command):
                 pending_exit_code = _print_close_reason_notice(
                     closure_reason,
                     pending_exit_code=pending_exit_code,
+                    session_established=session_established_at_close,
                 )
 
                 # Cleanup - check if connection is already closed to avoid deadlock
