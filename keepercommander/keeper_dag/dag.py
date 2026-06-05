@@ -441,6 +441,27 @@ class DAG:
 
         return None
 
+    def get_vertex_by_uid(self, uid: str) -> Optional[DAGVertex]:
+        """
+        Get a single vertex by its UID only.
+
+        Unlike get_vertex, this never falls back to path or name matching, so it
+        can never raise DAGPathException. Use this where the key is known to be a
+        UID (for example, the graph load and the add_vertex existence check),
+        otherwise an unloaded UID that happens to collide with a shared path
+        value would be misinterpreted as an ambiguous path.
+
+        :param uid: The UID of the vertex.
+        :return: DAGVertex instance, if it exists.
+        """
+
+        if uid is None:
+            return None
+        index = self._uid_lookup.get(uid)
+        if index is None:
+            return None
+        return self._vertices[index]
+
     @property
     def get_root(self) -> Optional[DAGVertex]:
         """
@@ -462,7 +483,12 @@ class DAG:
         :return:
         """
 
-        return self.get_vertex(key) is not None
+        try:
+            return self.get_vertex(key) is not None
+        except DAGPathException:
+            # The key matched multiple vertices by path value. We cannot pick a
+            # single vertex, but a matching vertex does exist.
+            return True
 
     def get_vertices_by_path_value(self, path: str, inc_deleted: bool = False) -> List[DAGVertex]:
         """
@@ -637,7 +663,7 @@ class DAG:
             self.debug(f"  * edge {edge_type}, tail {tail_uid} to head {head_uid}", level=3)
 
             # We want to store this edge in the Vertex with the same value/UID as the ref.
-            if not self.vertex_exists(tail_uid):
+            if self.get_vertex_by_uid(tail_uid) is None:
                 self.debug(f"    * tail vertex {tail_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=tail_uid,
@@ -649,7 +675,7 @@ class DAG:
                 )
 
             # Get the tail vertex.
-            tail = self.get_vertex(tail_uid)
+            tail = self.get_vertex_by_uid(tail_uid)
 
             # This most likely is a DELETION edge of a DATA edge.
             # Set the head to be the same as the tail.
@@ -657,7 +683,7 @@ class DAG:
                 head_uid = tail_uid
 
             # If the head vertex doesn't exist, we need to create.
-            if not self.vertex_exists(head_uid):
+            if self.get_vertex_by_uid(head_uid) is None:
                 self.debug(f"    * head vertex {head_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=head_uid,
@@ -665,7 +691,7 @@ class DAG:
                     vertex_type=RefType.GENERAL
                 )
             # Get the head vertex, which will exist now.
-            head = self.get_vertex(head_uid)
+            head = self.get_vertex_by_uid(head_uid)
             self.debug(f"    * tail {tail_uid} belongs to {head_uid}, "
                        f"edge type {edge_type}", level=3)
 
@@ -704,7 +730,7 @@ class DAG:
             # Get the tail vertex.
             tail_uid = data.ref.value
             # We want to store this edge in the Vertex with the same value/UID as the ref.
-            if not self.vertex_exists(tail_uid):
+            if self.get_vertex_by_uid(tail_uid) is None:
                 self.debug(f"    * tail vertex {tail_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=tail_uid,
@@ -714,7 +740,7 @@ class DAG:
                     # future.
                     vertex_type=RefType.find_enum(data.ref.type)
                 )
-            tail = self.get_vertex(tail_uid)
+            tail = self.get_vertex_by_uid(tail_uid)
 
             content = data.content
             if content is not None:
@@ -1264,7 +1290,7 @@ class DAG:
             keychain=keychain,
             vertex_type=vertex_type
         )
-        if self.vertex_exists(vertex.uid):
+        if self.get_vertex_by_uid(vertex.uid) is not None:
             raise DAGVertexAlreadyExistsException(f"Vertex {vertex.uid} already exists.")
 
         # Set the UID to array index lookup.
