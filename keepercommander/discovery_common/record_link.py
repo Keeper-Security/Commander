@@ -21,7 +21,7 @@ class RecordLink:
                  log_prefix: str = "GS Record Linking",
                  save_batch_count: int = 200,
                  agent: Optional[str] = None,
-                 use_read_protobuf: bool = True,
+                 use_read_protobuf: bool = False,
                  use_write_protobuf: bool = True,
                  use_per_graph_endpoints: bool = False,
                  **kwargs):
@@ -50,7 +50,8 @@ class RecordLink:
         self.log_prefix = log_prefix
         self.debug_level = debug_level
         self.save_batch_count = save_batch_count
-        self.use_per_graph_endpoints = use_per_graph_endpoints
+        # self.use_per_graph_endpoints = use_per_graph_endpoints
+        self.use_per_graph_endpoints = False
 
         # Based on the connection type, use_write_protobuf might be set to False is True was passed.
         # Use self.conn.use_write_protobuf; don't use passed in use_write_protobuf.
