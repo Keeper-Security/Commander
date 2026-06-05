@@ -135,11 +135,11 @@ class PAMDebugDumpCommand(Command):
             if not config_uid:
                 from ..tunnel.port_forward.tunnel_helpers import (
                     get_config_uid_from_local_vault,
-                    get_config_uid_from_krouter,
+                    get_config_uid_via_pam_link,
                 )
                 config_uid = (
                     get_config_uid_from_local_vault(params, rec_uid)
-                    or get_config_uid_from_krouter(params, rec_uid)
+                    or get_config_uid_via_pam_link(params, rec_uid)
                 )
 
             if config_uid:

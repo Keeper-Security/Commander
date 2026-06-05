@@ -155,10 +155,30 @@ def test_get_config_uid_uses_local_match_and_skips_get_dag_leafs():
     mock_dl.assert_not_called()
 
 
-def test_get_config_uid_falls_back_to_get_dag_leafs_when_no_local_match():
-    """No local match -> legacy get_dag_leafs path; whatever it returns flows through."""
+def test_get_config_uid_uses_pam_link_before_get_dag_leafs():
+    """No local match -> precise PAM_LINK resolution wins and legacy get_dag_leafs is skipped.
+
+    Regression guard for the "Found multiple vertex that use the path" bug: the
+    legacy graphId=0 get_dag_leafs can return a stale/duplicate config when a
+    resource still has link edges under more than one PAM config. Resolving the
+    owner precisely via the per-graph PAM_LINK get_leafs avoids loading that
+    ambiguous graph, so it must run before the legacy path.
+    """
     params = MagicMock()
     with patch('keepercommander.vault_extensions.find_records', return_value=iter([])), \
+         patch.object(tunnel_helpers, 'get_config_uid_via_pam_link', return_value=CONFIG_UID) as mock_link, \
+         patch.object(tunnel_helpers, 'get_dag_leafs') as mock_dl:
+        result = tunnel_helpers.get_config_uid(params, b'tok', b'tk', RESOURCE_UID)
+    assert result == CONFIG_UID
+    mock_link.assert_called_once()
+    mock_dl.assert_not_called()
+
+
+def test_get_config_uid_falls_back_to_get_dag_leafs_when_no_local_match():
+    """No local match and no PAM_LINK owner -> legacy get_dag_leafs path; its result flows through."""
+    params = MagicMock()
+    with patch('keepercommander.vault_extensions.find_records', return_value=iter([])), \
+         patch.object(tunnel_helpers, 'get_config_uid_via_pam_link', return_value=''), \
          patch.object(tunnel_helpers, 'get_dag_leafs',
                       return_value=[{'type': 'rec', 'value': CONFIG_UID, 'name': None}]) as mock_dl:
         result = tunnel_helpers.get_config_uid(params, b'tok', b'tk', RESOURCE_UID)
@@ -167,9 +187,10 @@ def test_get_config_uid_falls_back_to_get_dag_leafs_when_no_local_match():
 
 
 def test_get_config_uid_returns_none_when_neither_path_resolves():
-    """No local match and get_dag_leafs returns None -> None propagates."""
+    """No local match, no PAM_LINK owner, and get_dag_leafs returns None -> None propagates."""
     params = MagicMock()
     with patch('keepercommander.vault_extensions.find_records', return_value=iter([])), \
+         patch.object(tunnel_helpers, 'get_config_uid_via_pam_link', return_value=''), \
          patch.object(tunnel_helpers, 'get_dag_leafs', return_value=None):
         result = tunnel_helpers.get_config_uid(params, b'tok', b'tk', RESOURCE_UID)
     assert result is None
