@@ -11,6 +11,8 @@
 
 import json
 import os
+import platform
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -516,9 +518,8 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as f:
-            output_path = f.name
+        tmp_dir = tempfile.mkdtemp()
+        output_path = os.path.join(tmp_dir, 'output.json')
 
         try:
             # With --include-credentials, passwords are preserved
@@ -547,6 +548,7 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
+            os.rmdir(tmp_dir)
 
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
@@ -562,9 +564,8 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as f:
-            output_path = f.name
+        tmp_dir = tempfile.mkdtemp()
+        output_path = os.path.join(tmp_dir, 'output.json')
 
         try:
             cmd.execute(params,
@@ -588,6 +589,7 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
+            os.rmdir(tmp_dir)
 
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
@@ -1290,7 +1292,6 @@ class TestOutputFilePermissions(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
-        import stat
         tmp_dir = tempfile.mkdtemp()
         output_path = os.path.join(tmp_dir, 'test_output.json')
         try:
@@ -1298,9 +1299,21 @@ class TestOutputFilePermissions(unittest.TestCase):
                         db_host='127.0.0.1',
                         output=output_path)
 
-            file_mode = os.stat(output_path).st_mode & 0o777
-            self.assertEqual(file_mode, 0o600,
-                             f'Expected 0o600, got {oct(file_mode)}')
+            # POSIX: verifies mode == 0o600 via os.stat.
+            # Windows: os.stat().st_mode reads DOS attributes, not the NTFS
+            # DACL, so verify the icacls-applied ACL has the principals
+            # stripped by utils.set_file_permissions (SYSTEM, Administrators).
+            if platform.system() == 'Windows':
+                acl = subprocess.run(['icacls', output_path],
+                                     capture_output=True, text=True, check=True).stdout
+                self.assertNotIn('NT AUTHORITY\\SYSTEM', acl,
+                                 f'SYSTEM should have been removed from ACL:\n{acl}')
+                self.assertNotIn('BUILTIN\\Administrators', acl,
+                                 f'Administrators should have been removed from ACL:\n{acl}')
+            else:
+                file_mode = os.stat(output_path).st_mode & 0o777
+                self.assertEqual(file_mode, 0o600,
+                                 f'Expected 0o600, got {oct(file_mode)}')
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)

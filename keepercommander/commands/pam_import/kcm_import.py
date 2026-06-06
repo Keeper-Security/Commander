@@ -1367,6 +1367,7 @@ Examples:
             fd = os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, 'w') as f:
                 json.dump(out_data, f, indent=2)
+            utils.set_file_permissions(output_file)
             redact_note = '' if include_creds else ' (credentials redacted)'
             logging.warning('JSON written to %s (%d resources, %d users)%s',
                             output_file, num_resources, num_users, redact_note)
