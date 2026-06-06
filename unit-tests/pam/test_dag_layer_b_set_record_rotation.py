@@ -83,18 +83,30 @@ def test_set_record_rotation_hits_correct_url():
 
 def test_set_record_rotation_sends_protobuf_body():
     from keepercommander.commands.pam.router_helper import router_set_record_rotation_information
+    from keepercommander import crypto, utils
     rq = router_pb2.RouterRecordRotationRequest(
         recordUid=RECORD_UID,
         configurationUid=CONFIG_UID,
         resourceUid=RESOURCE_UID,
         schedule='0 0 * * *',
     )
+    transmission_key = utils.generate_aes_key()
     with patch(REQUESTS_TARGET, return_value=_ok_router_response()) as mock_req:
-        router_set_record_rotation_information(_mock_params(), rq)
+        router_set_record_rotation_information(_mock_params(), rq, transmission_key=transmission_key)
     body = mock_req.call_args.kwargs.get('data')
     assert isinstance(body, (bytes, bytearray))
-    # Encrypted blob, not JSON
-    assert not body.startswith(b'{')
+    # Body is the AES-GCM-encrypted protobuf — not the plaintext proto, and not
+    # JSON. Decrypt with the known transmission key and confirm it round-trips.
+    # (A first-byte heuristic like `not body.startswith(b'{')` is flaky: ~1/256
+    # of ciphertexts legitimately start with 0x7b.)
+    assert body != rq.SerializeToString()
+    decrypted = crypto.decrypt_aes_v2(body, transmission_key)
+    parsed = router_pb2.RouterRecordRotationRequest()
+    parsed.ParseFromString(decrypted)
+    assert parsed.recordUid == RECORD_UID
+    assert parsed.configurationUid == CONFIG_UID
+    assert parsed.resourceUid == RESOURCE_UID
+    assert parsed.schedule == '0 0 * * *'
 
 
 # --------------------------------------------------------------------------- #
