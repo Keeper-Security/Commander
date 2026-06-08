@@ -403,7 +403,7 @@ class Verify:
             # Get all the child vertices, allow self ref, so we can delete it if not already deleted.
             for next_vertex in vertex.has_vertices(allow_self_ref=True):
                 if next_vertex.uid == vertex.uid:
-                    version, edge = next_vertex.get_highest_edge_version(vertex.uid)
+                    _, edge = next_vertex.get_highest_edge_version(vertex.uid)
                     if edge.edge_type == EdgeType.DELETION:
                         continue
                     else:

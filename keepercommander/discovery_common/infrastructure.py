@@ -394,7 +394,9 @@ class Infrastructure:
                     head_uids.append(edge.head_uid)
 
             def _render_edge(e):
-
+                # _render_edge is invoked immediately within the loop below, so capturing the
+                # loop variables v/content is safe.
+                # pylint: disable=cell-var-from-loop
                 edge_color = "grey"
                 style = "solid"
 
@@ -439,7 +441,7 @@ class Infrastructure:
                          tooltip=edge_tip)
 
             for head_uid in head_uids:
-                version, edge = v.get_highest_edge_version(head_uid)
+                _, edge = v.get_highest_edge_version(head_uid)
                 _render_edge(edge)
 
             data_edge = v.get_data()

@@ -736,7 +736,7 @@ class NormalizedRecord(BaseModel):
 
         return False
 
-      
+
 class PromptResult(BaseModel):
 
     # "add" and "ignore" are the only action

@@ -377,7 +377,7 @@ class Process:
         for provider_vertex in provider_vertices:
             content = DiscoveryObject.get_discovery_object(provider_vertex)
             found = False
-            for domain in domains:
+            for domain in domains:  # pylint: disable=redefined-argument-from-local
                 for provider_domain in content.item.info.get("domains", []):
                     if domain.lower() in provider_domain.lower():
                         found = True
@@ -453,7 +453,7 @@ class Process:
 
                     found_vertex = None
                     if find_user is not None:
-                        user, domain = split_user_and_domain(find_user)
+                        user, _ = split_user_and_domain(find_user)
                         if user_content.item.user.lower() == user.lower():
                             found_vertex = user_vertex
                         elif user_content.item.user.lower() == find_user.lower():
@@ -1185,7 +1185,7 @@ class Process:
                 # We need to populate the id and uid of the content, now that we have data in the content.
                 self.populate_admin_content_ids(admin_content, resource_vertex)
 
-                ad_user, ad_domain = split_user_and_domain(admin_content.item.user)
+                _, ad_domain = split_user_and_domain(admin_content.item.user)
                 if ad_domain is not None and admin_content.item.source == LOCAL_USER:
                     self.logger.debug("The admin is an directory user, but the source is set to a local user")
 
