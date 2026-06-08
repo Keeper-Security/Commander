@@ -165,6 +165,7 @@ class Connection(ConnectionBase):
 
             attempt = 0
             while True:
+                err_msg = "no error message"
                 try:
                     attempt += 1
                     response = requests.get(url,
