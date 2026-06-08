@@ -17,7 +17,7 @@ Makefile
 dr-logs
 /.venv*
 *.swp
-CLAUDE.md
+#CLAUDE.md
 AGENTS.md
 keeper_db.sqlite
 __pycache__/
