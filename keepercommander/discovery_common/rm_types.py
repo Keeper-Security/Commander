@@ -465,7 +465,7 @@ class RmOracleUserAddMeta(RmMetaBase):
 
 
 class RmOracleRoleAddMeta(RmMetaBase):
-    not_identified: bool = False,
+    not_identified: bool = False
     identified_by_password: Optional[str] = None
     identified_using: Optional[str] = None
     identified_externally: bool = False

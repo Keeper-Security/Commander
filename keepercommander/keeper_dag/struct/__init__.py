@@ -54,3 +54,34 @@ class DataStructBase:
                 graph_id: Optional[int] = None) -> Union[DataPayload, gs_pb2.GraphSyncAddDataRequest]:
 
         pass
+
+    # --- Per-graph multi-stream read transport ---------------------------
+    # Used by DAG._sync_per_graph when read_endpoint is set. Two-step pattern:
+    # 1. leafs_query(...) -> get_leafs_result(...) discovers stream refs.
+    # 2. multi_sync_query(...) -> get_multi_sync_result(...) fetches data.
+
+    def leafs_query(self,
+                    vertices: List[str]) -> Union[BaseModel, gs_pb2.GraphSyncLeafsQuery]:
+        """Build a GraphSyncLeafsQuery from a list of vertex UIDs (URL-safe str)."""
+        pass
+
+    @staticmethod
+    def get_leafs_result(results: bytes) -> List[Ref]:
+        """Parse GraphSyncRefsResult bytes into a list of Ref objects.
+        Each Ref's `value` is the stream UID rooted under the queried vertex.
+        """
+        pass
+
+    def multi_sync_query(self,
+                         stream_ids: List[bytes],
+                         origin: bytes,
+                         sync_point: int = 0) -> Union[BaseModel, gs_pb2.GraphSyncMultiQuery]:
+        """Build a GraphSyncMultiQuery wrapping one GraphSyncQuery per stream."""
+        pass
+
+    @staticmethod
+    def get_multi_sync_result(results: bytes):  # -> List[SyncData]
+        """Parse GraphSyncMultiResult bytes into a list of SyncData, one per
+        inner GraphSyncResult (each carrying its own streamId/syncPoint/hasMore).
+        """
+        pass
