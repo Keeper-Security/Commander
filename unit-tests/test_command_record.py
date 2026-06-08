@@ -248,6 +248,14 @@ class TestRecord(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, uid='invalid')
 
+    def test_get_rejects_shell_metacharacters_in_lookup_token(self):
+        params = get_synced_params()
+        cmd = record.RecordGetUidCommand()
+
+        with self.assertRaises(CommandError) as context:
+            cmd.execute(params, uid='x;cd $HOME && id > pwned_keeper_rce.txt;#"unclosed')
+        self.assertIn('forbidden characters', context.exception.message)
+
     def test_append_notes_command(self):
         params = get_synced_params()
         cmd = record_edit.RecordAppendNotesCommand()

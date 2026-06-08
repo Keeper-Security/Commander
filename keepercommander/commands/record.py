@@ -20,6 +20,7 @@ import os
 import re
 from functools import reduce
 from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
+from .helpers.record import raise_if_unsafe_get_lookup_token
 
 from colorama import Fore, Back, Style
 
@@ -293,6 +294,8 @@ class RecordGetUidCommand(Command):
         uid = kwargs.get('uid')
         if not uid:
             raise CommandError('get', 'UID parameter is required')
+
+        raise_if_unsafe_get_lookup_token(uid)
 
         fmt = kwargs.get('format') or 'detail'
 
