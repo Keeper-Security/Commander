@@ -6,6 +6,7 @@ Follows the same patterns as test_command_folder.py and test_command_record.py:
   - Key utility/parsing functions
 """
 
+import json
 import os
 import time
 from unittest import TestCase, mock
@@ -282,6 +283,160 @@ class TestNestedShareFolderRecordCommands(TestCase):
             cmd.execute(_make_params(nested_share_folders={fuid: fobj}, record_type_cache={}),
                         title='New Record', folder_uid=fuid, force=True,
                         record_type='general', fields=[])
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
+    def test_add_record_rejects_restricted_record_type(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
+        fuid, fobj = _make_folder()
+        params = _make_params(
+            nested_share_folders={fuid: fobj},
+            record_type_cache={1: json.dumps({'$id': 'login'})},
+            enforcements={
+                'jsons': [{'key': 'restrict_record_types', 'value': '{"std": [1], "ent": []}'}],
+            },
+        )
+        cmd = NestedShareRecordAddCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, title='Blocked', record_type='login', fields=[], force=True)
+        self.assertIn('restricted', str(ctx.exception).lower())
+        mock_create.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
+    def test_add_record_rejects_weak_password_without_force(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
+        fuid, fobj = _make_folder()
+        params = _make_params(
+            nested_share_folders={fuid: fobj},
+            enforcements={
+                'jsons': [{
+                    'key': 'generated_password_complexity',
+                    'value': json.dumps([{
+                        'length': 12,
+                        'lower-use': True, 'lower-min': 1,
+                        'upper-use': True, 'upper-min': 1,
+                        'digit-use': True, 'digit-min': 1,
+                    }]),
+                }],
+            },
+        )
+        cmd = NestedShareRecordAddCommand()
+        cmd.execute(params, title='Weak', record_type='general',
+                    fields=['password=abc'], force=False)
+        mock_create.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
+    def test_add_record_allows_weak_password_with_force(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
+        mock_create.return_value = {
+            'record_uid': utils.generate_uid(), 'status': 'SUCCESS',
+            'message': '', 'success': True, 'revision': 1,
+        }
+        fuid, fobj = _make_folder()
+        params = _make_params(
+            nested_share_folders={fuid: fobj},
+            enforcements={
+                'jsons': [{
+                    'key': 'generated_password_complexity',
+                    'value': json.dumps([{
+                        'length': 12,
+                        'lower-use': True, 'lower-min': 1,
+                        'upper-use': True, 'upper-min': 1,
+                        'digit-use': True, 'digit-min': 1,
+                    }]),
+                }],
+            },
+        )
+        cmd = NestedShareRecordAddCommand()
+        cmd.execute(params, title='Weak', record_type='general',
+                    fields=['password=abc'], force=True)
+        mock_create.assert_called_once()
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
+    def test_add_record_gen_uses_password_policy(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
+        mock_create.return_value = {
+            'record_uid': utils.generate_uid(), 'status': 'SUCCESS',
+            'message': '', 'success': True, 'revision': 1,
+        }
+        fuid, fobj = _make_folder()
+        params = _make_params(
+            nested_share_folders={fuid: fobj},
+            enforcements={
+                'jsons': [{
+                    'key': 'generated_password_complexity',
+                    'value': json.dumps([{
+                        'length': 16,
+                        'lower-use': True, 'lower-min': 2,
+                        'upper-use': True, 'upper-min': 2,
+                        'digit-use': True, 'digit-min': 2,
+                        'special-use': True, 'special-min': 1,
+                        'special': '!@#$',
+                    }]),
+                }],
+            },
+        )
+        cmd = NestedShareRecordAddCommand()
+        cmd.execute(params, title='Generated', record_type='general',
+                    fields=['password=$GEN'], force=False)
+        mock_create.assert_called_once()
+        record_data = mock_create.call_args.kwargs['record_data']
+        password = next(
+            v[0] for f in record_data['fields']
+            if f.get('type') == 'password' for v in [f.get('value', [])] if v
+        )
+        self.assertGreaterEqual(len(password), 16)
+        self.assertGreaterEqual(sum(1 for c in password if c.islower()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c.isupper()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c.isdigit()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c in '!@#$'), 1)
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
+    @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
+    def test_update_record_rejects_restricted_record_type(self, mock_perm, mock_update):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
+        ruid, robj = _make_record()
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {'revision': 1, 'data_unencrypted': json.dumps({
+                'type': 'login', 'title': 'Old', 'fields': [],
+            })}},
+            record_type_cache={1: json.dumps({'$id': 'login'})},
+            enforcements={
+                'jsons': [{'key': 'restrict_record_types', 'value': '{"std": [1], "ent": []}'}],
+            },
+        )
+        cmd = NestedShareRecordUpdateCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, record_uids=[ruid], record_type='login', fields=[])
+        self.assertIn('restricted', str(ctx.exception).lower())
+        mock_update.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
+    @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
+    def test_update_record_rejects_weak_password_without_force(self, mock_perm, mock_update):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
+        ruid, robj = _make_record()
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {'revision': 1, 'data_unencrypted': json.dumps({
+                'type': 'login', 'title': 'Old',
+                'fields': [{'type': 'password', 'value': ['ExistingPass123']}],
+            })}},
+            enforcements={
+                'jsons': [{
+                    'key': 'generated_password_complexity',
+                    'value': json.dumps([{
+                        'length': 12,
+                        'lower-use': True, 'lower-min': 1,
+                        'upper-use': True, 'upper-min': 1,
+                        'digit-use': True, 'digit-min': 1,
+                    }]),
+                }],
+            },
+        )
+        cmd = NestedShareRecordUpdateCommand()
+        cmd.execute(params, record_uids=[ruid], fields=['password=abc'], force=False)
+        mock_update.assert_not_called()
 
     @patch('keepercommander.nested_share_folder.folder_record_api.add_record_to_folder_v3')
     def test_add_record_to_folder(self, mock_add):
