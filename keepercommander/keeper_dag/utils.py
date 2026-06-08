@@ -55,5 +55,5 @@ def set_file_permissions(file_path):     # type: (str) -> None
                            check=False, capture_output=True)
             subprocess.run(["icacls", file_path, "/grant", f"{username}:M"], check=True, capture_output=True)
             logging.debug(f'Set secure permissions (owner Modify only) for Windows file: {file_path}')
-    except Exception:
-        logging.warning(f'Failed to set file permissions for {file_path}')
+    except (OSError, subprocess.SubprocessError) as err:
+        logging.warning(f'Failed to set file permissions for {file_path}: {err}')
