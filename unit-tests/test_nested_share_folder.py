@@ -628,6 +628,83 @@ class TestNestedShareFolderFolderApi(TestCase):
         mock_handle_invite.assert_called_once_with(params, email, True)
         mock_access_update.assert_not_called()
 
+    @patch('keepercommander.nested_share_folder.folder_api.parse_folder_access_result')
+    @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
+    @patch('keepercommander.nested_share_folder.folder_api._resolve_accessor')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    def test_update_folder_access_v3_sets_expiration(
+            self, mock_resolve_folder, mock_resolve_accessor,
+            mock_access_update, mock_parse_result):
+        from keepercommander.nested_share_folder.folder_api import update_folder_access_v3
+
+        fuid, _ = _make_folder()
+        email = 'user@example.com'
+        uid_bytes = utils.base64_url_decode(utils.generate_uid())
+        mock_resolve_folder.return_value = fuid
+        mock_resolve_accessor.return_value = (uid_bytes, email, 1)
+        mock_parse_result.return_value = {'success': True}
+        mock_access_update.return_value = Mock()
+
+        expiration = 1_700_000_000_000
+        update_folder_access_v3(
+            _make_params(), fuid, email, expiration_timestamp=expiration)
+
+        update_call = mock_access_update.call_args
+        ad = update_call.kwargs['folder_access_updates'][0]
+        self.assertEqual(ad.tlaProperties.expiration, expiration)
+
+    @patch('keepercommander.nested_share_folder.folder_api.update_folder_access_v3')
+    @patch('keepercommander.nested_share_folder.folder_api._check_existing_access')
+    @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    def test_grant_folder_access_update_passes_expiration(
+            self, mock_resolve_folder, mock_get_public_key,
+            mock_existing, mock_update):
+        from keepercommander.nested_share_folder.folder_api import grant_folder_access_v3
+
+        fuid, fobj = _make_folder()
+        email = 'user@example.com'
+        uid_bytes = utils.base64_url_decode(utils.generate_uid())
+        mock_resolve_folder.return_value = fuid
+        mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
+        mock_existing.return_value = 'viewer'
+        mock_update.return_value = {'success': True}
+
+        expiration = 1_800_000_000_000
+        grant_folder_access_v3(
+            _make_params(nested_share_folders={fuid: fobj}),
+            fuid, email, role='editor', expiration_timestamp=expiration)
+
+        mock_update.assert_called_once_with(
+            mock.ANY, fuid, email, role='editor', as_team=False,
+            expiration_timestamp=expiration)
+
+    @patch('keepercommander.nested_share_folder.folder_api.update_folder_access_v3')
+    @patch('keepercommander.nested_share_folder.folder_api._check_existing_access')
+    @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    def test_grant_folder_access_same_role_updates_expiration(
+            self, mock_resolve_folder, mock_get_public_key,
+            mock_existing, mock_update):
+        from keepercommander.nested_share_folder.folder_api import grant_folder_access_v3
+
+        fuid, fobj = _make_folder()
+        email = 'user@example.com'
+        uid_bytes = utils.base64_url_decode(utils.generate_uid())
+        mock_resolve_folder.return_value = fuid
+        mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
+        mock_existing.return_value = 'viewer'
+        mock_update.return_value = {'success': True}
+
+        expiration = 1_900_000_000_000
+        grant_folder_access_v3(
+            _make_params(nested_share_folders={fuid: fobj}),
+            fuid, email, role='viewer', expiration_timestamp=expiration)
+
+        mock_update.assert_called_once_with(
+            mock.ANY, fuid, email, role='viewer', as_team=False,
+            expiration_timestamp=expiration)
+
 
 class TestNestedShareFolderDisplayCommands(TestCase):
 

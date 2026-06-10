@@ -1523,7 +1523,7 @@ class SearchCommand(Command):
                             'record_type': record.record_type,
                             'title': record.title,
                             'description': vault_extensions.get_record_description(record),
-                            'record_category': 'Nested' if is_nsf else 'Classic',
+                            'record_category': 'nested' if is_nsf else 'classic',
                         }
                         all_results.append(result_item)
                 else:
@@ -1531,7 +1531,7 @@ class SearchCommand(Command):
                     table = []
                     headers = ['Record UID', 'Type', 'Title', 'Description', 'Record Category']
                     for record in records:
-                        record_category = 'Nested' if record.record_uid in nsf_records_map else 'Classic'
+                        record_category = 'nested' if record.record_uid in nsf_records_map else 'classic'
                         row = [record.record_uid, record.record_type, record.title,
                                vault_extensions.get_record_description(record), record_category]
                         table.append(row)
@@ -1620,7 +1620,7 @@ class SearchCommand(Command):
                 for item in all_results:
                     if item['type'] == 'record':
                         row = [item['type'], item['record_uid'], item['title'], 
-                               f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'Classic')}"]
+                               f"Type: {item['record_type']}, Description: {item['description']}, Record Category: {item.get('record_category', 'classic')}"]
                     elif item['type'] == 'shared_folder':
                         row = [item['type'], item['shared_folder_uid'], item['name'],
                                f"Folder Category: Classic, Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
@@ -1797,7 +1797,7 @@ class RecordListCommand(Command):
             for record in records:
                 # Determine if record is from Nested Share Folder or Classic
                 is_nested_share = hasattr(params, 'nested_share_records') and record.record_uid in params.nested_share_records
-                record_category = 'Nested' if is_nested_share else 'Classic'
+                record_category = 'nested' if is_nested_share else 'classic'
                 row = [record.record_uid, record.record_type, record.title,
                        vault_extensions.get_record_description(record), record.shared, record_category]
                 table.append(row)
