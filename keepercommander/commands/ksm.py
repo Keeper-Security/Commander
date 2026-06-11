@@ -10,6 +10,7 @@
 #
 
 import argparse
+import base64
 import datetime
 import hmac
 import json
@@ -1594,6 +1595,8 @@ class KSMCommand(Command):
         if 'KEY_OWNER_PUBLIC_KEY' in ConfigKeys.__members__ and ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):
             config_dict[ConfigKeys.KEY_OWNER_PUBLIC_KEY.value] = ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY)
 
+        KSMCommand.validate_ksm_config_dict(config_dict)
+
         converted_config = KSMCommand.convert_config_dict(config_dict, config_init)
 
         if include_config_dict:
@@ -1605,12 +1608,48 @@ class KSMCommand(Command):
             return converted_config
 
     @staticmethod
+    def validate_ksm_config_dict(config_dict):
+        """Verify a freshly generated KSM device config is intact.
+
+        The config is handed out as an opaque base64 blob (gateway install,
+        k8s secret) and a corrupted clientId/privateKey only surfaces much
+        later as an unusable device, so fail loudly at the source instead.
+
+        Note: if this validation passes but the consumer still receives a
+        malformed token, the base64 was most likely mangled by the console -
+        lines overwritten/lost during print (wrapped rows, redraws) or a bad
+        copy/paste. For comparison capture it losslessly with a redirect:
+        pam project import ... > out.json
+        """
+        required_keys = ('hostname', 'clientId', 'privateKey', 'serverPublicKeyId', 'appKey')
+        for key in required_keys:
+            value = config_dict.get(key)
+            if not value or not isinstance(value, str):
+                raise Exception(f'Generated KSM config is invalid: "{key}" is missing or empty. '
+                                'Please remove the client device and try again.')
+        for key in ('clientId', 'privateKey', 'appKey'):
+            try:
+                decoded = base64.b64decode(config_dict[key], validate=True)
+            except Exception:
+                raise Exception(f'Generated KSM config is invalid: "{key}" is not valid base64. '
+                                'Please remove the client device and try again.')
+            if key == 'clientId' and len(decoded) != 64:  # HMAC-SHA512 digest
+                raise Exception(f'Generated KSM config is invalid: "clientId" decodes to '
+                                f'{len(decoded)} bytes, expected 64. '
+                                'Please remove the client device and try again.')
+
+    @staticmethod
     def convert_config_dict(config_dict, conversion_type='json'):
 
         config = json.dumps(config_dict)
 
         if conversion_type in ['b64', 'k8s']:
-            config = json_to_base64(config)
+            encoded = json_to_base64(config)
+            # the encoded blob must round-trip to the exact JSON it was built
+            # from - catches any corruption before the config is handed out
+            if base64.b64decode(encoded).decode('utf-8') != config:
+                raise Exception('KSM config base64 encoding failed the integrity check')
+            config = encoded
 
         if conversion_type == 'k8s':
             config = "\n" \
