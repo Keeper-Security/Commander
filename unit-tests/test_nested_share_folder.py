@@ -681,10 +681,10 @@ class TestNestedShareFolderFolderApi(TestCase):
         expiration = 1_800_000_000_000
         grant_folder_access_v3(
             _make_params(nested_share_folders={fuid: fobj}),
-            fuid, email, role='editor', expiration_timestamp=expiration)
+            fuid, email, role='content-manager', expiration_timestamp=expiration)
 
         mock_update.assert_called_once_with(
-            mock.ANY, fuid, email, role='editor', as_team=False,
+            mock.ANY, fuid, email, role='content-manager', as_team=False,
             expiration_timestamp=expiration)
 
     @patch('keepercommander.nested_share_folder.folder_api.update_folder_access_v3')
