@@ -7,7 +7,7 @@ import sys
 from tempfile import mkdtemp
 from typing import Optional
 
-from . import fetcher
+from . import fetcher, session
 from . import parser
 from .exceptions import InvalidResponseError
 from .shared_folder import LastpassSharedFolder
@@ -46,7 +46,7 @@ class Vault(object):
         self.errors = set()
         self.shared_folders = []
         self.attachments = []
-        self.accounts = self.parse_accounts(chunks, encryption_key)
+        self.accounts = self.parse_accounts(chunks, encryption_key, session.privatekeyenc)
         self.tmpdir = None
         self.proxies = kwargs.get('proxies')
         self.certificate_check = kwargs.get('certificate_check')
@@ -83,11 +83,16 @@ class Vault(object):
     def is_complete(self, chunks):
         return len(chunks) > 0 and chunks[-1].id == b'ENDM' and chunks[-1].payload == b'OK'
 
-    def parse_accounts(self, chunks, encryption_key):
+    def parse_accounts(self, chunks, encryption_key, privatekeyenc = None):
         accounts = []
 
         key = encryption_key
         rsa_private_key = None   # type: Optional[bytes]
+        if isinstance(privatekeyenc, bytes):
+            try:
+                rsa_private_key = parser.parse_PRIK(privatekeyenc, encryption_key)
+            except Exception:
+                pass
         shared_folder = None
         last_account = None
         for i in chunks:
@@ -100,7 +105,8 @@ class Vault(object):
                 if last_account:
                     accounts.append(last_account)
             elif i.id == b'PRIK':
-                rsa_private_key = parser.parse_PRIK(i, encryption_key)
+                if not rsa_private_key:
+                    rsa_private_key = parser.parse_PRIK(i.payload, encryption_key)
             elif i.id == b'SHAR':
                 # After SHAR chunk all the following accounts are encrypted with a new key
                 share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
