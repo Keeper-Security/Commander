@@ -201,6 +201,13 @@ class TestRegister(TestCase):
         finally:
             TestRegister.record_share_rq_rs = original
 
+    def test_get_share_expiration_rejects_sub_minute(self):
+        with self.assertRaises(CommandError) as ctx:
+            register.get_share_expiration(None, '0mi', cmd_name='share-record')
+        self.assertIn('at least 1 minute', str(ctx.exception))
+        with self.assertRaises(CommandError):
+            register.get_share_expiration('2020-01-01T00:00:00', None, cmd_name='share-record')
+
     def test_share_record_update_clears_expiration_with_never(self):
         """--expire-at never on an existing share must clear the timer (expiration = -1)."""
         params = get_synced_params()
