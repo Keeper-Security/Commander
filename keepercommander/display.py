@@ -254,7 +254,17 @@ import threading
 
 
 class Spinner:
-    """Animated spinner for long-running operations."""
+    """Animated spinner for long-running operations.
+
+    WARNING: every frame starts with '\\r' and overwrites the current console
+    row with the frame, message and padding spaces. A spinner that is still
+    (or again) ticking while other code prints can therefore erase chunks of
+    large multi-row output - especially long single-line blobs like base64
+    KSM config tokens (`pam project import`/`pam gateway new` access_token),
+    silently corrupting what the user copies. Callers MUST guarantee stop()
+    via try/finally, and any change here must keep frames out of stopped
+    spinners and out of redirected/captured output.
+    """
 
     # Claude-style spinner frames
     FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -272,26 +282,49 @@ class Spinner:
             message = self.message or ''
             visible_len = len(message) + 2  # frame + space + message
             pad = max(0, self._last_visible_len - visible_len)
-            sys.stdout.write(f'\r{Fore.CYAN}{frame}{Fore.RESET} {message}' + (' ' * pad))
-            sys.stdout.flush()
+            # Re-check right before the write: a stale tick firing after
+            # stop() has returned (join timed out on a blocked console write)
+            # would '\r'-overwrite output printed in the meantime - erasing a
+            # row of large output such as a printed KSM config token.
+            # Skipping costs only one cosmetic frame.
+            if not self.running:
+                break
+            # Frames go to stderr (codebase convention for '\r' progress, see
+            # sox/aram/record_totp): on stdout they land inside redirected or
+            # captured command output, e.g. corrupting the base64 config in
+            # `pam project import ... > out.json`.
+            sys.stderr.write(f'\r{Fore.CYAN}{frame}{Fore.RESET} {message}' + (' ' * pad))
+            sys.stderr.flush()
             self._last_visible_len = visible_len + pad
             idx += 1
             time.sleep(0.08)
-        # Clear the line when done
-        clear_len = max(self._last_visible_len, len(self.message or '') + 2)
-        sys.stdout.write('\r' + ' ' * clear_len + '\r')
-        sys.stdout.flush()
-        self._last_visible_len = 0
 
     def start(self):
+        # Spin only on a real console; in a redirected/captured stream the
+        # frames cannot animate and would pile up as '\r' noise in the data.
+        try:
+            if not sys.stderr.isatty():
+                return
+        except Exception:
+            return
         self.running = True
         self.thread = threading.Thread(target=self._animate, daemon=True)
         self.thread.start()
 
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=0.5)
+        if not self.thread:
+            return
+        self.thread.join(timeout=0.5)
+        self.thread = None
+        # Clear the spinner line from the calling thread after the animator
+        # has exited; clearing from the animator raced with output printed
+        # right after stop() and could blank part of it (erased lines in
+        # large output, e.g. ksm config tokens) with the padding spaces.
+        clear_len = max(self._last_visible_len, len(self.message or '') + 2)
+        sys.stderr.write('\r' + ' ' * clear_len + '\r')
+        sys.stderr.flush()
+        self._last_visible_len = 0
 
 
 def post_login_summary(record_count=0, breachwatch_count=0, show_tips=True):
