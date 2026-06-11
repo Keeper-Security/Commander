@@ -129,12 +129,15 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     return account
 
 
-def parse_PRIK(chunk, encryption_key):
+def parse_PRIK(payload, encryption_key):
     """Parse PRIK chunk which contains private RSA key"""
-    decrypted = decode_aes256('cbc',
-                              encryption_key[:16],
-                              decode_hex(chunk.payload),
-                              encryption_key)
+    if payload[0] == ord('!'):
+        decrypted = decode_aes256_base64_auto(payload, encryption_key)
+    else:
+        decrypted = decode_aes256('cbc',
+                                  encryption_key[:16],
+                                  decode_hex(payload),
+                                  encryption_key)
 
     hex_key = re.match(br'^LastPassPrivateKey<(?P<hex_key>.*)>LastPassPrivateKey$', decrypted).group('hex_key')
     return decode_hex(hex_key)
