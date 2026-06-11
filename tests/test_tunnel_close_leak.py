@@ -19,6 +19,20 @@ import threading
 import time
 import logging
 
+# Linux-only e2e repro: shells out to `sshpass`/`ssh` with `/dev/null` paths and
+# needs an SSH container on 127.0.0.1:2222. Bail before importing the native
+# keeper_pam_connections module so it neither aborts pytest collection nor errors
+# when run on Windows.
+if sys.platform == "win32":
+    _skip_msg = ("tunnel close-leak e2e is Linux-only (needs sshpass + SSH "
+                 "container on :2222); skipped on Windows")
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(_skip_msg, allow_module_level=True)
+    else:
+        print(f"SKIP: {_skip_msg}")
+        sys.exit(0)
+
 import keeper_pam_connections
 from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     TunnelSignalHandler,

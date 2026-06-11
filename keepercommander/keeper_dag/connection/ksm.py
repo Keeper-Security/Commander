@@ -57,7 +57,7 @@ class Connection(ConnectionBase):
             self.use_read_protobuf = False
         if self.use_write_protobuf:
             self.logger.info("KSM cannot use protobuf for writing to the graph, using JSON.")
-            self.use_read_protobuf = False
+            self.use_write_protobuf = False
 
         if InMemoryKeyValueStorage.is_base64(config):
             config = utils.base64_to_string(config)

@@ -16,7 +16,7 @@ from ...params import KeeperParams
 from ...keeper_dag import DAG, EdgeType
 from ...keeper_dag.exceptions import DAGPathException
 from ...keeper_dag.connection.commander import Connection
-from ...keeper_dag.types import PamEndpoints
+from ...keeper_dag.types import PamGraphId
 from ...vault import PasswordRecord
 from ... import vault
 from ...display import bcolors
@@ -84,17 +84,15 @@ def list_resource_data_edges(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
 
         # Load the DAG
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM
+            graph_id=PamGraphId.PAM.value
         )
         try:
             linking_dag.load()
@@ -103,7 +101,7 @@ def list_resource_data_edges(
             return []
 
         # Get the resource vertex
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return []
@@ -189,17 +187,15 @@ def get_resource_settings(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
 
         # Load the DAG
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM
+            graph_id=PamGraphId.PAM.value
         )
         try:
             linking_dag.load()
@@ -211,7 +207,7 @@ def get_resource_settings(
             return None
 
         # Get the resource vertex
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return None
@@ -414,10 +410,11 @@ def set_resource_keeper_ai_settings(
     validates caller access then writes the `ai_settings` DAG DATA edge on the
     resource server-side.
 
-    Fallback (env var `KEEPER_DAG_LB_FALLBACK=1`, default ON): on
+    Fallback (env var `KEEPER_DAG_LB_FALLBACK`, default OFF / strict mode): on
     `RRC_NOT_ALLOWED*` from krouter, fall back to the legacy direct
     DAG-write path (`_set_resource_keeper_ai_settings_legacy`). Gateway then
-    enforces at runtime. Set the env var to `0` for strict mode (denials propagate).
+    enforces at runtime. Default (unset/`0`) propagates denials; set to `1` to opt
+    into fallback.
 
     Args:
         params: KeeperParams instance
@@ -436,6 +433,17 @@ def set_resource_keeper_ai_settings(
 
     encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
 
+    # krouter's configure_resource only writes a settings edge when it loads the
+    # resource's existing edges (loopEdges), which it does only for requests that
+    # carry meta/jit/connection (UserRest.kt). A keeperAiSettings-only request
+    # leaves loopEdges null and the ai_settings write is silently dropped. The Web
+    # Vault avoids this by always sending meta alongside the AI settings, so mirror
+    # that: include the resource's current meta in the same request.
+    meta_bytes = None
+    current_meta = get_resource_settings(params, resource_uid, 'meta', resolved_config_uid)
+    if isinstance(current_meta, dict):
+        meta_bytes = json.dumps(current_meta).encode()
+
     # Primary: Layer-B configure_resource (permission-checked).
     from ..pam.router_helper import router_configure_resource, get_router_url
     host = get_router_url(params)
@@ -446,6 +454,8 @@ def set_resource_keeper_ai_settings(
             networkUid=url_safe_str_to_bytes(resolved_config_uid),
             keeperAiSettings=encrypted_content,
         )
+        if meta_bytes is not None:
+            rq.meta = meta_bytes
         try:
             router_configure_resource(params, rq)
             logging.debug(f"Saved KeeperAI settings via configure_resource for {resource_uid}")
@@ -527,20 +537,19 @@ def _set_resource_keeper_ai_settings_legacy(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True,
+            use_read_protobuf=False,
+            use_write_protobuf=False,
         )
 
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=True,
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
@@ -649,20 +658,19 @@ def _set_resource_jit_settings_legacy(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True,
+            use_read_protobuf=False,
+            use_write_protobuf=False,
         )
 
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=True,
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
@@ -725,19 +733,17 @@ def refresh_meta_to_latest(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=True
         )
         linking_dag.load()
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             return False
         meta_edges = [e for e in (resource_vertex.edges or [])
@@ -795,20 +801,18 @@ def refresh_link_to_config_to_latest(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=True
         )
         linking_dag.load()
-        resource_vertex = linking_dag.get_vertex(resource_uid)
-        config_vertex = linking_dag.get_vertex(config_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
+        config_vertex = linking_dag.get_vertex_by_uid(config_uid)
         if not resource_vertex or not config_vertex:
             return False
         # Re-add LINK (path empty, content {}) so it becomes latest, above KEY added by JIT/AI
@@ -933,15 +937,13 @@ def inspect_resource_in_graph(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=not show_raw_content
         )
         linking_dag.load()
@@ -1035,19 +1037,17 @@ def get_resource_domain_dir_uid(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True
+            use_read_protobuf=False,
+            use_write_protobuf=False
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            graph_id=0,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM
+            graph_id=PamGraphId.PAM.value
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             return None
 
@@ -1131,19 +1131,18 @@ def _set_resource_domain_dir_legacy(
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token,
             transmission_key=transmission_key,
-            use_read_protobuf=True,
-            use_write_protobuf=True,
+            use_read_protobuf=False,
+            use_write_protobuf=False,
         )
         linking_dag = DAG(
             conn=conn,
             record=dag_record,
-            read_endpoint=PamEndpoints.PAM,
-            write_endpoint=PamEndpoints.PAM,
+            graph_id=PamGraphId.PAM.value,
             decrypt=True,
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex(resource_uid)
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
@@ -1156,12 +1155,12 @@ def _set_resource_domain_dir_legacy(
                 old_dir_uid = edge.head_uid
                 break
         if old_dir_uid and old_dir_uid != dir_uid:
-            old_dir_vertex = linking_dag.get_vertex(old_dir_uid)
+            old_dir_vertex = linking_dag.get_vertex_by_uid(old_dir_uid)
             if old_dir_vertex:
                 resource_vertex.disconnect_from(old_dir_vertex)
                 logging.debug(f"Disconnected old domain LINK edge to {old_dir_uid}")
 
-        dir_vertex = linking_dag.get_vertex(dir_uid)
+        dir_vertex = linking_dag.get_vertex_by_uid(dir_uid)
         if not dir_vertex:
             logging.warning(f"Directory vertex {dir_uid} not found in DAG")
             return False
