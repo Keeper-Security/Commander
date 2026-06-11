@@ -42,7 +42,7 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
-                                   agent=f"Cmdr/{__version__}", use_per_graph_endpoints=False)
+                                   agent=f"Cmdr/{__version__}")
 
         service_map = {}
         for resource_vertex in user_service.dag.get_root.has_vertices(edge_type=EdgeType.LINK):

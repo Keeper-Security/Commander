@@ -46,7 +46,7 @@ class PAMGatewayActionDiscoverRuleRemoveCommand(PAMGatewayActionDiscoverCommandB
             return
 
         try:
-            rules = Rules(record=gateway_context.configuration, params=params, use_per_graph_endpoints=False)
+            rules = Rules(record=gateway_context.configuration, params=params)
             if remove_all:
                 rules.remove_all(RuleTypeEnum.ACTION)
                 print(f"{bcolors.OKGREEN}All rules removed.{bcolors.ENDC}")
