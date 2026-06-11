@@ -101,7 +101,7 @@ class PAMGatewayActionDiscoverRuleListCommand(PAMGatewayActionDiscoverCommandBas
             multi_conf_msg(gateway, err)
             return
 
-        rules = Rules(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
+        rules = Rules(record=gateway_context.configuration, params=params, use_per_graph_endpoints=False)
         rule_list = rules.rule_list(rule_type=RuleTypeEnum.ACTION,
                                     search=kwargs.get("search"))  # type: List[RuleItem]
         if len(rule_list) == 0:
