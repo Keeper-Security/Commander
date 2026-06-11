@@ -78,7 +78,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                             indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level, use_per_graph_endpoints=False)
+                               debug_level=debug_level)
         infra.load(sync_point=0)
 
         try:
@@ -164,7 +164,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
                                  logger=logging,
-                                 debug_level=debug_level, use_per_graph_endpoints=False)
+                                 debug_level=debug_level)
         configuration = record_link.dag.get_root
         
         record = vault.KeeperRecord.load(params, configuration.uid)  # type: Optional[TypedRecord]
@@ -316,7 +316,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                               indent: int = 0):
 
         user_service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                                   debug_level=debug_level, use_per_graph_endpoints=False)
+                                   debug_level=debug_level)
         configuration = user_service.dag.get_root
 
         def _handle(current_vertex: DAGVertex, parent_vertex: Optional[DAGVertex] = None, indent: int = 0):
@@ -364,7 +364,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                            indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level, fail_on_corrupt=False, use_per_graph_endpoints=False)
+                               debug_level=debug_level, fail_on_corrupt=False)
         infra.load(sync_point=0)
 
         pad = ""
@@ -461,7 +461,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                          debug_level: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level, use_per_graph_endpoints=False)
+                               debug_level=debug_level)
         infra.load(sync_point=0)
 
         print("")
@@ -487,7 +487,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         rl = RecordLink(record=gateway_context.configuration,
                         params=params,
                         logger=logging,
-                        debug_level=debug_level, use_per_graph_endpoints=False)
+                        debug_level=debug_level)
 
         print("")
         dot_instance = rl.to_dot(
@@ -510,7 +510,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                            graph_format: str, debug_level: int = 0):
 
         service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                              debug_level=debug_level, use_per_graph_endpoints=False)
+                              debug_level=debug_level)
 
         print("")
         dot_instance = service.to_dot(
@@ -532,7 +532,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def _do_render_jobs(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
                         graph_format: str, debug_level: int = 0):
 
-        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level, use_per_graph_endpoints=False)
+        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level)
 
         print("")
         dot_instance = jobs.dag.to_dot()

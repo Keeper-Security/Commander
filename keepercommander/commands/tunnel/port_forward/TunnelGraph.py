@@ -3,7 +3,7 @@ import logging
 from .tunnel_helpers import generate_random_bytes, get_config_uid
 from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
-from ....keeper_dag.types import RefType, PamEndpoints
+from ....keeper_dag.types import RefType, PamGraphId
 from ....keeper_dag.vertex import DAGVertex
 from ....display import bcolors
 from ....vault import PasswordRecord
@@ -113,11 +113,11 @@ class TunnelDAG:
                                encrypted_transmission_key=self.encrypted_transmission_key,
                                encrypted_session_token=self.encrypted_session_token,
                                transmission_key=self.transmission_key,
-                               use_read_protobuf=True,
-                               use_write_protobuf=True
+                               use_read_protobuf=False,
+                               use_write_protobuf=False
                                )
         self.linking_dag = DAG(conn=self.conn, record=self.record,
-                               read_endpoint=PamEndpoints.PAM, write_endpoint=PamEndpoints.PAM)
+                               graph_id=PamGraphId.PAM.value)
         try:
             self.linking_dag.load()
         except Exception as e:
@@ -127,15 +127,15 @@ class TunnelDAG:
     def resource_belongs_to_config(self, resource_uid):
         if not self.linking_dag.has_graph:
             return False
-        resource_vertex = self.linking_dag.get_vertex(resource_uid)
-        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        resource_vertex = self.linking_dag.get_vertex_by_uid(resource_uid)
+        config_vertex = self.linking_dag.get_vertex_by_uid(self.record.record_uid)
         return resource_vertex and config_vertex.has(resource_vertex, EdgeType.LINK)
 
     def user_belongs_to_config(self, user_uid):
         if not self.linking_dag.has_graph:
             return False
-        user_vertex = self.linking_dag.get_vertex(user_uid)
-        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        user_vertex = self.linking_dag.get_vertex_by_uid(user_uid)
+        config_vertex = self.linking_dag.get_vertex_by_uid(self.record.record_uid)
         res_content = False
         if user_vertex and config_vertex and config_vertex.has(user_vertex, EdgeType.ACL):
             acl_edge = user_vertex.get_edge(config_vertex, EdgeType.ACL)

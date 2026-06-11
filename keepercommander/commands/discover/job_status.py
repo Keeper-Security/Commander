@@ -6,7 +6,7 @@ from ..pam.router_helper import router_get_connected_gateways
 from ...display import bcolors
 from ...discovery_common.jobs import Jobs
 from ...discovery_common.infrastructure import Infrastructure
-from ...keeper_dag.types import PamEndpoints
+from ...keeper_dag.types import PamGraphId
 from ...discovery_common.types import DiscoveryDelta, DiscoveryObject
 from ...keeper_dag.dag import DAG
 from typing import Optional, Dict, List, TYPE_CHECKING
@@ -160,7 +160,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                          job_id: str):
 
         def _find_job(configuration_record) -> Optional[Dict]:
-            jobs_obj = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
+            jobs_obj = Jobs(record=configuration_record, params=params)
             job_item = jobs_obj.get_job(job_id)
             if job_item is not None:
                 return {
@@ -175,7 +175,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         if gateway_context is not None:
             jobs = payload["jobs"]
             job = jobs.get_job(job_id)  # type: JobItem
-            infra = Infrastructure(record=gateway_context.configuration, params=params, use_per_graph_endpoints=False)
+            infra = Infrastructure(record=gateway_context.configuration, params=params)
 
             color = bcolors.OKBLUE
             status = "RUNNING"
@@ -257,8 +257,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                     print("Fall back to raw graph.")
                     print("")
                     dag = DAG(conn=infra.conn, record=infra.record,
-                              read_endpoint=PamEndpoints.INFRASTRUCTURE,
-                              write_endpoint=PamEndpoints.INFRASTRUCTURE)
+                              graph_id=PamGraphId.INFRASTRUCTURE)
                     print(dag.to_dot_raw(sync_point=job.sync_point, rank_dir="RL"))
 
         else:
@@ -325,7 +324,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                 if len(gateway_context.gateway_name) > max_gateway_name:
                     max_gateway_name = len(gateway_context.gateway_name)
 
-                jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
+                jobs = Jobs(record=configuration_record, params=params)
                 if show_history is True:
                     job_list = reversed(jobs.history)
                 else:
