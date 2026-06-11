@@ -1,4 +1,5 @@
 # coding: utf-8
+import codecs
 import hashlib
 import json
 import logging
@@ -127,6 +128,7 @@ def request_login(username, password, key_iteration_count, multifactor_password=
         'username': username,
         'hash': make_hash(username, password, key_iteration_count),
         'iterations': key_iteration_count,
+        'includeprivatekeyenc': 1,
     }
 
     if multifactor_password:
@@ -176,7 +178,14 @@ def create_session(parsed_response, key_iteration_count):
     if parsed_response.tag == 'ok':
         session_id = parsed_response.attrib.get('sessionid')
         if isinstance(session_id, str):
-            return Session(session_id, key_iteration_count)
+            session = Session(session_id, key_iteration_count)
+            try:
+                privatekeyenc = parsed_response.attrib.get('privatekeyenc')
+                if isinstance(privatekeyenc, str):
+                    session.privatekeyenc = privatekeyenc.encode('utf-8')
+            except Exception:
+                pass
+            return session
 
 
 def login_error(parsed_response):
