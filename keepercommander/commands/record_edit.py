@@ -42,6 +42,10 @@ record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='stor
 record_add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
 record_add_parser.add_argument('-t', '--title', dest='title', action='store', help='record title')
 record_add_parser.add_argument('-rt', '--record-type', dest='record_type', action='store', help='record type')
+record_add_parser.add_argument('--labels', dest='labels', action='store', choices=['on', 'off'],
+                               help='label fields in standard record-type definition. "on" (default) keeps legacy '
+                                    'labels; "off" omits them. "off" affects only RT-definition fields without their '
+                                    'own label; RT-definition custom labels and explicitly provided labels are preserved.')
 record_add_parser.add_argument('-n', '--notes', dest='notes', action='store', help='record notes')
 record_add_parser.add_argument('--folder', dest='folder', action='store',
                                help='folder name or UID to store record')
@@ -865,11 +869,15 @@ class RecordAddCommand(Command, RecordEditMixin):
                 raise CommandError('record-add', f'Record type \"{record_type}\" cannot be found.')
             record = vault.TypedRecord()
             record.type_name = record_type
+            omit_labels = (kwargs.get('labels') or 'on').lower() == 'off'
             for rf in rt_fields:
                 ref = rf.get('$ref')
                 if not ref:
                     continue
-                label = rf.get('label') or ref
+                # Use the label from the record-type definition when present (both modes).
+                # When the definition has none: legacy ("on") falls back to the field type;
+                # "off" leaves it empty so the redundant type-name label is omitted (matches Vault UI).
+                label = rf.get('label') or ('' if omit_labels else ref)
                 required = rf.get('required', False)
                 default_value = None
                 if ref == 'appFiller':
