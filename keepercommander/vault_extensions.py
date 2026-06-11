@@ -447,9 +447,10 @@ def extract_typed_field(field):     # type: (vault.TypedField) -> dict
                 field_values.append(value)
     result = {
         'type': field_type,
-        'label': field.label or '',
         'value': field_values
     }
+    if field.label:
+        result['label'] = field.label
     if field.required is True:
         result['required'] = True
     return result
