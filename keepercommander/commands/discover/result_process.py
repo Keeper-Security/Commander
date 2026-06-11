@@ -1334,7 +1334,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     def remove_job(params: KeeperParams, configuration_record: KeeperRecord, job_id: str):
 
         try:
-            jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=True)
+            jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
             jobs.cancel(job_id)
             print(f"{bcolors.OKGREEN}No items left to process. Removing completed discovery job.{bcolors.ENDC}")
         except Exception as err:
@@ -1353,7 +1353,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                                params=params,
                                logger=logging,
                                debug_level=debug_level,
-                               use_per_graph_endpoints=True)
+                               use_per_graph_endpoints=False)
         infra.load(sync_point)
 
         configuration = None
@@ -1512,7 +1512,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             # Get the current job.
             # There can only be one active job.
             # This will give us the sync point for the delta
-            jobs = Jobs(record=configuration_record, params=params, logger=logging, debug_level=debug_level, use_per_graph_endpoints=True)
+            jobs = Jobs(record=configuration_record, params=params, logger=logging, debug_level=debug_level, use_per_graph_endpoints=False)
             job_item = jobs.current_job
             if job_item is None:
                 continue
