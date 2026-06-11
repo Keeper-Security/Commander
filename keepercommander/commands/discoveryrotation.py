@@ -3372,7 +3372,7 @@ class PAMGatewayActionRotateCommand(Command):
                 # Check the graph for the noop setting.
                 record_link = RecordLink(record=pam_config,
                                          params=params,
-                                         fail_on_corrupt=False, use_per_graph_endpoints=True)
+                                         fail_on_corrupt=False, use_per_graph_endpoints=False)
                 acl = record_link.get_acl(record_uid, pam_config.record_uid)
                 if acl is not None and acl.rotation_settings is not None:
                     is_noop = acl.rotation_settings.noop

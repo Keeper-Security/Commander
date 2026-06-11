@@ -57,7 +57,7 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
-                                   agent=f"Cmdr/{__version__}", use_per_graph_endpoints=True)
+                                   agent=f"Cmdr/{__version__}", use_per_graph_endpoints=False)
 
         machine_record = vault.KeeperRecord.load(params, machine_uid)  # type: Optional[TypedRecord]
         if machine_record is None:

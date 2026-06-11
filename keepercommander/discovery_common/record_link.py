@@ -56,7 +56,7 @@ class RecordLink:
         # Based on the connection type, use_write_protobuf might be set to False is True was passed.
         # Use self.conn.use_write_protobuf; don't use passed in use_write_protobuf.
         # If using protobuf to write, then use the endpoint.
-        # `use_per_graph_endpoints=True` also forces the endpoints on, independent
+        # `use_per_graph_endpoints=False` also forces the endpoints on, independent
         # of the protobuf flags.
         self.write_endpoint = None
         if use_per_graph_endpoints or self.conn.use_write_protobuf:

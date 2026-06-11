@@ -112,7 +112,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
             multi_conf_msg(gateway, err)
             return
 
-        jobs = Jobs(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
+        jobs = Jobs(record=gateway_context.configuration, params=params, use_per_graph_endpoints=False)
         current_job_item = jobs.current_job
         removed_prior_job = None
         if current_job_item is not None:

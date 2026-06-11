@@ -160,7 +160,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                          job_id: str):
 
         def _find_job(configuration_record) -> Optional[Dict]:
-            jobs_obj = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=True)
+            jobs_obj = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
             job_item = jobs_obj.get_job(job_id)
             if job_item is not None:
                 return {
@@ -175,7 +175,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         if gateway_context is not None:
             jobs = payload["jobs"]
             job = jobs.get_job(job_id)  # type: JobItem
-            infra = Infrastructure(record=gateway_context.configuration, params=params, use_per_graph_endpoints=True)
+            infra = Infrastructure(record=gateway_context.configuration, params=params, use_per_graph_endpoints=False)
 
             color = bcolors.OKBLUE
             status = "RUNNING"
@@ -325,7 +325,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                 if len(gateway_context.gateway_name) > max_gateway_name:
                     max_gateway_name = len(gateway_context.gateway_name)
 
-                jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=True)
+                jobs = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
                 if show_history is True:
                     job_list = reversed(jobs.history)
                 else:
