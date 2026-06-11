@@ -27,14 +27,26 @@ from .vault import KeeperRecord
 def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> None
     """Sync full or partial data down to the client"""
 
-    params.sync_data = False
-    token = params.sync_down_token
-
-    # Use spinner animation for full sync (only in interactive mode, not batch/automation)
+    # Use spinner animation for full sync (only in interactive mode, not batch/automation).
+    # WARNING: stop() MUST be guaranteed via finally. A leaked spinner thread keeps
+    # '\r'-overwriting the current console row for the rest of the session, erasing
+    # lines of any large output printed later - notably base64 KSM config tokens
+    # (`pam project import` / `pam gateway new` access_token), which then reach the
+    # user silently corrupted.
     spinner = None
-    if not token and not params.batch_mode:
+    if not params.sync_down_token and not params.batch_mode:
         spinner = Spinner('Syncing...')
         spinner.start()
+    try:
+        _sync_down_impl(params, record_types)
+    finally:
+        if spinner:
+            spinner.stop()
+
+
+def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) -> None
+    params.sync_data = False
+    token = params.sync_down_token
 
     for record in params.record_cache.values():
         if 'shares' in record:
@@ -1040,10 +1052,6 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 type_id = rt.recordTypeId
                 type_id += rt.scope * 1000000
                 params.record_type_cache[type_id] = rt.content
-
-    # Stop spinner if running
-    if spinner:
-        spinner.stop()
 
     if full_sync:
         convert_keys.change_key_types(params)
