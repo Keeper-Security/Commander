@@ -39,7 +39,7 @@ class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBa
         all_gateways = GatewayContext.all_gateways(params)
 
         def _find_job(configuration_record) -> Optional[Dict]:
-            jobs_obj = Jobs(record=configuration_record, params=params, use_per_graph_endpoints=False)
+            jobs_obj = Jobs(record=configuration_record, params=params)
             job_item = jobs_obj.get_job(job_id)
             if job_item is not None:
                 return {
