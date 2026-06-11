@@ -65,7 +65,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
             for configuration_record in configuration_records:
 
-                record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=True)
+                record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=False)
                 record_vertex = record_link.dag.get_vertex(record.record_uid)
                 if record_vertex is not None and record_vertex.active is True:
                     controller_uid = configuration_record.record_uid
@@ -95,10 +95,10 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}Could not find the gateway for configuration record.{controller_uid}{bcolors.ENDC}")
             return
 
-        infra = Infrastructure(record=configuration_record, params=params, use_per_graph_endpoints=True)
+        infra = Infrastructure(record=configuration_record, params=params, use_per_graph_endpoints=False)
         infra.load()
-        record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=True)
-        user_service = UserService(record=configuration_record, params=params, use_per_graph_endpoints=True)
+        record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=False)
+        user_service = UserService(record=configuration_record, params=params, use_per_graph_endpoints=False)
 
         print("")
         print(self._h("Record Information"))
