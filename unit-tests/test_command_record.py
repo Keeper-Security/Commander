@@ -8,7 +8,7 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
-from keepercommander import api, utils, crypto, attachment, vault
+from keepercommander import api, utils, crypto, attachment, vault, vault_extensions
 from keepercommander.commands import record, record_edit
 from keepercommander.error import CommandError
 
@@ -96,6 +96,78 @@ class TestRecord(TestCase):
             field = added_record.get_typed_field('text', 'AAA')
             self.assertIsNotNone(field)
             self.assertEqual(field.get_default_value(str), 'BBB')
+
+    def _run_add(self, params, **kwargs):
+        """Run record-add with the API mocked; return the TypedRecord that would be saved."""
+        cmd = record_edit.RecordAddCommand()
+        captured = {}
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar:
+            def artf(p, r, f):
+                captured['record'] = r
+                r.record_uid = utils.generate_uid()
+            ar.side_effect = artf
+            cmd.execute(params, **kwargs)
+        return captured.get('record')
+
+    # RT schema with a label-less field (synthesized fallback) and one with a real definition label.
+    _RT_SCHEMA = [
+        {"$ref": "login"},                                  # no label in RT definition
+        {"$ref": "password"},                               # no label in RT definition
+        {"$ref": "script", "label": "rotationScripts"},     # real RT-definition label
+    ]
+
+    def test_add_command_labels_default_is_legacy(self):
+        # No --labels (and explicit --labels=on): fields with no label in the RT definition fall
+        # back to the field type as the label; real definition labels are kept.
+        params = get_synced_params()
+        for labels in (None, 'on'):
+            kwargs = dict(force=True, title='L', record_type='login',
+                          fields=['login=user@company.com', 'password=secret'])
+            if labels is not None:
+                kwargs['labels'] = labels
+            with mock.patch.object(record_edit.RecordAddCommand, 'get_record_type_fields',
+                                   return_value=list(self._RT_SCHEMA)):
+                record = self._run_add(params, **kwargs)
+            self.assertIsInstance(record, vault.TypedRecord)
+            self.assertEqual(record.get_typed_field('login').label, 'login')            # synthesized
+            self.assertEqual(record.get_typed_field('password').label, 'password')      # synthesized
+            self.assertEqual(record.get_typed_field('script').label, 'rotationScripts')  # real, kept
+            data = vault_extensions.extract_typed_record_data(record)
+            login_data = next(x for x in data['fields'] if x['type'] == 'login')
+            self.assertEqual(login_data.get('label'), 'login')
+
+    def test_add_command_labels_off_matches_vault(self):
+        # --labels=off: omit the synthesized type-name labels (login, password) but KEEP real
+        # RT-definition labels (script->rotationScripts), matching the Vault UI; an explicitly
+        # provided cmdline label is always preserved.
+        params = get_synced_params()
+        with mock.patch.object(record_edit.RecordAddCommand, 'get_record_type_fields',
+                               return_value=list(self._RT_SCHEMA)):
+            record = self._run_add(params, force=True, title='L', record_type='login', labels='off',
+                                   fields=['login=user@company.com', 'text.MyLabel=val'])
+        self.assertIsInstance(record, vault.TypedRecord)
+        self.assertFalse(record.get_typed_field('login').label)                        # synthesized -> dropped
+        self.assertFalse(record.get_typed_field('password').label)                     # synthesized -> dropped
+        self.assertEqual(record.get_typed_field('script').label, 'rotationScripts')    # real -> kept
+        self.assertEqual(record.get_typed_field('text', 'MyLabel').label, 'MyLabel')   # explicit -> kept
+
+        data = vault_extensions.extract_typed_record_data(record)
+        login_d = next(x for x in data['fields'] if x['type'] == 'login')
+        script_d = next(x for x in data['fields'] if x['type'] == 'script')
+        self.assertNotIn('label', login_d)                          # synthesized label omitted
+        self.assertEqual(script_d.get('label'), 'rotationScripts')  # real label serialized
+        custom_d = next(x for x in data['custom'] if x.get('label') == 'MyLabel')
+        self.assertEqual(custom_d['label'], 'MyLabel')
+
+    def test_extract_typed_field_omits_empty_label(self):
+        # Serializer omits the label key when falsy; keeps it when present.
+        self.assertNotIn('label', vault_extensions.extract_typed_field(
+            vault.TypedField.new_field('login', 'admin', '')))
+        self.assertNotIn('label', vault_extensions.extract_typed_field(
+            vault.TypedField.new_field('login', 'admin', None)))
+        kept = vault_extensions.extract_typed_field(vault.TypedField.new_field('text', 'v', 'MyLabel'))
+        self.assertEqual(kept.get('label'), 'MyLabel')
 
     def test_remove_command_from_root(self):
         params = get_synced_params()
