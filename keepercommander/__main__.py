@@ -120,6 +120,7 @@ def show_brief_help():
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --proxy PROXY            Proxy server')
     print('  --new-login              Force full login (bypass persistent login)')
+    print('  --via-desktop            Use Keeper Desktop bridge for login')
     print('  --version                Display version')
     print('')
     print('Getting Started:')
@@ -163,6 +164,8 @@ fail_on_throttle_help = 'Disable default client-side pausing of command executio
 parser.add_argument('--fail-on-throttle', action='store_true', help=fail_on_throttle_help)
 parser.add_argument('--data-dir', dest='data_dir', action='store', help='Directory to use for Commander data (config, cache, etc.). Overrides environment variables.')
 parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow (bypass persistent login)')
+parser.add_argument('--via-desktop', dest='via_desktop', action='store_true',
+                    help='Use Keeper Desktop bridge for login in this Commander process')
 parser.add_argument('--config-file', dest='config_file', action='store_true',
                     help='Store credentials in config.json instead of the OS-native keychain')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
@@ -203,6 +206,9 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
+    if opts.via_desktop and opts.new_login:
+        logging.error('--via-desktop cannot be used with --new-login')
+        sys.exit(1)
     
     # Store the original command arguments for proper reconstruction
     if opts.command:
@@ -226,8 +232,8 @@ def main(from_package=False):
                                           '--launched-with-shortcut', '--proxy',
                                           '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
                 bool_main_parser_args = ['--version', '--debug', '--silent', '--batch-mode',
-                                         '--unmask-all', '--fail-on-throttle',
-                                         '--new-login', '--config-file']
+                                          '--unmask-all', '--fail-on-throttle',
+                                          '--new-login', '--via-desktop', '--config-file']
                 main_parser_args = value_main_parser_args + bool_main_parser_args
 
                 is_main_parser_arg = False
@@ -297,6 +303,9 @@ def main(from_package=False):
 
     if opts.fail_on_throttle:
         params.rest_context.fail_on_throttle = opts.fail_on_throttle
+
+    params.via_desktop_login = opts.via_desktop
+    params.top_level_new_login = opts.new_login
 
     if opts.password:
         params.password = opts.password

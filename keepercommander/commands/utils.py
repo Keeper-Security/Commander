@@ -294,7 +294,10 @@ proxy_parser.exit = suppress_exit
 
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
-login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
+login_mode_group = login_parser.add_mutually_exclusive_group()
+login_mode_group.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
+login_mode_group.add_argument('--via-desktop', dest='via_desktop', action='store_true',
+                              help='Use Keeper Desktop bridge for this login')
 login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
 login_parser.add_argument('--config-file', dest='config_file', action='store_true',
                           help='Store config in config.json instead of the OS-native keychain '
@@ -1690,9 +1693,18 @@ class LoginCommand(Command):
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
+        new_login = kwargs.get('new_login') is True
+        skip_sync = kwargs.get('skip_sync') is True
+        via_desktop = kwargs.get('via_desktop') is True or getattr(params, 'via_desktop_login', False) is True
+        if via_desktop and new_login:
+            raise CommandError('', '--via-desktop cannot be used with --new-login')
+        if kwargs.get('via_desktop') is True and getattr(params, 'top_level_new_login', False):
+            raise CommandError('', '--via-desktop cannot be used with --new-login')
+        if kwargs.get('via_desktop') is True:
+            params.via_desktop_login = True
 
         try:
-            if not user:
+            if not user and not via_desktop:
                 # Show current data center before prompting for email
                 region = get_abbrev_by_host(params.server) if params.server else 'US'
                 if not region:
@@ -1703,21 +1715,22 @@ class LoginCommand(Command):
                 print(f'{Fore.CYAN}Use {Fore.GREEN}{hint_cmd}{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
                 print('', file=sys.stderr)
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
-            if not user:
+            if not user and not via_desktop:
                 return
         except KeyboardInterrupt as e:
             logging.info('Canceled')
             return
 
-        params.user = user.lower()
+        if user:
+            params.user = user.lower()
+        elif via_desktop and isinstance(params.config, dict):
+            params.user = params.config.get('user') or params.user
         if not password and isinstance(params.config, dict):
             if 'user' in params.config and 'password' in params.config:
                 if params.config['user'] == params.user:
                     password = params.config['password']
 
         params.password = password
-        new_login = kwargs.get('new_login') is True
-        skip_sync = kwargs.get('skip_sync') is True
 
         # Apply storage backend choice before login so that store_config_properties
         # (called inside api.login) honours the user's explicit preference.
@@ -1758,17 +1771,25 @@ class LoginCommand(Command):
             keychain_was_or_would_be_selected = (
                 not current_backend or _is_os_keychain_url(current_backend)
             )
-            if keychain_was_or_would_be_selected and not is_os_keychain_available():
+            if not via_desktop and keychain_was_or_would_be_selected and not is_os_keychain_available():
                 logging.warning(
                     '%sWarning: OS keychain not available. Config will be stored in config.json '
                     '(use --config-file to suppress this message).%s',
                     Fore.YELLOW, Fore.RESET
                 )
 
-        try:
-            api.login(params, new_login=new_login)
-        except Exception as exc:
-            logging.warning(str(exc))
+        if via_desktop:
+            try:
+                from ..auth import desktop_bridge
+                desktop_bridge.login_via_desktop(params)
+            except desktop_bridge.DesktopBridgeLoginError as exc:
+                logging.warning(str(exc))
+                return
+        else:
+            try:
+                api.login(params, new_login=new_login)
+            except Exception as exc:
+                logging.warning(str(exc))
 
         if params.session_token and not skip_sync:
             params.enterprise = None
@@ -1785,27 +1806,27 @@ class LoginCommand(Command):
                 logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
                 logging.debug(e, exc_info=True)
 
-            # Auto-register device for persistent login (stores encrypted data key on server)
             try:
                 loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
             except Exception as e:
                 logging.debug(f'Device registration: {e}')
 
-            # Print config storage confirmation, mirroring KSM CLI's post-init messages.
-            stored_backend = (params.config or {}).get(CONFIG_STORAGE_URL, '')
-            if stored_backend and stored_backend != 'file':
-                _os = _platform.system()
-                if _os == 'Darwin':
-                    _storage_label = 'macOS Keychain'
-                elif _os == 'Windows':
-                    _storage_label = 'Windows Credential Manager'
+            if not via_desktop:
+                # Print config storage confirmation, mirroring KSM CLI's post-init messages.
+                stored_backend = (params.config or {}).get(CONFIG_STORAGE_URL, '')
+                if stored_backend and stored_backend != 'file':
+                    _os = _platform.system()
+                    if _os == 'Darwin':
+                        _storage_label = 'macOS Keychain'
+                    elif _os == 'Windows':
+                        _storage_label = 'Windows Credential Manager'
+                    else:
+                        _storage_label = 'system keyring (Secret Service)'
+                    logging.info('%sConfig stored in %s.%s', Fore.GREEN, _storage_label, Fore.RESET)
                 else:
-                    _storage_label = 'system keyring (Secret Service)'
-                logging.info('%sConfig stored in %s.%s', Fore.GREEN, _storage_label, Fore.RESET)
-            else:
-                logging.info('%sConfig stored in %s.%s', Fore.GREEN,
-                             os.path.abspath(params.config_filename) if params.config_filename else 'config.json',
-                             Fore.RESET)
+                    logging.info('%sConfig stored in %s.%s', Fore.GREEN,
+                                 os.path.abspath(params.config_filename) if params.config_filename else 'config.json',
+                                 Fore.RESET)
 
             # Show post-login message (only for explicit login command, not auto-login)
             show_help = kwargs.get('show_help', True)
