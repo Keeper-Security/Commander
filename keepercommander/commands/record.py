@@ -635,6 +635,41 @@ class RecordGetUidCommand(Command):
                             'value': r.notes,
                         }
                         fields.append(field)
+                    # custom fields (v2 type in c['type']; v3 encode type as "type:label" in c['name'])
+                    # Keep _MASKED_FIELD_TYPES in sync with _MASKED_TYPES in record.py.
+                    # 'note' = Secured Note — sensitive, masked by design.
+                    # 'passkey' omitted: early-exit handler renders only non-sensitive sub-fields.
+                    _MASKED_FIELD_TYPES = frozenset({
+                        'secret', 'pinCode', 'note', 'json', 'oneTimeCode',
+                        'paymentCard', 'bankAccount', 'keyPair', 'securityQuestion',
+                    })
+                    unmask = kwargs.get('unmask') is True
+                    for cf in (r.custom_fields or []):
+                        cf_value = cf.get('value')
+                        if not cf_value and cf_value != 0:
+                            continue
+                        cf_name = str(cf.get('name') or cf.get('type') or '')
+                        is_sensitive = (cf.get('type') in _MASKED_FIELD_TYPES or
+                                        cf_name.split(':')[0] in _MASKED_FIELD_TYPES)
+                        is_sq = (cf.get('type') == 'securityQuestion' or
+                                 cf_name == 'securityQuestion' or
+                                 cf_name.startswith('securityQuestion:'))
+                        if is_sq:
+                            val = cf_value
+                            entry = val[0] if (isinstance(val, list) and val) else val
+                            if isinstance(entry, dict):
+                                display_val = {
+                                    'question': entry.get('question') or '',
+                                    'answer': (entry.get('answer') or '') if unmask else '********',
+                                }
+                            else:
+                                display_val = cf_value if unmask else '********'
+                        else:
+                            display_val = cf_value if (unmask or not is_sensitive) else '********'
+                        fields.append({
+                            'name': cf_name,
+                            'value': display_val,
+                        })
 
                     print(json.dumps(fields, indent=2))
                 else:

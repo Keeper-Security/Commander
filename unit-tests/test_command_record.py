@@ -423,3 +423,219 @@ class TestRecord(TestCase):
 
         raise Exception()
 
+
+class TestGetCommandMasking(TestCase):
+    """Sensitive fields are masked in detail/fields output; --unmask reveals them."""
+
+    def setUp(self):
+        mock.patch('keepercommander.api.communicate').start()
+        mock.patch('keepercommander.api.communicate_rest').start()
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+    def _printed(self, mock_print):
+        return ' '.join(str(a) for call in mock_print.call_args_list for a in call[0])
+
+    # ── Record.display() (v2 / v3-via-Record.load) ─────────────────────────
+
+    def _v2_record(self, custom_fields):
+        from keepercommander.record import Record
+        r = Record(utils.generate_uid())
+        r.title = 'Test'
+        r.custom_fields = list(custom_fields)
+        return r
+
+    def test_detail_masks_secret_type(self):
+        r = self._v2_record([{'type': 'secret', 'name': 'Token', 'value': 'top-secret'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('top-secret', out)
+        self.assertIn('********', out)
+
+    def test_detail_unmask_reveals_secret(self):
+        r = self._v2_record([{'type': 'secret', 'name': 'Token', 'value': 'top-secret'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=True)
+        self.assertIn('top-secret', self._printed(p))
+
+    def test_detail_masks_pincode_type(self):
+        r = self._v2_record([{'type': 'pinCode', 'name': 'PIN', 'value': '1234'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('1234', out)
+        self.assertIn('********', out)
+
+    def test_detail_masks_v3_secret_prefix(self):
+        # v3 with label: Record.load() encodes type in name as "secret:Label"
+        r = self._v2_record([{'type': 'text', 'name': 'secret:Token', 'value': 'top-secret'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('top-secret', out)
+        self.assertIn('********', out)
+
+    def test_detail_masks_v3_secret_no_label(self):
+        # v3 without label: Record.load() stores just the type as the name, no colon
+        r = self._v2_record([{'type': 'text', 'name': 'secret', 'value': 'top-secret'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('top-secret', out)
+        self.assertIn('********', out)
+
+    def test_detail_masks_v3_pincode_no_label(self):
+        r = self._v2_record([{'type': 'text', 'name': 'pinCode', 'value': '9999'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('9999', out)
+        self.assertIn('********', out)
+
+    def test_detail_does_not_mask_text_field(self):
+        r = self._v2_record([{'type': 'text', 'name': 'Note', 'value': 'public info'}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        self.assertIn('public info', self._printed(p))
+
+    def test_detail_masks_security_question_answer_only(self):
+        # v3 custom field: Record.load() stores type='text', name='securityQuestion', value=dict
+        r = self._v2_record([{'type': 'text', 'name': 'securityQuestion',
+                               'value': {'question': 'MyQuestion', 'answer': 'MyAnswer'}}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=False)
+        out = self._printed(p)
+        self.assertNotIn('MyAnswer', out)
+        self.assertIn('MyQuestion', out)
+        self.assertIn('********', out)
+
+    def test_detail_unmask_reveals_security_question_answer(self):
+        r = self._v2_record([{'type': 'text', 'name': 'securityQuestion',
+                               'value': {'question': 'MyQuestion', 'answer': 'MyAnswer'}}])
+        with mock.patch('builtins.print') as p:
+            r.display(unmask=True)
+        out = self._printed(p)
+        self.assertIn('MyQuestion', out)
+        self.assertIn('MyAnswer', out)
+        self.assertNotIn('********', out)
+
+    # ── RecordV3.display() ──────────────────────────────────────────────────
+
+    def _v3_cache_entry(self, fields=None, custom=None):
+        data = json.dumps({
+            'type': 'login', 'title': 'Test',
+            'fields': fields or [],
+            'custom': custom or [],
+        }).encode()
+        return {'record_uid': utils.generate_uid(), 'data_unencrypted': data}
+
+    def test_v3_detail_masks_json_field(self):
+        from keepercommander.recordv3 import RecordV3
+        rec = self._v3_cache_entry(
+            fields=[{'type': 'json', 'label': 'Config', 'value': ['{"k":"v"}']}])
+        with mock.patch('builtins.print') as p:
+            RecordV3.display(rec, unmask=False, params=None)
+        out = self._printed(p)
+        self.assertNotIn('"k"', out)
+        self.assertIn('********', out)
+
+    def test_v3_detail_masks_security_question_answer(self):
+        from keepercommander.recordv3 import RecordV3
+        rec = self._v3_cache_entry(fields=[{
+            'type': 'securityQuestion', 'label': 'SQ',
+            'value': [{'question': 'Mothers maiden name', 'answer': 'Smith'}],
+        }])
+        with mock.patch('builtins.print') as p:
+            RecordV3.display(rec, unmask=False, params=None)
+        out = self._printed(p)
+        self.assertNotIn('Smith', out)
+        self.assertIn('********', out)
+        self.assertIn('Mothers maiden name', out)
+
+    def test_v3_detail_unmask_reveals_security_answer(self):
+        from keepercommander.recordv3 import RecordV3
+        rec = self._v3_cache_entry(fields=[{
+            'type': 'securityQuestion', 'label': 'SQ',
+            'value': [{'question': 'Mothers maiden name', 'answer': 'Smith'}],
+        }])
+        with mock.patch('builtins.print') as p:
+            RecordV3.display(rec, unmask=True, params=None)
+        self.assertIn('Smith', self._printed(p))
+
+    # ── fields format ──────────────────────────────────────────────────────
+
+    def _run_fields(self, custom_fields, unmask=False):
+        from keepercommander.record import Record as LegacyRecord
+        params = get_synced_params()
+        r = LegacyRecord(utils.generate_uid())
+        r.title = 'Test'
+        r.custom_fields = list(custom_fields)
+        params.record_cache[r.record_uid] = {'version': 2, 'shared': False}
+        captured = []
+        cmd = record.RecordGetUidCommand()
+        with mock.patch('builtins.print', side_effect=captured.append), \
+             mock.patch('keepercommander.api.get_record', return_value=r), \
+             mock.patch('keepercommander.api.get_record_shares'), \
+             mock.patch('keepercommander.api.get_share_admins_for_record', return_value=[]):
+            cmd.execute(params, uid=r.record_uid, format='fields', unmask=unmask)
+        return json.loads(captured[-1])
+
+    def test_fields_includes_secret_custom_field_masked(self):
+        fields = self._run_fields([{'type': 'secret', 'name': 'Token', 'value': 'top-secret'}])
+        f = next((x for x in fields if x['name'] == 'Token'), None)
+        self.assertIsNotNone(f)
+        self.assertEqual(f['value'], '********')
+
+    def test_fields_masks_v3_secret_no_label(self):
+        # v3 custom secret without label: type='text', name='secret'
+        fields = self._run_fields([{'type': 'text', 'name': 'secret', 'value': 'top-secret'}])
+        f = next((x for x in fields if x['name'] == 'secret'), None)
+        self.assertIsNotNone(f)
+        self.assertEqual(f['value'], '********')
+
+    def test_fields_masks_v3_pincode_no_label(self):
+        fields = self._run_fields([{'type': 'text', 'name': 'pinCode', 'value': '9999'}])
+        f = next((x for x in fields if x['name'] == 'pinCode'), None)
+        self.assertIsNotNone(f)
+        self.assertEqual(f['value'], '********')
+
+    def test_fields_unmask_reveals_secret(self):
+        fields = self._run_fields(
+            [{'type': 'secret', 'name': 'Token', 'value': 'top-secret'}], unmask=True)
+        f = next((x for x in fields if x['name'] == 'Token'), None)
+        self.assertIsNotNone(f)
+        self.assertEqual(f['value'], 'top-secret')
+
+    def test_fields_excludes_empty_custom_fields(self):
+        fields = self._run_fields([
+            {'type': 'text', 'name': 'Empty', 'value': ''},
+            {'type': 'text', 'name': 'Present', 'value': 'hello'},
+        ])
+        names = [x['name'] for x in fields]
+        self.assertNotIn('Empty', names)
+        self.assertIn('Present', names)
+
+    def test_fields_security_question_masks_answer_only(self):
+        fields = self._run_fields([{
+            'type': 'securityQuestion', 'name': 'securityQuestion',
+            'value': [{'question': 'MyQuestion', 'answer': 'MyAnswer'}],
+        }])
+        f = next((x for x in fields if x['name'] == 'securityQuestion'), None)
+        self.assertIsNotNone(f)
+        self.assertIsInstance(f['value'], dict)
+        self.assertEqual(f['value']['question'], 'MyQuestion')
+        self.assertEqual(f['value']['answer'], '********')
+
+    def test_fields_security_question_unmask_reveals_answer(self):
+        fields = self._run_fields([{
+            'type': 'securityQuestion', 'name': 'securityQuestion',
+            'value': [{'question': 'MyQuestion', 'answer': 'MyAnswer'}],
+        }], unmask=True)
+        f = next((x for x in fields if x['name'] == 'securityQuestion'), None)
+        self.assertIsNotNone(f)
+        self.assertIsInstance(f['value'], dict)
+        self.assertEqual(f['value']['question'], 'MyQuestion')
+        self.assertEqual(f['value']['answer'], 'MyAnswer')
+
