@@ -952,7 +952,17 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"allowed_url_patterns": "*.com\n*.org",
 						"allowed_resource_url_patterns": "*.org\n*.gov",
 						"autofill_targets": "autofil_target1\nautofil_target2",
-						"ignore_server_cert": true
+						"ignore_server_cert": true,
+						"session_persistence": "none",
+						"_comment_session_persistence": "none | user | resource",
+						"allow_file_uploads": true,
+						"allow_file_downloads": true,
+						"disable_audio": false,
+						"audio_channels": 2,
+						"_comment_audio_channels": "1 (mono) or 2 (stereo)",
+						"audio_bps": 16,
+						"_comment_audio_bps": "8 or 16",
+						"audio_sample_rate": 44100
 					}
 				}
 			},

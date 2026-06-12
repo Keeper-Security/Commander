@@ -2303,7 +2303,14 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         allowedResourceUrlPatterns: Optional[str] = None,
         httpCredentials: Optional[List[str]] = None, # autofill_credentials: login|pamUser
         autofillConfiguration: Optional[str] = None,
-        ignoreInitialSslCert: Optional[bool] = None
+        ignoreInitialSslCert: Optional[bool] = None,
+        sessionPersistence: Optional[str] = None,
+        allowFileUploads: Optional[bool] = None,
+        allowFileDownloads: Optional[bool] = None,
+        disableAudio: Optional[bool] = None,
+        audioChannels: Optional[int] = None,
+        audioBps: Optional[int] = None,
+        audioSampleRate: Optional[int] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
@@ -2314,6 +2321,13 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         self.autofillConfiguration = autofillConfiguration
         self.ignoreInitialSslCert = ignoreInitialSslCert
         self.httpCredentialsUid = None # resolved from httpCredentials
+        self.sessionPersistence = sessionPersistence
+        self.allowFileUploads = allowFileUploads
+        self.allowFileDownloads = allowFileDownloads
+        self.disableAudio = disableAudio
+        self.audioChannels = audioChannels
+        self.audioBps = audioBps
+        self.audioSampleRate = audioSampleRate
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2342,6 +2356,40 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         obj.httpCredentials = parse_multiline(data, "autofill_credentials", "Error parsing autofill_credentials")
         obj.autofillConfiguration = multiline_to_str(parse_multiline(data, "autofill_targets", "Error parsing autofill_targets"))
         obj.ignoreInitialSslCert = utils.value_to_boolean(data.get("ignore_server_cert", None))
+
+        val = data.get("session_persistence", None)
+        if isinstance(val, str) and val.lower() in ("none", "user", "resource"):
+            obj.sessionPersistence = val.lower()
+        obj.allowFileUploads = utils.value_to_boolean(data.get("allow_file_uploads", None))
+        obj.allowFileDownloads = utils.value_to_boolean(data.get("allow_file_downloads", None))
+        obj.disableAudio = utils.value_to_boolean(data.get("disable_audio", None))
+        val = data.get("audio_channels", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed not in (1, 2):
+                    logging.warning(f"ConnectionSettingsHTTP: audio_channels must be 1 or 2, got: {parsed}")
+                else:
+                    obj.audioChannels = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_channels value: {val!r}")
+        val = data.get("audio_bps", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed not in (8, 16):
+                    logging.warning(f"ConnectionSettingsHTTP: audio_bps must be 8 or 16, got: {parsed}")
+                else:
+                    obj.audioBps = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_bps value: {val!r}")
+        val = data.get("audio_sample_rate", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed < 0:
+                    logging.warning(f"ConnectionSettingsHTTP: audio_sample_rate must be non-negative, got: {parsed}")
+                else:
+                    obj.audioSampleRate = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_sample_rate value: {val!r}")
 
         return obj
 
@@ -2376,6 +2424,21 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
             kvp["autofillConfiguration"] = self.autofillConfiguration.strip()
         if self.ignoreInitialSslCert is not None and isinstance(self.ignoreInitialSslCert, bool):
             kvp["ignoreInitialSslCert"] = self.ignoreInitialSslCert
+
+        if self.sessionPersistence and isinstance(self.sessionPersistence, str) and self.sessionPersistence in ("none", "user", "resource"):
+            kvp["sessionPersistence"] = self.sessionPersistence
+        if self.allowFileUploads is not None and isinstance(self.allowFileUploads, bool):
+            kvp["allowFileUploads"] = self.allowFileUploads
+        if self.allowFileDownloads is not None and isinstance(self.allowFileDownloads, bool):
+            kvp["allowFileDownloads"] = self.allowFileDownloads
+        if self.disableAudio is not None and isinstance(self.disableAudio, bool):
+            kvp["disableAudio"] = self.disableAudio
+        if self.audioChannels is not None and type(self.audioChannels) is int:
+            kvp["audioChannels"] = self.audioChannels
+        if self.audioBps is not None and type(self.audioBps) is int:
+            kvp["audioBps"] = self.audioBps
+        if self.audioSampleRate is not None and type(self.audioSampleRate) is int:
+            kvp["audioSampleRate"] = self.audioSampleRate
 
         return kvp
 
