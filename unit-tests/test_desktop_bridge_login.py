@@ -191,13 +191,14 @@ def _make_ka_proto_response(device_public_key, data_key):
 
 class TestDesktopBridgeLogin(TestCase):
 
-    def test_login_parser_accepts_via_desktop_and_rejects_new_login_conflict(self):
+    def test_login_parser_accepts_via_desktop_and_new_login_together(self):
         opts = command_utils.login_parser.parse_args(['--via-desktop'])
         self.assertTrue(opts.via_desktop)
         self.assertFalse(opts.new_login)
 
-        with self.assertRaises(ParseError):
-            command_utils.login_parser.parse_args(['--via-desktop', '--new-login'])
+        opts = command_utils.login_parser.parse_args(['--via-desktop', '--new-login'])
+        self.assertTrue(opts.via_desktop)
+        self.assertTrue(opts.new_login)
 
     def test_command_uses_bridge_adapter_without_normal_login_fallback(self):
         params = KeeperParams()
@@ -211,13 +212,6 @@ class TestDesktopBridgeLogin(TestCase):
         bridge_login.assert_called_once_with(params)
         api_login.assert_not_called()
         self.assertTrue(params.via_desktop_login)
-
-    def test_command_rejects_cross_level_new_login_conflict(self):
-        params = KeeperParams()
-        params.top_level_new_login = True
-
-        with self.assertRaises(CommandError):
-            command_utils.LoginCommand().execute(params, via_desktop=True, skip_sync=True)
 
     def test_queued_shell_login_suppresses_startup_auto_login(self):
         params = KeeperParams()

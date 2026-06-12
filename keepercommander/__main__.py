@@ -206,10 +206,6 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
-    if opts.via_desktop and opts.new_login:
-        logging.error('--via-desktop cannot be used with --new-login')
-        sys.exit(1)
-    
     # Store the original command arguments for proper reconstruction
     if opts.command:
         # Find where the command starts in the original args and take everything after it
@@ -305,7 +301,6 @@ def main(from_package=False):
         params.rest_context.fail_on_throttle = opts.fail_on_throttle
 
     params.via_desktop_login = opts.via_desktop
-    params.top_level_new_login = opts.new_login
 
     if opts.password:
         params.password = opts.password

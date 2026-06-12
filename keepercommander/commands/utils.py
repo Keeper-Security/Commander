@@ -294,10 +294,9 @@ proxy_parser.exit = suppress_exit
 
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
-login_mode_group = login_parser.add_mutually_exclusive_group()
-login_mode_group.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
-login_mode_group.add_argument('--via-desktop', dest='via_desktop', action='store_true',
-                              help='Use Keeper Desktop bridge for this login')
+login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
+login_parser.add_argument('--via-desktop', dest='via_desktop', action='store_true',
+                          help='Use Keeper Desktop bridge for this login')
 login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
 login_parser.add_argument('--config-file', dest='config_file', action='store_true',
                           help='Store config in config.json instead of the OS-native keychain '
@@ -1696,10 +1695,6 @@ class LoginCommand(Command):
         new_login = kwargs.get('new_login') is True
         skip_sync = kwargs.get('skip_sync') is True
         via_desktop = kwargs.get('via_desktop') is True or getattr(params, 'via_desktop_login', False) is True
-        if via_desktop and new_login:
-            raise CommandError('', '--via-desktop cannot be used with --new-login')
-        if kwargs.get('via_desktop') is True and getattr(params, 'top_level_new_login', False):
-            raise CommandError('', '--via-desktop cannot be used with --new-login')
         if kwargs.get('via_desktop') is True:
             params.via_desktop_login = True
 
