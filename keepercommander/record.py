@@ -275,6 +275,15 @@ class Record:
                 # Strip type prefixes from field names (e.g., "text:Sign-In Address" -> "Sign-In Address")
                 field_type_prefixes = ('text:', 'multiline:', 'url:', 'phone:', 'email:', 'secret:', 'date:', 'name:', 'host:', 'address:')
                 display_name = field_name
+                # v2 records carry the real type in c['type']; v3 encode it as "type:label" in the name.
+                # Keep this list in sync with _MASKED_FIELD_TYPES in commands/record.py.
+                # 'note' = Secured Note — sensitive, masked by design.
+                # 'passkey' omitted: early-exit handler above renders only non-sensitive sub-fields.
+                _MASKED_TYPES = frozenset({
+                    'secret', 'pinCode', 'note', 'json', 'oneTimeCode',
+                    'paymentCard', 'bankAccount', 'keyPair', 'securityQuestion',
+                })
+                is_secret_field = c.get('type') in _MASKED_TYPES
                 for prefix in field_type_prefixes:
                     if field_name.lower().startswith(prefix):
                         display_name = field_name[len(prefix):]
@@ -293,8 +302,26 @@ class Record:
                                 'address:': 'Address',
                             }
                             display_name = type_friendly_names.get(prefix, prefix.rstrip(':').title())
+                        if prefix.rstrip(':') in _MASKED_TYPES:
+                            is_secret_field = True
                         break
-                print('{0:>20s}: {1:<s}'.format(display_name, str(c['value'])))
+                # v3 custom fields without a label are stored as name='fieldType' (no colon)
+                if not is_secret_field and field_name.split(':')[0] in _MASKED_TYPES:
+                    is_secret_field = True
+                if (field_name == 'securityQuestion' or
+                        field_name.startswith('securityQuestion:') or
+                        c.get('type') == 'securityQuestion'):
+                    val = c['value']
+                    entry = val[0] if (isinstance(val, list) and val) else val
+                    if isinstance(entry, dict):
+                        q = (entry.get('question') or '').rstrip('?').strip()
+                        a = entry.get('answer') or ''
+                        display_value = f'{q}? ' + (a if unmask else '********')
+                    else:
+                        display_value = str(c['value']) if unmask else '********'
+                else:
+                    display_value = str(c['value']) if (unmask or not is_secret_field) else '********'
+                print('{0:>20s}: {1:<s}'.format(display_name, display_value))
 
         if self.notes:
             lines = self.notes.split('\n')

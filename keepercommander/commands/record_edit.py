@@ -1035,7 +1035,7 @@ class RecordAddCommand(Command, RecordEditMixin):
 
             if plugin_name == 'azureadpwd':
                 # Import Azure AD plugin
-                from ...plugins.azureadpwd import azureadpwd
+                from ..plugins.azureadpwd import azureadpwd
 
                 # Call the rotate function with PAM config record
                 success = azureadpwd.rotate(pam_record, password)
@@ -1047,7 +1047,7 @@ class RecordAddCommand(Command, RecordEditMixin):
 
             elif plugin_name == 'awspswd':
                 # Import AWS plugin and common rotator
-                from ...plugins.awspswd import aws_passwd
+                from ..plugins.awspswd import aws_passwd
 
                 # Extract AWS credentials from PAM config
                 aws_access_key = None
@@ -1078,7 +1078,6 @@ class RecordAddCommand(Command, RecordEditMixin):
 
                 # Set AWS credentials in environment or use profile
                 if aws_access_key and aws_secret_key:
-                    import os
                     original_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
                     original_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
 
@@ -1145,7 +1144,6 @@ class RecordAddCommand(Command, RecordEditMixin):
         # Load email configuration
         from .email_commands import find_email_config_record, load_email_config_from_record
         from ..email_service import EmailSender, build_onboarding_email
-        from .helpers.timeout import parse_timeout
 
         config_uid = find_email_config_record(params, email_config_name)
         if not config_uid:
@@ -1170,7 +1168,7 @@ class RecordAddCommand(Command, RecordEditMixin):
                 else:  # minutes
                     minutes = expire_seconds // 60
                     expiration_text = f"{minutes} minute{'s' if minutes > 1 else ''}"
-            except:
+            except Exception:
                 expiration_text = expiration  # fallback to original if parsing fails
 
         html_body = build_onboarding_email(

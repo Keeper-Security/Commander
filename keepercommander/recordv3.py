@@ -1641,7 +1641,10 @@ class RecordV3:
                         if ftyp == 'name':
                             fval.append(vault.TypedField.export_name_field(x))
                         elif ftyp == 'securityQuestion':
-                            fval.append(vault.TypedField.export_q_and_a_field(x))
+                            q = (x.get('question') or '').replace('?', '').strip()
+                            a = x.get('answer') or ''
+                            # answer is masked by default (same as WV initialMasked=true)
+                            fval.append(f'{q}? ' + (a if unmask else '********'))
                         elif ftyp == 'paymentCard':
                             n = x.get('cardNumber') or ''
                             if n and not unmask:
@@ -1719,7 +1722,7 @@ class RecordV3:
                         RecordV3.display_ref(ftyp, fval, **kwargs)
                     else:
                         is_masked = (ftyp not in record_types.RecordFields or
-                                     ftyp in ['password', 'pinCode', 'secret', 'note', 'oneTimeCode']) and not unmask
+                                     ftyp in ['password', 'pinCode', 'secret', 'note', 'oneTimeCode', 'json']) and not unmask
                         if is_masked:
                             print('{0:>20s}: {1:<s}'.format(fkey, '********'))
                         else:
