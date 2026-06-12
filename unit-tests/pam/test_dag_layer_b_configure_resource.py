@@ -102,15 +102,25 @@ def test_configure_resource_hits_correct_url():
 
 
 def test_configure_resource_sends_protobuf_body():
-    """Body is the encrypted PAMResourceConfig protobuf, not JSON."""
+    """Body is the AES-GCM-encrypted PAMResourceConfig protobuf — not plaintext proto, not JSON."""
     from keepercommander.commands.pam.router_helper import router_configure_resource
+    from keepercommander import crypto, utils
     rq = pam_pb2.PAMResourceConfig(recordUid=RESOURCE_UID, networkUid=NETWORK_UID, adminUid=ADMIN_UID)
+    transmission_key = utils.generate_aes_key()
     with patch(REQUESTS_TARGET, return_value=_ok_router_response()) as mock_req:
-        router_configure_resource(_mock_params(), rq)
+        router_configure_resource(_mock_params(), rq, transmission_key=transmission_key)
     _, body = _capture_call(mock_req)
     assert isinstance(body, (bytes, bytearray)), f'body must be bytes, got {type(body)}'
-    # Body is encrypted; check that it's NOT a JSON-encoded payload (sanity).
-    assert not body.startswith(b'{'), 'body should be encrypted protobuf, not JSON'
+    # Must not be the raw (unencrypted) serialisation.
+    # (A first-byte heuristic like `not body.startswith(b'{')` is flaky: ~1/256
+    # of ciphertexts legitimately start with 0x7b.)
+    assert body != rq.SerializeToString()
+    decrypted = crypto.decrypt_aes_v2(body, transmission_key)
+    parsed = pam_pb2.PAMResourceConfig()
+    parsed.ParseFromString(decrypted)
+    assert parsed.recordUid == RESOURCE_UID
+    assert parsed.networkUid == NETWORK_UID
+    assert parsed.adminUid == ADMIN_UID
 
 
 # --------------------------------------------------------------------------- #
