@@ -3327,6 +3327,11 @@ class PAMRbiEditCommand(Command):
     parser.add_argument('--audio-sample-rate', '-sr', dest='audio_sample_rate', type=int,
                         help='Audio sample rate in Hz (e.g., 44100, 48000)')
 
+    # Session Persistence
+    parser.add_argument('--session-persistence', '-sp', dest='session_persistence',
+                        choices=['none', 'user', 'resource', 'default'],
+                        help='RBI session persistence (none/user/resource; default = unset)')
+
     # Utility
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
                         help='Silent mode - don\'t print PAM User, PAM Config etc.')
@@ -3357,6 +3362,7 @@ class PAMRbiEditCommand(Command):
         audio_channels = kwargs.get('audio_channels')  # int or None
         audio_bit_depth = kwargs.get('audio_bit_depth')  # int or None
         audio_sample_rate = kwargs.get('audio_sample_rate')  # int or None
+        session_persistence = kwargs.get('session_persistence')  # none/user/resource/default/None
 
         if not record_name:
             raise CommandError('pam rbi edit', 'Record parameter is required.')
@@ -3375,7 +3381,8 @@ class PAMRbiEditCommand(Command):
             disable_audio is not None,
             audio_channels is not None,
             audio_bit_depth is not None,
-            audio_sample_rate is not None
+            audio_sample_rate is not None,
+            session_persistence is not None
         ])
 
         if not (autofill or key_events or config_name or rbi or recording or has_new_settings):
@@ -3542,6 +3549,31 @@ class PAMRbiEditCommand(Command):
                 else:
                     logging.debug(f'{field_name} is already set to {value} on record={record_uid}')
 
+        # Helper for enum string fields (e.g. sessionPersistence): set a literal value,
+        # or remove the key on 'default' so the gateway/vault applies its own default.
+        # Coerces 'connection' to a dict locally (idempotent) so this is safe even if
+        # 'connection' is missing/null/"" — no dependency on the earlier coercion. Removal
+        # keys on presence, so a present-but-null value is cleared too.
+        def update_connection_choice(field_name, value):
+            nonlocal dirty
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            if rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                _coerce_settings_subdicts(rbs_fld.value[0], 'connection')
+                connection = rbs_fld.value[0]['connection']
+                if value == 'default':
+                    if field_name in connection:
+                        connection.pop(field_name, None)
+                        dirty = True
+                        logging.debug(f'Removed {field_name} (set to default) on record={record_uid}')
+                    else:
+                        logging.debug(f'{field_name} is already unset on record={record_uid}')
+                elif connection.get(field_name) != value:
+                    connection[field_name] = value
+                    dirty = True
+                    logging.debug(f'Set {field_name}={value} on record={record_uid}')
+                else:
+                    logging.debug(f'{field_name} is already set to {value} on record={record_uid}')
+
         # Browser Settings - allowUrlManipulation (on/off/default)
         if allow_url_navigation:
             update_connection_toggle('allowUrlManipulation', allow_url_navigation)
@@ -3593,6 +3625,10 @@ class PAMRbiEditCommand(Command):
         # Audio Settings - audioSampleRate (integer)
         if audio_sample_rate is not None:
             update_connection_int('audioSampleRate', audio_sample_rate)
+
+        # Session Persistence - sessionPersistence (none/user/resource; default removes)
+        if session_persistence:
+            update_connection_choice('sessionPersistence', session_persistence)
 
         if dirty:
             record_management.update_record(params, record)
