@@ -48,6 +48,50 @@ class TestPamConnectionEditScrollbackArgs(unittest.TestCase):
 
 
 @unittest.skipIf(skip_tests, skip_reason)
+class TestPamConnectionEditProtocolChoices(unittest.TestCase):
+    """--protocol choices: the full DB protocol set is now accepted, and the choices
+    list is composed from the db_protocols / non_db_protocols source-of-truth lists."""
+
+    NEW_DB_PROTOCOLS = ['mariadb', 'oracle', 'mongodb', 'redis',
+                        'elasticsearch', 'clickhouse', 'dynamodb']
+
+    def setUp(self):
+        self.parser = PAMConnectionEditCommand.parser
+
+    def test_new_db_protocols_accepted(self):
+        for proto in self.NEW_DB_PROTOCOLS:
+            with self.subTest(protocol=proto):
+                args = self.parser.parse_args(['rec', '--protocol', proto])
+                self.assertEqual(args.protocol, proto)
+
+    def test_mariadb_and_oracle_accepted(self):
+        # The two protocols this change was specifically about.
+        self.assertEqual(self.parser.parse_args(['rec', '-p', 'mariadb']).protocol, 'mariadb')
+        self.assertEqual(self.parser.parse_args(['rec', '-p', 'oracle']).protocol, 'oracle')
+
+    def test_existing_protocols_still_accepted(self):
+        for proto in ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']:
+            with self.subTest(protocol=proto):
+                self.assertEqual(self.parser.parse_args(['rec', '--protocol', proto]).protocol, proto)
+
+    def test_invalid_protocol_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(['rec', '--protocol', 'bogus'])
+
+    def test_choices_composed_from_source_lists(self):
+        # protocols is the single source of truth: '' + sorted(non_db + db), no duplicates.
+        expected = [''] + sorted(PAMConnectionEditCommand.non_db_protocols
+                                  + PAMConnectionEditCommand.db_protocols)
+        self.assertEqual(PAMConnectionEditCommand.protocols, expected)
+        self.assertEqual(len(PAMConnectionEditCommand.protocols),
+                         len(set(PAMConnectionEditCommand.protocols)))
+
+    def test_all_db_protocols_present_in_choices(self):
+        for proto in PAMConnectionEditCommand.db_protocols:
+            self.assertIn(proto, PAMConnectionEditCommand.protocols)
+
+
+@unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditScrollbackValidation(unittest.TestCase):
     """Validation runs before DAG / token operations, so we can drive execute()
     with mocks that only need to satisfy resolve_single_record + the typed-field

@@ -2623,7 +2623,16 @@ class PAMTunnelDiagnoseCommand(Command):
 
 class PAMConnectionEditCommand(Command):
     choices = ['on', 'off', 'default']
-    protocols = ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']
+    # Database connection protocols (pamDatabase). Kept as its own list so it is the single
+    # source of truth for DB-protocol checks (e.g. --scrollback) and so a future DB-vs-non-DB
+    # split or per-record-type gate is a one-line change. No per-type gating is applied today:
+    # any supported PAM resource may use any protocol (see validate_pam_connection in pam_import).
+    db_protocols = ['clickhouse', 'dynamodb', 'elasticsearch', 'mariadb', 'mongodb',
+                    'mysql', 'oracle', 'postgresql', 'redis', 'sql-server']
+    # Non-database protocols (terminal/remote for pamMachine/pamDirectory, http for RBI).
+    non_db_protocols = ['http', 'kubernetes', 'rdp', 'ssh', 'telnet', 'vnc']
+    # Protocols offered by --protocol ('' clears the protocol).
+    protocols = [''] + sorted(non_db_protocols + db_protocols)
     parser = argparse.ArgumentParser(prog='pam connection edit')
     parser.add_argument('record', type=str, action='store', help='The record UID or path of the PAM '
                         'resource record with network information to use for connections')
@@ -2708,8 +2717,7 @@ class PAMConnectionEditCommand(Command):
         scrollback_clear = False
         scrollback_value = None  # parsed int, or None to skip apply
         if scrollback_arg is not None:
-            db_scrollback_protocols = {'mysql', 'postgresql', 'sql-server', 'mariadb', 'oracle',
-                                       'mongodb', 'redis', 'elasticsearch', 'clickhouse', 'dynamodb'}
+            db_scrollback_protocols = set(PAMConnectionEditCommand.db_protocols)
             terminal_scrollback_protocols = {'ssh', 'telnet', 'kubernetes'}
             if record_type == 'pamDatabase':
                 allowed_protocols = db_scrollback_protocols
