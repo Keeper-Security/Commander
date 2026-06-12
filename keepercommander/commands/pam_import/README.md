@@ -820,7 +820,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					},
 					"connection" : {
 						"protocol": "mysql",
-						"_comment": "protocol types: <sql-server|postgresql|mysql>",
+						"_comment": "DB protocol types: <sql-server|postgresql|mysql|mariadb|oracle|mongodb|redis|elasticsearch|clickhouse|dynamodb>",
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",

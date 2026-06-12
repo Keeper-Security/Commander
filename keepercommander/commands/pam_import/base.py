@@ -1901,6 +1901,13 @@ class ConnectionProtocol(Enum):
     SQLSERVER = "sql-server"
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
+    MARIADB = "mariadb"
+    ORACLE = "oracle"
+    MONGODB = "mongodb"
+    REDIS = "redis"
+    ELASTICSEARCH = "elasticsearch"
+    CLICKHOUSE = "clickhouse"
+    DYNAMODB = "dynamodb"
     HTTP = "http"
 
 class RDPSecurity(Enum):
@@ -3058,6 +3065,59 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
         dict["protocol"] = ConnectionProtocol.MYSQL.value  # pylint: disable=E1101
         return dict
 
+# The remaining database protocols share BaseDatabaseConnectionSettings verbatim — they
+# differ only by their wire protocol value. __init__ and load() are inherited unchanged
+# (BaseDatabaseConnectionSettings.load uses cls(), so it builds the right subclass);
+# only to_record_dict needs to stamp the protocol.
+class ConnectionSettingsMariaDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.MARIADB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.MARIADB.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsOracle(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.ORACLE
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.ORACLE.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsMongoDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.MONGODB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.MONGODB.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsRedis(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.REDIS
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.REDIS.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsElasticsearch(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.ELASTICSEARCH
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.ELASTICSEARCH.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsClickHouse(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.CLICKHOUSE
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.CLICKHOUSE.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsDynamoDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.DYNAMODB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.DYNAMODB.value  # pylint: disable=E1101
+        return d
+
 PamConnectionSettings = Optional[
     Union[
         ConnectionSettingsRDP,
@@ -3067,7 +3127,14 @@ PamConnectionSettings = Optional[
         ConnectionSettingsKubernetes,
         ConnectionSettingsSqlServer,
         ConnectionSettingsPostgreSQL,
-        ConnectionSettingsMySQL
+        ConnectionSettingsMySQL,
+        ConnectionSettingsMariaDB,
+        ConnectionSettingsOracle,
+        ConnectionSettingsMongoDB,
+        ConnectionSettingsRedis,
+        ConnectionSettingsElasticsearch,
+        ConnectionSettingsClickHouse,
+        ConnectionSettingsDynamoDB
     ]
 ]
 
@@ -3174,7 +3241,14 @@ class PamSettingsFieldData:
         ConnectionSettingsKubernetes,
         ConnectionSettingsSqlServer,
         ConnectionSettingsPostgreSQL,
-        ConnectionSettingsMySQL
+        ConnectionSettingsMySQL,
+        ConnectionSettingsMariaDB,
+        ConnectionSettingsOracle,
+        ConnectionSettingsMongoDB,
+        ConnectionSettingsRedis,
+        ConnectionSettingsElasticsearch,
+        ConnectionSettingsClickHouse,
+        ConnectionSettingsDynamoDB
     ]
 
     @classmethod
@@ -3259,14 +3333,22 @@ def is_blank_instance(obj, skiplist: Optional[List[str]] = None):
 
 def is_database_protocol(protocol):
     """
-    Returns True if the protocol is one of the database protocols: MYSQL, POSTGRESQL, or SQLSERVER.
+    Returns True if the protocol is one of the database protocols: MYSQL, POSTGRESQL,
+    SQLSERVER, MARIADB, ORACLE, MONGODB, REDIS, ELASTICSEARCH, CLICKHOUSE, or DYNAMODB.
 
-    Accepts ConnectionProtocol or the string wire values (e.g. 'mysql', 'postgresql', 'sql-server').
+    Accepts ConnectionProtocol or the string wire values (e.g. 'mysql', 'oracle', 'sql-server').
     """
     db_members = (
         ConnectionProtocol.MYSQL,
         ConnectionProtocol.POSTGRESQL,
         ConnectionProtocol.SQLSERVER,
+        ConnectionProtocol.MARIADB,
+        ConnectionProtocol.ORACLE,
+        ConnectionProtocol.MONGODB,
+        ConnectionProtocol.REDIS,
+        ConnectionProtocol.ELASTICSEARCH,
+        ConnectionProtocol.CLICKHOUSE,
+        ConnectionProtocol.DYNAMODB,
     )
     db_values = {m.value for m in db_members}
     if isinstance(protocol, ConnectionProtocol):
