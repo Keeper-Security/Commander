@@ -199,6 +199,34 @@ class TestPamRbiEditArguments(unittest.TestCase):
         self.assertEqual(args.allow_url_navigation, 'on')
         self.assertEqual(args.allowed_urls, ['*.example.com'])
 
+    def test_session_persistence_none(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'none'])
+        self.assertEqual(args.session_persistence, 'none')
+
+    def test_session_persistence_user(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'user'])
+        self.assertEqual(args.session_persistence, 'user')
+
+    def test_session_persistence_resource(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'resource'])
+        self.assertEqual(args.session_persistence, 'resource')
+
+    def test_session_persistence_default(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'default'])
+        self.assertEqual(args.session_persistence, 'default')
+
+    def test_session_persistence_short_flag(self):
+        args = self.parser.parse_args(['--record', 'test-record', '-sp', 'user'])
+        self.assertEqual(args.session_persistence, 'user')
+
+    def test_session_persistence_invalid(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'invalid'])
+
+    def test_session_persistence_not_provided(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--key-events', 'on'])
+        self.assertIsNone(args.session_persistence)
+
 
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditExecute(unittest.TestCase):
@@ -327,6 +355,42 @@ class TestPamRbiEditExecute(unittest.TestCase):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', autofill_targets=['#username', '#password'])
         self.assertEqual(self.pam_settings['connection'].get('autofillConfiguration'), '#username\n#password')
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_session_persistence_sets_value(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', session_persistence='user')
+        self.assertEqual(self.pam_settings['connection'].get('sessionPersistence'), 'user')
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_session_persistence_none_sets_literal(self, mock_sync, mock_update, mock_resolve):
+        # 'none' is a real enum value (no persistence), not a removal sentinel
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', session_persistence='none')
+        self.assertEqual(self.pam_settings['connection'].get('sessionPersistence'), 'none')
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_session_persistence_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['sessionPersistence'] = 'user'
+        self.command.execute(self.mock_params, record='test-record', session_persistence='default')
+        self.assertNotIn('sessionPersistence', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
+    def test_session_persistence_default_removes_present_but_null(self, mock_sync, mock_update, mock_resolve):
+        # A present-but-null value must still be removed (membership check, not None check)
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['sessionPersistence'] = None
+        self.command.execute(self.mock_params, record='test-record', session_persistence='default')
+        self.assertNotIn('sessionPersistence', self.pam_settings['connection'])
 
 
 @unittest.skipIf(skip_tests, skip_reason)

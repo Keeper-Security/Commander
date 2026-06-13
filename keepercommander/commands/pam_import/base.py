@@ -1901,6 +1901,13 @@ class ConnectionProtocol(Enum):
     SQLSERVER = "sql-server"
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
+    MARIADB = "mariadb"
+    ORACLE = "oracle"
+    MONGODB = "mongodb"
+    REDIS = "redis"
+    ELASTICSEARCH = "elasticsearch"
+    CLICKHOUSE = "clickhouse"
+    DYNAMODB = "dynamodb"
     HTTP = "http"
 
 class RDPSecurity(Enum):
@@ -2094,9 +2101,11 @@ def sftp_enabled(connection_settings: Union[PamConnectionSettings, ConnectionSet
 
 class TerminalDisplayConnectionSettings:
     fontSizes: List[int] = [8,9,10,11,12,14,18,24,30,36,48,60,72,96]
-    def __init__(self, colorScheme: Optional[str] = None, fontSize: Optional[int] = None):
+    def __init__(self, colorScheme: Optional[str] = None, fontSize: Optional[int] = None,
+                 scrollback: Optional[int] = None):
         self.colorScheme = colorScheme
         self.fontSize = fontSize
+        self.scrollback = scrollback
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2116,6 +2125,18 @@ class TerminalDisplayConnectionSettings:
             if closest_number != font_size:
                 logging.error(f"Terminal Display Connection Settings - adjusted invalid font_size from: {obj.fontSize} to: {closest_number}")
                 obj.fontSize = closest_number
+
+        # scrollback (Maximum Scrollback Size): must be a positive integer.
+        val = data.get("scrollback", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed <= 0:
+                    logging.warning(f"Terminal Display Connection Settings: scrollback must be a positive integer, got: {parsed}")
+                else:
+                    obj.scrollback = parsed
+            except (TypeError, ValueError):
+                logging.warning(f"Terminal Display Connection Settings: invalid scrollback value: {val!r}")
         return obj
 
 class BaseConnectionSettings:
@@ -2303,7 +2324,14 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         allowedResourceUrlPatterns: Optional[str] = None,
         httpCredentials: Optional[List[str]] = None, # autofill_credentials: login|pamUser
         autofillConfiguration: Optional[str] = None,
-        ignoreInitialSslCert: Optional[bool] = None
+        ignoreInitialSslCert: Optional[bool] = None,
+        sessionPersistence: Optional[str] = None,
+        allowFileUploads: Optional[bool] = None,
+        allowFileDownloads: Optional[bool] = None,
+        disableAudio: Optional[bool] = None,
+        audioChannels: Optional[int] = None,
+        audioBps: Optional[int] = None,
+        audioSampleRate: Optional[int] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
@@ -2314,6 +2342,13 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         self.autofillConfiguration = autofillConfiguration
         self.ignoreInitialSslCert = ignoreInitialSslCert
         self.httpCredentialsUid = None # resolved from httpCredentials
+        self.sessionPersistence = sessionPersistence
+        self.allowFileUploads = allowFileUploads
+        self.allowFileDownloads = allowFileDownloads
+        self.disableAudio = disableAudio
+        self.audioChannels = audioChannels
+        self.audioBps = audioBps
+        self.audioSampleRate = audioSampleRate
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2342,6 +2377,40 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         obj.httpCredentials = parse_multiline(data, "autofill_credentials", "Error parsing autofill_credentials")
         obj.autofillConfiguration = multiline_to_str(parse_multiline(data, "autofill_targets", "Error parsing autofill_targets"))
         obj.ignoreInitialSslCert = utils.value_to_boolean(data.get("ignore_server_cert", None))
+
+        val = data.get("session_persistence", None)
+        if isinstance(val, str) and val.lower() in ("none", "user", "resource"):
+            obj.sessionPersistence = val.lower()
+        obj.allowFileUploads = utils.value_to_boolean(data.get("allow_file_uploads", None))
+        obj.allowFileDownloads = utils.value_to_boolean(data.get("allow_file_downloads", None))
+        obj.disableAudio = utils.value_to_boolean(data.get("disable_audio", None))
+        val = data.get("audio_channels", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed not in (1, 2):
+                    logging.warning(f"ConnectionSettingsHTTP: audio_channels must be 1 or 2, got: {parsed}")
+                else:
+                    obj.audioChannels = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_channels value: {val!r}")
+        val = data.get("audio_bps", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed not in (8, 16):
+                    logging.warning(f"ConnectionSettingsHTTP: audio_bps must be 8 or 16, got: {parsed}")
+                else:
+                    obj.audioBps = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_bps value: {val!r}")
+        val = data.get("audio_sample_rate", None)
+        if val is not None:
+            try:
+                parsed = int(val)
+                if parsed < 0:
+                    logging.warning(f"ConnectionSettingsHTTP: audio_sample_rate must be non-negative, got: {parsed}")
+                else:
+                    obj.audioSampleRate = parsed
+            except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_sample_rate value: {val!r}")
 
         return obj
 
@@ -2376,6 +2445,21 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
             kvp["autofillConfiguration"] = self.autofillConfiguration.strip()
         if self.ignoreInitialSslCert is not None and isinstance(self.ignoreInitialSslCert, bool):
             kvp["ignoreInitialSslCert"] = self.ignoreInitialSslCert
+
+        if self.sessionPersistence and isinstance(self.sessionPersistence, str) and self.sessionPersistence in ("none", "user", "resource"):
+            kvp["sessionPersistence"] = self.sessionPersistence
+        if self.allowFileUploads is not None and isinstance(self.allowFileUploads, bool):
+            kvp["allowFileUploads"] = self.allowFileUploads
+        if self.allowFileDownloads is not None and isinstance(self.allowFileDownloads, bool):
+            kvp["allowFileDownloads"] = self.allowFileDownloads
+        if self.disableAudio is not None and isinstance(self.disableAudio, bool):
+            kvp["disableAudio"] = self.disableAudio
+        if self.audioChannels is not None and type(self.audioChannels) is int:
+            kvp["audioChannels"] = self.audioChannels
+        if self.audioBps is not None and type(self.audioBps) is int:
+            kvp["audioBps"] = self.audioBps
+        if self.audioSampleRate is not None and type(self.audioSampleRate) is int:
+            kvp["audioSampleRate"] = self.audioSampleRate
 
         return kvp
 
@@ -2484,6 +2568,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         disablePaste: Optional[bool] = None,
         colorScheme: Optional[str] = None,
         fontSize: Optional[int] = None,
+        scrollback: Optional[int] = None,
         usernameRegex: Optional[str] = None,
         passwordRegex: Optional[str] = None,
         loginSuccessRegex: Optional[str] = None,
@@ -2491,7 +2576,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
         self.usernameRegex = usernameRegex
         self.passwordRegex = passwordRegex
         self.loginSuccessRegex = loginSuccessRegex
@@ -2522,6 +2607,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
+            obj.scrollback = tcs.scrollback
 
         val = data.get("username_regex", None)
         if isinstance(val, str): obj.usernameRegex = val
@@ -2558,6 +2644,8 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
             kvp["colorScheme"] = self.colorScheme.strip()
         if self.fontSize and type(self.fontSize) is int and self.fontSize > 4:
             kvp["fontSize"] = str(self.fontSize)
+        if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
+            kvp["scrollback"] = self.scrollback
         if self.usernameRegex and isinstance(self.usernameRegex, str) and self.usernameRegex.strip():
             kvp["usernameRegex"] = self.usernameRegex.strip()
         if self.passwordRegex and isinstance(self.passwordRegex, str) and self.passwordRegex.strip():
@@ -2586,13 +2674,14 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         disablePaste: Optional[bool] = None,
         colorScheme: Optional[str] = None,
         fontSize: Optional[int] = None,
+        scrollback: Optional[int] = None,
         hostKey: Optional[str] = None,
         command: Optional[str] = None,
         sftp: Optional[SFTPRootDirectorySettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
         self.hostKey = hostKey
         self.command = command
         self.sftp = sftp if isinstance(sftp, SFTPRootDirectorySettings) else None
@@ -2622,6 +2711,7 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
+            obj.scrollback = tcs.scrollback
 
         val = data.get("public_host_key", None)
         if isinstance(val, str): obj.hostKey = val
@@ -2656,6 +2746,8 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
             kvp["colorScheme"] = self.colorScheme.strip()
         if self.fontSize and type(self.fontSize) is int and self.fontSize > 4:
             kvp["fontSize"] = str(self.fontSize)
+        if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
+            kvp["scrollback"] = self.scrollback
         if self.hostKey and isinstance(self.hostKey, str) and self.hostKey.strip():
             kvp["hostKey"] = self.hostKey.strip()
         if self.command and isinstance(self.command, str) and self.command.strip():
@@ -2683,6 +2775,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         recordingIncludeKeys: Optional[bool] = None,
         colorScheme: Optional[str] = None,
         fontSize: Optional[int] = None,
+        scrollback: Optional[int] = None,
         ignoreCert: Optional[bool] = None,
         caCert: Optional[str] = None,
         namespace: Optional[str] = None,
@@ -2692,7 +2785,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         clientKey: Optional[str] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
         self.ignoreCert = ignoreCert
         self.caCert = caCert
         self.namespace = namespace
@@ -2721,6 +2814,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
+            obj.scrollback = tcs.scrollback
 
         val = data.get("namespace", None)
         if isinstance(val, str): obj.namespace = val
@@ -2754,6 +2848,8 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
             kvp["colorScheme"] = self.colorScheme.strip()
         if self.fontSize and type(self.fontSize) is int and self.fontSize > 4:
             kvp["fontSize"] = str(self.fontSize)
+        if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
+            kvp["scrollback"] = self.scrollback
         if self.namespace and isinstance(self.namespace, str) and self.namespace.strip():
             kvp["namespace"] = self.namespace.strip()
         if self.pod and isinstance(self.pod, str) and self.pod.strip():
@@ -2857,143 +2953,144 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
         rec_json = json.dumps(dict)
         return rec_json
 
-class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
+class CliCapableDatabaseConnectionSettings(BaseDatabaseConnectionSettings, TerminalDisplayConnectionSettings):
+    """mysql/postgresql/sql-server: CLI-capable DB protocols with terminal display (mirrors WV)."""
+
+    def __init__( # pylint: disable=R0917
+        self,
+        port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
+        userRecords: Optional[List[str]] = None,
+        recordingIncludeKeys: Optional[bool] = None,
+        disableCopy: Optional[bool] = None,
+        disablePaste: Optional[bool] = None,
+        database: Optional[str] = None,
+        disableCsvExport: Optional[bool] = None,
+        disableCsvImport: Optional[bool] = None,
+        colorScheme: Optional[str] = None,
+        fontSize: Optional[int] = None,
+        scrollback: Optional[int] = None,
+    ):
+        BaseDatabaseConnectionSettings.__init__(
+            self, port, allowSupplyUser, userRecords, recordingIncludeKeys,
+            disableCopy, disablePaste, database, disableCsvExport, disableCsvImport)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
+
+    @classmethod
+    def load(cls, data: Union[str, dict]):
+        obj = cls()
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: logging.error(f"CLI-capable Database Connection Settings failed to load from: {str(data)[:80]}")
+        if not isinstance(data, dict): return obj
+
+        bdcs = BaseDatabaseConnectionSettings.load(data)
+        if bdcs:
+            obj.port = bdcs.port
+            obj.allowSupplyUser = bdcs.allowSupplyUser
+            obj.userRecords = bdcs.userRecords
+            obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
+            obj.disableCopy = bdcs.disableCopy
+            obj.disablePaste = bdcs.disablePaste
+            obj.database = bdcs.database
+            obj.disableCsvExport = bdcs.disableCsvExport
+            obj.disableCsvImport = bdcs.disableCsvImport
+            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
+
+        tcs = TerminalDisplayConnectionSettings.load(data)
+        if tcs:
+            obj.colorScheme = tcs.colorScheme
+            obj.fontSize = tcs.fontSize
+            obj.scrollback = tcs.scrollback
+
+        return obj
+
+    def _apply_terminal_display_to_record_dict(self, kvp: Dict[str, Any]):
+        if self.colorScheme and isinstance(self.colorScheme, str) and self.colorScheme.strip():
+            kvp["colorScheme"] = self.colorScheme.strip()
+        if self.fontSize and type(self.fontSize) is int and self.fontSize > 4:
+            kvp["fontSize"] = str(self.fontSize)
+        if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
+            kvp["scrollback"] = self.scrollback
+
+    def to_record_dict(self):
+        kvp = super().to_record_dict()
+        self._apply_terminal_display_to_record_dict(kvp)
+        return kvp
+
+class ConnectionSettingsSqlServer(CliCapableDatabaseConnectionSettings):
     protocol = ConnectionProtocol.SQLSERVER
-    def __init__( # pylint: disable=W0246
-        self,
-        port: Optional[str] = None,  # Override port from host
-        allowSupplyUser: Optional[bool] = None,
-        userRecords: Optional[List[str]] = None,
-        recordingIncludeKeys: Optional[bool] = None,
-        disableCopy: Optional[bool] = None,
-        disablePaste: Optional[bool] = None,
-        database: Optional[str] = None,
-        disableCsvExport: Optional[bool] = None,
-        disableCsvImport: Optional[bool] = None
-    ):
-        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
-                         disableCopy, disablePaste, database,
-                         disableCsvExport, disableCsvImport)
-
-    @classmethod
-    def load(cls, data: Union[str, dict]):
-        obj = cls()
-        try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"SQLServer Connection Settings failed to load from: {str(data)[:80]}")
-        if not isinstance(data, dict): return obj
-
-        bdcs = BaseDatabaseConnectionSettings.load(data)
-        if bdcs:
-            obj.port = bdcs.port
-            obj.allowSupplyUser = bdcs.allowSupplyUser
-            obj.userRecords = bdcs.userRecords
-            obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
-            obj.disableCopy = bdcs.disableCopy
-            obj.disablePaste = bdcs.disablePaste
-            obj.database = bdcs.database
-            obj.disableCsvExport = bdcs.disableCsvExport
-            obj.disableCsvImport = bdcs.disableCsvImport
-            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
-            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
-
-        return obj
-
     def to_record_dict(self):
-        dict = super().to_record_dict()
-        dict["protocol"] = ConnectionProtocol.SQLSERVER.value  # pylint: disable=E1101
-        return dict
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.SQLSERVER.value  # pylint: disable=E1101
+        return d
 
-class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
+class ConnectionSettingsPostgreSQL(CliCapableDatabaseConnectionSettings):
     protocol = ConnectionProtocol.POSTGRESQL
-    def __init__( # pylint: disable=W0246,R0917
-        self,
-        port: Optional[str] = None,  # Override port from host
-        allowSupplyUser: Optional[bool] = None,
-        userRecords: Optional[List[str]] = None,
-        recordingIncludeKeys: Optional[bool] = None,
-        disableCopy: Optional[bool] = None,
-        disablePaste: Optional[bool] = None,
-        database: Optional[str] = None,
-        disableCsvExport: Optional[bool] = None,
-        disableCsvImport: Optional[bool] = None
-    ):
-        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
-                         disableCopy, disablePaste, database,
-                         disableCsvExport, disableCsvImport)
-
-    @classmethod
-    def load(cls, data: Union[str, dict]):
-        obj = cls()
-        try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PostgreSQL Connection Settings failed to load from: {str(data)[:80]}")
-        if not isinstance(data, dict): return obj
-
-        bdcs = BaseDatabaseConnectionSettings.load(data)
-        if bdcs:
-            obj.port = bdcs.port
-            obj.allowSupplyUser = bdcs.allowSupplyUser
-            obj.userRecords = bdcs.userRecords
-            obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
-            obj.disableCopy = bdcs.disableCopy
-            obj.disablePaste = bdcs.disablePaste
-            obj.database = bdcs.database
-            obj.disableCsvExport = bdcs.disableCsvExport
-            obj.disableCsvImport = bdcs.disableCsvImport
-            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
-            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
-
-        return obj
-
     def to_record_dict(self):
-        dict = super().to_record_dict()
-        dict["protocol"] = ConnectionProtocol.POSTGRESQL.value  # pylint: disable=E1101
-        return dict
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.POSTGRESQL.value  # pylint: disable=E1101
+        return d
 
-class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
+class ConnectionSettingsMySQL(CliCapableDatabaseConnectionSettings):
     protocol = ConnectionProtocol.MYSQL
-    def __init__( # pylint: disable=W0246,R0917
-        self,
-        port: Optional[str] = None,  # Override port from host
-        allowSupplyUser: Optional[bool] = None,
-        userRecords: Optional[List[str]] = None,
-        recordingIncludeKeys: Optional[bool] = None,
-        disableCopy: Optional[bool] = None,
-        disablePaste: Optional[bool] = None,
-        database: Optional[str] = None,
-        disableCsvExport: Optional[bool] = None,
-        disableCsvImport: Optional[bool] = None
-    ):
-        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
-                         disableCopy, disablePaste, database,
-                         disableCsvExport, disableCsvImport)
-
-    @classmethod
-    def load(cls, data: Union[str, dict]):
-        obj = cls()
-        try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"MySQL Connection Settings failed to load from: {str(data)[:80]}")
-        if not isinstance(data, dict): return obj
-
-        bdcs = BaseDatabaseConnectionSettings.load(data)
-        if bdcs:
-            obj.port = bdcs.port
-            obj.allowSupplyUser = bdcs.allowSupplyUser
-            obj.userRecords = bdcs.userRecords
-            obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
-            obj.disableCopy = bdcs.disableCopy
-            obj.disablePaste = bdcs.disablePaste
-            obj.database = bdcs.database
-            obj.disableCsvExport = bdcs.disableCsvExport
-            obj.disableCsvImport = bdcs.disableCsvImport
-            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
-            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
-
-        return obj
-
     def to_record_dict(self):
-        dict = super().to_record_dict()
-        dict["protocol"] = ConnectionProtocol.MYSQL.value  # pylint: disable=E1101
-        return dict
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.MYSQL.value  # pylint: disable=E1101
+        return d
+
+# The remaining database protocols share BaseDatabaseConnectionSettings verbatim — they
+# differ only by their wire protocol value. __init__ and load() are inherited unchanged
+# (BaseDatabaseConnectionSettings.load uses cls(), so it builds the right subclass);
+# only to_record_dict needs to stamp the protocol.
+class ConnectionSettingsMariaDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.MARIADB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.MARIADB.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsOracle(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.ORACLE
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.ORACLE.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsMongoDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.MONGODB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.MONGODB.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsRedis(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.REDIS
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.REDIS.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsElasticsearch(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.ELASTICSEARCH
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.ELASTICSEARCH.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsClickHouse(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.CLICKHOUSE
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.CLICKHOUSE.value  # pylint: disable=E1101
+        return d
+
+class ConnectionSettingsDynamoDB(BaseDatabaseConnectionSettings):
+    protocol = ConnectionProtocol.DYNAMODB
+    def to_record_dict(self):
+        d = super().to_record_dict()
+        d["protocol"] = ConnectionProtocol.DYNAMODB.value  # pylint: disable=E1101
+        return d
 
 PamConnectionSettings = Optional[
     Union[
@@ -3004,7 +3101,14 @@ PamConnectionSettings = Optional[
         ConnectionSettingsKubernetes,
         ConnectionSettingsSqlServer,
         ConnectionSettingsPostgreSQL,
-        ConnectionSettingsMySQL
+        ConnectionSettingsMySQL,
+        ConnectionSettingsMariaDB,
+        ConnectionSettingsOracle,
+        ConnectionSettingsMongoDB,
+        ConnectionSettingsRedis,
+        ConnectionSettingsElasticsearch,
+        ConnectionSettingsClickHouse,
+        ConnectionSettingsDynamoDB
     ]
 ]
 
@@ -3111,7 +3215,14 @@ class PamSettingsFieldData:
         ConnectionSettingsKubernetes,
         ConnectionSettingsSqlServer,
         ConnectionSettingsPostgreSQL,
-        ConnectionSettingsMySQL
+        ConnectionSettingsMySQL,
+        ConnectionSettingsMariaDB,
+        ConnectionSettingsOracle,
+        ConnectionSettingsMongoDB,
+        ConnectionSettingsRedis,
+        ConnectionSettingsElasticsearch,
+        ConnectionSettingsClickHouse,
+        ConnectionSettingsDynamoDB
     ]
 
     @classmethod
@@ -3194,16 +3305,30 @@ def is_blank_instance(obj, skiplist: Optional[List[str]] = None):
             return False
     return True
 
+_CLI_CAPABLE_DB_MEMBERS = (
+    ConnectionProtocol.MYSQL,
+    ConnectionProtocol.POSTGRESQL,
+    ConnectionProtocol.SQLSERVER,
+)
+
 def is_database_protocol(protocol):
     """
-    Returns True if the protocol is one of the database protocols: MYSQL, POSTGRESQL, or SQLSERVER.
+    Returns True if the protocol is one of the database protocols: MYSQL, POSTGRESQL,
+    SQLSERVER, MARIADB, ORACLE, MONGODB, REDIS, ELASTICSEARCH, CLICKHOUSE, or DYNAMODB.
 
-    Accepts ConnectionProtocol or the string wire values (e.g. 'mysql', 'postgresql', 'sql-server').
+    Accepts ConnectionProtocol or the string wire values (e.g. 'mysql', 'oracle', 'sql-server').
     """
     db_members = (
         ConnectionProtocol.MYSQL,
         ConnectionProtocol.POSTGRESQL,
         ConnectionProtocol.SQLSERVER,
+        ConnectionProtocol.MARIADB,
+        ConnectionProtocol.ORACLE,
+        ConnectionProtocol.MONGODB,
+        ConnectionProtocol.REDIS,
+        ConnectionProtocol.ELASTICSEARCH,
+        ConnectionProtocol.CLICKHOUSE,
+        ConnectionProtocol.DYNAMODB,
     )
     db_values = {m.value for m in db_members}
     if isinstance(protocol, ConnectionProtocol):
@@ -3211,6 +3336,25 @@ def is_database_protocol(protocol):
     if isinstance(protocol, str):
         return str(protocol).strip().lower() in db_values
     return False
+
+def is_cli_capable_db_protocol(protocol):
+    """
+    Returns True for mysql/postgresql/sql-server — DB protocols with CLI/TTY sessions
+    (mirrors WV: terminal display is shown when !isKeeperDbOnlyProtocol).
+    """
+    cli_values = {m.value for m in _CLI_CAPABLE_DB_MEMBERS}
+    if isinstance(protocol, ConnectionProtocol):
+        return protocol in _CLI_CAPABLE_DB_MEMBERS
+    if isinstance(protocol, str):
+        return str(protocol).strip().lower() in cli_values
+    return False
+
+def is_keeper_db_only_protocol(protocol):
+    """
+    Returns True for keeperDb-only DB protocols (mariadb, oracle, mongodb, redis,
+    elasticsearch, clickhouse, dynamodb). Mirrors WV isKeeperDbOnlyProtocol.
+    """
+    return is_database_protocol(protocol) and not is_cli_capable_db_protocol(protocol)
 
 def get_sftp_attribute(obj, name: str) -> str:
     # Get one of pam_settings.connection.sftp.{sftpResource,sftpResourceUid,sftpUser,sftpUserUid}
