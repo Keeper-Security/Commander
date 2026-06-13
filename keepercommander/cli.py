@@ -744,6 +744,24 @@ def read_command_with_continuation(prompt_session, params):
     return result
 
 
+def _first_queued_command_is_login(params):
+    if not params.commands:
+        return False
+    command = params.commands[0].strip()
+    if command.startswith('@'):
+        command = command[1:].strip()
+    cmd, _ = command_and_args_from_cmd(command)
+    if not cmd:
+        return False
+    cmd = cmd.lower()
+    alias = aliases.get(cmd)
+    if isinstance(alias, (tuple, list)):
+        cmd = alias[0]
+    elif isinstance(alias, str):
+        cmd = alias
+    return cmd == 'login'
+
+
 def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # type: (KeeperParams, bool, bool, bool) -> int  # suppress_goodbye kept for API compat
     global prompt_session
     error_no = 0
@@ -776,7 +794,7 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
                 display.show_government_warning()
 
     if not params.batch_mode and not skip_init:
-        if params.user:
+        if params.user and not _first_queued_command_is_login(params):
             try:
                 LoginCommand().execute(params, email=params.user, password=params.password, new_login=new_login)
             except KeyboardInterrupt:
