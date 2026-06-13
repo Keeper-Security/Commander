@@ -715,6 +715,7 @@ def _import(params, file_format, filename, **kwargs):
     filter_folder = kwargs.get('filter_folder')
     dry_run = kwargs.get('dry_run') is True
     show_skipped = kwargs.get('show_skipped') is True
+    secret_ids = kwargs.get('secret_ids')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -732,7 +733,7 @@ def _import(params, file_format, filename, **kwargs):
     filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
 
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
-                              old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, dry_run=dry_run):
+                              old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids, dry_run=dry_run):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
