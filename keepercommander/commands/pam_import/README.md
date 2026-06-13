@@ -600,6 +600,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"public_host_key": "<Public Host Key (Base64)>",
 			"command": "/bin/bash",
 			"sftp": {
@@ -715,6 +716,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"username_regex": "regex: username",
 			"password_regex": "regex: password",
 			"login_success_regex": "regex: login success",
@@ -768,6 +770,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"recording_include_keys": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"namespace": "namespace",
 			"pod_name": "pod name",
 			"container": "container name",
@@ -828,6 +831,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
+						"color_scheme": "gray-black",
+						"font_size": "18",
+						"scrollback": 5000,
 						"disable_csv_import": true,
 						"disable_csv_export": true,
 						"default_database": "db1"
@@ -899,6 +905,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"disable_paste": true,
 						"color_scheme": "gray-black",
 						"font_size": "18",
+						"scrollback": 5000,
 						"public_host_key": "<Public Host Key (Base64)>",
 						"command": "/bin/bash",
 						"sftp": {

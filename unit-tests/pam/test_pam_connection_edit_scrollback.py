@@ -166,6 +166,18 @@ class TestPamConnectionEditScrollbackValidation(unittest.TestCase):
             self._execute(rec, scrollback='100')
         self.assertIn('not supported for protocol "http"', str(ctx.exception))
 
+    def test_pam_database_mariadb_rejected(self):
+        rec = self._mock_record('pamDatabase', 'mariadb')
+        with self.assertRaises(CommandError) as ctx:
+            self._execute(rec, scrollback='100')
+        self.assertIn('not supported for protocol "mariadb"', str(ctx.exception))
+
+    def test_pam_database_mongodb_rejected(self):
+        rec = self._mock_record('pamDatabase', 'mongodb')
+        with self.assertRaises(CommandError) as ctx:
+            self._execute(rec, scrollback='100')
+        self.assertIn('not supported for protocol "mongodb"', str(ctx.exception))
+
     def test_non_numeric_rejected(self):
         rec = self._mock_record('pamMachine', 'ssh')
         with self.assertRaises(CommandError) as ctx:
@@ -227,8 +239,9 @@ class TestPamConnectionEditScrollbackAllowedCombinations(unittest.TestCase):
     a scrollback-related error. We don't run the full execute path (which would
     require mocking the entire DAG layer), only verify validation passes."""
 
-    DB_PROTOCOLS = ['mysql', 'postgresql', 'sql-server', 'mariadb', 'oracle',
-                    'mongodb', 'redis', 'elasticsearch', 'clickhouse', 'dynamodb']
+    DB_PROTOCOLS = ['mysql', 'postgresql', 'sql-server']
+    KEEPER_DB_ONLY_PROTOCOLS = ['mariadb', 'oracle', 'mongodb', 'redis',
+                                'elasticsearch', 'clickhouse', 'dynamodb']
     TERMINAL_PROTOCOLS = ['ssh', 'telnet', 'kubernetes']
 
     def _assert_validation_passes(self, record_type, protocol):
@@ -255,10 +268,29 @@ class TestPamConnectionEditScrollbackAllowedCombinations(unittest.TestCase):
             except Exception:
                 pass  # downstream DAG/token failures are not what we're testing
 
-    def test_pam_database_all_db_protocols(self):
+    def test_pam_database_cli_capable_db_protocols(self):
         for proto in self.DB_PROTOCOLS:
             with self.subTest(protocol=proto):
                 self._assert_validation_passes('pamDatabase', proto)
+
+    def test_pam_database_keeper_db_only_rejected(self):
+        for proto in self.KEEPER_DB_ONLY_PROTOCOLS:
+            rec = mock.MagicMock(spec=vault.TypedRecord)
+            rec.record_uid = 'rec-uid'
+            rec.record_type = 'pamDatabase'
+            rec.version = 3
+            ps_field = mock.MagicMock()
+            ps_field.value = [{'connection': {'protocol': proto}}]
+            rec.get_typed_field.side_effect = lambda name: ps_field if name == 'pamSettings' else None
+            cmd = PAMConnectionEditCommand()
+            params = mock.MagicMock()
+            with mock.patch(
+                'keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record',
+                return_value=rec,
+            ):
+                with self.assertRaises(CommandError) as ctx:
+                    cmd.execute(params, record='rec', scrollback='100')
+                self.assertIn(f'not supported for protocol "{proto}"', str(ctx.exception))
 
     def test_pam_machine_terminal_protocols(self):
         for proto in self.TERMINAL_PROTOCOLS:

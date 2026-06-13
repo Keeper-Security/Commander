@@ -2629,6 +2629,9 @@ class PAMConnectionEditCommand(Command):
     # any supported PAM resource may use any protocol (see validate_pam_connection in pam_import).
     db_protocols = ['clickhouse', 'dynamodb', 'elasticsearch', 'mariadb', 'mongodb',
                     'mysql', 'oracle', 'postgresql', 'redis', 'sql-server']
+    # CLI-capable DB protocols (mysql/postgresql/sql-server): terminal display incl. scrollback.
+    # Mirrors WV isKeeperDbOnlyProtocol — keeperDb-only DBs have no TTY session settings.
+    cli_capable_db_protocols = ['mysql', 'postgresql', 'sql-server']
     # Non-database protocols (terminal/remote for pamMachine/pamDirectory, http for RBI).
     non_db_protocols = ['http', 'kubernetes', 'rdp', 'ssh', 'telnet', 'vnc']
     # Protocols offered by --protocol ('' clears the protocol).
@@ -2662,8 +2665,8 @@ class PAMConnectionEditCommand(Command):
                         help='Toggle Key Events settings')
     parser.add_argument('--scrollback', '-sb', required=False, dest='scrollback', action='store',
                         help='Maximum Scrollback Size (terminal history). Integer to set, '
-                             'empty string to remove. Supported only for pamDatabase (any DB protocol) and '
-                             'pamMachine/pamDirectory (ssh/telnet/kubernetes).')
+                             'empty string to remove. Supported for pamDatabase (mysql/postgresql/sql-server) '
+                             'and pamMachine/pamDirectory (ssh/telnet/kubernetes).')
     parser.add_argument('--rotate-on-termination', required=False, dest='rotate_on_termination',
                         choices=['on', 'off'],
                         help='Rotate launch credentials when the PAM session ends (DAG resource meta)')
@@ -2717,7 +2720,7 @@ class PAMConnectionEditCommand(Command):
         scrollback_clear = False
         scrollback_value = None  # parsed int, or None to skip apply
         if scrollback_arg is not None:
-            db_scrollback_protocols = set(PAMConnectionEditCommand.db_protocols)
+            db_scrollback_protocols = set(PAMConnectionEditCommand.cli_capable_db_protocols)
             terminal_scrollback_protocols = {'ssh', 'telnet', 'kubernetes'}
             if record_type == 'pamDatabase':
                 allowed_protocols = db_scrollback_protocols
