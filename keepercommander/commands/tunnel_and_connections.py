@@ -2623,7 +2623,19 @@ class PAMTunnelDiagnoseCommand(Command):
 
 class PAMConnectionEditCommand(Command):
     choices = ['on', 'off', 'default']
-    protocols = ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']
+    # Database connection protocols (pamDatabase). Kept as its own list so it is the single
+    # source of truth for DB-protocol checks (e.g. --scrollback) and so a future DB-vs-non-DB
+    # split or per-record-type gate is a one-line change. No per-type gating is applied today:
+    # any supported PAM resource may use any protocol (see validate_pam_connection in pam_import).
+    db_protocols = ['clickhouse', 'dynamodb', 'elasticsearch', 'mariadb', 'mongodb',
+                    'mysql', 'oracle', 'postgresql', 'redis', 'sql-server']
+    # CLI-capable DB protocols (mysql/postgresql/sql-server): terminal display incl. scrollback.
+    # Mirrors WV isKeeperDbOnlyProtocol — keeperDb-only DBs have no TTY session settings.
+    cli_capable_db_protocols = ['mysql', 'postgresql', 'sql-server']
+    # Non-database protocols (terminal/remote for pamMachine/pamDirectory, http for RBI).
+    non_db_protocols = ['http', 'kubernetes', 'rdp', 'ssh', 'telnet', 'vnc']
+    # Protocols offered by --protocol ('' clears the protocol).
+    protocols = [''] + sorted(non_db_protocols + db_protocols)
     parser = argparse.ArgumentParser(prog='pam connection edit')
     parser.add_argument('record', type=str, action='store', help='The record UID or path of the PAM '
                         'resource record with network information to use for connections')
@@ -2653,8 +2665,8 @@ class PAMConnectionEditCommand(Command):
                         help='Toggle Key Events settings')
     parser.add_argument('--scrollback', '-sb', required=False, dest='scrollback', action='store',
                         help='Maximum Scrollback Size (terminal history). Integer to set, '
-                             'empty string to remove. Supported only for pamDatabase (any DB protocol) and '
-                             'pamMachine/pamDirectory (ssh/telnet/kubernetes).')
+                             'empty string to remove. Supported for pamDatabase (mysql/postgresql/sql-server) '
+                             'and pamMachine/pamDirectory (ssh/telnet/kubernetes).')
     parser.add_argument('--rotate-on-termination', required=False, dest='rotate_on_termination',
                         choices=['on', 'off'],
                         help='Rotate launch credentials when the PAM session ends (DAG resource meta)')
@@ -2708,8 +2720,7 @@ class PAMConnectionEditCommand(Command):
         scrollback_clear = False
         scrollback_value = None  # parsed int, or None to skip apply
         if scrollback_arg is not None:
-            db_scrollback_protocols = {'mysql', 'postgresql', 'sql-server', 'mariadb', 'oracle',
-                                       'mongodb', 'redis', 'elasticsearch', 'clickhouse', 'dynamodb'}
+            db_scrollback_protocols = set(PAMConnectionEditCommand.cli_capable_db_protocols)
             terminal_scrollback_protocols = {'ssh', 'telnet', 'kubernetes'}
             if record_type == 'pamDatabase':
                 allowed_protocols = db_scrollback_protocols
@@ -3327,6 +3338,11 @@ class PAMRbiEditCommand(Command):
     parser.add_argument('--audio-sample-rate', '-sr', dest='audio_sample_rate', type=int,
                         help='Audio sample rate in Hz (e.g., 44100, 48000)')
 
+    # Session Persistence
+    parser.add_argument('--session-persistence', '-sp', dest='session_persistence',
+                        choices=['none', 'user', 'resource', 'default'],
+                        help='RBI session persistence (none/user/resource; default = unset)')
+
     # Utility
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
                         help='Silent mode - don\'t print PAM User, PAM Config etc.')
@@ -3357,6 +3373,7 @@ class PAMRbiEditCommand(Command):
         audio_channels = kwargs.get('audio_channels')  # int or None
         audio_bit_depth = kwargs.get('audio_bit_depth')  # int or None
         audio_sample_rate = kwargs.get('audio_sample_rate')  # int or None
+        session_persistence = kwargs.get('session_persistence')  # none/user/resource/default/None
 
         if not record_name:
             raise CommandError('pam rbi edit', 'Record parameter is required.')
@@ -3375,7 +3392,8 @@ class PAMRbiEditCommand(Command):
             disable_audio is not None,
             audio_channels is not None,
             audio_bit_depth is not None,
-            audio_sample_rate is not None
+            audio_sample_rate is not None,
+            session_persistence is not None
         ])
 
         if not (autofill or key_events or config_name or rbi or recording or has_new_settings):
@@ -3542,6 +3560,31 @@ class PAMRbiEditCommand(Command):
                 else:
                     logging.debug(f'{field_name} is already set to {value} on record={record_uid}')
 
+        # Helper for enum string fields (e.g. sessionPersistence): set a literal value,
+        # or remove the key on 'default' so the gateway/vault applies its own default.
+        # Coerces 'connection' to a dict locally (idempotent) so this is safe even if
+        # 'connection' is missing/null/"" — no dependency on the earlier coercion. Removal
+        # keys on presence, so a present-but-null value is cleared too.
+        def update_connection_choice(field_name, value):
+            nonlocal dirty
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            if rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                _coerce_settings_subdicts(rbs_fld.value[0], 'connection')
+                connection = rbs_fld.value[0]['connection']
+                if value == 'default':
+                    if field_name in connection:
+                        connection.pop(field_name, None)
+                        dirty = True
+                        logging.debug(f'Removed {field_name} (set to default) on record={record_uid}')
+                    else:
+                        logging.debug(f'{field_name} is already unset on record={record_uid}')
+                elif connection.get(field_name) != value:
+                    connection[field_name] = value
+                    dirty = True
+                    logging.debug(f'Set {field_name}={value} on record={record_uid}')
+                else:
+                    logging.debug(f'{field_name} is already set to {value} on record={record_uid}')
+
         # Browser Settings - allowUrlManipulation (on/off/default)
         if allow_url_navigation:
             update_connection_toggle('allowUrlManipulation', allow_url_navigation)
@@ -3593,6 +3636,10 @@ class PAMRbiEditCommand(Command):
         # Audio Settings - audioSampleRate (integer)
         if audio_sample_rate is not None:
             update_connection_int('audioSampleRate', audio_sample_rate)
+
+        # Session Persistence - sessionPersistence (none/user/resource; default removes)
+        if session_persistence:
+            update_connection_choice('sessionPersistence', session_persistence)
 
         if dirty:
             record_management.update_record(params, record)
