@@ -600,6 +600,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"public_host_key": "<Public Host Key (Base64)>",
 			"command": "/bin/bash",
 			"sftp": {
@@ -715,6 +716,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"username_regex": "regex: username",
 			"password_regex": "regex: password",
 			"login_success_regex": "regex: login success",
@@ -768,6 +770,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"recording_include_keys": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
+			"scrollback": 5000,
 			"namespace": "namespace",
 			"pod_name": "pod name",
 			"container": "container name",
@@ -820,7 +823,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					},
 					"connection" : {
 						"protocol": "mysql",
-						"_comment": "protocol types: <sql-server|postgresql|mysql>",
+						"_comment": "DB protocol types: <sql-server|postgresql|mysql|mariadb|oracle|mongodb|redis|elasticsearch|clickhouse|dynamodb>",
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
@@ -828,6 +831,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
+						"color_scheme": "gray-black",
+						"font_size": "18",
+						"scrollback": 5000,
 						"disable_csv_import": true,
 						"disable_csv_export": true,
 						"default_database": "db1"
@@ -899,6 +905,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"disable_paste": true,
 						"color_scheme": "gray-black",
 						"font_size": "18",
+						"scrollback": 5000,
 						"public_host_key": "<Public Host Key (Base64)>",
 						"command": "/bin/bash",
 						"sftp": {
@@ -952,7 +959,17 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"allowed_url_patterns": "*.com\n*.org",
 						"allowed_resource_url_patterns": "*.org\n*.gov",
 						"autofill_targets": "autofil_target1\nautofil_target2",
-						"ignore_server_cert": true
+						"ignore_server_cert": true,
+						"session_persistence": "none",
+						"_comment_session_persistence": "none | user | resource",
+						"allow_file_uploads": true,
+						"allow_file_downloads": true,
+						"disable_audio": false,
+						"audio_channels": 2,
+						"_comment_audio_channels": "1 (mono) or 2 (stereo)",
+						"audio_bps": 16,
+						"_comment_audio_bps": "8 or 16",
+						"audio_sample_rate": 44100
 					}
 				}
 			},
