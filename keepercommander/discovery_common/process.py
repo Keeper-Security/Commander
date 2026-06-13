@@ -1368,6 +1368,7 @@ class Process:
             prompt_confirm_add_func: Optional[Callable] = None,
             prompt_admin_func: Optional[Callable] = None,
             auto_add_result_func: Optional[Callable] = None,
+            rules_only: bool = False,
             directory_info_func: Optional[Callable] = None,
             context: Optional[Any] = None,
             record_cache: Optional[dict] = None,
@@ -1473,21 +1474,22 @@ class Process:
             # This is the total number of items that processing needs to process.
             # We start with items_left equal to item_count.
             item_count = self._get_count(configuration)
-
-            self._process_level(
-                current_vertex=configuration,
-                bulk_add_records=bulk_add_records,
-                bulk_convert_records=bulk_convert_records,
-                record_lookup_func=record_lookup_func,
-                prompt_func=prompt_func,
-                prompt_admin_func=prompt_admin_func,
-                record_prepare_func=record_prepare_func,
-                directory_info_func=directory_info_func,
-                record_cache=record_cache,
-                indent=0,
-                item_count=item_count,
-                items_left=item_count,
-                context=context)
+            
+            if rules_only is False:
+                self._process_level(
+                    current_vertex=configuration,
+                    bulk_add_records=bulk_add_records,
+                    bulk_convert_records=bulk_convert_records,
+                    record_lookup_func=record_lookup_func,
+                    prompt_func=prompt_func,
+                    prompt_admin_func=prompt_admin_func,
+                    record_prepare_func=record_prepare_func,
+                    directory_info_func=directory_info_func,
+                    record_cache=record_cache,
+                    indent=0,
+                    item_count=item_count,
+                    items_left=item_count,
+                    context=context)
 
             # This mainly for testing.
             # If throw and quit exception, so we can prompt the user.
