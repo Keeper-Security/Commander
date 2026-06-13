@@ -205,8 +205,9 @@ class KCM_export:
             '(2) I have hardcoded them in the Python script'
         ])
         if handle_prompt({'1':'file','2':'code'}) == 'file':
-            display('## Please upload your docker-compose file', 'cyan')
-            self.docker_compose = validate_file_upload('yaml')
+            display('## Please upload your docker-compose file\n(blank for /etc/kcm-setup/docker-compose.yml)', 'cyan')
+            docker_file = input('File path: ') or '/etc/kcm-setup/docker-compose.yml'
+            self.docker_compose = validate_file_upload('yaml',docker_file)
             
             port={'MYSQL':3306,'POSTGRES':5432}
             custom_port = None
@@ -340,9 +341,9 @@ The format of this file is as follows:
             templ = validate_file_upload('json')
             templ_resources = templ.get('pam_data',{}).get('resources',[])
             if len(templ_resources)>1:
-                self.template_rs = templ_resources[1]
+                self.template_rs = deepcopy(templ_resources[1])
             if self.template_rs.get('users',[]):
-                self.template_usr = self.template_rs['users'][0]
+                self.template_usr = deepcopy(self.template_rs['users'][0])
         print()
         
         self.group_paths = {}
@@ -372,6 +373,55 @@ The format of this file is as follows:
         self.connections = {}
         self.users = {}
         self.shared_folders = []
+        
+        def handle_mapping(mapping, name, arg, value, dir):
+            if mapping == 'ignore':
+                debug(f'Mapping {arg} ignored', self.debug)
+                return dir
+            if mapping == 'log':
+                if name not in self.logged_records:
+                    self.logged_records[name] = {'name':name}
+                if 'parameters' not in self.logged_records:
+                    self.logged_records[name]['parameters'] = []
+                self.logged_records[name]['parameters'].append(arg)
+                return dir
+            if mapping is None:
+                debug(f'Mapping {arg} recognized but not supported', self.debug)
+                return dir
+            if '=' in mapping:
+                mapping, value = mapping.split('=', 1)
+            keys = mapping.split('.')
+            set_nested(dir[id], keys, value)
+            return dir
+        
+        def handle_arg(id,name,arg,value,resource,user):
+            
+            if value.startswith('${KEEPER_') and id not in self.dynamic_tokens:
+                debug('Dynamic token detected',self.debug)
+                self.dynamic_tokens.append(id)
+                if name not in self.logged_records:
+                    self.logged_records[name] = {'name':name, 'dynamic_token':True}
+                else:
+                    self.logged_records[name]['dynamic_token'] = True
+            elif value and arg.startswith('totp-'):
+                if 'oneTimeCode' not in user:
+                    user['oneTimeCode'] = {
+                        "totp-algorithm": '',
+                        "totp-digits": "",
+                        "totp-period": "",
+                        "totp-secret": ""
+                        }
+                user['oneTimeCode'][arg] = value
+            elif value and arg == 'hostname':
+                resource['host'] = value
+            elif value and arg == 'port':
+                resource['pam_settings']['connection']['port'] = value
+            elif value and arg in self.mappings['users']:
+                self.users = handle_mapping(self.mappings['users'][arg],name,arg,value,self.users)
+            elif arg in self.mappings['resources']:
+                self.connections = handle_mapping(self.mappings['resources'][arg],name,arg,value,self.connections)
+            else:
+                display(f'Error: Unknown parameter detected: {arg}. Add it to KCM_mappings.json to resolve this error','bold red')
         
         for connection in self.connection_data:
             id = connection['connection_id']
@@ -445,50 +495,7 @@ The format of this file is as follows:
                     resource['pam_settings']['connection']['launch_credentials'] = f'KCM User - {name}'
                 self.connections[id] = resource
             
-            def handle_arg(id,name,arg,value,resource,user):
-                def handle_mapping(mapping, value, dir):
-                    if mapping == 'ignore':
-                        debug(f'Mapping {arg} ignored', self.debug)
-                        return dir
-                    if mapping == 'log':
-                        record = self.logged_records.setdefault(name, {'name': name})
-                        record[arg] = value
-                        return dir
-                    if mapping is None:
-                        debug(f'Mapping {arg} recognized but not supported', self.debug)
-                        return dir
-                    if '=' in mapping:
-                        mapping, value = mapping.split('=', 1)
-                    keys = mapping.split('.')
-                    set_nested(dir[id], keys, value)
-                    return dir
-                
-                if value.startswith('${KEEPER_') and id not in self.dynamic_tokens:
-                    debug('Dynamic token detected',self.debug)
-                    self.dynamic_tokens.append(id)
-                    if name not in self.logged_records:
-                        self.logged_records[name] = {'name':name, 'dynamic_token':True}
-                    else:
-                        self.logged_records[name]['dynamic_token'] = True
-                elif value and arg.startswith('totp-'):
-                    if 'oneTimeCode' not in user:
-                        user['oneTimeCode'] = {
-                            "totp-algorithm": '',
-                            "totp-digits": "",
-                            "totp-period": "",
-                            "totp-secret": ""
-                            }
-                    user['oneTimeCode'][arg] = value
-                elif value and arg == 'hostname':
-                    resource['host'] = value
-                elif value and arg == 'port':
-                    resource['pam_settings']['connection']['port'] = value
-                elif value and arg in self.mappings['users']:
-                    self.users = handle_mapping(self.mappings['users'][arg],value,self.users)
-                elif arg in self.mappings['resources']:
-                    self.connections = handle_mapping(self.mappings['resources'][arg],value,self.connections)
-                else:
-                    display(f'Error: Unknown parameter detected: {arg}. Add it to KCM_mappings.json to resolve this error','bold red')
+            
  
             # Handle args
             if connection['parameter_name']:
@@ -497,8 +504,7 @@ The format of this file is as follows:
             if connection['attribute_name']:
                 handle_arg(id,connection['name'],connection['attribute_name'],connection['attribute_value'],self.connections[id],self.users[id])
 
-        
-        self.user_records = list(user for user in self.users.values())
+        self.user_records = list(user for user in self.users.values() if user.get('login',None))
         self.resource_records = list(conn for conn in self.connections.values())
         
         # Sanitize totp
@@ -511,10 +517,25 @@ The format of this file is as follows:
                 stripped_secret = ''.join([x for x in secret if x.isnumeric()])
                 user['otp'] = f'otpauth://totp/{TOTP_ACCOUNT}?secret={stripped_secret}&issuer=&algorithm={alg}&digits={dig}&period={period}'
         
-        # Handle SFTP records
+        usernames = [x['title'] for x in self.user_records]
         for resource in self.resource_records:
+            # Replace launch_credentials with autofill_credentials on http
+            if resource['pam_settings']['connection']['protocol']=='http':
+                resource['pam_settings']['connection']['autofill_credentials'] = resource['pam_settings']['connection']['launch_credentials']
+                del resource['pam_settings']['connection']['launch_credentials']
+            else:
+                # Remove non-existent users and add to logs
+                if resource['pam_settings']['connection']['launch_credentials'] not in usernames:
+                    if resource['title'] not in self.logged_records:
+                        self.logged_records[resource['title']] = {'name':resource['title']}
+                    self.logged_records[resource['title']]['empty_credentials'] = True
+                    resource['pam_settings']['connection']['launch_credentials'] = None
+                # Handle empty ports
+                if not resource['pam_settings']['connection'].get('port',None):
+                    resource['pam_settings']['connection']['port'] = self.mappings['ports'].get(resource['pam_settings']['connection']['protocol'],'')
+            # Handle SFTP records
             if 'sftp' in resource['pam_settings']['connection']:
-                sftp_settings = resource['pam_settings']['connection']['sftp']
+                sftp_settings = deepcopy(resource['pam_settings']['connection']['sftp'])
                 # Create resource for SFTP
                 sftp_resource = {
                     'folder_path':resource['folder_path']+'/SFTP Resources',
@@ -556,12 +577,13 @@ The format of this file is as follows:
         
         if self.dynamic_tokens:
             display(f'- {len(self.dynamic_tokens)} dynamic tokens detected, they will be added to the JSON file.','yellow')
-        if len(self.logged_records)-len(self.dynamic_tokens)>0:
-            display(f'- {len(self.logged_records)-len(self.dynamic_tokens)} records logged, they will be added to the JSON file.','yellow')
+        logged_records_count = len([x for x in self.logged_records if self.logged_records[x].get('parameters',None)])
+        if logged_records_count:
+            display(f'- {logged_records_count} records logged, they will be added to the JSON file.','yellow')
         
         logged_records = []
         if self.logged_records:
-            logged_records = (list(record for record in self.logged_records.values()))
+            logged_records = list(record for record in self.logged_records.values())
         
         shared_folders = []
         for folder in self.shared_folders:

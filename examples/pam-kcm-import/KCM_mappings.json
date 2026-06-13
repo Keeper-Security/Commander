@@ -1,4 +1,14 @@
 {
+	"ports":{
+		"rdp":3389,
+		"ssh":22,
+		"vnc":5900,
+		"telnet":23,
+		"kubernetes":8080,
+		"mysql":3306,
+		"postgresql":5432,
+		"sql-server":1433
+	},
 	"users":{
 		"username":"login",
 		"password":"password",
@@ -21,6 +31,7 @@
 		"disable-copy": "pam_settings.connection.disable_copy",
 		"disable-paste": "pam_settings.connection.disable_paste",
 		"force-lossless": null,
+		"allow-file-uploads":null,
 		"read-only": null,
 		"backspace": null,
 		"url": "url",
