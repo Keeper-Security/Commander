@@ -12,13 +12,16 @@
 
 import importlib
 import logging
+import os
 import uuid
+from urllib.parse import urlparse
 
 from .. import __version__, crypto, rest_api, utils
 from ..params import KeeperParams
 
 
 DEFAULT_BRIDGE_TIMEOUT_MS = 160000
+DEV_BRIDGE_VERIFICATION_POLICY = 'log_only'
 KDBC_CLIENT_NOT_ENROLLED = 'KDBC_CLIENT_NOT_ENROLLED'
 KDBC_KA_LOGIN_FAILED = 'KDBC_KA_LOGIN_FAILED'
 KDBC_PROTOCOL_ERROR = 'KDBC_PROTOCOL_ERROR'
@@ -37,19 +40,26 @@ class DesktopBridgeLoginError(Exception):
         self.request_id = request_id
 
     def __str__(self):
-        parts = [f'Desktop bridge login failed [{self.code}]: {self.message}']
-        if self.retryable:
-            parts.append('The operation may be retried after the reported condition is resolved.')
+        parts = [
+            'Desktop bridge login failed:',
+            f'code={self.code}',
+            f'kind={self.kind}',
+            f'actor={self.actor}',
+            f'retryable={self.retryable}',
+        ]
         if self.request_id:
             parts.append(f'request_id={self.request_id}')
+        parts.append(f'message={self.message}')
         return ' '.join(parts)
 
 
-def login_via_desktop(params, bridge_module=None, bridge_socket=None, timeout_ms=DEFAULT_BRIDGE_TIMEOUT_MS):
+def login_via_desktop(params, bridge_module=None, bridge_socket=None, timeout_ms=DEFAULT_BRIDGE_TIMEOUT_MS,
+                      verification_policy=None):
     # type: (KeeperParams, object, str, int) -> None
     module = bridge_module or _load_bridge_module()
     device_token, device_private_key = _get_device_credentials(params)
-    request = _build_bootstrap_request(module, params, device_token, device_private_key, bridge_socket, timeout_ms)
+    request = _build_bootstrap_request(
+        module, params, device_token, device_private_key, bridge_socket, timeout_ms, verification_policy)
 
     try:
         vault_result = module.BridgeClient().exchange_vault_token(request)
@@ -198,7 +208,8 @@ def _get_device_credentials(params):
     return device_token, device_private_key
 
 
-def _build_bootstrap_request(module, params, device_token, device_private_key, bridge_socket, timeout_ms):
+def _build_bootstrap_request(module, params, device_token, device_private_key, bridge_socket, timeout_ms,
+                             verification_policy):
     private_key = crypto.load_ec_private_key(device_private_key)
     device_public_key = crypto.unload_ec_public_key(private_key.public_key())
     client = module.ClientIdentity(
@@ -213,13 +224,7 @@ def _build_bootstrap_request(module, params, device_token, device_private_key, b
         device_public_key=device_public_key,
     )
 
-    config = None
-    if hasattr(module, 'BridgeClientConfig'):
-        config = module.BridgeClientConfig(
-            server=params.server,
-            socket_override=bridge_socket,
-            timeout_millis=timeout_ms,
-        )
+    config = _build_bridge_config(module, params, bridge_socket, timeout_ms, verification_policy)
 
     return module.BootstrapRequest(
         client=client,
@@ -229,6 +234,54 @@ def _build_bootstrap_request(module, params, device_token, device_private_key, b
         message_session_uid=utils.generate_uid(),
         config=config,
     )
+
+
+def _build_bridge_config(module, params, bridge_socket, timeout_ms, verification_policy):
+    if not hasattr(module, 'BridgeClientConfig'):
+        return None
+
+    verification_policy = _resolve_verification_policy(params, verification_policy)
+    kwargs = {
+        'server': params.server,
+        'socket_override': bridge_socket,
+        'timeout_millis': timeout_ms,
+    }
+    if verification_policy:
+        kwargs['verification_policy'] = verification_policy
+
+    try:
+        return module.BridgeClientConfig(**kwargs)
+    except TypeError:
+        # Older KDBC wheels do not expose verification_policy.
+        kwargs.pop('verification_policy', None)
+        return module.BridgeClientConfig(**kwargs)
+
+
+def _resolve_verification_policy(params, verification_policy):
+    if verification_policy:
+        return verification_policy
+
+    env_policy = os.environ.get('KDBC_VERIFICATION_POLICY')
+    if env_policy:
+        return env_policy
+
+    if _is_keeper_dev_host(getattr(params, 'server', '')):
+        return DEV_BRIDGE_VERIFICATION_POLICY
+
+    return None
+
+
+def _is_keeper_dev_host(server):
+    if not server:
+        return False
+
+    server = str(server).strip().lower()
+    if not server:
+        return False
+
+    parsed = urlparse(server if '://' in server else f'https://{server}')
+    host = parsed.hostname or ''
+    return host.startswith('dev.keepersecurity.') or host.startswith('govcloud.dev.keepersecurity.')
 
 
 def _translate_bridge_error(exc):

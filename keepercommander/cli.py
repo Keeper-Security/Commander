@@ -794,9 +794,16 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
                 display.show_government_warning()
 
     if not params.batch_mode and not skip_init:
-        if params.user and not _first_queued_command_is_login(params):
+        startup_via_desktop = getattr(params, 'via_desktop_login', False) is True
+        if (params.user or startup_via_desktop) and not _first_queued_command_is_login(params):
             try:
-                LoginCommand().execute(params, email=params.user, password=params.password, new_login=new_login)
+                LoginCommand().execute(
+                    params,
+                    email=params.user,
+                    password=params.password,
+                    new_login=new_login,
+                    via_desktop=startup_via_desktop,
+                )
             except KeyboardInterrupt:
                 logging.info('')
             except EOFError:

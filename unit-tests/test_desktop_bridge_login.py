@@ -138,11 +138,13 @@ def _make_bridge_module(vault_result=None, error=None):
             self.device_public_key = device_public_key
 
     class BridgeClientConfig:
-        def __init__(self, server=None, region=None, socket_override=None, timeout_millis=None):
+        def __init__(self, server=None, region=None, socket_override=None, timeout_millis=None,
+                     verification_policy=None):
             self.server = server
             self.region = region
             self.socket_override = socket_override
             self.timeout_millis = timeout_millis
+            self.verification_policy = verification_policy
 
     class BootstrapRequest:
         def __init__(self, client, device, flow=None, request_id=None, message_session_uid=None,
@@ -226,6 +228,20 @@ class TestDesktopBridgeLogin(TestCase):
         login_execute.assert_called_once()
         self.assertTrue(login_execute.call_args.kwargs.get('via_desktop'))
 
+    def test_shell_startup_uses_session_wide_via_desktop_without_login_command(self):
+        params = KeeperParams()
+        params.via_desktop_login = True
+        params.commands = ['q']
+
+        with mock.patch('keepercommander.cli.display.welcome'), \
+                mock.patch('keepercommander.cli.versioning.welcome_print_version'), \
+                mock.patch('keepercommander.cli.LoginCommand.execute') as login_execute:
+            cli.loop(params)
+
+        login_execute.assert_called_once()
+        self.assertTrue(login_execute.call_args.kwargs.get('via_desktop'))
+        self.assertEqual('', login_execute.call_args.kwargs.get('email'))
+
     def test_bridge_exchange_populates_in_memory_session_via_ka(self):
         params, device_public_key = _make_enrolled_params()
         data_key = utils.generate_aes_key()
@@ -241,6 +257,7 @@ class TestDesktopBridgeLogin(TestCase):
                 bridge_module=bridge_module,
                 bridge_socket='/tmp/keeper-bridge-leaf.sock',
                 timeout_ms=1234,
+                verification_policy='log_only',
             )
 
         request = bridge_module.last_request
@@ -250,6 +267,7 @@ class TestDesktopBridgeLogin(TestCase):
         self.assertEqual(rest_api.CLIENT_VERSION, request.client.ka_client_version)
         self.assertEqual('/tmp/keeper-bridge-leaf.sock', request.config.socket_override)
         self.assertEqual(1234, request.config.timeout_millis)
+        self.assertEqual('log_only', request.config.verification_policy)
         self.assertEqual(utils.base64_url_decode(params.device_token), request.device.encrypted_device_token)
         self.assertEqual(b'ka-session-token', params.session_token_bytes)
         self.assertEqual(utils.base64_url_encode(b'ka-session-token'), params.session_token)
@@ -270,6 +288,60 @@ class TestDesktopBridgeLogin(TestCase):
         self.assertTrue(context.exception.retryable)
         self.assertEqual('vault', context.exception.actor)
         self.assertEqual('request-1', context.exception.request_id)
+        self.assertIn('code=KDBC_VAULT_LOCKED', str(context.exception))
+        self.assertIn('kind=vault_locked', str(context.exception))
+        self.assertIn('actor=vault', str(context.exception))
+        self.assertIn('retryable=True', str(context.exception))
+
+    def test_bridge_config_uses_verification_policy_from_environment(self):
+        params, _ = _make_enrolled_params()
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-token'))
+
+        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'log_only'}):
+            request = desktop_bridge._build_bootstrap_request(
+                bridge_module,
+                params,
+                utils.base64_url_decode(params.device_token),
+                utils.base64_url_decode(params.device_private_key),
+                None,
+                1234,
+                None,
+            )
+
+        self.assertEqual('log_only', request.config.verification_policy)
+
+    def test_bridge_config_defaults_dev_hosts_to_log_only(self):
+        params = KeeperParams(server='dev.keepersecurity.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-token'))
+
+        with mock.patch.dict('os.environ', {}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertEqual('log_only', config.verification_policy)
+
+    def test_bridge_config_leaves_production_policy_to_kdbc_default(self):
+        params = KeeperParams(server='keepersecurity.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-token'))
+
+        with mock.patch.dict('os.environ', {}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertIsNone(config.verification_policy)
+
+    def test_bridge_config_environment_overrides_dev_default(self):
+        params = KeeperParams(server='dev.keepersecurity.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-token'))
+
+        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'enforce'}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertEqual('enforce', config.verification_policy)
 
 
 class TestAutoEnrollment(TestCase):
