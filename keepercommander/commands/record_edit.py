@@ -292,7 +292,7 @@ class RecordEditMixin:
             elif parsed_field.type == 'password':
                 action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
-                    record.password = self.generate_password(action_params)
+                    record.password = self.generate_password(action_params, policy=self._password_policy)
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
                         record.password = action_params[0]
