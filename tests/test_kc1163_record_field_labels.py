@@ -144,5 +144,28 @@ class TestOldBehaviorWouldFail(unittest.TestCase):
                         "Expected old code to produce blank labels (regression check)")
 
 
+class TestPluginManagerLabeledFields(unittest.TestCase):
+    """Rotation plugins must read login/password from labeled typed fields (KC-1163)."""
+
+    def test_get_rotation_record_kwargs_reads_labeled_login_password(self):
+        from keepercommander.plugins import plugin_manager
+
+        record = vault.TypedRecord()
+        record.type_name = 'login'
+        record.fields.append(vault.TypedField.new_field('login', ['sa'], 'login'))
+        record.fields.append(vault.TypedField.new_field('password', ['Str0ng!Pass'], 'password'))
+        record.custom.append(vault.TypedField.new_field('text', ['mssql'], 'cmdr:plugin'))
+        record.custom.append(vault.TypedField.new_field('text', ['127.0.0.1'], 'cmdr:host'))
+        record.custom.append(vault.TypedField.new_field('text', ['1433'], 'cmdr:port'))
+
+        plugin_name, plugin_kwargs, plugin = plugin_manager.get_plugin(record, rotate_name=None)
+        self.assertEqual(plugin_name, 'mssql')
+        self.assertEqual(plugin_kwargs['login'], 'sa')
+        self.assertEqual(plugin_kwargs['password'], 'Str0ng!Pass')
+        self.assertEqual(plugin_kwargs['host'], '127.0.0.1')
+        self.assertEqual(plugin_kwargs['port'], 1433)
+        self.assertIsNotNone(plugin)
+
+
 if __name__ == '__main__':
     unittest.main()
