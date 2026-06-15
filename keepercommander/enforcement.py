@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict, Any, Set
 
 from . import api, utils, crypto
-from .proto import APIRequest_pb2
+from .proto import APIRequest_pb2, record_pb2
 from .display import bcolors
 from .params import KeeperParams
 from .error import KeeperApiError, CommandError
@@ -528,18 +528,30 @@ class RecordTypeEnforcer:
 
         cache = getattr(params, 'record_type_cache', None) or {}
         restricted = set()   # type: Set[str]
-        for rt_id in list(policy.get('std') or []) + list(policy.get('ent') or []):
-            entry = cache.get(rt_id)
-            if not entry:
-                continue
-            try:
-                schema = json.loads(entry) if isinstance(entry, str) else entry
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if isinstance(schema, dict):
-                name = schema.get('$id')
-                if name:
-                    restricted.add(name)
+        scope_buckets = (
+            ('std', record_pb2.RT_STANDARD),
+            ('ent', record_pb2.RT_ENTERPRISE),
+        )
+        for bucket, scope in scope_buckets:
+            for rt_id in policy.get(bucket) or []:
+                try:
+                    rt_id = int(rt_id)
+                except (TypeError, ValueError):
+                    continue
+                # Role policy stores bare recordTypeId; sync_down keys cache by
+                # recordTypeId + scope * 1_000_000.
+                scoped_id = rt_id + scope * 1_000_000
+                entry = cache.get(scoped_id) or cache.get(rt_id)
+                if not entry:
+                    continue
+                try:
+                    schema = json.loads(entry) if isinstance(entry, str) else entry
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(schema, dict):
+                    name = schema.get('$id')
+                    if name:
+                        restricted.add(name)
         return restricted
 
     @classmethod
