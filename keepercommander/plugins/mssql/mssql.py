@@ -19,8 +19,7 @@ import pymssql
        pip3 install pymssql
 """
 
-_LOGIN_NAME_PATTERN = re.compile(r'^[a-zA-Z_@#][a-zA-Z0-9_@#$-]*$')
-
+_LOGIN_NAME_PATTERN = re.compile(r'^[a-zA-Z_@#.][a-zA-Z0-9_@#.$\\-]*$')
 
 def _quoted_login_name(login):
     if not login or not _LOGIN_NAME_PATTERN.match(login):
