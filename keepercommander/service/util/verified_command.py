@@ -56,18 +56,7 @@ class Verifycommand:
         if missing_params:
             return f"Missing required parameters: {' and '.join(missing_params)}"
         return None
-    
-    # Legacy methods for backward compatibility
-    @staticmethod
-    def is_append_command(command):
-        """Legacy method - returns True if command is invalid."""
-        return Verifycommand.validate_append_command(command) is not None
-    
-    @staticmethod
-    def is_mkdir_command(command):
-        """Legacy method - returns True if command is invalid."""
-        return Verifycommand.validate_mkdir_command(command) is not None
-    
+
     @staticmethod
     def validate_transform_folder_command(command):
         """
@@ -97,19 +86,3 @@ class Verifycommand:
         if missing_params:
             return f"Missing required parameters: {' and '.join(missing_params)}"
         return None
-    
-    # Legacy methods for backward compatibility
-    @staticmethod
-    def is_append_command(command):
-        """Legacy method - returns True if command is invalid."""
-        return Verifycommand.validate_append_command(command) is not None
-    
-    @staticmethod
-    def is_mkdir_command(command):
-        """Legacy method - returns True if command is invalid."""
-        return Verifycommand.validate_mkdir_command(command) is not None
-    
-    @staticmethod
-    def is_transform_folder_command(command):
-        """Legacy method - returns True if command is invalid."""
-        return Verifycommand.validate_transform_folder_command(command) is not None
