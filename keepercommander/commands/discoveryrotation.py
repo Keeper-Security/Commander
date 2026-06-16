@@ -1399,6 +1399,8 @@ class PAMGatewayListCommand(Command):
                         help='Verbose output')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
                         help='Output format (table, json)')
+    parser.add_argument('--online', required=False, default=False, dest='online_only', action='store_true',
+                        help='Show only online gateways')
 
     def get_parser(self):
         return PAMGatewayListCommand.parser
@@ -1408,6 +1410,7 @@ class PAMGatewayListCommand(Command):
         is_force = kwargs.get('is_force')
         is_verbose = kwargs.get('is_verbose')
         format_type = kwargs.get('format', 'table')
+        online_only = kwargs.get('online_only', False)
 
         is_router_down = False
         krouter_url = router_helper.get_router_url(params)
@@ -1478,12 +1481,25 @@ class PAMGatewayListCommand(Command):
                     connected_controllers_dict[controller.controllerUid] = []
                 connected_controllers_dict[controller.controllerUid].append(controller)
 
+        gateway_counts = {'online': 0, 'offline': 0, 'total': len(enterprise_controllers_all)}
+
         # Process each gateway and handle multiple instances
         for c in enterprise_controllers_all:
             gateway_uid_bytes = c.controllerUid
             gateway_uid_str = utils.base64_url_encode(c.controllerUid)
 
             connected_instances = connected_controllers_dict.get(gateway_uid_bytes, [])
+
+            is_online = not is_router_down and len(connected_instances) > 0
+            if is_router_down:
+                pass
+            elif is_online:
+                gateway_counts['online'] += 1
+            else:
+                gateway_counts['offline'] += 1
+
+            if online_only and not is_online:
+                continue
 
             ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
@@ -1714,6 +1730,9 @@ class PAMGatewayListCommand(Command):
             else:
                 result = {"gateways": gateways_data}
 
+            if online_only:
+                result["gateway_counts"] = gateway_counts
+
             return json.dumps(result, indent=2)
         else:
             # Separate rows into groups: each parent with its instances
@@ -1745,6 +1764,14 @@ class PAMGatewayListCommand(Command):
 
             dump_report_data(table, headers, fmt='table', filename="",
                              row_number=False, column_width=None)
+
+            if online_only:
+                print(
+                    f"\n{bcolors.BOLD}Gateways: "
+                    f"{bcolors.OKGREEN}Online: {gateway_counts['online']}{bcolors.ENDC}, "
+                    f"{bcolors.FAIL}Offline: {gateway_counts['offline']}{bcolors.ENDC}, "
+                    f"Total: {gateway_counts['total']}{bcolors.ENDC}\n"
+                )
 
 
 class PAMConfigurationListCommand(Command):
