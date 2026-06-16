@@ -227,7 +227,7 @@ one_time_share_remove_parser.add_argument('share', nargs='?', type=str, action='
 create_account_parser = argparse.ArgumentParser(prog='create-account', description='Create Keeper Account')
 create_account_parser.add_argument('email', help='email')
 
-def get_share_expiration(expire_at, expire_in):     # (Optional[str], Optional[str]) -> Optional[int]
+def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (Optional[str], Optional[str], str) -> Optional[int]
     if not expire_at and not expire_in:
         return
 
@@ -240,11 +240,20 @@ def get_share_expiration(expire_at, expire_in):     # (Optional[str], Optional[s
         if expire_in == 'never':
             return -1
         td = parse_timeout(expire_in)
+        if td < datetime.timedelta(minutes=1):
+            raise CommandError(
+                cmd_name,
+                'Share expiration must be at least 1 minute.',
+           
+            )
         dt = datetime.datetime.now() + td
     if dt is None:
         raise ValueError(f'Incorrect expiration: {expire_at or expire_in}')
 
-    return int(dt.timestamp())
+    expiration_seconds = int(dt.timestamp())
+    from .nested_share_folder.helpers import validate_share_expiration_timestamp
+    validate_share_expiration_timestamp(expiration_seconds * 1000, cmd_name)
+    return expiration_seconds
 
 
 class ShareFolderCommand(Command):
@@ -310,7 +319,8 @@ class ShareFolderCommand(Command):
 
         share_expiration = None
         if action == 'grant':
-            share_expiration = get_share_expiration(kwargs.get('expire_at'), kwargs.get('expire_in'))
+            share_expiration = get_share_expiration(
+                kwargs.get('expire_at'), kwargs.get('expire_in'), cmd_name='share-folder')
 
         rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
         if rotate_on_expiration:
@@ -690,7 +700,8 @@ class ShareRecordCommand(Command):
 
         share_expiration = None
         if action == 'grant':
-            share_expiration = get_share_expiration(kwargs.get('expire_at'), kwargs.get('expire_in'))
+            share_expiration = get_share_expiration(
+                kwargs.get('expire_at'), kwargs.get('expire_in'), cmd_name='share-record')
 
         rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
         if rotate_on_expiration:

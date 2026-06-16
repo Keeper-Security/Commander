@@ -364,14 +364,15 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
         existing = _check_existing_access(params, folder_uid, actual_uid_bytes,
                                           target_role_name, access_type_label)
         if existing is not None:
-            if existing == target_role_name:
+            if existing == target_role_name and expiration_timestamp is None:
                 return {'folder_uid': folder_uid, 'user_uid': identifier_label,
                         'access_type': access_type_label,
                         'status': 'SUCCESS',
                         'message': f"{'Team' if as_team else 'User'} already has {role} access",
                         'success': True, 'action_taken': 'already_had_access'}
             result = update_folder_access_v3(params, folder_uid, identifier_label,
-                                             role=role, as_team=as_team)
+                                             role=role, as_team=as_team,
+                                             expiration_timestamp=expiration_timestamp)
             result['action_taken'] = 'updated'
             return result
 
@@ -382,7 +383,7 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
     ad.accessRoleType = access_role
     ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
 
-    if expiration_timestamp:
+    if expiration_timestamp is not None:
         ad.tlaProperties.expiration = expiration_timestamp
 
     if share_folder_key:
@@ -430,9 +431,9 @@ def _check_existing_access(params, folder_uid, uid_bytes, target_role_name,
 
 
 def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None,
-                            as_team=False):
-    if role is None and hidden is None:
-        raise ValueError("At least one field (role or hidden) required")
+                            expiration_timestamp=None, as_team=False):
+    if role is None and hidden is None and expiration_timestamp is None:
+        raise ValueError("At least one field (role, hidden, or expiration) required")
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
@@ -453,6 +454,8 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
         ad.permissions.CopyFrom(get_folder_permissions_for_role(resolved_role))
     if hidden is not None:
         ad.hidden = hidden
+    if expiration_timestamp is not None:
+        ad.tlaProperties.expiration = expiration_timestamp
 
     response = folder_access_update_v3(params, folder_access_updates=[ad])
     result = parse_folder_access_result(response, folder_uid, identifier_label,
