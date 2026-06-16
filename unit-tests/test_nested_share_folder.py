@@ -69,6 +69,15 @@ def _make_record(record_uid=None, title='Test Record'):
     }
 
 
+def _make_sharing_status(record_uid, recipient_uid_bytes=None):
+    from keepercommander.proto import record_sharing_pb2
+    status = record_sharing_pb2.Status()
+    status.recordUid = utils.base64_url_decode(record_uid)
+    status.recipientUid = recipient_uid_bytes or utils.base64_url_decode(utils.generate_uid())
+    status.status = record_sharing_pb2.SUCCESS
+    return status
+
+
 class TestCommandHelpers(TestCase):
 
     def test_parse_expiration_none(self):
@@ -923,8 +932,8 @@ class TestNestedShareFolderRecordApi(TestCase):
         mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
         mock_encrypt.return_value = b'enc-key'
         mock_response = Mock()
-        mock_response.revokedSharingStatus = []
-        mock_response.createdSharingStatus = []
+        mock_response.revokedSharingStatus = [_make_sharing_status(ruid, uid_bytes)]
+        mock_response.createdSharingStatus = [_make_sharing_status(ruid, uid_bytes)]
         mock_communicate.side_effect = [mock_response, mock_response]
 
         expiration = 1_900_000_000_000
@@ -960,15 +969,41 @@ class TestNestedShareFolderRecordApi(TestCase):
         mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
         mock_encrypt.return_value = b'enc-key'
         mock_response = Mock()
-        mock_response.revokedSharingStatus = []
-        mock_response.createdSharingStatus = []
+        mock_response.revokedSharingStatus = [_make_sharing_status(ruid, uid_bytes)]
+        mock_response.createdSharingStatus = [_make_sharing_status(ruid, uid_bytes)]
         mock_communicate.side_effect = [mock_response, mock_response]
 
         ra.update_record_share_v3(
             _make_params(nested_share_records={ruid: robj}),
             ruid, email, access_role_type=1, expiration_timestamp=1_900_000_000_000)
 
-        mock_sync_down.assert_called_once()
+        self.assertEqual(mock_sync_down.call_count, 2)
+
+    def test_find_direct_user_share_access_by_recipient_uid(self):
+        from keepercommander.nested_share_folder.record_api import find_direct_user_share_access
+
+        ruid = utils.generate_uid()
+        recipient_uid = utils.generate_uid()
+        access_result = {
+            'record_accesses': [{
+                'record_uid': ruid,
+                'access_type': 'AT_USER',
+                'access_type_uid': recipient_uid,
+                'accessor_name': 'Different Display Name',
+                'access_role_type': 4,
+                'owner': False,
+                'inherited': False,
+            }],
+        }
+        found = find_direct_user_share_access(
+            access_result, ruid, 'user@example.com', recipient_uid=recipient_uid)
+        self.assertIsNotNone(found)
+        self.assertEqual(found['access_role_type'], 4)
+
+    def test_sharing_request_ok_rejects_empty_status(self):
+        from keepercommander.nested_share_folder.record_api import _sharing_request_ok
+
+        self.assertFalse(_sharing_request_ok([]))
 
     def test_is_record_share_update_noop(self):
         from keepercommander.nested_share_folder.record_api import is_record_share_update_noop
