@@ -48,6 +48,7 @@ class CollectionType(int, enum.Enum):
     UserName = 10,
     CustomAppCollection = 102,
     CustomUserCollection = 103,
+    SystemAppCollection = 105,
     CustomMachineCollection = 201,
     OsVersion = 202,
 
@@ -69,6 +70,8 @@ def collection_type_to_name(collection_type: int) -> str:
         return 'App Collection'
     if collection_type == CollectionType.CustomUserCollection:
         return 'User Collection'
+    if collection_type == CollectionType.SystemAppCollection:
+        return 'System App Collection'
     if collection_type == CollectionType.CustomMachineCollection:
         return 'Machine Collection'
     if collection_type == CollectionType.OsVersion:
@@ -141,7 +144,11 @@ def get_collection_required_fields(collection_type: Optional[int]) -> Optional[C
         return CollectionRequiredFields(['Name'])
     if collection_type == CollectionType.UserName:
         return CollectionRequiredFields(['Name'])
+    if collection_type == CollectionType.CustomAppCollection:
+        return CollectionRequiredFields(['Name'])
     if collection_type == CollectionType.CustomUserCollection:
+        return CollectionRequiredFields(['Name'])
+    if collection_type == CollectionType.SystemAppCollection:
         return CollectionRequiredFields(['Name'])
     if collection_type == CollectionType.OsVersion:
         return CollectionRequiredFields(['Name'])
