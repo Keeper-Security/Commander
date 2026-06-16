@@ -98,8 +98,23 @@ class NestedShareRecordShareCommand(Command):
                 params=params, record_uid=record_uid, new_owner_email=email), 'owner')
 
         if action == 'grant':
-            if NestedShareRecordShareCommand._is_already_shared(
-                    params, record_uid, email):
+            existing = NestedShareRecordShareCommand._get_direct_user_share(
+                params, record_uid, email)
+            if existing:
+                if _nsf.is_record_share_update_noop(
+                        existing, access_role_type, expiration):
+                    logging.info(
+                        "Record '%s' already shared with '%s' at the requested "
+                        "role and expiration; no change needed.",
+                        record_uid, email)
+                    return ({
+                        'results': [{
+                            'record_uid': record_uid,
+                            'success': True,
+                            'message': 'Already has requested access',
+                        }],
+                        'success': True,
+                    }, 'update')
                 logging.debug(
                     "Record '%s' is already shared with user '%s'; switching to update.",
                     record_uid, email)
@@ -116,6 +131,17 @@ class NestedShareRecordShareCommand(Command):
             params=params, record_uid=record_uid, recipient_email=email), 'revoke')
 
     @staticmethod
+    def _get_direct_user_share(params, record_uid, email):
+        """Return direct AT_USER share metadata for *email*, or None."""
+        try:
+            access_result = _nsf.get_record_accesses_v3(params, [record_uid])
+            return _nsf.find_direct_user_share_access(
+                access_result, record_uid, email)
+        except Exception as exc:
+            logging.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
+            return None
+
+    @staticmethod
     def _is_already_shared(params, record_uid, email):
         """Return True if *email* already has a *direct* non-owner share on *record_uid*.
 
@@ -126,21 +152,8 @@ class NestedShareRecordShareCommand(Command):
         causes the caller to dispatch ``share_record_v3`` (a fresh direct
         grant) which correctly overrides the inherited folder permission.
         """
-        try:
-            access_result = _nsf.get_record_accesses_v3(params, [record_uid])
-            for a in access_result.get('record_accesses', []):
-                if a.get('record_uid') != record_uid or a.get('owner', False):
-                    continue
-                if a.get('access_type') and a.get('access_type') != 'AT_USER':
-                    continue
-                if a.get('inherited'):
-                    continue
-                if a.get('accessor_name', '').casefold() == email.casefold():
-                    return True
-            return False
-        except Exception as exc:
-            logging.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
-            return False
+        return NestedShareRecordShareCommand._get_direct_user_share(
+            params, record_uid, email) is not None
 
     @staticmethod
     def _log_results(result, action, email):
