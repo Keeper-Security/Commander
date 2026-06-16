@@ -119,8 +119,8 @@ class HelpScreen(ModalScreen):
 [green]Folder Icons:[/green]
   🔒            Legacy Personal Folder
   📦            Legacy Shared Folder
-  👥            Drive Shared Folder
-  📁            Drive NonShared Folder""", classes="help_column")
+  👥            Nested Shared Folder (Shared)
+  📁            Nested Shared Folder (NonShared)""", classes="help_column")
             yield Static("[dim]Press Esc or q to close[/dim]", id="help_footer")
 
     def action_dismiss(self):
