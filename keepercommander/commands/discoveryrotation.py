@@ -1399,7 +1399,7 @@ class PAMGatewayListCommand(Command):
                         help='Verbose output')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
                         help='Output format (table, json)')
-    parser.add_argument('--online', required=False, default=False, dest='online_only', action='store_true',
+    parser.add_argument('--online', '-o', required=False, default=False, dest='online_only', action='store_true',
                         help='Show only online gateways')
 
     def get_parser(self):

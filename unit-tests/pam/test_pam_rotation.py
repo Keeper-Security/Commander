@@ -420,6 +420,9 @@ class TestPAMGatewayListCommand(unittest.TestCase):
         args = self.parser.parse_args(['--online'])
         self.assertTrue(args.online_only)
 
+        args = self.parser.parse_args(['-o'])
+        self.assertTrue(args.online_only)
+
     @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
     @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')
     @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
