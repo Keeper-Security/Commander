@@ -13,6 +13,7 @@ import logging
 from urllib.parse import urlparse
 
 from . import noop
+from ..vault import PasswordRecord, TypedField, TypedRecord
 
 
 CONVERT_KWARG_TO_INT = ('port', 'length')
@@ -156,6 +157,51 @@ def get_custom_cmdr_fields(record):
         }
 
 
+def get_rotation_record_kwargs(record):
+    """Extract login/password/url/host for rotation plugins from a vault record."""
+    plugin_kwargs = {}
+
+    if isinstance(record, PasswordRecord):
+        if record.login:
+            plugin_kwargs['login'] = record.login
+        if record.password:
+            plugin_kwargs['password'] = record.password
+        if record.link:
+            plugin_kwargs['url'] = record.link
+    elif isinstance(record, TypedRecord):
+        login_field = record.get_typed_field('login')
+        if login_field:
+            login = login_field.get_default_value(str)
+            if login:
+                plugin_kwargs['login'] = login
+        password_field = record.get_typed_field('password')
+        if password_field:
+            password = password_field.get_default_value(str)
+            if password:
+                plugin_kwargs['password'] = password
+        url_field = record.get_typed_field('url')
+        if url_field:
+            url = url_field.get_default_value(str)
+            if url:
+                plugin_kwargs['url'] = url
+        host_field = record.get_typed_field('host')
+        if host_field:
+            host_value = host_field.get_default_value(dict)
+            if host_value:
+                host = TypedField.export_host_field(host_value)
+                if host:
+                    plugin_kwargs['host'] = host
+
+    for key, value in record.enumerate_fields():
+        if not value or key not in ('(login)', '(password)', '(url)', '(host)'):
+            continue
+        name = key[1:-1]
+        if name not in plugin_kwargs:
+            plugin_kwargs[name] = value
+
+    return plugin_kwargs
+
+
 def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
     """Load plugin based on given record and alt identifier
 
@@ -171,9 +217,7 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
 
     plugin_kwargs = {}
     plugin_kwargs.update(cmdr_kwargs)
-    plugin_kwargs.update({
-        k[1:-1]: v for k, v in record.enumerate_fields() if k in ('(login)', '(password)', '(url)', '(host)') and v
-    })
+    plugin_kwargs.update(get_rotation_record_kwargs(record))
     if 'host' in plugin_kwargs:
         server = plugin_kwargs['host']
         h, sep, p = server.partition(':')

@@ -62,6 +62,42 @@ rotate_parser.add_argument(
 rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
 
+UNSAFE_ROTATION_PASSWORD_PATTERN = re.compile(r"""[';"\\]|--""")
+_UNSAFE_ROTATION_PASSWORD_LABELS = {
+    "'": "single quote (')",
+    '"': 'double quote (")',
+    ';': 'semicolon (;)',
+    '\\': 'backslash (\\)',
+    '--': 'double hyphen (--)',
+}
+
+
+def validate_user_supplied_rotation_password(new_password):
+    # type: (str) -> bool
+    matches = UNSAFE_ROTATION_PASSWORD_PATTERN.findall(new_password)
+    if not matches:
+        return True
+
+    labels = []
+    seen = set()
+    for match in matches:
+        if match in seen:
+            continue
+        seen.add(match)
+        labels.append(_UNSAFE_ROTATION_PASSWORD_LABELS.get(match, repr(match)))
+
+    if len(labels) == 1:
+        logging.error(
+            'Password contains character unsafe for database rotation: %s',
+            labels[0],
+        )
+    else:
+        logging.error(
+            'Password contains characters unsafe for database rotation: %s',
+            ', '.join(labels),
+        )
+    return False
+
 
 def adjust_password(password):   # type: (str) -> str
     if not password:
@@ -178,6 +214,8 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         if not length:
             length = plugin_kwargs.get('length')
         new_password = get_new_password(plugin, rules, length)
+    elif not validate_user_supplied_rotation_password(new_password):
+        return False
 
     if plugin_kwargs.get('password') == new_password:
         logging.warning('Rotation aborted because the old and new passwords are the same.')
