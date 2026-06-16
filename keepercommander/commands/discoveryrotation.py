@@ -303,6 +303,10 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('gateway-info', PAMGatewayActionServerInfoCommand(), 'Info command', 'i')
         self.register_command('discover', PAMDiscoveryCommand(), 'Discover command', 'd')
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command', 'r')
+        self.register_command('exec', PAMGatewayActionExecCommand(),
+                              'Execute a remote command on a PAM machine via the gateway', 'e')
+        self.register_command('query', PAMGatewayActionQueryCommand(),
+                              'Run a query against a PAM-managed database via the gateway', 'q')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details', 'ji')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
         self.register_command('service', PAMActionServiceCommand(),
@@ -3589,6 +3593,101 @@ class PAMGatewayActionRotateCommand(Command):
             pattern = re.compile(re.escape(text), re.IGNORECASE)
             logging.debug(f"regex pattern {text} failed to compile (using it as plaintext pattern)")
         return pattern
+
+
+class PAMGatewayActionExecCommand(Command):
+    """Execute a remote shell command on a PAM machine via the gateway.
+
+    STUB: returns synthetic data so the end-to-end path (including the MCP
+    ``pam_exec_command`` tool) can be exercised before the gateway-side
+    implementation lands. Replace the body of ``execute`` with a real
+    ``router_send_action_to_gateway`` call when the gateway action is available.
+    """
+    parser = argparse.ArgumentParser(prog='pam action exec')
+    parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
+                        help='Record UID of the PAM machine to run the command on')
+    parser.add_argument('--command', '-c', required=True, dest='command', action='store',
+                        help='Shell command to execute on the remote machine')
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid', action='store',
+                        help='Gateway UID (defaults to the record\'s configured gateway)')
+    parser.add_argument('--format', dest='format', choices=['table', 'json'], default='table',
+                        help='Output format')
+
+    def get_parser(self):
+        return PAMGatewayActionExecCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record_uid')
+        command = kwargs.get('command')
+
+        # --- STUB: synthetic gateway response -------------------------------------
+        result = {
+            'status': 'success',
+            'record_uid': record_uid,
+            'gateway_uid': kwargs.get('gateway_uid') or 'STUB-GATEWAY-UID',
+            'command': command,
+            'exit_code': 0,
+            'stdout': f'[stub] executed: {command}',
+            'stderr': '',
+            'note': 'Synthetic response from pam action exec stub.',
+        }
+        # --------------------------------------------------------------------------
+
+        if kwargs.get('format') == 'json':
+            print(json.dumps(result))
+        else:
+            print(f'{bcolors.WARNING}pam action exec is a stub returning synthetic data.{bcolors.ENDC}')
+            dump_report_data(
+                [[k, v] for k, v in result.items()],
+                headers=['Field', 'Value'], title='PAM Exec (stub)')
+        return result
+
+
+class PAMGatewayActionQueryCommand(Command):
+    """Run a read/write query against a PAM-managed database via the gateway.
+
+    STUB: returns synthetic rows so the end-to-end path (including the MCP
+    ``pam_db_query`` tool) can be exercised before the gateway-side implementation
+    lands. Replace the body of ``execute`` with a real gateway action when available.
+    """
+    parser = argparse.ArgumentParser(prog='pam action query')
+    parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
+                        help='Record UID of the PAM database resource')
+    parser.add_argument('--query', '-q', required=True, dest='query', action='store',
+                        help='SQL query to run against the database')
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid', action='store',
+                        help='Gateway UID (defaults to the record\'s configured gateway)')
+    parser.add_argument('--format', dest='format', choices=['table', 'json'], default='table',
+                        help='Output format')
+
+    def get_parser(self):
+        return PAMGatewayActionQueryCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record_uid')
+        query = kwargs.get('query')
+
+        # --- STUB: synthetic query result -----------------------------------------
+        result = {
+            'status': 'success',
+            'record_uid': record_uid,
+            'gateway_uid': kwargs.get('gateway_uid') or 'STUB-GATEWAY-UID',
+            'query': query,
+            'columns': ['id', 'name'],
+            'rows': [[1, 'alpha'], [2, 'beta']],
+            'row_count': 2,
+            'note': 'Synthetic response from pam action query stub.',
+        }
+        # --------------------------------------------------------------------------
+
+        if kwargs.get('format') == 'json':
+            print(json.dumps(result))
+        else:
+            print(f'{bcolors.WARNING}pam action query is a stub returning synthetic data.{bcolors.ENDC}')
+            dump_report_data(
+                result['rows'], headers=result['columns'],
+                title=f'PAM Query (stub): {query}')
+        return result
 
 
 class PAMGatewayActionServerInfoCommand(Command):

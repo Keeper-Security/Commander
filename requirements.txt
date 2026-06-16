@@ -29,6 +29,7 @@ winrt-runtime; sys_platform == "win32"
 winrt-Windows.Foundation; sys_platform == "win32"
 winrt-Windows.Security.Credentials.UI; sys_platform == "win32"
 googleapis-common-protos
+mcp>=1.2.0; python_version>='3.10'
 tzlocal>=5.0
 keeper-mlkem; python_version>='3.11'
 textual; python_version>='3.9'
