@@ -10,12 +10,21 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
+import re
+
 import pymssql
 
 """Commander Plugin for Microsoft SQL Server
    Dependencies: 
        pip3 install pymssql
 """
+
+_LOGIN_NAME_PATTERN = re.compile(r'^[a-zA-Z_@#.][a-zA-Z0-9_@#.$\\-]*$')
+
+def _quoted_login_name(login):
+    if not login or not _LOGIN_NAME_PATTERN.match(login):
+        return None
+    return f'[{login.replace("]", "]]")}]'
 
 
 class Rotator:
@@ -47,6 +56,11 @@ class Rotator:
             old_password = self.password
 
         user = self.login
+        quoted_user = _quoted_login_name(user)
+        if not quoted_user:
+            logging.error('Invalid SQL Server login name for rotation: %s', user)
+            return False
+
         kwargs = {'user': user, 'password': old_password}
         if self.host:
             kwargs['server'] = self.host
@@ -60,8 +74,8 @@ class Rotator:
             with connection.cursor() as cursor:
                 host = 'default host' if self.host is None else f'"{self.host}"'
                 logging.debug(f'Connected to {host}')
-                sql = f"ALTER LOGIN {user} WITH PASSWORD = '{new_password}';"
-                cursor.execute(sql)
+                sql = f"ALTER LOGIN {quoted_user} WITH PASSWORD = %s"
+                cursor.execute(sql, (new_password,))
             # connection is not autocommit by default. So you must commit to save your changes.
             connection.commit()
             result = True
