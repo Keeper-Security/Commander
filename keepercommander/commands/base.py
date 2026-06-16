@@ -165,6 +165,13 @@ def register_commands(commands, aliases, command_info):
     service_commands(commands)
     service_command_info(aliases, command_info)
 
+    try:
+        from .. import mcp
+        mcp.register_commands(commands)
+        mcp.register_command_info(aliases, command_info)
+    except Exception as e:
+        logging.debug(f"MCP commands not available: {e}")
+
     toggle_pam_legacy_commands(legacy=False)
 
 

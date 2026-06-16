@@ -103,6 +103,11 @@ COMMAND_CATEGORIES = {
     'KeeperPAM Commands': {
         'pam'
     },
+
+    # MCP / AI Access Commands
+    'MCP / AI Access Commands': {
+        'mcp'
+    },
     
     # EPM Commands
     'EPM Commands': {
@@ -152,6 +157,7 @@ def get_category_order():
         'Service Mode REST API',
         'Miscellaneous Commands',
         'KeeperPAM Commands',
+        'MCP / AI Access Commands',
         'EPM Commands',
         'Nested Share Folder Commands',
         'Legacy Commands'
