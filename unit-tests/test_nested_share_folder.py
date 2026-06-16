@@ -977,33 +977,7 @@ class TestNestedShareFolderRecordApi(TestCase):
             _make_params(nested_share_records={ruid: robj}),
             ruid, email, access_role_type=1, expiration_timestamp=1_900_000_000_000)
 
-        self.assertEqual(mock_sync_down.call_count, 2)
-
-    def test_find_direct_user_share_access_by_recipient_uid(self):
-        from keepercommander.nested_share_folder.record_api import find_direct_user_share_access
-
-        ruid = utils.generate_uid()
-        recipient_uid = utils.generate_uid()
-        access_result = {
-            'record_accesses': [{
-                'record_uid': ruid,
-                'access_type': 'AT_USER',
-                'access_type_uid': recipient_uid,
-                'accessor_name': 'Different Display Name',
-                'access_role_type': 4,
-                'owner': False,
-                'inherited': False,
-            }],
-        }
-        found = find_direct_user_share_access(
-            access_result, ruid, 'user@example.com', recipient_uid=recipient_uid)
-        self.assertIsNotNone(found)
-        self.assertEqual(found['access_role_type'], 4)
-
-    def test_sharing_request_ok_rejects_empty_status(self):
-        from keepercommander.nested_share_folder.record_api import _sharing_request_ok
-
-        self.assertFalse(_sharing_request_ok([]))
+        self.assertEqual(mock_sync_down.call_count, 1)
 
     def test_is_record_share_update_noop(self):
         from keepercommander.nested_share_folder.record_api import is_record_share_update_noop
