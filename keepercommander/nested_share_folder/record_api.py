@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 
 from .. import utils, crypto, api
 from ..params import KeeperParams
-from ..proto import record_pb2, folder_pb2, record_endpoints_pb2, record_details_pb2, record_sharing_pb2
+from ..proto import record_pb2, folder_pb2, record_endpoints_pb2, record_details_pb2, record_sharing_pb2, tla_pb2
 from ..error import KeeperApiError
 from ..api import pad_aes_gcm
 
@@ -336,21 +336,84 @@ def get_record_accesses_v3(params, record_uids):
                      'can_update_access', 'can_delete', 'can_change_ownership',
                      'can_request_access', 'can_approve_access'):
             ao[flag] = getattr(d, flag, False)
+        # Proto3 scalar fields have no presence; only test the submessage.
+        if d.HasField('tlaProperties'):
+            ao['tla_expiration'] = d.tlaProperties.expiration
         result['record_accesses'].append(ao)
     for fu in rs.forbiddenRecords:
         result['forbidden_records'].append(utils.base64_url_encode(fu))
     return result
 
 
+def find_direct_user_share_access(access_result, record_uid, email):
+    """Return the direct AT_USER share row for *email* on *record_uid*, or None."""
+    email_cf = email.casefold()
+    for access in access_result.get('record_accesses', []):
+        if access.get('record_uid') != record_uid or access.get('owner', False):
+            continue
+        if access.get('access_type') and access.get('access_type') != 'AT_USER':
+            continue
+        if access.get('inherited'):
+            continue
+        if access.get('accessor_name', '').casefold() == email_cf:
+            return access
+    return None
+
+
+_SHARE_EXPIRATION_NOOP_TOLERANCE_MS = 60_000
+
+
+def is_record_share_update_noop(existing, access_role_type, expiration_timestamp):
+    """True when an update would leave role and expiration unchanged."""
+    if existing.get('access_role_type') != access_role_type:
+        return False
+    existing_exp = existing.get('tla_expiration')
+    if expiration_timestamp is None:
+        return True
+    if expiration_timestamp == -1:
+        return not existing_exp or existing_exp <= 0
+    if expiration_timestamp > 0:
+        if not existing_exp or existing_exp <= 0:
+            return False
+        return abs(existing_exp - expiration_timestamp) <= _SHARE_EXPIRATION_NOOP_TOLERANCE_MS
+    return False
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Record sharing  (Strategy: share / update / revoke)
 # ══════════════════════════════════════════════════════════════════════════
 
+def _apply_share_expiration_tla(tla_props, expiration_timestamp):
+    """Set expiration / notification fields on a TLAProperties proto."""
+    if expiration_timestamp is None:
+        return
+    tla_props.expiration = expiration_timestamp
+    if expiration_timestamp > 0:
+        tla_props.timerNotificationType = tla_pb2.NOTIFY_OWNER
+
+
+def _build_revoke_permission(params, record_uid, recipient_email):
+    """Build a minimal Permissions proto for revokeSharingPermissions."""
+    _, _, uid_bytes, _ = get_user_public_key(params, recipient_email)
+    if not uid_bytes:
+        raise ValueError(f"User {recipient_email} not found")
+
+    uid_b = utils.base64_url_decode(record_uid)
+    perm = record_sharing_pb2.Permissions()
+    perm.recipientUid = uid_bytes
+    perm.recordUid = uid_b
+    perm.rules.accessTypeUid = uid_bytes
+    perm.rules.accessType = folder_pb2.AT_USER
+    perm.rules.recordUid = uid_b
+    return perm
+
+
 def _build_share_permissions(params, record_uid, recipient_email, access_role_type,
-                              expiration_timestamp, include_role):
+                              expiration_timestamp, include_role, skip_sync=False):
     """Build a Permissions protobuf for share/update — single source of truth."""
-    from .. import sync_down as sd
-    sd.sync_down(params)
+    if not skip_sync:
+        from .. import sync_down as sd
+        sd.sync_down(params)
 
     rec = get_record_from_cache(params, record_uid)
     if not rec:
@@ -381,9 +444,31 @@ def _build_share_permissions(params, record_uid, recipient_email, access_role_ty
     perm.rules.owner = False
     if include_role and access_role_type is not None:
         perm.rules.accessRoleType = access_role_type
-    if expiration_timestamp:
-        perm.rules.tlaProperties.expiration = expiration_timestamp
+    _apply_share_expiration_tla(perm.rules.tlaProperties, expiration_timestamp)
     return perm
+
+
+def _send_revoke_share_request(params, record_uid, recipient_email):
+    perm = _build_revoke_permission(params, record_uid, recipient_email)
+    rq = record_sharing_pb2.Request()
+    rq.revokeSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
+def _send_create_share_request(params, record_uid, recipient_email, access_role_type,
+                               expiration_timestamp, skip_sync=False):
+    perm = _build_share_permissions(params, record_uid, recipient_email,
+                                     access_role_type, expiration_timestamp,
+                                     include_role=True, skip_sync=skip_sync)
+    rq = record_sharing_pb2.Request()
+    rq.createSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.createdSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
 
 
 def share_record_v3(params, record_uid, recipient_email, access_role_type,
@@ -401,9 +486,43 @@ def share_record_v3(params, record_uid, recipient_email, access_role_type,
 
 def update_record_share_v3(params, record_uid, recipient_email,
                             access_role_type=None, expiration_timestamp=None):
+    """Update an existing direct share.
+
+    Role changes use ``updateSharingPermissions``.  Positive expirations use
+    revoke then create (two requests) because the server only INSERTs
+    ``record_access_expiration`` on create — sending ``tlaProperties`` on
+    update fails when the share already exists.
+    """
+    from .. import sync_down as sd
+    sd.sync_down(params)
+
+    rec = get_record_from_cache(params, record_uid)
+    if not rec:
+        raise ValueError(f"Record {record_uid} not found in cache")
+
+    if expiration_timestamp is not None and expiration_timestamp > 0:
+        if access_role_type is None:
+            raise ValueError(
+                'access_role_type is required when setting share expiration')
+        # Expiration must be applied via create, not update.  The server
+        # rejects revoke+create for the same (recipient, record) in one
+        # request, so run them sequentially (one sync_down above only).
+        logger.info(
+            "Revoking existing share with '%s' before re-granting with expiration...",
+            recipient_email)
+        revoke_result = _send_revoke_share_request(params, record_uid, recipient_email)
+        if not revoke_result.get('success'):
+            return revoke_result
+        logger.info(
+            "Re-granting share to '%s' with updated role and expiration...",
+            recipient_email)
+        return _send_create_share_request(
+            params, record_uid, recipient_email, access_role_type,
+            expiration_timestamp, skip_sync=True)
+
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True)
+                                     include_role=True, skip_sync=True)
     rq = record_sharing_pb2.Request()
     rq.updateSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
@@ -412,31 +531,16 @@ def update_record_share_v3(params, record_uid, recipient_email,
     return {'results': results, 'success': all(r['success'] for r in results)}
 
 
-def unshare_record_v3(params, record_uid, recipient_email):
-    from .. import sync_down as sd
-    sd.sync_down(params)
+def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
+    if not skip_sync:
+        from .. import sync_down as sd
+        sd.sync_down(params)
 
     rec = get_record_from_cache(params, record_uid)
     if not rec:
         raise ValueError(f"Record {record_uid} not found in cache")
-    _, _, uid_bytes, _ = get_user_public_key(params, recipient_email)
-    if not uid_bytes:
-        raise ValueError(f"User {recipient_email} not found")
 
-    uid_b = utils.base64_url_decode(record_uid)
-    perm = record_sharing_pb2.Permissions()
-    perm.recipientUid = uid_bytes
-    perm.recordUid = uid_b
-    perm.rules.accessTypeUid = uid_bytes
-    perm.rules.accessType = folder_pb2.AT_USER
-    perm.rules.recordUid = uid_b
-
-    rq = record_sharing_pb2.Request()
-    rq.revokeSharingPermissions.append(perm)
-    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
-                              rs_type=record_sharing_pb2.Response)
-    results = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
-    return {'results': results, 'success': all(r['success'] for r in results)}
+    return _send_revoke_share_request(params, record_uid, recipient_email)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -461,6 +565,45 @@ def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, ch
     sd.sync_down(params)
 
     outcomes = []
+    recreate = expiration_timestamp is not None and expiration_timestamp > 0
+    if recreate:
+        for i in range(0, len(updates), chunk_size):
+            chunk = updates[i:i + chunk_size]
+            rq = record_sharing_pb2.Request()
+            built = []
+            for u in chunk:
+                try:
+                    rq.revokeSharingPermissions.append(
+                        _build_revoke_permission(params, u['record_uid'], u['email']))
+                    built.append(u)
+                except Exception as exc:
+                    outcomes.append((u, {'success': False, 'skipped': True,
+                                          'message': str(exc)}))
+            if not built:
+                continue
+            try:
+                rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                                          rs_type=record_sharing_pb2.Response)
+                statuses = [parse_sharing_status(x) for x in rs.revokedSharingStatus]
+                if statuses:
+                    revoked = {s['record_uid'] for s in statuses if s['success']}
+                else:
+                    revoked = {u['record_uid'] for u in built}
+                for u in built:
+                    if u['record_uid'] not in revoked:
+                        outcomes.append((u, {'success': False,
+                                              'message': 'Revoke failed'}))
+            except Exception as exc:
+                for u in built:
+                    outcomes.append((u, {'success': False, 'message': str(exc)}))
+        failed_uids = {u['record_uid'] for u, r in outcomes if not r.get('success')}
+        create_updates = [u for u in updates if u['record_uid'] not in failed_uids]
+        if create_updates:
+            create_outcomes = batch_create_record_shares_v3(
+                params, create_updates, expiration_timestamp, chunk_size)
+            outcomes.extend(create_outcomes)
+        return outcomes
+
     for i in range(0, len(updates), chunk_size):
         chunk = updates[i:i + chunk_size]
         rq = record_sharing_pb2.Request()
@@ -470,7 +613,7 @@ def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, ch
                 perm = _build_share_permissions(
                     params, u['record_uid'], u['email'],
                     u['access_role_type'], expiration_timestamp,
-                    include_role=True,
+                    include_role=True, skip_sync=True,
                 )
                 rq.updateSharingPermissions.append(perm)
                 built.append(u)
@@ -526,7 +669,7 @@ def batch_create_record_shares_v3(params, creates, expiration_timestamp=None, ch
                 perm = _build_share_permissions(
                     params, c['record_uid'], c['email'],
                     c['access_role_type'], expiration_timestamp,
-                    include_role=True,
+                    include_role=True, skip_sync=True,
                 )
                 rq.createSharingPermissions.append(perm)
                 built.append(c)

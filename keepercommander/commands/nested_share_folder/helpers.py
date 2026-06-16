@@ -74,6 +74,9 @@ _EXPIRATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+MIN_SHARE_EXPIRATION_MS = 60_000
+"""Minimum share expiration is one minute (milliseconds)."""
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Error-handling patterns  (eliminates repetitive try/except boilerplate)
@@ -306,6 +309,18 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 # Expiration parsing
 # ═══════════════════════════════════════════════════════════════════════════
 
+def validate_share_expiration_timestamp(expiration_ms, cmd_name):
+    """Reject finite expirations that are less than one minute."""
+    if expiration_ms is None or expiration_ms == -1:
+        return
+    min_allowed = int(datetime.datetime.now(timezone.utc).timestamp() * 1000) + MIN_SHARE_EXPIRATION_MS
+    if expiration_ms < min_allowed:
+        raise CommandError(
+            cmd_name,
+            'Share expiration must be at least 1 minute.',
+        )
+
+
 def parse_expiration(expire_at, expire_in, cmd_name):
     """Parse ``--expire-at`` / ``--expire-in`` into a millisecond timestamp.
 
@@ -320,13 +335,15 @@ def parse_expiration(expire_at, expire_in, cmd_name):
     if expire_at:
         try:
             dt = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00'))
-            return int(dt.timestamp() * 1000)
+            expiration_ms = int(dt.timestamp() * 1000)
         except ValueError:
             raise CommandError(
                 cmd_name,
                 f'Invalid --expire-at format: {raw!r}. '
                 f'Use ISO datetime, e.g. 2027-01-01T00:00:00Z or "never"',
             )
+        validate_share_expiration_timestamp(expiration_ms, cmd_name)
+        return expiration_ms
 
     m = _EXPIRATION_RE.fullmatch(raw)
     if not m:
@@ -336,6 +353,11 @@ def parse_expiration(expire_at, expire_in, cmd_name):
         )
     amount = int(m.group(1))
     unit = m.group(2).lower()
+    if unit.startswith('mi') and amount < 1:
+        raise CommandError(
+            cmd_name,
+            'Share expiration must be at least 1 minute.',
+        )
     now = datetime.datetime.now(timezone.utc)
     delta_map = {
         'mi': timedelta(minutes=amount),
@@ -345,7 +367,9 @@ def parse_expiration(expire_at, expire_in, cmd_name):
         'y':  timedelta(days=amount * 365),
     }
     delta = next(v for k, v in delta_map.items() if unit.startswith(k))
-    return int((now + delta).timestamp() * 1000)
+    expiration_ms = int((now + delta).timestamp() * 1000)
+    validate_share_expiration_timestamp(expiration_ms, cmd_name)
+    return expiration_ms
 
 
 # ═══════════════════════════════════════════════════════════════════════════

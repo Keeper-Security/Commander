@@ -254,8 +254,8 @@ class SuperShellApp(App):
 [bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
   [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
-  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
-  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+  [{t['text_dim']}]•[/{t['text_dim']}] Nested Shared Folder (Shared) 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Nested Shared Folder (NonShared) 📁
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
 
@@ -393,8 +393,8 @@ class SuperShellApp(App):
 [bold {t['primary_bright']}]Folder Icons[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] Legacy Personal Folder 🔒
   [{t['text_dim']}]•[/{t['text_dim']}] Legacy Shared Folder 📦
-  [{t['text_dim']}]•[/{t['text_dim']}] Drive Shared Folder 👥
-  [{t['text_dim']}]•[/{t['text_dim']}] Drive NonShared Folder 📁
+  [{t['text_dim']}]•[/{t['text_dim']}] Nested Shared Folder (Shared) 👥
+  [{t['text_dim']}]•[/{t['text_dim']}] Nested Shared Folder (NonShared) 📁
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
@@ -984,8 +984,8 @@ class SuperShellApp(App):
           - Legacy Personal Folder  (user_folder)           → 🔒
           - Legacy Shared Folder    (shared_folder)          → 📦
           - Subfolder in Shared     (shared_folder_folder)   → 📦
-          - Drive Shared Folder     (nested_share_folder, shared) → 👥
-          - Drive NonShared Folder  (nested_share_folder, not shared) → 📁
+          - Nested Shared Folder (Shared)     (nested_share_folder, shared) → 👥
+          - Nested Shared Folder (NonShared)  (nested_share_folder, not shared) → 📁
         """
         from ...subfolder import BaseFolderNode
         if folder_node is None:
