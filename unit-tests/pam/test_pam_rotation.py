@@ -416,6 +416,13 @@ class TestPAMGatewayListCommand(unittest.TestCase):
         self.assertTrue(args.is_verbose)
         self.assertTrue(args.is_force)
 
+    def test_parser_online(self):
+        args = self.parser.parse_args(['--online'])
+        self.assertTrue(args.online_only)
+
+        args = self.parser.parse_args(['-o'])
+        self.assertTrue(args.online_only)
+
     @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
     @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')
     @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
@@ -487,6 +494,61 @@ class TestPAMGatewayListCommand(unittest.TestCase):
         self.assertTrue(mock_router_get_connected_gateways.called)
         self.assertTrue(mock_get_all_gateways.called)
         self.assertTrue(mock_get_router_url.called)
+
+    @patch('keepercommander.commands.discoveryrotation.print')
+    @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
+    @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    @patch('keepercommander.commands.discoveryrotation.dump_report_data')
+    def test_execute_online_only(self, mock_dump_report_data, mock_get_app_record, mock_get_all_gateways,
+                                 mock_get_router_url, mock_router_get_connected_gateways, mock_print):
+        mock_params = create_mock_params()
+
+        online_uid = utils.base64_url_decode('controller_uid')
+        offline_uid = utils.base64_url_decode('offline_uid')
+
+        mock_router_get_connected_gateways.return_value.controllers = [
+            MagicMock(controllerUid=online_uid, version='1.0.0')
+        ]
+
+        mock_get_all_gateways.return_value = [
+            MagicMock(
+                applicationUid=utils.base64_url_decode('app_uid'),
+                controllerUid=online_uid,
+                controllerName='Online Gateway',
+                deviceName='Device 1',
+                deviceToken='Token 1',
+                created=int(datetime.now().timestamp() * 1000),
+                lastModified=int(datetime.now().timestamp() * 1000),
+                nodeId='Node 1'
+            ),
+            MagicMock(
+                applicationUid=utils.base64_url_decode('app_uid2'),
+                controllerUid=offline_uid,
+                controllerName='Offline Gateway',
+                deviceName='Device 2',
+                deviceToken='Token 2',
+                created=int(datetime.now().timestamp() * 1000),
+                lastModified=int(datetime.now().timestamp() * 1000),
+                nodeId='Node 2'
+            )
+        ]
+
+        mock_get_app_record.return_value = {
+            'data_unencrypted': json.dumps({'title': 'App Title'})
+        }
+
+        kwargs = {'is_force': True, 'online_only': True}
+        self.command.execute(mock_params, **kwargs)
+
+        self.assertTrue(mock_dump_report_data.called)
+        table = mock_dump_report_data.call_args[0][0]
+        self.assertEqual(len(table), 1)
+        self.assertIn('Online Gateway', table[0][1])
+
+        totals_printed = any('Online: 1' in str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertTrue(totals_printed)
 
     @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
     @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')
