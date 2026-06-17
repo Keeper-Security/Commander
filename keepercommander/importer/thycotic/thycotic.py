@@ -366,6 +366,30 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
               logging.warning('Invalid input for secret IDs, exiting.')
               return
 
+        # secret_ids arg
+        debug_ids = kwargs.get('secret_ids')
+        if debug_ids is not None:
+          # Convert CLI string input into list
+          if isinstance(debug_ids,str):
+              debug_ids = debug_ids.replace(' ','').split(',')
+          # Handle secret IDs list
+          if isinstance(debug_ids,list):
+              # Deduplicate
+              debug_ids = list(set(debug_ids))
+              # Check whether secrets were found in the lookup
+              stringified_secrets_ids = [str(x) for x in secrets_ids]
+              stringified_debug_ids = [str(x) for x in debug_ids]
+              found_secrets = [x for x in stringified_debug_ids if x in stringified_secrets_ids]
+              logging.info(f'From the specified {len(debug_ids)} secret IDs, {len(found_secrets)} were found in the secret server lookup.')
+              logging.info(', '.join(found_secrets))
+              
+              # Replace import list with specified IDs
+              secrets_ids = debug_ids
+          else:
+              # Quit if secret IDs != list
+              logging.warning('Invalid input for secret IDs, exiting.')
+              return
+
         self._send_keep_alive_if_needed(params)
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
