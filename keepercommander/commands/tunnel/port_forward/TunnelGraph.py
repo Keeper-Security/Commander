@@ -379,8 +379,18 @@ class TunnelDAG:
         server enforces edit-access on the pamUser record at the call boundary, so 
         the per-flag check that other Layer-B endpoints do is not needed here."""
         from ...pam.router_helper import router_set_record_rotation_information
+        current_record_rotation = self.params.record_rotation_cache.get(user_uid)
+        revision = (
+            current_record_rotation.get('revision', 0)
+            if current_record_rotation else 0
+        )
+        # IAM link: resourceUid must stay empty so krouter sets isIAM=true
+        # (resourceUid.isEmpty && noop=False). Never copy resource_uid from cache.
         rq = router_pb2.RouterRecordRotationRequest(
             recordUid=url_safe_str_to_bytes(user_uid),
+            configurationUid=url_safe_str_to_bytes(self.record.record_uid),
+            revision=revision,
+            resourceUid=b'',
             noop=False,
         )
         router_set_record_rotation_information(self.params, rq)

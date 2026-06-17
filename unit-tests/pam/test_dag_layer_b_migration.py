@@ -22,6 +22,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -697,6 +698,7 @@ class TestTunnelGraphIamUserMigration:
 
         tg = TunnelDAG.__new__(TunnelDAG)
         tg.params = MagicMock()
+        tg.params.record_rotation_cache = {}
         tg.record = MagicMock()
         tg.record.record_uid = CONFIG_UID_STR
         tg.linking_dag = MagicMock()
@@ -723,6 +725,7 @@ class TestTunnelGraphIamUserMigration:
         assert isinstance(rq, router_pb2.RouterRecordRotationRequest)
         # recordUid is the pamUser record (the target of the permission check)
         assert len(rq.recordUid) == 16
+        assert rq.configurationUid == url_safe_str_to_bytes(CONFIG_UID_STR)
         # noop=False is what triggers the is_iam_user write server-side
         assert rq.noop is False
         # NO resourceUid, NO saasConfiguration — these would change the semantics
@@ -730,6 +733,52 @@ class TestTunnelGraphIamUserMigration:
         assert rq.saasConfiguration == b''
         # After permission check succeeds, the legacy link_user mutation still runs
         link_user_mock.assert_called_once()
+
+    def test_link_user_to_config_passes_revision_from_rotation_cache(self):
+        """When pamUser already has rotation metadata, KeeperApp requires matching revision."""
+        tg, _ = self._build_tg()
+        tg.params.record_rotation_cache = {
+            USER_UID_STR: {'revision': 3, 'configuration_uid': CONFIG_UID_STR},
+        }
+        captured = {}
+
+        def _capture(params, rq, *args, **kwargs):
+            captured['rq'] = rq
+
+        with patch('keepercommander.commands.pam.router_helper.router_set_record_rotation_information',
+                   side_effect=_capture), \
+             patch.object(tg, 'link_user'):
+            tg.link_user_to_config(USER_UID_STR)
+
+        rq = captured.get('rq')
+        assert rq is not None
+        assert rq.revision == 3
+        assert rq.resourceUid == b''
+
+    def test_link_user_to_config_clears_stale_resource_uid_from_rotation_cache(self):
+        """IAM permission-check must not send cached resource_uid (non-IAM semantics)."""
+        tg, _ = self._build_tg()
+        tg.params.record_rotation_cache = {
+            USER_UID_STR: {
+                'revision': 2,
+                'configuration_uid': CONFIG_UID_STR,
+                'resource_uid': 'AAAAAAAAAAAAAAAAAAAAAA',
+            },
+        }
+        captured = {}
+
+        def _capture(params, rq, *args, **kwargs):
+            captured['rq'] = rq
+
+        with patch('keepercommander.commands.pam.router_helper.router_set_record_rotation_information',
+                   side_effect=_capture), \
+             patch.object(tg, 'link_user'):
+            tg.link_user_to_config(USER_UID_STR)
+
+        rq = captured.get('rq')
+        assert rq is not None
+        assert rq.revision == 2
+        assert rq.resourceUid == b''
 
     def test_link_user_to_config_no_fallback_on_permission_denial(self):
         """If set_record_rotation fails (permission denied), DO NOT fall back to
@@ -770,6 +819,8 @@ class TestTunnelGraphIamUserMigration:
         rq = captured.get('rq')
         assert rq is not None
         assert isinstance(rq, router_pb2.RouterRecordRotationRequest)
+        assert rq.configurationUid == url_safe_str_to_bytes(CONFIG_UID_STR)
+        assert rq.resourceUid == b''
         assert rq.noop is False
 
     def test_link_user_to_config_with_options_iam_user_not_true_skips_set_rotation(self):
