@@ -185,6 +185,11 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                         else:
                             print(f"      . Is {self._bl('Remote user')}")
 
+                        if acl_content.is_iam_user:
+                            print(f"      . Is an IAM User (user belonging to configuration)")
+                        else:
+                            print(f"      . Is NOT an IAM User (user belonging to configuration)")
+
                         if acl_content.rotation_settings is None:
                             print(f"{bcolors.FAIL}      . There are no rotation settings!{bcolors.ENDC}")
                         else:
