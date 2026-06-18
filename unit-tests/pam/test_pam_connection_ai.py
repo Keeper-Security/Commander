@@ -277,3 +277,12 @@ def test_apply_ai_setting_changes_unset_all_leaves_empty():
 
     assert warnings == []
     assert result == {}
+
+
+def test_pam_connection_ai_resource_types_include_rbi():
+    from keepercommander.commands.tunnel_and_connections import _PAM_CONNECTION_AI_RESOURCE_TYPES
+
+    assert 'pamRemoteBrowser' in _PAM_CONNECTION_AI_RESOURCE_TYPES
+    assert 'pamMachine' in _PAM_CONNECTION_AI_RESOURCE_TYPES
+    assert 'pamDatabase' in _PAM_CONNECTION_AI_RESOURCE_TYPES
+    assert 'pamDirectory' in _PAM_CONNECTION_AI_RESOURCE_TYPES

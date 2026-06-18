@@ -3282,10 +3282,21 @@ class PAMConnectionJitCommand(Command):
         print(f'{bcolors.OKGREEN}JIT settings saved successfully.{bcolors.ENDC}')
 
 
+_PAM_CONNECTION_AI_RESOURCE_TYPES = frozenset({
+    'pamMachine',
+    'pamDatabase',
+    'pamDirectory',
+    'pamRemoteBrowser',
+})
+_PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL = (
+    'pamMachine, pamDatabase, pamDirectory, or pamRemoteBrowser'
+)
+
+
 class PAMConnectionAiCommand(Command):
     parser = argparse.ArgumentParser(prog='pam connection ai')
     parser.add_argument('record', type=str, action='store',
-                        help='Record UID, path, or title (pamMachine, pamDatabase, or pamDirectory)')
+                        help=f'Record UID, path, or title ({_PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL})')
     parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
                         help='PAM Configuration UID or title (required when record is not linked yet or is linked to 2+ configs)')
     parser.add_argument('--set', '-s', dest='set_values', action='append', default=None,
@@ -3323,11 +3334,11 @@ class PAMConnectionAiCommand(Command):
 
         record = RecordMixin.resolve_single_record(params, record_name)
         if record is None:
-            pam_resource_types = {'pamMachine', 'pamDatabase', 'pamDirectory'}
             matches = []
             for uid in params.record_cache:
                 rec = vault.KeeperRecord.load(params, uid)
-                if rec and rec.record_type in pam_resource_types and rec.title.casefold() == record_name.casefold():
+                if rec and rec.record_type in _PAM_CONNECTION_AI_RESOURCE_TYPES \
+                        and rec.title.casefold() == record_name.casefold():
                     matches.append(rec)
             if len(matches) == 0:
                 raise CommandError('', f'{bcolors.FAIL}Record "{record_name}" not found.{bcolors.ENDC}')
@@ -3337,10 +3348,10 @@ class PAMConnectionAiCommand(Command):
             record = matches[0]
 
         if not isinstance(record, vault.TypedRecord) or \
-                record.record_type not in ('pamMachine', 'pamDatabase', 'pamDirectory'):
+                record.record_type not in _PAM_CONNECTION_AI_RESOURCE_TYPES:
             raise CommandError('',
-                f'{bcolors.FAIL}KeeperAI settings are only supported on pamMachine, pamDatabase, '
-                f'and pamDirectory records.{bcolors.ENDC}')
+                f'{bcolors.FAIL}KeeperAI settings are only supported on '
+                f'{_PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL} records.{bcolors.ENDC}')
 
         record_uid = record.record_uid
         config_uid = self._resolve_config_uid(

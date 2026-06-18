@@ -197,7 +197,7 @@ def get_resource_settings(
 
     Args:
         params: KeeperParams instance
-        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, etc.)
+        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser)
         dag_path: Path of the DATA edge (e.g., 'ai_settings', 'jit_settings')
         config_uid: Optional PAM config UID. If not provided, will be looked up.
         quiet_if_missing_vertex: Log at debug instead of warning when the resource
@@ -392,7 +392,7 @@ def get_resource_jit_settings(
 
     Args:
         params: KeeperParams instance
-        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, etc.)
+        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser)
         config_uid: Optional PAM config UID. If not provided, will be looked up.
 
     Returns:
@@ -419,7 +419,7 @@ def get_resource_keeper_ai_settings(
 
     Args:
         params: KeeperParams instance
-        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, etc.)
+        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser)
         config_uid: Optional PAM config UID. If not provided, will be looked up.
 
     Returns:
@@ -474,7 +474,7 @@ def set_resource_keeper_ai_settings(
 
     Args:
         params: KeeperParams instance
-        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, etc.)
+        resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser)
         settings: Dictionary containing KeeperAI settings to save
         config_uid: Optional PAM config UID. If not provided, will be looked up.
 
