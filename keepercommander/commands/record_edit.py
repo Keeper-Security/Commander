@@ -188,8 +188,11 @@ $<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value
 Value                   Field type         Description                      Example
 ====================    ===============    ===================              ==============
 $GEN:[alg],[n]          password           Generates a random password      $GEN:dice,5
-                                           Default algorith is rand         alg: [rand | dice | crypto]
+                                           Default algorith is rand         alg: [rand | dice | crypto | passphrase]
                                            Optional: password length
+                                           Passphrase extras (override      $GEN:passphrase,7,_,true,true
+                                           policy for generation only):
+                                           word_count[,separator][,capitalize][,number]
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc
@@ -398,7 +401,7 @@ class RecordEditMixin:
     @staticmethod
     def generate_password(parameters=None, policy=None):   # type: (Optional[Sequence[str]], Optional[dict]) -> str
         if isinstance(parameters, (tuple, list, set)):
-            algorithm = next((x for x in parameters if x in ('rand', 'dice', 'crypto')), 'rand')
+            algorithm = next((x for x in parameters if x in ('rand', 'dice', 'crypto', 'passphrase')), 'rand')
             length = next((x for x in parameters if x.isnumeric()), None)
             if isinstance(length, str) and len(length) > 0:
                 try:
@@ -411,6 +414,20 @@ class RecordEditMixin:
 
         if algorithm == 'crypto':
             gen = generator.CryptoPassphraseGenerator()
+        elif algorithm == 'passphrase':
+            pp_opts = generator.parse_passphrase_gen_parameters(parameters)
+            if policy and policy.get('passphrase-allow') is False:
+                logging.warning('Passphrase generation is disabled by enterprise policy; using random password.')
+                gen = generator.KeeperPasswordGenerator.create_from_policy(
+                    policy, length_override=pp_opts.word_count or length)
+            else:
+                gen = generator.KeeperPassphraseGenerator.create_with_options(
+                    policy,
+                    word_count=pp_opts.word_count if pp_opts.word_count is not None else length,
+                    separator=pp_opts.separator,
+                    capitalize=pp_opts.capitalize,
+                    append_number=pp_opts.append_number,
+                )
         elif algorithm == 'dice':
             if isinstance(length, int):
                 if length < 1:
