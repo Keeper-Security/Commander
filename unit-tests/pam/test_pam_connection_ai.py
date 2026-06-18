@@ -286,3 +286,42 @@ def test_pam_connection_ai_resource_types_include_rbi():
     assert 'pamMachine' in _PAM_CONNECTION_AI_RESOURCE_TYPES
     assert 'pamDatabase' in _PAM_CONNECTION_AI_RESOURCE_TYPES
     assert 'pamDirectory' in _PAM_CONNECTION_AI_RESOURCE_TYPES
+
+
+def test_pam_connection_ai_parser_enabled_and_session_terminate_options():
+    from keepercommander.commands.tunnel_and_connections import PAMConnectionAiCommand
+
+    parser = PAMConnectionAiCommand().get_parser()
+    args = parser.parse_args(['resource-uid', '--enabled', 'on', '--session-terminate', 'default'])
+    assert args.enabled == 'on'
+    assert args.session_terminate == 'default'
+
+
+def test_pam_connection_ai_parser_short_names():
+    from keepercommander.commands.tunnel_and_connections import PAMConnectionAiCommand
+
+    parser = PAMConnectionAiCommand().get_parser()
+    args = parser.parse_args(['resource-uid', '-e', 'off', '-st', 'on'])
+    assert args.enabled == 'off'
+    assert args.session_terminate == 'on'
+
+
+def test_pam_connection_ai_apply_allowed_settings_calls_set_resource_allowed():
+    from unittest.mock import MagicMock
+    from keepercommander.commands.tunnel_and_connections import PAMConnectionAiCommand
+
+    cmd = PAMConnectionAiCommand()
+    params = _Params()
+    mock_tdag = MagicMock()
+    mock_tdag.linking_dag.has_graph = True
+    mock_tdag.is_tunneling_config_set_up.return_value = True
+
+    with patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens', return_value=(b'a', b'b', b'c')), \
+         patch('keepercommander.commands.tunnel_and_connections.TunnelDAG', return_value=mock_tdag):
+        cmd._do_apply_allowed_settings(params, 'on', 'off', 'resource', 'config')
+
+    mock_tdag.set_resource_allowed.assert_called_once_with(
+        resource_uid='resource',
+        ai_enabled='on',
+        ai_session_terminate='off',
+    )
