@@ -16,10 +16,14 @@ if TYPE_CHECKING:
 class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
     parser = argparse.ArgumentParser(prog='pam action saas remove')
 
+    parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
+                        help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
     parser.add_argument('--resource-uid', '-r', required=False, dest='resource_uid', action='store',
-                        help='The UID of the Resource record, if needed.')
+                        help='The UID of the Resource record, if needed. DEPRECATED')
 
     def get_parser(self):
         return PAMActionSaasRemoveCommand.parser

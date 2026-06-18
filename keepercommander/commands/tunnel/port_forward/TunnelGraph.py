@@ -5,8 +5,9 @@ from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
 from ....keeper_dag.types import RefType, PamGraphId
 from ....keeper_dag.vertex import DAGVertex
+from ....discovery_common.types import UserAclRotationSettings, UserAcl
 from ....display import bcolors
-from ....vault import PasswordRecord
+from ....vault import PasswordRecord, TypedRecord
 from ....proto import pam_pb2, router_pb2
 from ...pam._layer_b import should_fallback_on_layer_b_error
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -568,6 +569,65 @@ class TunnelDAG:
         else:
             user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
             self.linking_dag.save()
+
+    def link_saas_user(self, user_uid: str, saas_config_record: TypedRecord, pam_config_record_type: str) -> bool:
+
+        logging.debug("linking saas user")
+
+        if not self.linking_dag.has_graph:
+            logging.error("linking graph is empty")
+            return False
+
+        configuration_vertex = self.linking_dag.get_root
+        if configuration_vertex is None:
+            logging.error("cannot find configuration vertex,")
+            return False
+
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        if user_vertex is None:
+            logging.debug("creating vertex for user")
+            user_vertex = self.linking_dag.add_vertex(uid=user_uid, vertex_type=RefType.PAM_USER)
+
+        acl_edge = user_vertex.get_edge(vertex=configuration_vertex, edge_type=EdgeType.ACL)
+        if acl_edge is not None:
+            logging.debug("have an existing ACL edge between the user and configuration")
+            acl = acl_edge.content_as_object(UserAcl)
+        else:
+            logging.debug("do NOT have an ACL edge between the user and configuration")
+            acl = UserAcl.default()
+
+        plugin_field = saas_config_record.get_typed_field('text', 'SaaS Type')
+        if plugin_field is None:
+            logging.error("cannot get the plugin name from the SaaS configuration")
+            return False
+
+        plugin_name = plugin_field.value[0]
+
+        if acl is not None and acl.rotation_settings is None:
+            acl.rotation_settings = UserAclRotationSettings()
+
+        logging.debug(f"plugin name is {plugin_name}")
+        logging.debug(f"pam configuration record type is {pam_config_record_type}")
+
+        if plugin_name == "AWS Access Key" and pam_config_record_type == "pamAwsConfiguration":
+            logging.debug("pam configuration is AWS, the user belongs to the configuration")
+            acl.belongs_to = True
+        else:
+            acl.belongs_to = False
+
+        acl.rotation_settings.noop = True
+        acl.is_iam_user = False
+        acl.is_admin = False
+        acl.rotation_settings.saas_record_uid_list = [saas_config_record.record_uid]
+
+        user_vertex.belongs_to(vertex=configuration_vertex,
+                               edge_type=EdgeType.ACL,
+                               content=acl,
+                               is_encrypted=False)
+
+        self.linking_dag.save()
+
+        return True
 
     def get_all_admins(self):
         if not self.linking_dag.has_graph:
