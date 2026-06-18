@@ -18,6 +18,7 @@ import re
 import time
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
+from typing import Optional, List
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -43,7 +44,7 @@ from .pam.pam_dto import (
 
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url
+    get_router_url, RouterResponseError
 from .record_edit import RecordEditMixin
 from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
@@ -93,6 +94,7 @@ from .universalsecretsync import (
     PAMUniversalSyncConfigCommand,
     PAMUniversalSyncRunCommand
 )
+from ..discovery_common.types import UserAcl, UserAclRotationSettings
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -398,6 +400,8 @@ class PAMCreateRecordRotationCommand(Command):
     parser.add_argument('--force', '-f', dest='force', action='store_true', help='Do not ask for confirmation')
     parser.add_argument('--config', '-c', required=False, dest='config', action='store',
                         help='UID or path of the configuration record.')
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                        help='UID or name of the gateway')
     parser.add_argument('--iam-aad-config', '-iac', dest='iam_aad_config_uid', action='store',
                         help='UID of a PAM Configuration. Used for an IAM or Azure AD user in place of --resource.')
     parser.add_argument('--rotation-profile', '-rp', dest='rotation_profile', action='store',
@@ -480,6 +484,158 @@ class PAMCreateRecordRotationCommand(Command):
 
             if not silent:
                 _dag.print_tunneling_config(target_record.record_uid, config_uid=target_config_uid)
+
+        def config_saas_user(_dag, target_record, saas_config_uid: str):
+
+            saas_config_record = vault.KeeperRecord.load(params, saas_config_uid)  # type: Optional[TypedRecord]
+            if saas_config_record is None:
+                raise CommandError('', 'The SaaS configuration record does not exists.')
+
+            if saas_config_record.record_type not in ["login", "saasConfiguration"]:
+                raise CommandError('',
+                                   f"The SaaS configuration record is not a SaaS configuration record: "
+                                   f"{saas_config_record.record_type}")
+
+            plugin_name_field = next((x for x in saas_config_record.custom if x.label == "SaaS Type"), None)
+            if plugin_name_field is None:
+                raise CommandError('',
+                                   f"The SaaS configuration record is missing the custom field "
+                                   "label 'SaaS Type'")
+
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
+            schedule_only = kwargs.get('schedule_only')
+
+            # Handle schedule-only operations first to avoid unnecessary resource validation
+            if schedule_only:
+                if kwargs.get('folder_name') and (
+                        not current_record_rotation or current_record_rotation.get('disabled')):
+                    skipped_records.append([target_record.record_uid, target_record.title,
+                                            'Rotation not enabled', 'Skipped'])
+                    return
+                if not current_record_rotation:
+                    skipped_records.append([target_record.record_uid, target_record.title,
+                                            'No rotation info', 'Skipped'])
+                    return
+
+            else:
+                # This looks like it is user to remove the user from another PAM graph.
+                # To prevent two graphs from using the same record.
+                if _dag and not _dag.linking_dag.has_graph:
+                    _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                                     transmission_key=transmission_key)
+                    if not _dag or not _dag.linking_dag.has_graph:
+                        _dag.edit_tunneling_config(rotation=True)
+                old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
+                                    target_record.record_uid, transmission_key=transmission_key)
+                if old_dag.linking_dag.has_graph and old_dag.record.record_uid != config_uid:
+                    old_dag.remove_from_dag(target_record.record_uid)
+
+            # 1. PAM Configuration UID
+            record_config_uid = _dag.record.record_uid
+            record_pam_config = pam_config
+            if not record_config_uid:
+                if current_record_rotation:
+                    record_config_uid = current_record_rotation.get('configuration_uid')
+                    pc = vault.KeeperRecord.load(params, record_config_uid)
+                    if pc is None:
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                             'Specify a configuration UID parameter [--config]'])
+                        return
+                    if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                             'Specify a configuration UID parameter [--config]'])
+                        return
+                    record_pam_config = pc
+                else:
+                    skipped_records.append(
+                        [target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                         'Specify a configuration UID parameter [--config]'])
+                    return
+
+            # 2. Schedule
+            record_schedule_data = schedule_data
+            if record_schedule_data is None:
+                if current_record_rotation and not schedule_config:
+                    try:
+                        current_schedule = current_record_rotation.get('schedule')
+                        if current_schedule:
+                            record_schedule_data = json.loads(current_schedule)
+                    except:
+                        pass
+                else:
+                    schedule_field = record_pam_config.get_typed_field('schedule', 'defaultRotationSchedule')
+                    if schedule_field and isinstance(schedule_field.value, list) and len(schedule_field.value) > 0:
+                        if isinstance(schedule_field.value[0], dict):
+                            record_schedule_data = [schedule_field.value[0]]
+
+            # 3. Password complexity
+            if pwd_complexity_rule_list is None:
+                if current_record_rotation:
+                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(
+                        current_record_rotation['pwd_complexity'])
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+            else:
+                if len(pwd_complexity_rule_list) > 0:
+                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
+                                                                                              target_record.record_key)
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+
+            disabled = False
+            # 5. Enable rotation
+            if kwargs.get('enable'):
+                _dag.set_resource_allowed(config_uid, rotation=True, is_config=True)
+            elif kwargs.get('disable'):
+                _dag.set_resource_allowed(config_uid, rotation=False, is_config=True)
+                disabled = True
+
+            schedule = 'On-Demand'
+            if isinstance(record_schedule_data, list) and len(record_schedule_data) > 0:
+                if isinstance(record_schedule_data[0], dict):
+                    schedule = record_schedule_data[0].get('type')
+            complexity = ''
+            if pwd_complexity_rule_list_encrypted:
+                try:
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted,
+                                                                 target_record.record_key)
+                    c = json.loads(decrypted_complexity.decode())
+                    complexity = f"{c.get('length', 0)}," \
+                                 f"{c.get('caps', 0)}," \
+                                 f"{c.get('lowercase', 0)}," \
+                                 f"{c.get('digits', 0)}," \
+                                 f"{c.get('special', 0)}," \
+                                 f"{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
+                except:
+                    pass
+            valid_records.append(
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, None,
+                 schedule, complexity])
+
+            # 6. Construct Request object for SaaS
+            rq = router_pb2.RouterRecordRotationRequest()
+            if current_record_rotation:
+                logging.debug("has current record gas rotation settings")
+                rq.revision = current_record_rotation.get('revision', 1)
+            else:
+                logging.debug("record has not rotation settings")
+            rq.recordUid = utils.base64_url_decode(target_record.record_uid)
+            rq.configurationUid = utils.base64_url_decode(record_config_uid)
+            rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
+            rq.pwdComplexity = pwd_complexity_rule_list_encrypted
+            rq.disabled = disabled
+            rq.noop = True
+            rq.resourceUid = b''
+            r_requests.append(rq)
+
+            if not _dag.link_saas_user(user_uid=target_record.record_uid,
+                                       saas_config_record=saas_config_record,
+                                       pam_config_record_type=pam_config.record_type):
+                raise CommandError('',"Could not connect SaaS user in the graph.")
+
+            params.sync_data = True
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
             current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
@@ -1191,15 +1347,14 @@ class PAMCreateRecordRotationCommand(Command):
                             raise CommandError('', 'General rotation profile requires --resource to be specified.')
                         config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
                     elif rotation_profile == 'saas':
+
                         saas_config_uid = kwargs.get("saas_config_uid")  # type: Optional[str]
                         if saas_config_uid is None:
                             raise CommandError('', 'SaaS rotation profile requires '
                                                    '--saas-config-uid to be specified.')
-                        saas_command = PAMActionSaasSetCommand()
-                        saas_command.execute(params,
-                                             user_uid=_record.record_uid,
-                                             pam_config_uid=config_uid,
-                                             config_record_uid=saas_config_uid)
+
+                        config_saas_user(_dag=tmp_dag, target_record=_record, saas_config_uid=saas_config_uid)
+                        params.sync_data = True
 
                 # NB! --folder=UID without --iam-aad-config, or --schedule-only converts to General rotation
                 elif iam_aad_config_uid:
@@ -1235,6 +1390,8 @@ class PAMCreateRecordRotationCommand(Command):
                 except KeeperApiError as kae:
                     logging.warning('Record "%s": Set rotation error "%s": %s',
                                     record_uid, kae.result_code, kae.message)
+                except RouterResponseError as rre:
+                    logging.warning('Record "%s": Set rotation error: %s', record_uid, rre)
             params.sync_data = True
 
 
