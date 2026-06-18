@@ -108,6 +108,7 @@ class PAMConnectionCommand(GroupCommand):
         # self.register_command('stop', PAMConnectionStopCommand(), 'Stop Connection', 'x')
         self.register_command('edit', PAMConnectionEditCommand(), 'Edit Connection settings', 'e')
         self.register_command('jit', PAMConnectionJitCommand(), 'View/update JIT settings', 'j')
+        self.register_command('ai', PAMConnectionAiCommand(), 'View/update KeeperAI settings', 'a')
         self.default_verb = 'edit'
 
 
@@ -3279,6 +3280,233 @@ class PAMConnectionJitCommand(Command):
             set_resource_domain_dir(params, record_uid, pam_dir_uid, config_uid)
 
         print(f'{bcolors.OKGREEN}JIT settings saved successfully.{bcolors.ENDC}')
+
+
+class PAMConnectionAiCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam connection ai')
+    parser.add_argument('record', type=str, action='store',
+                        help='Record UID, path, or title (pamMachine, pamDatabase, or pamDirectory)')
+    parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
+                        help='PAM Configuration UID or title (required when record is not linked yet or is linked to 2+ configs)')
+    parser.add_argument('--set', '-s', dest='set_values', action='append', default=None,
+                        metavar='LEVEL.SETTING=VALUE',
+                        help='Set a KeeperAI value (e.g. -s low.terminate=false -s low.allow=chmod -s "high.deny=kill -9")')
+    parser.add_argument('--unset', '-u', dest='unset_values', action='append', default=None,
+                        metavar='LEVEL[.SETTING[=VALUE]]',
+                        help='Unset KeeperAI values (e.g. -u low removes the level; -u low.allow removes all allow tags; '
+                             '-u low.allow=chmod removes one tag)')
+    parser.add_argument('--remove', dest='remove', action='store_true', default=False,
+                        help='Remove all KeeperAI settings (ai_settings path only)')
+    parser.add_argument('--show', dest='show', action='store_true', default=False,
+                        help='Show current KeeperAI settings')
+
+    def get_parser(self):
+        return PAMConnectionAiCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        configuration = kwargs.get('configuration')
+        remove_flag = kwargs.get('remove', False)
+        show_flag = kwargs.get('show', False)
+        set_values = kwargs.get('set_values') or []
+        unset_values = kwargs.get('unset_values') or []
+        change_options_provided = bool(set_values or unset_values)
+
+        if remove_flag and show_flag:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with --show.{bcolors.ENDC}')
+        if remove_flag and change_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with any other option.{bcolors.ENDC}')
+        if show_flag and change_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}--show cannot be used with --remove or any KeeperAI option.{bcolors.ENDC}')
+        if not remove_flag and not show_flag and not change_options_provided:
+            raise CommandError('', f'{bcolors.FAIL}Provide at least one --set/-s, --unset/-u, --remove, or --show.{bcolors.ENDC}')
+
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if record is None:
+            pam_resource_types = {'pamMachine', 'pamDatabase', 'pamDirectory'}
+            matches = []
+            for uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, uid)
+                if rec and rec.record_type in pam_resource_types and rec.title.casefold() == record_name.casefold():
+                    matches.append(rec)
+            if len(matches) == 0:
+                raise CommandError('', f'{bcolors.FAIL}Record "{record_name}" not found.{bcolors.ENDC}')
+            if len(matches) > 1:
+                raise CommandError('',
+                    f'{bcolors.FAIL}Multiple records match title "{record_name}"; use UID or path.{bcolors.ENDC}')
+            record = matches[0]
+
+        if not isinstance(record, vault.TypedRecord) or \
+                record.record_type not in ('pamMachine', 'pamDatabase', 'pamDirectory'):
+            raise CommandError('',
+                f'{bcolors.FAIL}KeeperAI settings are only supported on pamMachine, pamDatabase, '
+                f'and pamDirectory records.{bcolors.ENDC}')
+
+        record_uid = record.record_uid
+        config_uid = self._resolve_config_uid(
+            params, record_uid, configuration, allow_unlinked_without_config=show_flag)
+
+        if show_flag:
+            self._do_show(params, record, record_uid, config_uid)
+        elif remove_flag:
+            self._do_remove(params, record_uid, config_uid)
+        else:
+            self._do_apply(params, set_values, unset_values, record_uid, config_uid)
+
+    def _resolve_config_uid(self, params, record_uid, configuration, allow_unlinked_without_config=False):
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        config_leafs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        config_uids = [leaf.get('value') for leaf in (config_leafs or []) if leaf.get('value')]
+
+        if len(config_uids) == 0:
+            if not configuration:
+                if allow_unlinked_without_config:
+                    return None
+                raise CommandError('',
+                    f'{bcolors.FAIL}Record is not linked to a PAM Configuration; '
+                    f'specify --configuration|-c.{bcolors.ENDC}')
+            config_uid = self._resolve_configuration_record(params, configuration, linked_config_uids=None)
+            return config_uid
+
+        if len(config_uids) == 1:
+            config_uid = config_uids[0]
+            if configuration:
+                specified_uid = self._resolve_configuration_record(params, configuration, linked_config_uids=config_uids)
+                if specified_uid != config_uid:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}PAM Configuration "{configuration}" is not linked to this record.{bcolors.ENDC}')
+            return config_uid
+
+        if not configuration:
+            raise CommandError('',
+                f'{bcolors.FAIL}Record is linked to multiple PAM Configurations; '
+                f'specify --configuration|-c.{bcolors.ENDC}')
+        return self._resolve_configuration_record(params, configuration, linked_config_uids=config_uids)
+
+    @staticmethod
+    def _resolve_configuration_record(params, configuration, linked_config_uids):
+        config_rec = RecordMixin.resolve_single_record(params, configuration)
+        if config_rec is None:
+            for uid in params.record_cache:
+                if params.record_cache[uid].get('version', 0) == 6:
+                    r = vault.KeeperRecord.load(params, uid)
+                    if r and r.title.casefold() == configuration.casefold():
+                        config_rec = r
+                        break
+        if config_rec is None:
+            raise CommandError('',
+                f'{bcolors.FAIL}PAM Configuration "{configuration}" not found.{bcolors.ENDC}')
+        config_uid = config_rec.record_uid
+        if linked_config_uids is not None and config_uid not in linked_config_uids:
+            raise CommandError('',
+                f'{bcolors.FAIL}PAM Configuration "{configuration}" is not linked to this record.{bcolors.ENDC}')
+        return config_uid
+
+    def _do_show(self, params, record, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import (
+            get_resource_keeper_ai_settings,
+            is_default_keeper_ai_settings,
+        )
+
+        print(f'\nKeeperAI Settings for {bcolors.OKBLUE}{record.title}{bcolors.ENDC} ({record_uid}):')
+        if config_uid is None:
+            print(f'  {bcolors.WARNING}No KeeperAI settings configured '
+                  f'(record is not linked to a PAM Configuration).{bcolors.ENDC}\n')
+            return
+
+        settings = get_resource_keeper_ai_settings(params, record_uid, config_uid)
+        if is_default_keeper_ai_settings(settings):
+            print(f'  {bcolors.WARNING}No KeeperAI settings configured.{bcolors.ENDC}\n')
+            return
+
+        print(f'  Version: {settings.get("version", "unknown")}')
+        risk_levels = settings.get('riskLevels', {})
+        for level in ('critical', 'high', 'medium', 'low'):
+            level_data = risk_levels.get(level)
+            if not level_data:
+                continue
+            terminate = level_data.get('aiSessionTerminate', False)
+            tags = level_data.get('tags', {}) if isinstance(level_data.get('tags'), dict) else {}
+            allow_tags = tags.get('allow', [])
+            deny_tags = tags.get('deny', []) if level != 'low' else []
+            level_color = {
+                'critical': bcolors.FAIL,
+                'high': bcolors.WARNING,
+                'medium': bcolors.OKBLUE,
+                'low': bcolors.OKGREEN,
+            }.get(level, bcolors.ENDC)
+            print(f'\n  {level_color}{level.upper()}{bcolors.ENDC}:')
+            print(f'    Terminate Session: {terminate}')
+            if allow_tags:
+                print('    Allow:')
+                for tag_item in allow_tags:
+                    tag_name = tag_item.get('tag', '') if isinstance(tag_item, dict) else str(tag_item)
+                    print(f'      - {tag_name}')
+            if deny_tags:
+                print('    Deny:')
+                for tag_item in deny_tags:
+                    tag_name = tag_item.get('tag', '') if isinstance(tag_item, dict) else str(tag_item)
+                    print(f'      - {tag_name}')
+        print()
+
+    def _do_remove(self, params, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import remove_resource_keeper_ai_settings
+
+        result = remove_resource_keeper_ai_settings(params, record_uid, config_uid)
+        if result is True:
+            print(f'{bcolors.OKGREEN}KeeperAI settings removed successfully.{bcolors.ENDC}')
+        elif result is None:
+            print(f'{bcolors.WARNING}No KeeperAI settings configured.{bcolors.ENDC}')
+        else:
+            raise CommandError('', f'{bcolors.FAIL}Failed to remove KeeperAI settings.{bcolors.ENDC}')
+
+    def _do_apply(self, params, set_values, unset_values, record_uid, config_uid):
+        from .pam_import.keeper_ai_settings import (
+            apply_ai_setting_changes,
+            dedupe_ai_cli_option_specs,
+            get_resource_keeper_ai_settings,
+            is_default_keeper_ai_settings,
+            refresh_link_to_config_to_latest,
+            refresh_meta_to_latest,
+            remove_resource_keeper_ai_settings,
+            set_resource_keeper_ai_settings,
+        )
+
+        set_values, set_dup_warnings = dedupe_ai_cli_option_specs(set_values, '--set/-s')
+        unset_values, unset_dup_warnings = dedupe_ai_cli_option_specs(unset_values, '--unset/-u')
+        for warning in set_dup_warnings + unset_dup_warnings:
+            print(f'{bcolors.WARNING}Warning: {warning}{bcolors.ENDC}')
+
+        existing = get_resource_keeper_ai_settings(
+            params, record_uid, config_uid, quiet_if_missing_vertex=True)
+        try:
+            ai_dict, warnings = apply_ai_setting_changes(existing, set_values, unset_values, params)
+        except ValueError as err:
+            raise CommandError('', f'{bcolors.FAIL}{err}{bcolors.ENDC}') from err
+
+        for warning in warnings:
+            print(f'{bcolors.WARNING}Warning: {warning}{bcolors.ENDC}')
+
+        if not ai_dict:
+            # e.g. -s low.terminate=true|false when nothing is configured: defaults to {}.
+            if is_default_keeper_ai_settings(existing):
+                return
+            result = remove_resource_keeper_ai_settings(params, record_uid, config_uid)
+            if result is False:
+                raise CommandError('', f'{bcolors.FAIL}Failed to remove KeeperAI settings.{bcolors.ENDC}')
+            if result is None:
+                print(f'{bcolors.WARNING}No KeeperAI settings configured.{bcolors.ENDC}')
+            else:
+                print(f'{bcolors.OKGREEN}KeeperAI settings removed successfully.{bcolors.ENDC}')
+            return
+
+        ok = set_resource_keeper_ai_settings(params, record_uid, ai_dict, config_uid)
+        if not ok:
+            raise CommandError('', f'{bcolors.FAIL}Failed to save KeeperAI settings.{bcolors.ENDC}')
+
+        refresh_meta_to_latest(params, record_uid, config_uid)
+        refresh_link_to_config_to_latest(params, record_uid, config_uid)
+        print(f'{bcolors.OKGREEN}KeeperAI settings saved successfully.{bcolors.ENDC}')
 
 
 class PAMRbiEditCommand(Command):

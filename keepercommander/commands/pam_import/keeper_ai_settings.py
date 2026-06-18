@@ -21,10 +21,63 @@ from ...vault import PasswordRecord
 from ... import vault
 from ...display import bcolors
 from ...proto import pam_pb2
+from ... import utils
 from ..pam._layer_b import should_fallback_on_layer_b_error, is_layer_b_feature_disabled
 from ..tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from ...keeper_dag.crypto import encrypt_aes
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+
+AI_RISK_LEVELS = ('critical', 'high', 'medium', 'low')
+AI_SETTINGS_VERSION = 'v1.0.0'
+
+
+def empty_keeper_ai_settings_dict() -> Dict[str, Any]:
+    """Vault-compatible default KeeperAI settings (``emptyKeeperAISettings`` in dag-pam-link.ts)."""
+    empty_allow_deny = {'allow': [], 'deny': []}
+    return {
+        'version': AI_SETTINGS_VERSION,
+        'riskLevels': {
+            'critical': {'aiSessionTerminate': False, 'tags': dict(empty_allow_deny)},
+            'high': {'aiSessionTerminate': False, 'tags': dict(empty_allow_deny)},
+            'medium': {'aiSessionTerminate': False, 'tags': dict(empty_allow_deny)},
+            'low': {'aiSessionTerminate': False, 'tags': {'allow': []}},
+        },
+    }
+
+
+def is_default_keeper_ai_settings(settings: Optional[Dict[str, Any]]) -> bool:
+    """True when settings are absent or match the vault empty/default template."""
+    if not settings:
+        return True
+    risk_levels = settings.get('riskLevels')
+    if not isinstance(risk_levels, dict) or not risk_levels:
+        return True
+    for level, level_data in risk_levels.items():
+        if not isinstance(level_data, dict):
+            return False
+        if level_data.get('aiSessionTerminate', False):
+            return False
+        tags = level_data.get('tags')
+        if not isinstance(tags, dict):
+            continue
+        if tags.get('allow'):
+            return False
+        if level != 'low' and tags.get('deny'):
+            return False
+    return True
+
+
+def _find_highest_path_edge(vertex, head_uid: str, dag_path: str):
+    """Return the highest-version edge for a self-loop DATA path (any edge type)."""
+    best = None
+    best_version = -1
+    for edge in vertex.edges or []:
+        if not edge or edge.head_uid != head_uid or edge.path != dag_path:
+            continue
+        if edge.version > best_version:
+            best_version = edge.version
+            best = edge
+    return best
 
 
 def list_resource_data_edges(
@@ -129,7 +182,8 @@ def get_resource_settings(
     params: KeeperParams,
     resource_uid: str,
     dag_path: str,
-    config_uid: Optional[str] = None
+    config_uid: Optional[str] = None,
+    quiet_if_missing_vertex: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Generic function to retrieve settings from a DAG DATA edge with the specified path for a resource.
@@ -146,6 +200,8 @@ def get_resource_settings(
         resource_uid: UID of the PAM resource (pamMachine, pamDatabase, etc.)
         dag_path: Path of the DATA edge (e.g., 'ai_settings', 'jit_settings')
         config_uid: Optional PAM config UID. If not provided, will be looked up.
+        quiet_if_missing_vertex: Log at debug instead of warning when the resource
+            vertex is absent (expected before first link to a PAM Configuration).
 
     Returns:
         Dictionary containing settings if found, None otherwise.
@@ -209,21 +265,17 @@ def get_resource_settings(
         # Get the resource vertex
         resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
         if not resource_vertex:
-            logging.warning(f"Resource vertex {resource_uid} not found in DAG")
+            log = logging.debug if quiet_if_missing_vertex else logging.warning
+            log(f"Resource vertex {resource_uid} not found in DAG")
             return None
 
-        # Find the DATA edge with the specified path (get highest version, regardless of active status)
-        settings_edge = None
-        highest_version = -1
-        for edge in resource_vertex.edges:
-            if edge and (edge.edge_type == EdgeType.DATA and
-                         edge.path == dag_path):
-                if edge.version > highest_version:
-                    highest_version = edge.version
-                    settings_edge = edge
-
-        if not settings_edge:
-            logging.debug(f"No '{dag_path}' DATA edge found for resource {resource_uid}")
+        # Highest-version edge for this path; DELETION means "no settings" (vault GSE_DELETION).
+        settings_edge = _find_highest_path_edge(resource_vertex, resource_uid, dag_path)
+        if settings_edge is None or settings_edge.edge_type == EdgeType.DELETION:
+            logging.debug(f"No active '{dag_path}' DATA edge for resource {resource_uid}")
+            return None
+        if settings_edge.edge_type != EdgeType.DATA:
+            logging.debug(f"Latest '{dag_path}' edge is not DATA for resource {resource_uid}")
             return None
 
         # Get the content from the edge
@@ -352,7 +404,8 @@ def get_resource_jit_settings(
 def get_resource_keeper_ai_settings(
     params: KeeperParams,
     resource_uid: str,
-    config_uid: Optional[str] = None
+    config_uid: Optional[str] = None,
+    quiet_if_missing_vertex: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Retrieve KeeperAI settings from the DAG DATA edge with path 'ai_settings' for a resource.
@@ -393,7 +446,10 @@ def get_resource_keeper_ai_settings(
         }
         Returns None if settings not found or error occurred.
     """
-    return get_resource_settings(params, resource_uid, 'ai_settings', config_uid)
+    return get_resource_settings(
+        params, resource_uid, 'ai_settings', config_uid,
+        quiet_if_missing_vertex=quiet_if_missing_vertex,
+    )
 
 
 def set_resource_keeper_ai_settings(
@@ -431,6 +487,10 @@ def set_resource_keeper_ai_settings(
         return False
     record_key, resolved_config_uid = common
 
+    if not settings:
+        logging.debug(f"KeeperAI settings empty for {resource_uid}, skipping save")
+        return False
+
     encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
 
     # krouter's configure_resource only writes a settings edge when it loads the
@@ -438,11 +498,15 @@ def set_resource_keeper_ai_settings(
     # carry meta/jit/connection (UserRest.kt). A keeperAiSettings-only request
     # leaves loopEdges null and the ai_settings write is silently dropped. The Web
     # Vault avoids this by always sending meta alongside the AI settings, so mirror
-    # that: include the resource's current meta in the same request.
-    meta_bytes = None
-    current_meta = get_resource_settings(params, resource_uid, 'meta', resolved_config_uid)
-    if isinstance(current_meta, dict):
-        meta_bytes = json.dumps(current_meta).encode()
+    # that: include the resource's current meta in the same request. When the
+    # resource is not in the DAG yet (first link), bootstrap v1 meta instead.
+    from ..tunnel.port_forward.TunnelGraph import build_resource_meta_v1
+
+    current_meta = get_resource_settings(
+        params, resource_uid, 'meta', resolved_config_uid, quiet_if_missing_vertex=True)
+    if not isinstance(current_meta, dict):
+        current_meta = build_resource_meta_v1({}, False)
+    meta_bytes = json.dumps(current_meta).encode()
 
     # Primary: Layer-B configure_resource (permission-checked).
     from ..pam.router_helper import router_configure_resource, get_router_url
@@ -453,9 +517,8 @@ def set_resource_keeper_ai_settings(
             recordUid=url_safe_str_to_bytes(resource_uid),
             networkUid=url_safe_str_to_bytes(resolved_config_uid),
             keeperAiSettings=encrypted_content,
+            meta=meta_bytes,
         )
-        if meta_bytes is not None:
-            rq.meta = meta_bytes
         try:
             router_configure_resource(params, rq)
             logging.debug(f"Saved KeeperAI settings via configure_resource for {resource_uid}")
@@ -576,6 +639,73 @@ def _set_resource_keeper_ai_settings_legacy(
         return True
     except Exception as e:
         logging.error(f"Error saving KeeperAI settings (legacy path) for {resource_uid}: {e}", exc_info=True)
+        return False
+
+
+def _delete_resource_data_edge_legacy(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: str,
+    record_key: bytes,
+    dag_path: str,
+) -> Optional[bool]:
+    """Delete a path-scoped self-loop DATA edge via GSE_DELETION (vault ``createDeletionEvent``).
+
+    Returns:
+        True if a DELETION edge was written,
+        None if the path was already absent,
+        False on error.
+    """
+    try:
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+
+        dag_record = PasswordRecord()
+        dag_record.record_uid = config_uid
+        dag_record.record_key = record_key
+
+        conn = Connection(
+            params=params,
+            encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token,
+            transmission_key=transmission_key,
+            use_read_protobuf=False,
+            use_write_protobuf=False,
+        )
+
+        linking_dag = DAG(
+            conn=conn,
+            record=dag_record,
+            graph_id=PamGraphId.PAM.value,
+            decrypt=True,
+        )
+        linking_dag.load()
+
+        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
+        if not resource_vertex:
+            logging.debug(f"No resource vertex {resource_uid} in DAG; '{dag_path}' already absent")
+            return None
+
+        highest = _find_highest_path_edge(resource_vertex, resource_uid, dag_path)
+        if highest is None or highest.edge_type == EdgeType.DELETION:
+            logging.debug(f"'{dag_path}' already deleted for resource {resource_uid}")
+            return None
+
+        for edge in resource_vertex.edges or []:
+            if (edge and edge.edge_type == EdgeType.DATA and edge.path == dag_path
+                    and edge.head_uid == resource_uid and edge.active):
+                edge.active = False
+
+        resource_vertex.belongs_to(
+            resource_vertex,
+            EdgeType.DELETION,
+            path=dag_path,
+        )
+        linking_dag.save()
+
+        logging.debug(f"Deleted '{dag_path}' via DELETION edge for resource {resource_uid}")
+        return True
+    except Exception as e:
+        logging.error(f"Error deleting '{dag_path}' for {resource_uid}: {e}", exc_info=True)
         return False
 
 
@@ -824,6 +954,350 @@ def refresh_link_to_config_to_latest(
         return False
 
 
+def _get_audit_user_id(params: KeeperParams) -> str:
+    if getattr(params, 'account_uid_bytes', None):
+        return utils.base64_url_encode(params.account_uid_bytes)
+    return getattr(params, 'user', '') or ''
+
+
+def _make_tag_entry(tag: str, action: str, user_id: str) -> Dict[str, Any]:
+    return {
+        'tag': tag,
+        'auditLog': [{
+            'date': utils.current_milli_time(),
+            'userId': user_id,
+            'action': action,
+        }],
+    }
+
+
+def _parse_tag_name(tag_item: Any) -> str:
+    if isinstance(tag_item, dict):
+        return str(tag_item.get('tag', '')).strip()
+    return str(tag_item).strip()
+
+
+def _get_tag_list(level_data: Dict[str, Any], list_name: str) -> List[Dict[str, Any]]:
+    tags = level_data.setdefault('tags', {})
+    entries = tags.get(list_name)
+    if not isinstance(entries, list):
+        entries = []
+        tags[list_name] = entries
+    return entries
+
+
+def parse_ai_setting_spec(spec: str) -> tuple:
+    """
+    Parse CLI spec ``LEVEL``, ``LEVEL.SETTING``, or ``LEVEL.SETTING=VALUE``.
+
+    Returns (level, setting_or_none, value_or_none). ``value_or_none`` is None when
+    ``=`` is absent (unset-without-value forms).
+    """
+    if not spec or not str(spec).strip():
+        raise ValueError('empty AI setting spec')
+
+    text = str(spec).strip()
+    level_part, sep, value_part = text.partition('=')
+    if sep and value_part == '':
+        raise ValueError(
+            f'invalid AI setting spec (missing value): {spec}. '
+            f'To remove a setting, use --unset|-u (e.g. -u high.terminate or -u high.allow=chmod).'
+        )
+
+    if '.' in level_part:
+        level_name, setting_name = level_part.split('.', 1)
+    else:
+        level_name, setting_name = level_part, None
+
+    level_name = level_name.strip().lower()
+    if level_name not in AI_RISK_LEVELS:
+        raise ValueError(f'invalid risk level "{level_name}" (expected: {", ".join(AI_RISK_LEVELS)})')
+
+    if setting_name is not None:
+        setting_name = setting_name.strip().lower()
+        if setting_name not in ('terminate', 'allow', 'deny'):
+            raise ValueError(f'invalid setting "{setting_name}" (expected: terminate, allow, deny)')
+        if level_name == 'low' and setting_name == 'deny':
+            raise ValueError('deny is not supported for the low risk level')
+
+    value = value_part if sep else None
+    return level_name, setting_name, value
+
+
+def dedupe_ai_cli_option_specs(
+    specs: Optional[List[str]],
+    option_label: str,
+) -> tuple:
+    """Return unique specs in first-seen order and warnings for duplicate CLI options.
+
+    ``option_label`` is shown in warnings (e.g. ``--set/-s``).
+    """
+    if not specs:
+        return [], []
+
+    order: List[str] = []
+    counts: Dict[str, int] = {}
+    for spec in specs:
+        counts[spec] = counts.get(spec, 0) + 1
+        if spec not in order:
+            order.append(spec)
+
+    warnings = [
+        f'duplicate {option_label} ignored: {spec} ({counts[spec]}x)'
+        for spec in order
+        if counts[spec] > 1
+    ]
+    return order, warnings
+
+
+def _is_full_ai_setting_spec(spec: str) -> bool:
+    """True when spec is ``LEVEL.SETTING=VALUE`` (value present after ``=``)."""
+    _, setting, value = parse_ai_setting_spec(spec)
+    return setting is not None and value is not None
+
+
+def _reconcile_set_unset_specs(
+    unset_specs: Optional[List[str]],
+    set_specs: Optional[List[str]],
+) -> tuple:
+    """Drop ``--unset`` specs mirrored by a ``--set`` on the same ``LEVEL.SETTING=VALUE``.
+
+    Only applies when both sides use the full ``level.setting=value`` form. Partial
+    unsets (e.g. ``-u high.allow`` or ``-u high.terminate``) are not reconciled.
+    """
+    unset_list = list(unset_specs or [])
+    set_list = list(set_specs or [])
+    warnings: List[str] = []
+    if not unset_list or not set_list:
+        return unset_list, set_list, warnings
+
+    parsed_sets = [parse_ai_setting_spec(spec) for spec in set_list]
+    drop_unset_specs = set()
+
+    for u_spec in unset_list:
+        if not _is_full_ai_setting_spec(u_spec):
+            continue
+        u_level, u_setting, _u_value = parse_ai_setting_spec(u_spec)
+
+        for set_spec, (s_level, s_setting, _s_value) in zip(set_list, parsed_sets):
+            if u_level != s_level or u_setting != s_setting:
+                continue
+            if not _is_full_ai_setting_spec(set_spec):
+                continue
+            drop_unset_specs.add(u_spec)
+            if u_spec == set_spec:
+                warnings.append(f'--set/-s overrides --unset/-u: {u_spec}')
+            else:
+                warnings.append(
+                    f'--set/-s overrides --unset/-u: {u_spec} (mirrors -s {set_spec})'
+                )
+            break
+
+    return [spec for spec in unset_list if spec not in drop_unset_specs], set_list, warnings
+
+
+_LOW_TERMINATE_WARNING = 'risk level low.terminate always defaults to false.'
+
+
+def _parse_terminate_value(value: str) -> bool:
+    normalized = str(value).strip().casefold()
+    if normalized == 'true':
+        return True
+    if normalized == 'false':
+        return False
+    raise ValueError(f'invalid terminate value "{value}" (expected true or false)')
+
+
+def _existing_terminate_value(risk_levels: Dict[str, Any], level: str) -> Optional[bool]:
+    level_data = risk_levels.get(level)
+    if not isinstance(level_data, dict):
+        return None
+    value = level_data.get('aiSessionTerminate')
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _ensure_ai_settings_dict(existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    settings = dict(existing) if isinstance(existing, dict) else {}
+    settings['version'] = settings.get('version') or AI_SETTINGS_VERSION
+    risk_levels = settings.get('riskLevels')
+    if not isinstance(risk_levels, dict):
+        risk_levels = {}
+        settings['riskLevels'] = risk_levels
+    return settings
+
+
+def _ensure_level_dict(risk_levels: Dict[str, Any], level: str) -> Dict[str, Any]:
+    level_data = risk_levels.get(level)
+    if not isinstance(level_data, dict):
+        level_data = {}
+        risk_levels[level] = level_data
+    return level_data
+
+
+def _prune_level(level_data: Dict[str, Any]) -> bool:
+    tags = level_data.get('tags')
+    if isinstance(tags, dict):
+        for key in list(tags.keys()):
+            entries = tags.get(key)
+            if not entries:
+                tags.pop(key, None)
+        if not tags:
+            level_data.pop('tags', None)
+    return not level_data
+
+
+def _level_is_only_default_low(level_data: Dict[str, Any]) -> bool:
+    if not isinstance(level_data, dict):
+        return True
+    tags = level_data.get('tags')
+    has_tags = isinstance(tags, dict) and any(tags.get(k) for k in tags)
+    if has_tags:
+        return False
+    terminate = level_data.get('aiSessionTerminate')
+    return terminate is None or terminate is False
+
+
+def _normalize_ai_settings_for_save(settings: Dict[str, Any]) -> Dict[str, Any]:
+    risk_levels = settings.get('riskLevels')
+    if not isinstance(risk_levels, dict):
+        return {}
+
+    for level in list(risk_levels.keys()):
+        if level not in AI_RISK_LEVELS:
+            risk_levels.pop(level, None)
+            continue
+        if _prune_level(risk_levels[level]):
+            risk_levels.pop(level, None)
+
+    low_data = risk_levels.get('low')
+    if isinstance(low_data, dict):
+        low_data['aiSessionTerminate'] = False
+        tags = low_data.get('tags')
+        if isinstance(tags, dict):
+            tags.pop('deny', None)
+            if not tags:
+                low_data.pop('tags', None)
+        if _prune_level(low_data) or _level_is_only_default_low(low_data):
+            risk_levels.pop('low', None)
+
+    if not risk_levels:
+        return {}
+
+    return {
+        'version': settings.get('version', AI_SETTINGS_VERSION),
+        'riskLevels': risk_levels,
+    }
+
+
+def apply_ai_setting_changes(
+    existing: Optional[Dict[str, Any]],
+    set_specs: Optional[List[str]],
+    unset_specs: Optional[List[str]],
+    params: KeeperParams,
+) -> tuple:
+    """Merge CLI --set/--unset operations into KeeperAI DAG settings.
+
+    Returns ``(settings_dict, warnings)`` where ``warnings`` is a list of user-facing
+    messages (e.g. silent conversions applied during save).
+    """
+    settings = _ensure_ai_settings_dict(existing)
+    risk_levels = settings['riskLevels']
+    user_id = _get_audit_user_id(params)
+    warnings: List[str] = []
+
+    unset_specs, set_specs, reconcile_warnings = _reconcile_set_unset_specs(unset_specs, set_specs)
+    warnings.extend(reconcile_warnings)
+
+    for spec in unset_specs or []:
+        level, setting, value = parse_ai_setting_spec(spec)
+        if setting is None:
+            risk_levels.pop(level, None)
+            continue
+
+        level_data = risk_levels.get(level)
+        if not isinstance(level_data, dict):
+            continue
+
+        if setting == 'terminate':
+            level_data.pop('aiSessionTerminate', None)
+        else:
+            tags = level_data.get('tags')
+            if not isinstance(tags, dict):
+                continue
+            entries = tags.get(setting)
+            if not isinstance(entries, list):
+                continue
+            if value is None:
+                tags.pop(setting, None)
+            else:
+                tags[setting] = [e for e in entries if _parse_tag_name(e) != value]
+            if not tags.get(setting):
+                tags.pop(setting, None)
+            if not tags:
+                level_data.pop('tags', None)
+
+        if _prune_level(level_data):
+            risk_levels.pop(level, None)
+
+    for spec in set_specs or []:
+        level, setting, value = parse_ai_setting_spec(spec)
+        if setting is None:
+            raise ValueError(f'--set requires LEVEL.SETTING=VALUE (got "{spec}")')
+        if value is None:
+            raise ValueError(f'--set requires a value (got "{spec}")')
+
+        level_data = _ensure_level_dict(risk_levels, level)
+        if setting == 'terminate':
+            terminate_value = _parse_terminate_value(value)
+            effective_value = False if level == 'low' else terminate_value
+            if level == 'low' and terminate_value:
+                if _LOW_TERMINATE_WARNING not in warnings:
+                    warnings.append(_LOW_TERMINATE_WARNING)
+            if _existing_terminate_value(risk_levels, level) == effective_value:
+                continue
+            level_data['aiSessionTerminate'] = effective_value
+            continue
+
+        tag_value = value.strip()
+        if not tag_value:
+            raise ValueError(f'--set tag value cannot be empty (got "{spec}")')
+
+        entries = _get_tag_list(level_data, setting)
+        if not any(_parse_tag_name(e) == tag_value for e in entries):
+            action = 'added_to_allow' if setting == 'allow' else 'added_to_deny'
+            entries.append(_make_tag_entry(tag_value, action, user_id))
+
+    return _normalize_ai_settings_for_save(settings), warnings
+
+
+def remove_resource_keeper_ai_settings(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: Optional[str] = None
+) -> Optional[bool]:
+    """Remove the ``ai_settings`` DATA edge (GSE_DELETION), restoring pre-AI DAG state.
+
+    Web Vault treats a missing ``ai_settings`` edge as ``emptyKeeperAISettings`` in
+    memory. Writing ``{}`` or the empty template leaves a DATA edge and can break WV;
+    ``configure_resource`` does not clear ``keeperAiSettings`` when omitted — use graph-sync
+    DELETION like ``DagOperations.createDeletionEvent`` + ``dagPamLinkAddData``.
+
+    Returns:
+        True if a DELETION edge was written,
+        None if ``ai_settings`` was already absent,
+        False on error.
+    """
+    common = _resolve_resource_settings_inputs(params, resource_uid, {}, config_uid)
+    if common is None:
+        return False
+    record_key, resolved_config_uid = common
+
+    return _delete_resource_data_edge_legacy(
+        params, resource_uid, resolved_config_uid, record_key, 'ai_settings')
+
+
 def print_keeper_ai_settings(params: KeeperParams, resource_uid: str, config_uid: Optional[str] = None):
     """
     Print KeeperAI settings in a human-readable format.
@@ -835,7 +1309,7 @@ def print_keeper_ai_settings(params: KeeperParams, resource_uid: str, config_uid
     """
     settings = get_resource_keeper_ai_settings(params, resource_uid, config_uid)
 
-    if not settings:
+    if is_default_keeper_ai_settings(settings):
         print(f"{bcolors.WARNING}No KeeperAI settings found for resource {resource_uid}{bcolors.ENDC}")
         return
 
