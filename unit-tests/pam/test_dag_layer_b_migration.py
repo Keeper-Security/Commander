@@ -96,6 +96,11 @@ class TestSetResourceKeeperAiSettingsMigration:
         assert rq.keeperAiSettings == b'CIPHER_BYTES'
         # Critical: must NOT be set on jitSettings field
         assert rq.jitSettings == b''
+        assert rq.meta == json.dumps({
+            'version': 1,
+            'allowedSettings': {},
+            'rotateOnTermination': False,
+        }).encode()
 
     def test_happy_path_bundles_current_meta_so_krouter_persists_ai_edge(self):
         """Regression: krouter's configure_resource only writes a settings edge
@@ -125,8 +130,30 @@ class TestSetResourceKeeperAiSettingsMigration:
         # the ai_settings edge. Without it the write is a silent no-op.
         assert rq.meta == json.dumps(meta_dict).encode()
         # meta is read from the resource's current 'meta' DATA edge.
+        assert meta_mock.call_args.kwargs.get('quiet_if_missing_vertex') is True
+
+    def test_bootstraps_default_meta_when_resource_not_in_dag_yet(self):
+        captured = {}
+
+        def _capture(params, rq):
+            captured['rq'] = rq
+            return None
+
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'CIPHER_BYTES'), \
+             patch.object(ai_mod, 'get_resource_settings', return_value=None) as meta_mock, \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource', side_effect=_capture):
+            ok = ai_mod.set_resource_keeper_ai_settings(
+                _mock_params(), RESOURCE_UID_STR, {'riskLevels': {'high': {}}}, config_uid=CONFIG_UID_STR
+            )
+        assert ok is True
+        rq = captured['rq']
+        assert rq.meta == json.dumps({
+            'version': 1,
+            'allowedSettings': {},
+            'rotateOnTermination': False,
+        }).encode()
         meta_mock.assert_called_once()
-        assert meta_mock.call_args.args[2] == 'meta'
 
     def test_permission_denied_with_fallback_enabled_calls_legacy(self):
         legacy_called = {'count': 0}
