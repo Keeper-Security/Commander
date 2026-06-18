@@ -1031,6 +1031,33 @@ class TestTunnelGraphSetResourceAllowedMigration:
         assert 'connections' in meta_str
         assert 'rotation' in meta_str
 
+    def test_default_reset_skips_configure_resource_and_writes_legacy(self):
+        """on/off/default 'default' removes keys from meta; krouter mergeJson keeps
+        absent keys, so set_resource_allowed must use legacy DAG-write."""
+        from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
+
+        tg, resource_vertex = self._build_tg()
+        existing = {
+            'allowedSettings': {
+                'aiEnabled': True,
+                'aiSessionTerminate': True,
+                'connections': True,
+            },
+        }
+
+        with patch.object(tg_mod, 'get_vertex_content', return_value=existing), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource') as cr_mock:
+            tg.set_resource_allowed(RESOURCE_UID_STR, ai_enabled='default', ai_session_terminate='default')
+
+        cr_mock.assert_not_called()
+        resource_vertex.add_data.assert_called_once()
+        written = resource_vertex.add_data.call_args.kwargs['content']
+        allowed = written.get('allowedSettings', {})
+        assert 'aiEnabled' not in allowed
+        assert 'aiSessionTerminate' not in allowed
+        assert allowed.get('connections') is True
+        tg.linking_dag.save.assert_called_once()
+
     def test_config_happy_path_uses_configure_network_graph(self):
         """is_config=True flips the call to configure_network_graph with the
         inner allowedSettings dict (matches edit_tunneling_config's shape)."""

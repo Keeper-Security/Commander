@@ -3294,11 +3294,16 @@ _PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL = (
 
 
 class PAMConnectionAiCommand(Command):
+    choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam connection ai')
     parser.add_argument('record', type=str, action='store',
                         help=f'Record UID, path, or title ({_PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL})')
     parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
                         help='PAM Configuration UID or title (required when record is not linked yet or is linked to 2+ configs)')
+    parser.add_argument('--enabled', '-e', dest='enabled', choices=choices,
+                        help='Enable/disable KeeperAI threat detection (on/off/default; default removes from DAG JSON)')
+    parser.add_argument('--session-terminate', '-st', dest='session_terminate', choices=choices,
+                        help='Enable/disable session termination on detection (on/off/default; default removes from DAG JSON)')
     parser.add_argument('--set', '-s', dest='set_values', action='append', default=None,
                         metavar='LEVEL.SETTING=VALUE',
                         help='Set a KeeperAI value (e.g. -s low.terminate=false -s low.allow=chmod -s "high.deny=kill -9")')
@@ -3321,7 +3326,10 @@ class PAMConnectionAiCommand(Command):
         show_flag = kwargs.get('show', False)
         set_values = kwargs.get('set_values') or []
         unset_values = kwargs.get('unset_values') or []
-        change_options_provided = bool(set_values or unset_values)
+        enabled = kwargs.get('enabled')
+        session_terminate = kwargs.get('session_terminate')
+        toggle_options_provided = enabled is not None or session_terminate is not None
+        change_options_provided = bool(set_values or unset_values or toggle_options_provided)
 
         if remove_flag and show_flag:
             raise CommandError('', f'{bcolors.FAIL}--remove cannot be used with --show.{bcolors.ENDC}')
@@ -3330,7 +3338,8 @@ class PAMConnectionAiCommand(Command):
         if show_flag and change_options_provided:
             raise CommandError('', f'{bcolors.FAIL}--show cannot be used with --remove or any KeeperAI option.{bcolors.ENDC}')
         if not remove_flag and not show_flag and not change_options_provided:
-            raise CommandError('', f'{bcolors.FAIL}Provide at least one --set/-s, --unset/-u, --remove, or --show.{bcolors.ENDC}')
+            raise CommandError('', f'{bcolors.FAIL}Provide at least one --enabled/-e, --session-terminate/-st, '
+                                   f'--set/-s, --unset/-u, --remove, or --show.{bcolors.ENDC}')
 
         record = RecordMixin.resolve_single_record(params, record_name)
         if record is None:
@@ -3362,7 +3371,10 @@ class PAMConnectionAiCommand(Command):
         elif remove_flag:
             self._do_remove(params, record_uid, config_uid)
         else:
-            self._do_apply(params, set_values, unset_values, record_uid, config_uid)
+            if toggle_options_provided:
+                self._do_apply_allowed_settings(params, enabled, session_terminate, record_uid, config_uid)
+            if set_values or unset_values:
+                self._do_apply(params, set_values, unset_values, record_uid, config_uid)
 
     def _resolve_config_uid(self, params, record_uid, configuration, allow_unlinked_without_config=False):
         encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
@@ -3413,6 +3425,16 @@ class PAMConnectionAiCommand(Command):
                 f'{bcolors.FAIL}PAM Configuration "{configuration}" is not linked to this record.{bcolors.ENDC}')
         return config_uid
 
+    @staticmethod
+    def _format_allowed_setting_state(value: str) -> str:
+        if value == 'on':
+            return f'{bcolors.OKBLUE}on{bcolors.ENDC}'
+        if value == 'off':
+            return f'{bcolors.WARNING}off{bcolors.ENDC}'
+        if value == 'default':
+            return f'{bcolors.OKGREEN}default{bcolors.ENDC}'
+        return value or 'default'
+
     def _do_show(self, params, record, record_uid, config_uid):
         from .pam_import.keeper_ai_settings import (
             get_resource_keeper_ai_settings,
@@ -3425,12 +3447,20 @@ class PAMConnectionAiCommand(Command):
                   f'(record is not linked to a PAM Configuration).{bcolors.ENDC}\n')
             return
 
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                         transmission_key=transmission_key)
+        ai_enabled = tdag.get_resource_setting(record_uid, 'allowedSettings', 'aiEnabled')
+        ai_session_terminate = tdag.get_resource_setting(record_uid, 'allowedSettings', 'aiSessionTerminate')
+        print(f'  AI Threat Detection: {self._format_allowed_setting_state(ai_enabled)}')
+        print(f'  AI Session Terminate on Detection: {self._format_allowed_setting_state(ai_session_terminate)}')
+
         settings = get_resource_keeper_ai_settings(params, record_uid, config_uid)
         if is_default_keeper_ai_settings(settings):
-            print(f'  {bcolors.WARNING}No KeeperAI settings configured.{bcolors.ENDC}\n')
+            print(f'\n  {bcolors.WARNING}No risk-level KeeperAI settings configured.{bcolors.ENDC}\n')
             return
 
-        print(f'  Version: {settings.get("version", "unknown")}')
+        print(f'\n  Version: {settings.get("version", "unknown")}')
         risk_levels = settings.get('riskLevels', {})
         for level in ('critical', 'high', 'medium', 'low'):
             level_data = risk_levels.get(level)
@@ -3459,6 +3489,38 @@ class PAMConnectionAiCommand(Command):
                     tag_name = tag_item.get('tag', '') if isinstance(tag_item, dict) else str(tag_item)
                     print(f'      - {tag_name}')
         print()
+
+    def _do_apply_allowed_settings(self, params, enabled, session_terminate, record_uid, config_uid):
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                         transmission_key=transmission_key)
+
+        if tdag is None or not tdag.linking_dag.has_graph:
+            raise CommandError('',
+                f'{bcolors.FAIL}No PAM Configuration UID set. '
+                f'Specify --configuration|-c or link the record first.{bcolors.ENDC}')
+
+        if not tdag.is_tunneling_config_set_up(record_uid):
+            tdag.link_resource_to_config(record_uid)
+
+        if not tdag.is_tunneling_config_set_up(record_uid):
+            raise CommandError('',
+                f'{bcolors.FAIL}Record is not set up for connections. '
+                f'Use: pam connection edit {record_uid} --config <ConfigUID> --connections=on '
+                f'(list configs: pam config list).{bcolors.ENDC}')
+
+        tdag.set_resource_allowed(
+            resource_uid=record_uid,
+            ai_enabled=enabled,
+            ai_session_terminate=session_terminate,
+        )
+
+        labels = []
+        if enabled is not None:
+            labels.append(f'AI threat detection={enabled}')
+        if session_terminate is not None:
+            labels.append(f'AI session terminate={session_terminate}')
+        print(f'{bcolors.OKGREEN}KeeperAI allowed settings saved ({", ".join(labels)}).{bcolors.ENDC}')
 
     def _do_remove(self, params, record_uid, config_uid):
         from .pam_import.keeper_ai_settings import remove_resource_keeper_ai_settings
