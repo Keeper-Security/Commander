@@ -1,11 +1,12 @@
 from __future__ import annotations
 import argparse
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
+from ...display import bcolors
 from ... import vault
 from . import get_plugins_map
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.constants import PAM_USER
-from ...discovery_common.types import UserAclRotationSettings
+from ...discovery_common.constants import PAM_USER, PAM_AWS_CONFIGURATION
+from ...discovery_common.types import UserAclRotationSettings, UserAcl
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,9 +17,13 @@ if TYPE_CHECKING:
 class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
     parser = argparse.ArgumentParser(prog='pam action saas set')
 
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                        help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
-    parser.add_argument('--config-record-uid', '-c', required=True, dest='config_record_uid',
+    parser.add_argument('--config-record-uid', '-sc', required=True, dest='config_record_uid',
                         action='store', help='The UID of the record that has SaaS configuration')
 
     def get_parser(self):
@@ -26,9 +31,10 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
 
     def execute(self, params: KeeperParams, **kwargs):
 
-        user_uid = kwargs.get("user_uid")  # type: str
-        resource_uid = kwargs.get("resource_uid")  # type: str
-        config_record_uid = kwargs.get("config_record_uid")   # type: str
+        user_uid = kwargs.get("user_uid")  # type: Optional[str]
+        config_record_uid = kwargs.get("config_record_uid")   # type: Optional[str]
+        gateway = kwargs.get("gateway")  # type: Optional[str]
+        configuration_uid = kwargs.get('configuration_uid')  # type Optional[str]
 
         print("")
 
@@ -43,12 +49,36 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._f("The user record is not a PAM User."))
             return
 
-        record_rotation = params.record_rotation_cache.get(user_record.record_uid)
-        if record_rotation is not None:
-            configuration_uid = record_rotation.get("configuration_uid")
-        else:
-            print(self._f("The user record does not have any rotation settings."))
-            return
+        # If the configration UID is not set, then try to get it from the rotation settings.
+        # This might be blank due to rotation setting being stored on the graph and not in protobuf.
+        # If rotation settings are blank, require the gateway UID to be set.
+        if configuration_uid is None:
+
+            record_rotation = params.record_rotation_cache.get(user_record.record_uid)
+            if record_rotation is not None:
+                configuration_uid = record_rotation.get("configuration_uid")
+            else:
+                # If the configuration UID is not passed in, and we cannot get it from the protobug rotation settings,
+                #   get it from the gateway.
+                # This requires the user used the --gateway params.
+
+                if gateway is None:
+                    print(self._f("Cannot find the PAM configuration for the user record. "
+                                  "Please add the --gateway and/or --configuration-uid to the command parameters."))
+                    return
+
+                try:
+                    gateway_context = GatewayContext.from_gateway(params=params,
+                                                                  gateway=gateway)
+                    if gateway_context is None:
+                        print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                        return
+
+                    configuration_uid = gateway_context.configuration_uid
+
+                except MultiConfigurationException as err:
+                    multi_conf_msg(gateway, err)
+                    return
 
         if configuration_uid is None:
             print(self._f("The user record does not have the configuration record set in the rotation settings."))
@@ -114,11 +144,13 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
         acl = record_link.get_acl(user_uid, gateway_context.configuration_uid)
         if acl is None:
-            if resource_uid is not None:
-                print(self._f("There is no relationship between the user and the resource record."))
-            else:
-                print(self._f("There is no relationship between the user and the configuration record."))
-            return
+            acl = UserAcl.default()
+
+            # TODO: Un-hack this, dislike hardcoding this stuff.
+            # HACK - If the plugin is the AWS Access Key, the user is an IAM user if the configuration if AWS.
+            # So it does belong to the configuration.
+            if plugin_name == "AWS Access Key" and config_record.record_type == PAM_AWS_CONFIGURATION:
+                acl.belongs_to = True
 
         if acl.rotation_settings is None:
             acl.rotation_settings = UserAclRotationSettings()
