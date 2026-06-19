@@ -193,6 +193,7 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
                                            Passphrase extras (override      $GEN:passphrase,7,_,true,true
                                            policy for generation only):
                                            word_count[,separator][,capitalize][,number]
+                                           Separators allowed: - . _ ? ! space
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc

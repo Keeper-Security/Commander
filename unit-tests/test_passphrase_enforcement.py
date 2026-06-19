@@ -58,6 +58,12 @@ class TestPassphraseEnforcement(TestCase):
         failures = PasswordComplexityEnforcer.validate_password(password, policy)
         self.assertEqual(failures, [])
 
+    def test_invalid_separator_error_lists_allowed_characters(self):
+        policy = dict(STRICT_RANDOM_POLICY)
+        password = 'alpha~bravo~charlie~delta~echo'
+        failures = PasswordComplexityEnforcer.validate_password(password, policy)
+        self.assertTrue(any('Allowed:' in f and 'space' in f for f in failures))
+
     def test_invalid_passphrase_returns_passphrase_errors(self):
         policy = dict(STRICT_RANDOM_POLICY)
         password = 'ab-cd-ef'

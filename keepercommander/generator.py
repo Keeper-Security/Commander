@@ -28,6 +28,18 @@ PP_SEPARATOR_CHARACTERS = '-._?! '
 DEFAULT_PASSPHRASE_SEPARATOR = '-'
 DEFAULT_PASSPHRASE_WORD_COUNT = 5
 DEFAULT_DICEWARE_WORDLIST = 'diceware.wordlist.asc.txt'
+PASSPHRASE_SEPARATOR_HELP = '- . _ ? ! space'
+
+
+def format_passphrase_separators_for_display(separators=None):
+    # type: (Optional[str]) -> str
+    """Human-readable list of allowed passphrase separator characters."""
+    if not separators:
+        separators = PP_SEPARATOR_CHARACTERS
+    parts = []   # type: List[str]
+    for ch in separators:
+        parts.append('space' if ch == ' ' else ch)
+    return ', '.join(parts)
 
 PasswordStrength = namedtuple('PasswordStrength', 'length caps lower digits symbols')
 PassphraseGenOptions = namedtuple(
@@ -166,6 +178,26 @@ def _normalize_passphrase_separator(separator):
     if separator == '\u2423':  # OPEN BOX (Vault UI glyph for space)
         return ' '
     return separator[0]
+
+
+def _passphrase_separators_from_policy(policy_sep):
+    # type: (str) -> str
+    """Return allowed separators in Vault order (see getPasswordRules.ts)."""
+    normalized = policy_sep.replace('\u2423', ' ')
+    allowed = ''
+    for ch in PP_SEPARATOR_CHARACTERS:
+        if ch in normalized:
+            allowed += ch
+    return allowed
+
+
+def _default_passphrase_separator_from_policy(policy_sep):
+    # type: (Optional[str]) -> str
+    """Pick the default generation separator matching Vault / PowerCommander."""
+    if not policy_sep or not isinstance(policy_sep, str) or not policy_sep.strip():
+        return DEFAULT_PASSPHRASE_SEPARATOR
+    allowed = _passphrase_separators_from_policy(policy_sep.strip())
+    return allowed[0] if allowed else DEFAULT_PASSPHRASE_SEPARATOR
 
 
 def _parse_gen_bool(value):
@@ -326,13 +358,16 @@ class KeeperPassphraseGenerator(PasswordGenerator):
                 wc = DEFAULT_PASSPHRASE_WORD_COUNT
 
         sep = separator
+        if sep is not None and sep not in PP_SEPARATOR_CHARACTERS:
+            logging.warning(
+                'Ignoring invalid passphrase separator %r. Allowed: %s.',
+                sep, format_passphrase_separators_for_display())
+            sep = None
         if sep is None:
             if policy:
                 policy_sep = policy.get('passphrase-separator')
-                if isinstance(policy_sep, str) and policy_sep.strip():
-                    sep = _normalize_passphrase_separator(policy_sep.strip())
-                else:
-                    sep = DEFAULT_PASSPHRASE_SEPARATOR
+                sep = _default_passphrase_separator_from_policy(
+                    policy_sep if isinstance(policy_sep, str) else None)
             else:
                 sep = DEFAULT_PASSPHRASE_SEPARATOR
 

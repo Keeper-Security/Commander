@@ -58,6 +58,17 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertTrue(gen.capitalize)
     self.assertTrue(gen.append_number)
 
+  def test_policy_separator_uses_vault_order_not_raw_first_char(self):
+    gen = generator.KeeperPassphraseGenerator.create_with_options({
+      'passphrase-separator': '!._?-',
+    })
+    self.assertEqual(gen.separator, '-')
+
+  def test_invalid_separator_override_falls_back_to_default(self):
+    gen = generator.KeeperPassphraseGenerator.create_with_options(
+      None, separator='~', word_count=3)
+    self.assertEqual(gen.separator, '-')
+
   def test_loads_bundled_eff_wordlist(self):
     words = generator._load_wordlist()
     self.assertEqual(len(words), 7776)

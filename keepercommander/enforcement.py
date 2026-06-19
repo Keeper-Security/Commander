@@ -23,7 +23,10 @@ from .proto import APIRequest_pb2, record_pb2
 from .display import bcolors
 from .params import KeeperParams
 from .error import KeeperApiError, CommandError
-from .generator import DEFAULT_PASSPHRASE_WORD_COUNT, PP_SEPARATOR_CHARACTERS
+from .generator import (
+    DEFAULT_PASSPHRASE_WORD_COUNT, PP_SEPARATOR_CHARACTERS, _passphrase_separators_from_policy,
+    format_passphrase_separators_for_display,
+)
 
 
 def _find_enforcement_value(enforcements, key):
@@ -428,11 +431,7 @@ class PasswordComplexityEnforcer:
     def _normalize_passphrase_separators(cls, policy):   # type: (Dict[str, Any]) -> Optional[str]
         raw = policy.get('passphrase-separator')
         if isinstance(raw, str) and raw.strip():
-            normalized = raw.replace('\u2423', ' ')
-            allowed = ''
-            for ch in PP_SEPARATOR_CHARACTERS:
-                if ch in normalized:
-                    allowed += ch
+            allowed = _passphrase_separators_from_policy(raw.strip())
             return allowed or None
         return PP_SEPARATOR_CHARACTERS
 
@@ -445,7 +444,9 @@ class PasswordComplexityEnforcer:
 
         allowed_seps = cls._normalize_passphrase_separators(policy)
         if not allowed_seps:
-            failures.append('Passphrase cannot meet separator criteria set by policy.')
+            failures.append(
+                'Passphrase cannot meet separator criteria set by policy. '
+                f'Allowed: {format_passphrase_separators_for_display(PP_SEPARATOR_CHARACTERS)}.')
             return failures
 
         separator = next((ch for ch in allowed_seps if ch in password), None)
@@ -453,7 +454,9 @@ class PasswordComplexityEnforcer:
             # Allow CLI-selected separators even when not listed in policy.
             separator = next((ch for ch in PP_SEPARATOR_CHARACTERS if ch in password), None)
         if separator is None:
-            failures.append('Passphrase must contain an allowed separator character.')
+            failures.append(
+                'Passphrase must contain an allowed separator character. '
+                f'Allowed: {format_passphrase_separators_for_display(PP_SEPARATOR_CHARACTERS)}.')
             return failures
 
         words = password.split(separator)

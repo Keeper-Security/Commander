@@ -45,7 +45,7 @@ from ..display import bcolors, post_login_summary
 from ..error import CommandError
 from ..generator import (
     KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator,
-    KeeperPassphraseGenerator,
+    KeeperPassphraseGenerator, PASSPHRASE_SEPARATOR_HELP,
 )
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
@@ -409,7 +409,8 @@ passphrase_group.add_argument('--passphrase', dest='passphrase', action='store_t
                               help='Generate a vault-style passphrase from the EFF word list')
 passphrase_group.add_argument(
     '--pp-separator', '-pps', dest='pp_separator', action='store',
-    help='Word separator (single character, or "space"). Overrides enterprise policy for this command.'
+    help=f'Word separator (single character, or "space"). Allowed: {PASSPHRASE_SEPARATOR_HELP}. '
+         'Overrides enterprise policy for this command.'
 )
 passphrase_group.add_argument(
     '--pp-capitalize', '-ppc', dest='pp_capitalize', action='store_true',
