@@ -207,10 +207,12 @@ def register_enterprise_commands(commands, aliases, command_info):
     commands['risk-management'] = RiskManagementReportCommand()
     command_info['risk-management'] = 'Risk Management Reports'
     aliases['rmd'] = 'risk-management'
-    
     from . import device_management
     device_management.register_enterprise_commands(commands)
     device_management.register_enterprise_command_info(aliases, command_info)
+    from . import mc_transfer
+    commands['mc-transfer'] = mc_transfer.McTransferCommand()
+    command_info['mc-transfer'] = 'Managed Company Transfer'
 
     from . import sso_cloud
     sso_cloud.register_commands(commands)
