@@ -15,7 +15,7 @@ import os
 import secrets
 import string
 from secrets import choice
-from typing import Optional, List, Iterator
+from typing import Optional, List, Iterator, Sequence
 from collections import namedtuple
 
 from . import crypto
@@ -24,8 +24,28 @@ from Cryptodome.Random.random import shuffle
 
 DEFAULT_PASSWORD_LENGTH = 20
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
+PP_SEPARATOR_CHARACTERS = '-._?! '
+DEFAULT_PASSPHRASE_SEPARATOR = '-'
+DEFAULT_PASSPHRASE_WORD_COUNT = 5
+DEFAULT_PASSPHRASE_CAPITALIZE = True
+DEFAULT_PASSPHRASE_NUMBER = True
+DEFAULT_DICEWARE_WORDLIST = 'diceware.wordlist.asc.txt'
+PASSPHRASE_SEPARATOR_HELP = '- . _ ? ! space'
+
+
+def format_passphrase_separators_for_display(separators=None):
+    # type: (Optional[str]) -> str
+    """Human-readable list of allowed passphrase separator characters."""
+    if not separators:
+        separators = PP_SEPARATOR_CHARACTERS
+    parts = []   # type: List[str]
+    for ch in separators:
+        parts.append('space' if ch == ' ' else ch)
+    return ', '.join(parts)
 
 PasswordStrength = namedtuple('PasswordStrength', 'length caps lower digits symbols')
+PassphraseGenOptions = namedtuple(
+    'PassphraseGenOptions', ('word_count', 'separator', 'capitalize', 'append_number'))
 
 
 def get_password_strength(password):  # type: (str) -> PasswordStrength
@@ -153,37 +173,133 @@ class KeeperPasswordGenerator(PasswordGenerator):
         )
 
 
+def _normalize_passphrase_separator(separator):
+    # type: (Optional[str]) -> str
+    if not separator:
+        return DEFAULT_PASSPHRASE_SEPARATOR
+    if separator == '\u2423':  # OPEN BOX (Vault UI glyph for space)
+        return ' '
+    return separator[0]
+
+
+def _passphrase_separators_from_policy(policy_sep):
+    # type: (str) -> str
+    """Return allowed separators in Vault order (see getPasswordRules.ts)."""
+    normalized = policy_sep.replace('\u2423', ' ')
+    allowed = ''
+    for ch in PP_SEPARATOR_CHARACTERS:
+        if ch in normalized:
+            allowed += ch
+    return allowed
+
+
+def _default_passphrase_separator_from_policy(policy_sep):
+    # type: (Optional[str]) -> str
+    """Pick the default generation separator matching Vault / PowerCommander."""
+    if not policy_sep or not isinstance(policy_sep, str) or not policy_sep.strip():
+        return DEFAULT_PASSPHRASE_SEPARATOR
+    allowed = _passphrase_separators_from_policy(policy_sep.strip())
+    return allowed[0] if allowed else DEFAULT_PASSPHRASE_SEPARATOR
+
+
+def _parse_gen_bool(value):
+    # type: (str) -> Optional[bool]
+    normalized = value.strip().lower()
+    if normalized in ('true', '1', 'yes', 'on'):
+        return True
+    if normalized in ('false', '0', 'no', 'off'):
+        return False
+    return None
+
+
+def parse_passphrase_gen_parameters(parameters):
+    # type: (Optional[Sequence[str]]) -> PassphraseGenOptions
+    """Parse $GEN:passphrase optional parameters.
+
+    Format: $GEN:passphrase[,word_count][,separator][,capitalize][,number]
+    Examples:
+        $GEN:passphrase,7
+        $GEN:passphrase,7,_
+        $GEN:passphrase,7,_,true,true
+        $GEN:passphrase,7,space,false,true
+    """
+    if not parameters:
+        return PassphraseGenOptions(None, None, None, None)
+
+    extras = [p.strip() for p in parameters if p.strip() and p.strip() != 'passphrase']
+    word_count = None
+    separator = None
+    capitalize = None
+    append_number = None
+    idx = 0
+
+    if idx < len(extras) and extras[idx].isdigit():
+        word_count = int(extras[idx])
+        idx += 1
+
+    if idx < len(extras):
+        candidate = extras[idx]
+        if _parse_gen_bool(candidate) is None:
+            if candidate.lower() in ('space', 'sp'):
+                separator = ' '
+            else:
+                separator = _normalize_passphrase_separator(candidate)
+            idx += 1
+
+    if idx < len(extras):
+        parsed = _parse_gen_bool(extras[idx])
+        if parsed is not None:
+            capitalize = parsed
+            idx += 1
+
+    if idx < len(extras):
+        parsed = _parse_gen_bool(extras[idx])
+        if parsed is not None:
+            append_number = parsed
+
+    return PassphraseGenOptions(word_count, separator, capitalize, append_number)
+
+
+def _resolve_wordlist_path(word_list_file=None):
+    # type: (Optional[str]) -> str
+    if word_list_file:
+        dice_path = os.path.join(os.path.dirname(__file__), 'resources', word_list_file)
+        if not os.path.isfile(dice_path):
+            dice_path = os.path.expanduser(word_list_file)
+    else:
+        dice_path = os.path.join(os.path.dirname(__file__), 'resources', DEFAULT_DICEWARE_WORDLIST)
+    return dice_path
+
+
+def _load_wordlist(word_list_file=None):
+    # type: (Optional[str]) -> List[str]
+    dice_path = _resolve_wordlist_path(word_list_file)
+    if not os.path.isfile(dice_path):
+        raise Exception(f'Word list file \"{dice_path}\" not found.')
+
+    vocabulary = []   # type: List[str]
+    unique_words = set()
+    with open(dice_path, 'r', encoding='utf-8') as dw:
+        for line in dw:
+            line = line.strip()
+            if not line or line.startswith('--'):
+                continue
+            if line.lower().startswith('source url:') or line.lower().startswith('title:'):
+                continue
+            parts = line.split()
+            word = parts[1] if len(parts) >= 2 else parts[0]
+            vocabulary.append(word)
+            unique_words.add(word.lower())
+    if len(vocabulary) != len(unique_words):
+        raise Exception(f'Word list file \"{dice_path}\" contains non-unique words.')
+    return vocabulary
+
+
 class DicewarePasswordGenerator(PasswordGenerator):
     def __init__(self, number_of_rolls, word_list_file=None, delimiter=' '):   # type: (int, Optional[str], str) -> None
         self._number_of_rolls = number_of_rolls if number_of_rolls > 0 else 5
         self.delimiter = delimiter
-
-        if word_list_file:
-            dice_path = os.path.join(os.path.dirname(__file__), 'resources', word_list_file)
-            if not os.path.isfile(dice_path):
-                dice_path = os.path.expanduser(word_list_file)
-        else:
-            dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'diceware.wordlist.asc.txt')
-        self._vocabulary = None    # type: Optional[List[str]]
-        if os.path.isfile(dice_path):
-            with open(dice_path, 'r', encoding='utf-8') as dw:
-                self._vocabulary = []
-                line_count = 0
-                unique_words = set()
-                for line in dw.readlines():
-                    if not line:
-                        continue
-                    if line.startswith('--'):
-                        continue
-                    line_count += 1
-                    words = [x.strip() for x in line.split()]
-                    word = words[1] if len(words) >= 2 else words[0]
-                    self._vocabulary.append(word)
-                    unique_words.add(word.lower())
-                if line_count != len(unique_words):
-                    raise Exception(f'Word list file \"{dice_path}\" contains non-unique words.')
-        else:
-            raise Exception(f'Word list file \"{dice_path}\" not found.')
+        self._vocabulary = _load_wordlist(word_list_file)
 
     def generate(self):
         if not self._vocabulary:
@@ -192,6 +308,90 @@ class DicewarePasswordGenerator(PasswordGenerator):
         words = [secrets.choice(self._vocabulary) for _ in range(self._number_of_rolls)]
         shuffle(words)
         return self.delimiter.join(words)
+
+
+class KeeperPassphraseGenerator(PasswordGenerator):
+    """Vault-style passphrase generator using the bundled EFF large word list."""
+
+    def __init__(self, word_count=DEFAULT_PASSPHRASE_WORD_COUNT, separator=DEFAULT_PASSPHRASE_SEPARATOR,
+                 capitalize=DEFAULT_PASSPHRASE_CAPITALIZE, append_number=DEFAULT_PASSPHRASE_NUMBER,
+                 word_list_file=None):
+        # type: (int, str, bool, bool, Optional[str]) -> None
+        if isinstance(word_count, int):
+            if word_count < 1:
+                word_count = 1
+            elif word_count > 40:
+                word_count = 40
+        else:
+            word_count = DEFAULT_PASSPHRASE_WORD_COUNT
+        self.word_count = word_count
+        self.separator = _normalize_passphrase_separator(separator)
+        self.capitalize = capitalize
+        self.append_number = append_number
+        self._vocabulary = _load_wordlist(word_list_file)
+
+    def generate(self):
+        if not self._vocabulary:
+            raise Exception('Passphrase word list was not loaded')
+
+        passphrase = ''
+        first_word = True
+        for _ in range(self.word_count):
+            word = secrets.choice(self._vocabulary)
+            if self.capitalize and word:
+                word = word[0].upper() + word[1:]
+            if self.append_number and first_word:
+                word += str(secrets.randbelow(10))
+            if not first_word:
+                passphrase += self.separator
+            passphrase += word
+            first_word = False
+        return passphrase
+
+    @classmethod
+    def create_with_options(cls, policy=None, word_count=None, separator=None,
+                            capitalize=None, append_number=None):
+        # type: (Optional[dict], Optional[int], Optional[str], Optional[bool], Optional[bool]) -> KeeperPassphraseGenerator
+        """Build a generator from CLI/$GEN overrides with optional policy defaults."""
+        wc = word_count
+        if wc is None:
+            if policy:
+                wc = policy.get('passphrase-length', DEFAULT_PASSPHRASE_WORD_COUNT)
+            else:
+                wc = DEFAULT_PASSPHRASE_WORD_COUNT
+
+        sep = separator
+        if sep is not None and sep not in PP_SEPARATOR_CHARACTERS:
+            logging.warning(
+                'Ignoring invalid passphrase separator %r. Allowed: %s.',
+                sep, format_passphrase_separators_for_display())
+            sep = None
+        if sep is None:
+            if policy:
+                policy_sep = policy.get('passphrase-separator')
+                sep = _default_passphrase_separator_from_policy(
+                    policy_sep if isinstance(policy_sep, str) else None)
+            else:
+                sep = DEFAULT_PASSPHRASE_SEPARATOR
+
+        cap = capitalize
+        if cap is None:
+            cap = DEFAULT_PASSPHRASE_CAPITALIZE
+
+        num = append_number
+        if num is None:
+            num = DEFAULT_PASSPHRASE_NUMBER
+
+        return cls(word_count=wc, separator=sep, capitalize=cap, append_number=num)
+
+    @classmethod
+    def create_from_policy(cls, policy, length_override=None, separator_override=None):
+        # type: (dict, Optional[int], Optional[str]) -> KeeperPassphraseGenerator
+        return cls.create_with_options(
+            policy,
+            word_count=length_override,
+            separator=separator_override,
+        )
 
 
 class CryptoPassphraseGenerator(PasswordGenerator):
