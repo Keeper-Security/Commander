@@ -27,6 +27,8 @@ PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 PP_SEPARATOR_CHARACTERS = '-._?! '
 DEFAULT_PASSPHRASE_SEPARATOR = '-'
 DEFAULT_PASSPHRASE_WORD_COUNT = 5
+DEFAULT_PASSPHRASE_CAPITALIZE = True
+DEFAULT_PASSPHRASE_NUMBER = True
 DEFAULT_DICEWARE_WORDLIST = 'diceware.wordlist.asc.txt'
 PASSPHRASE_SEPARATOR_HELP = '- . _ ? ! space'
 
@@ -312,7 +314,8 @@ class KeeperPassphraseGenerator(PasswordGenerator):
     """Vault-style passphrase generator using the bundled EFF large word list."""
 
     def __init__(self, word_count=DEFAULT_PASSPHRASE_WORD_COUNT, separator=DEFAULT_PASSPHRASE_SEPARATOR,
-                 capitalize=False, append_number=False, word_list_file=None):
+                 capitalize=DEFAULT_PASSPHRASE_CAPITALIZE, append_number=DEFAULT_PASSPHRASE_NUMBER,
+                 word_list_file=None):
         # type: (int, str, bool, bool, Optional[str]) -> None
         if isinstance(word_count, int):
             if word_count < 1:
@@ -373,11 +376,11 @@ class KeeperPassphraseGenerator(PasswordGenerator):
 
         cap = capitalize
         if cap is None:
-            cap = bool(policy.get('passphrase-capitalize', False)) if policy else False
+            cap = DEFAULT_PASSPHRASE_CAPITALIZE
 
         num = append_number
         if num is None:
-            num = bool(policy.get('passphrase-number', False)) if policy else False
+            num = DEFAULT_PASSPHRASE_NUMBER
 
         return cls(word_count=wc, separator=sep, capitalize=cap, append_number=num)
 

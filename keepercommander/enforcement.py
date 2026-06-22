@@ -24,7 +24,8 @@ from .display import bcolors
 from .params import KeeperParams
 from .error import KeeperApiError, CommandError
 from .generator import (
-    DEFAULT_PASSPHRASE_WORD_COUNT, PP_SEPARATOR_CHARACTERS, _passphrase_separators_from_policy,
+    DEFAULT_PASSPHRASE_WORD_COUNT, DEFAULT_PASSPHRASE_CAPITALIZE, DEFAULT_PASSPHRASE_NUMBER,
+    PP_SEPARATOR_CHARACTERS, _passphrase_separators_from_policy,
     format_passphrase_separators_for_display,
 )
 
@@ -469,8 +470,8 @@ class PasswordComplexityEnforcer:
             failures.append(
                 f'Passphrase must contain at least {min_words} words (got {len(words)}).')
 
-        capitalize = bool(policy.get('passphrase-capitalize', False))
-        append_number = bool(policy.get('passphrase-number', False))
+        capitalize = bool(policy.get('passphrase-capitalize', DEFAULT_PASSPHRASE_CAPITALIZE))
+        append_number = bool(policy.get('passphrase-number', DEFAULT_PASSPHRASE_NUMBER))
 
         if capitalize:
             word_re = re.compile(r'^[A-Z][a-z]{2,}$')

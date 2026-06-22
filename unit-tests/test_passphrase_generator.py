@@ -8,11 +8,13 @@ class TestKeeperPassphraseGenerator(TestCase):
   def test_default_generates_five_hyphen_separated_words(self):
     gen = generator.KeeperPassphraseGenerator()
     with mock.patch('secrets.choice', side_effect=['alpha', 'bravo', 'charlie', 'delta', 'echo']):
-      result = gen.generate()
-    self.assertEqual(result, 'alpha-bravo-charlie-delta-echo')
+      with mock.patch('secrets.randbelow', return_value=3):
+        result = gen.generate()
+    self.assertEqual(result, 'Alpha3-Bravo-Charlie-Delta-Echo')
 
   def test_does_not_shuffle_words_like_diceware(self):
-    gen = generator.KeeperPassphraseGenerator(word_count=3, separator=' ')
+    gen = generator.KeeperPassphraseGenerator(
+      word_count=3, separator=' ', capitalize=False, append_number=False)
     with mock.patch('secrets.choice', side_effect=['one', 'two', 'three']):
       result = gen.generate()
     self.assertEqual(result, 'one two three')
@@ -58,6 +60,14 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertTrue(gen.capitalize)
     self.assertTrue(gen.append_number)
 
+  def test_commander_defaults_override_policy_capitalize_and_number(self):
+    gen = generator.KeeperPassphraseGenerator.create_with_options({
+      'passphrase-capitalize': False,
+      'passphrase-number': False,
+    })
+    self.assertTrue(gen.capitalize)
+    self.assertTrue(gen.append_number)
+
   def test_policy_separator_uses_vault_order_not_raw_first_char(self):
     gen = generator.KeeperPassphraseGenerator.create_with_options({
       'passphrase-separator': '!._?-',
@@ -80,8 +90,9 @@ class TestGeneratePasswordPassphrase(TestCase):
   def test_record_edit_generate_password_passphrase(self):
     from keepercommander.commands.record_edit import RecordEditMixin
     with mock.patch('secrets.choice', side_effect=['alpha', 'bravo', 'charlie', 'delta', 'echo']):
-      result = RecordEditMixin.generate_password(['passphrase'])
-    self.assertEqual(result, 'alpha-bravo-charlie-delta-echo')
+      with mock.patch('secrets.randbelow', return_value=5):
+        result = RecordEditMixin.generate_password(['passphrase'])
+    self.assertEqual(result, 'Alpha5-Bravo-Charlie-Delta-Echo')
 
   def test_record_edit_passphrase_uses_policy_when_allowed(self):
     from keepercommander.commands.record_edit import RecordEditMixin
@@ -93,8 +104,9 @@ class TestGeneratePasswordPassphrase(TestCase):
       'passphrase-number': False,
     }
     with mock.patch('secrets.choice', side_effect=['alpha', 'bravo']):
-      result = RecordEditMixin.generate_password(['passphrase'], policy=policy)
-    self.assertEqual(result, 'Alpha_Bravo')
+      with mock.patch('secrets.randbelow', return_value=4):
+        result = RecordEditMixin.generate_password(['passphrase'], policy=policy)
+    self.assertEqual(result, 'Alpha4_Bravo')
 
   def test_record_edit_passphrase_cli_overrides_policy(self):
     from keepercommander.commands.record_edit import RecordEditMixin
