@@ -322,16 +322,18 @@ class CollectionLink(_message.Message):
     def __init__(self, collectionUid: _Optional[bytes] = ..., linkUid: _Optional[bytes] = ..., linkType: _Optional[_Union[CollectionLinkType, str]] = ...) -> None: ...
 
 class ApprovalStatusNode(_message.Message):
-    __slots__ = ("approvalUid", "approvalStatus", "enterpriseUserId", "modified")
+    __slots__ = ("approvalUid", "approvalStatus", "enterpriseUserId", "expireIn", "modified")
     APPROVALUID_FIELD_NUMBER: _ClassVar[int]
     APPROVALSTATUS_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
+    EXPIREIN_FIELD_NUMBER: _ClassVar[int]
     MODIFIED_FIELD_NUMBER: _ClassVar[int]
     approvalUid: bytes
     approvalStatus: ApprovalStatusType
     enterpriseUserId: int
+    expireIn: int
     modified: int
-    def __init__(self, approvalUid: _Optional[bytes] = ..., approvalStatus: _Optional[_Union[ApprovalStatusType, str]] = ..., enterpriseUserId: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
+    def __init__(self, approvalUid: _Optional[bytes] = ..., approvalStatus: _Optional[_Union[ApprovalStatusType, str]] = ..., enterpriseUserId: _Optional[int] = ..., expireIn: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
 
 class ApprovalNode(_message.Message):
     __slots__ = ("approvalUid", "approvalType", "agentUid", "accountInfo", "applicationInfo", "justification", "expireIn", "created")

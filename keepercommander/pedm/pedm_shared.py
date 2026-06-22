@@ -110,15 +110,15 @@ def approval_type_to_name(event_type: int) -> str:
     return 'Other'
 
 def approval_status_to_name(approval_status: int, created: datetime.datetime, expire_in: int) -> str:
-    if approval_status == NotificationCenter_pb2.NAS_APPROVED:
+    if approval_status == pedm_pb2.AST_APPROVED:
         return 'Approved'
-    elif approval_status == NotificationCenter_pb2.NAS_DENIED:
+    elif approval_status == pedm_pb2.AST_DENIED:
         return 'Denied'
-    elif approval_status == NotificationCenter_pb2.NAS_ESCALATED:
+    elif approval_status == pedm_pb2.AST_ESCALATED:
         return 'Escalated'
-    elif approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS:
+    elif approval_status == pedm_pb2.AST_EXPIRED:
         return 'Expired'
-    elif approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
+    elif approval_status == pedm_pb2.AST_UNSPECIFIED:
         return 'Pending'
     else:
         return 'Unsupported'
