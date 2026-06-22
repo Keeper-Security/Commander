@@ -533,7 +533,7 @@ class PasswordComplexityEnforcer:
                         f'Password must contain at least {required} special character(s) (got {count}).')
 
         if not failures:
-            return failures
+            return []
 
         # Vault re-validates as a passphrase when random password rules fail.
         if policy.get('passphrase-allow') is False:
