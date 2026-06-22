@@ -43,7 +43,10 @@ from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_ex
 from ..breachwatch import BreachWatch
 from ..display import bcolors, post_login_summary
 from ..error import CommandError
-from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
+from ..generator import (
+    KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator,
+    KeeperPassphraseGenerator, PASSPHRASE_SEPARATOR_HELP,
+)
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
 from ..security_audit import needs_security_audit, update_security_audit_data
@@ -402,6 +405,30 @@ random_group.add_argument(
 )
 
 passphrase_group = generate_parser.add_argument_group('Keeper Passphrase')
+passphrase_group.add_argument('--passphrase', dest='passphrase', action='store_true',
+                              help='Generate a vault-style passphrase from the EFF word list')
+passphrase_group.add_argument(
+    '--pp-separator', '-pps', dest='pp_separator', action='store',
+    help=f'Word separator (single character, or "space"). Allowed: {PASSPHRASE_SEPARATOR_HELP}. '
+         'Overrides enterprise policy for this command.'
+)
+passphrase_group.add_argument(
+    '--pp-capitalize', '-ppc', dest='pp_capitalize', action='store_true',
+    help='Capitalize the first letter of each word. Overrides enterprise policy for this command.'
+)
+passphrase_group.add_argument(
+    '--pp-no-capitalize', dest='pp_capitalize', action='store_false',
+    help='Do not capitalize words. Overrides enterprise policy for this command.'
+)
+passphrase_group.add_argument(
+    '--pp-number', '-ppn', dest='pp_number', action='store_true',
+    help='Append a digit (0-9) to the first word only. Overrides enterprise policy for this command.'
+)
+passphrase_group.add_argument(
+    '--pp-no-number', dest='pp_number', action='store_false',
+    help='Do not append a digit to the first word. Overrides enterprise policy for this command.'
+)
+passphrase_group.set_defaults(pp_capitalize=None, pp_number=None)
 passphrase_group.add_argument('--recoveryphrase', dest='recoveryphrase', action='store_true',
                               help='Generate Generate a 24-word recovery phrase')
 
@@ -2208,7 +2235,29 @@ class GenerateCommand(Command):
 
         if kwargs.get('crypto') is True:
             kpg = CryptoPassphraseGenerator()
-        if kwargs.get('recoveryphrase') is True:
+        elif kwargs.get('passphrase') is True:
+            from ..enforcement import PasswordComplexityEnforcer
+            policy = PasswordComplexityEnforcer.get_policy(params)
+            word_count = length if length != 20 else None
+            pp_separator = kwargs.get('pp_separator')
+            if isinstance(pp_separator, str) and pp_separator.lower() in ('space', 'sp'):
+                pp_separator = ' '
+            elif isinstance(pp_separator, str) and pp_separator:
+                pp_separator = pp_separator[0]
+            else:
+                pp_separator = None
+            if policy and policy.get('passphrase-allow') is False:
+                logging.warning('Passphrase generation is disabled by enterprise policy; using random password.')
+                kpg = KeeperPasswordGenerator.create_from_policy(policy, length_override=word_count)
+            else:
+                kpg = KeeperPassphraseGenerator.create_with_options(
+                    policy,
+                    word_count=word_count,
+                    separator=pp_separator,
+                    capitalize=kwargs.get('pp_capitalize'),
+                    append_number=kwargs.get('pp_number'),
+                )
+        elif kwargs.get('recoveryphrase') is True:
             kpg = DicewarePasswordGenerator(24, word_list_file='bip-39.english.txt', delimiter=' ')
         elif isinstance(kwargs.get('dice_rolls'), int):
             dice_rolls = kwargs.get('dice_rolls')
