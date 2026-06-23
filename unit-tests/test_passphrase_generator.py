@@ -109,9 +109,14 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertEqual(generator.clamp_passphrase_word_count(2), 5)
     self.assertEqual(generator.clamp_passphrase_word_count(9), 9)
     self.assertEqual(generator.clamp_passphrase_word_count(12), 9)
-    with self.assertLogs('root', level='WARNING') as logs:
+
+  def test_word_count_clamp_logs_warning(self):
+    with mock.patch('keepercommander.generator.logging.warning') as mock_warning:
       generator.clamp_passphrase_word_count(12)
-    self.assertIn('between 5 and 9', logs.output[0])
+    mock_warning.assert_called_once()
+    args, _ = mock_warning.call_args
+    self.assertIn('between', args[0])
+    self.assertEqual(args[1:], (5, 9, 9))
 
   def test_loads_bundled_eff_wordlist(self):
     words = generator._load_wordlist()
