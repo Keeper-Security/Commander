@@ -9,13 +9,14 @@
 #
 
 import abc
+import difflib
 import hashlib
 import logging
 import os
 import secrets
 import string
 from secrets import choice
-from typing import Optional, List, Iterator, Sequence
+from typing import Optional, List, Iterator, Sequence, Tuple
 from collections import namedtuple
 
 from . import crypto
@@ -27,10 +28,30 @@ PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 PP_SEPARATOR_CHARACTERS = '-._?! '
 DEFAULT_PASSPHRASE_SEPARATOR = '-'
 DEFAULT_PASSPHRASE_WORD_COUNT = 5
+MIN_PASSPHRASE_WORD_COUNT = 5
+MAX_PASSPHRASE_WORD_COUNT = 9
 DEFAULT_PASSPHRASE_CAPITALIZE = True
 DEFAULT_PASSPHRASE_NUMBER = True
+GEN_PASSWORD_ALGORITHMS = ('rand', 'dice', 'crypto', 'passphrase')
 DEFAULT_DICEWARE_WORDLIST = 'diceware.wordlist.asc.txt'
 PASSPHRASE_SEPARATOR_HELP = '- . _ ? ! space'
+
+
+def clamp_passphrase_word_count(word_count):
+    # type: (Optional[int]) -> int
+    """Clamp passphrase word count to the Vault range (5-9 words)."""
+    if not isinstance(word_count, int):
+        return DEFAULT_PASSPHRASE_WORD_COUNT
+    original = word_count
+    if word_count < MIN_PASSPHRASE_WORD_COUNT:
+        word_count = MIN_PASSPHRASE_WORD_COUNT
+    elif word_count > MAX_PASSPHRASE_WORD_COUNT:
+        word_count = MAX_PASSPHRASE_WORD_COUNT
+    if word_count != original:
+        logging.warning(
+            'Passphrase word count must be between %d and %d; using %d.',
+            MIN_PASSPHRASE_WORD_COUNT, MAX_PASSPHRASE_WORD_COUNT, word_count)
+    return word_count
 
 
 def format_passphrase_separators_for_display(separators=None):
@@ -202,6 +223,25 @@ def _default_passphrase_separator_from_policy(policy_sep):
     return allowed[0] if allowed else DEFAULT_PASSPHRASE_SEPARATOR
 
 
+def resolve_gen_password_algorithm(parameters):
+    # type: (Optional[Sequence[str]]) -> Tuple[Optional[str], Optional[str]]
+    """Resolve $GEN password algorithm; return (algorithm, error_message)."""
+    if not parameters:
+        return 'rand', None
+    first = parameters[0].strip()
+    first_lower = first.lower()
+    if first_lower in GEN_PASSWORD_ALGORITHMS:
+        return first_lower, None
+    if first.isdigit():
+        return 'rand', None
+    suggestions = difflib.get_close_matches(first_lower, GEN_PASSWORD_ALGORITHMS, n=1, cutoff=0.6)
+    message = f'Unknown $GEN password algorithm "{first}".'
+    if suggestions:
+        message += f' Did you mean "{suggestions[0]}"?'
+    message += f' Valid algorithms: {", ".join(GEN_PASSWORD_ALGORITHMS)}.'
+    return None, message
+
+
 def _parse_gen_bool(value):
     # type: (str) -> Optional[bool]
     normalized = value.strip().lower()
@@ -212,52 +252,105 @@ def _parse_gen_bool(value):
     return None
 
 
+def _is_strict_gen_bool_token(value):
+    # type: (str) -> bool
+    return value.strip().lower() in ('true', 'false')
+
+
+def _parse_gen_bool_strict(value, param_name):
+    # type: (str, str) -> Tuple[Optional[bool], Optional[str]]
+    normalized = value.strip().lower()
+    if normalized == 'true':
+        return True, None
+    if normalized == 'false':
+        return False, None
+    return None, (
+        f'Invalid $GEN:passphrase {param_name} parameter "{value}". '
+        f'Expected true or false.')
+
+
+def _is_passphrase_separator_token(token):
+    # type: (str) -> bool
+    if token.lower() in ('space', 'sp'):
+        return True
+    return len(token) == 1 and token in PP_SEPARATOR_CHARACTERS
+
+
+def _parse_passphrase_separator_token(token):
+    # type: (str) -> Tuple[Optional[str], Optional[str]]
+    if token.lower() in ('space', 'sp'):
+        return ' ', None
+    if len(token) == 1 and token in PP_SEPARATOR_CHARACTERS:
+        return token, None
+    return None, (
+        f'Invalid passphrase separator "{token}". '
+        f'Allowed: {format_passphrase_separators_for_display(PP_SEPARATOR_CHARACTERS)}.')
+
+
 def parse_passphrase_gen_parameters(parameters):
-    # type: (Optional[Sequence[str]]) -> PassphraseGenOptions
+    # type: (Optional[Sequence[str]]) -> Tuple[PassphraseGenOptions, Optional[str]]
     """Parse $GEN:passphrase optional parameters.
 
     Format: $GEN:passphrase[,word_count][,separator][,capitalize][,number]
-    Examples:
-        $GEN:passphrase,7
-        $GEN:passphrase,7,_
-        $GEN:passphrase,7,_,true,true
-        $GEN:passphrase,7,space,false,true
+    word_count must be between 5 and 9 (Vault range).
     """
+    empty = PassphraseGenOptions(None, None, None, None)
     if not parameters:
-        return PassphraseGenOptions(None, None, None, None)
+        return empty, None
 
-    extras = [p.strip() for p in parameters if p.strip() and p.strip() != 'passphrase']
+    tokens = [p if isinstance(p, str) else str(p) for p in parameters]
+    if not tokens or tokens[0].strip().lower() != 'passphrase':
+        return empty, None
+
+    extras = tokens[1:]
+    if any(t.strip() == '' for t in extras):
+        return empty, (
+            'Incomplete $GEN:passphrase parameters: missing value after comma. '
+            'Format: $GEN:passphrase[,word_count][,separator][,capitalize][,number]')
+
     word_count = None
     separator = None
     capitalize = None
     append_number = None
     idx = 0
 
-    if idx < len(extras) and extras[idx].isdigit():
-        word_count = int(extras[idx])
+    if idx < len(extras):
+        token = extras[idx].strip()
+        if token.isdigit():
+            word_count = int(token)
+            if word_count < MIN_PASSPHRASE_WORD_COUNT or word_count > MAX_PASSPHRASE_WORD_COUNT:
+                return empty, (
+                    f'Passphrase word count must be between {MIN_PASSPHRASE_WORD_COUNT} '
+                    f'and {MAX_PASSPHRASE_WORD_COUNT} (got {word_count}).')
+            idx += 1
+        elif not _is_passphrase_separator_token(token) and not _is_strict_gen_bool_token(token):
+            return empty, (
+                f'Invalid passphrase word count "{token}". '
+                f'Expected an integer between {MIN_PASSPHRASE_WORD_COUNT} '
+                f'and {MAX_PASSPHRASE_WORD_COUNT}.')
+
+    if idx < len(extras) and not _is_strict_gen_bool_token(extras[idx].strip()):
+        separator, sep_error = _parse_passphrase_separator_token(extras[idx].strip())
+        if sep_error:
+            return empty, sep_error
         idx += 1
 
     if idx < len(extras):
-        candidate = extras[idx]
-        if _parse_gen_bool(candidate) is None:
-            if candidate.lower() in ('space', 'sp'):
-                separator = ' '
-            else:
-                separator = _normalize_passphrase_separator(candidate)
-            idx += 1
+        capitalize, cap_error = _parse_gen_bool_strict(extras[idx].strip(), 'capitalize')
+        if cap_error:
+            return empty, cap_error
+        idx += 1
 
     if idx < len(extras):
-        parsed = _parse_gen_bool(extras[idx])
-        if parsed is not None:
-            capitalize = parsed
-            idx += 1
+        append_number, num_error = _parse_gen_bool_strict(extras[idx].strip(), 'number')
+        if num_error:
+            return empty, num_error
+        idx += 1
 
     if idx < len(extras):
-        parsed = _parse_gen_bool(extras[idx])
-        if parsed is not None:
-            append_number = parsed
+        return empty, f'Unexpected $GEN:passphrase parameter "{extras[idx].strip()}".'
 
-    return PassphraseGenOptions(word_count, separator, capitalize, append_number)
+    return PassphraseGenOptions(word_count, separator, capitalize, append_number), None
 
 
 def _resolve_wordlist_path(word_list_file=None):
@@ -317,14 +410,8 @@ class KeeperPassphraseGenerator(PasswordGenerator):
                  capitalize=DEFAULT_PASSPHRASE_CAPITALIZE, append_number=DEFAULT_PASSPHRASE_NUMBER,
                  word_list_file=None):
         # type: (int, str, bool, bool, Optional[str]) -> None
-        if isinstance(word_count, int):
-            if word_count < 1:
-                word_count = 1
-            elif word_count > 40:
-                word_count = 40
-        else:
-            word_count = DEFAULT_PASSPHRASE_WORD_COUNT
-        self.word_count = word_count
+        self.word_count = clamp_passphrase_word_count(
+            word_count if isinstance(word_count, int) else DEFAULT_PASSPHRASE_WORD_COUNT)
         self.separator = _normalize_passphrase_separator(separator)
         self.capitalize = capitalize
         self.append_number = append_number
@@ -361,11 +448,6 @@ class KeeperPassphraseGenerator(PasswordGenerator):
                 wc = DEFAULT_PASSPHRASE_WORD_COUNT
 
         sep = separator
-        if sep is not None and sep not in PP_SEPARATOR_CHARACTERS:
-            logging.warning(
-                'Ignoring invalid passphrase separator %r. Allowed: %s.',
-                sep, format_passphrase_separators_for_display())
-            sep = None
         if sep is None:
             if policy:
                 policy_sep = policy.get('passphrase-separator')
@@ -382,7 +464,9 @@ class KeeperPassphraseGenerator(PasswordGenerator):
         if num is None:
             num = DEFAULT_PASSPHRASE_NUMBER
 
-        return cls(word_count=wc, separator=sep, capitalize=cap, append_number=num)
+        return cls(
+            word_count=clamp_passphrase_word_count(wc) if isinstance(wc, int) else wc,
+            separator=sep, capitalize=cap, append_number=num)
 
     @classmethod
     def create_from_policy(cls, policy, length_override=None, separator_override=None):

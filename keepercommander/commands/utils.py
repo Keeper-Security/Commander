@@ -2240,10 +2240,12 @@ class GenerateCommand(Command):
             policy = PasswordComplexityEnforcer.get_policy(params)
             word_count = length if length != 20 else None
             pp_separator = kwargs.get('pp_separator')
-            if isinstance(pp_separator, str) and pp_separator.lower() in ('space', 'sp'):
-                pp_separator = ' '
-            elif isinstance(pp_separator, str) and pp_separator:
-                pp_separator = pp_separator[0]
+            if isinstance(pp_separator, str) and pp_separator.strip():
+                pp_separator, pp_sep_error = generator._parse_passphrase_separator_token(
+                    pp_separator.strip())
+                if pp_sep_error:
+                    logging.error(pp_sep_error)
+                    return
             else:
                 pp_separator = None
             if policy and policy.get('passphrase-allow') is False:
