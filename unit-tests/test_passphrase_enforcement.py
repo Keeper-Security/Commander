@@ -70,6 +70,14 @@ class TestPassphraseEnforcement(TestCase):
         failures = PasswordComplexityEnforcer.validate_password(password, policy)
         self.assertTrue(any('word' in f.lower() for f in failures))
 
+    def test_passphrase_rejects_more_than_nine_words(self):
+        policy = dict(STRICT_RANDOM_POLICY)
+        password = '-'.join(
+            ['alpha', 'bravo', 'charlie', 'delta', 'echo',
+             'foxtrot', 'golf', 'hotel', 'india', 'juliet'])
+        failures = PasswordComplexityEnforcer.validate_passphrase(password, policy)
+        self.assertTrue(any('at most 9 words' in f for f in failures))
+
     def test_random_password_still_validated(self):
         password = 'ABCDE123!!!'
         failures = PasswordComplexityEnforcer.validate_password(password, STRICT_RANDOM_POLICY)
