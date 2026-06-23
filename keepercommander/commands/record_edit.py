@@ -192,7 +192,7 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
                                            Optional: password length
                                            Passphrase extras (override      $GEN:passphrase,7,_,true,true
                                            policy for generation only):
-                                           word_count[,separator][,capitalize][,number]
+                                           word_count(5-9)[,separator][,capitalize][,number]
                                            Separators allowed: - . _ ? ! space
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
@@ -234,19 +234,49 @@ pam rotation edit --config=PAM_CONFIG_UID \
 
 
 ParsedFieldValue = collections.namedtuple('ParsedFieldValue', ['section', 'type', 'label', 'value'])
+PASSWORD_GEN_FIELD_LABELS = frozenset(('password', 'passphrase', 'pwd', 'secret'))
 
 
 class RecordEditMixin:
     def __init__(self):
         self.warnings = []
+        self.errors = []
         self._password_policy = None   # type: Optional[Dict[str, Any]]
 
     def on_warning(self, message):
         if message:
             self.warnings.append(message)
 
+    def on_error(self, message):
+        if message:
+            self.errors.append(message)
+
+    def abort_if_errors(self):
+        # type: () -> bool
+        """Log command errors and return True when execution must stop."""
+        if not self.errors:
+            return False
+        for error in self.errors:
+            logging.warning(error)
+        self.errors.clear()
+        return True
+
     def on_info(self, message):
         logging.info(message)
+
+    def warn_wrong_password_gen_field(self, parsed_field):
+        # type: (ParsedFieldValue) -> bool
+        """Warn when $GEN is used with a label like Password= instead of password=."""
+        if not parsed_field.value or not parsed_field.value.startswith('$GEN'):
+            return False
+        if parsed_field.type == 'password':
+            return False
+        if (parsed_field.label or '').lower() not in PASSWORD_GEN_FIELD_LABELS:
+            return False
+        self.on_error(
+            f'Use lowercase field type password=\'{parsed_field.value}\' '
+            f'instead of {parsed_field.label}=... ($GEN only works on password fields).')
+        return True
 
     @staticmethod
     def parse_field(field):   # type: (str) -> ParsedFieldValue
@@ -296,7 +326,11 @@ class RecordEditMixin:
             elif parsed_field.type == 'password':
                 action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
-                    record.password = self.generate_password(action_params, policy=self._password_policy)
+                    password, gen_error = self.generate_password(action_params, policy=self._password_policy)
+                    if gen_error:
+                        self.on_error(gen_error)
+                    elif password is not None:
+                        record.password = password
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
                         record.password = action_params[0]
@@ -346,7 +380,8 @@ class RecordEditMixin:
             if value.startswith(':'):
                 gen_parameters = value[1:]
                 if gen_parameters and isinstance(parameters, list):
-                    parameters.extend((x.strip() for x in gen_parameters.split(',')))
+                    for part in gen_parameters.split(','):
+                        parameters.append(part.strip() if part.strip() else '')
             return True
 
     def is_base64_value(self, value, parameters):    # type: (str, List[str]) -> Optional[bool]
@@ -400,23 +435,27 @@ class RecordEditMixin:
         }
 
     @staticmethod
-    def generate_password(parameters=None, policy=None):   # type: (Optional[Sequence[str]], Optional[dict]) -> str
+    def generate_password(parameters=None, policy=None):   # type: (Optional[Sequence[str]], Optional[dict]) -> tuple
+        algorithm, error = generator.resolve_gen_password_algorithm(
+            parameters if isinstance(parameters, (tuple, list, set)) else None)
+        if error:
+            return None, error
+
+        length = None
         if isinstance(parameters, (tuple, list, set)):
-            algorithm = next((x for x in parameters if x in ('rand', 'dice', 'crypto', 'passphrase')), 'rand')
             length = next((x for x in parameters if x.isnumeric()), None)
             if isinstance(length, str) and len(length) > 0:
                 try:
                     length = int(length)
                 except ValueError:
                     pass
-        else:
-            algorithm = 'rand'
-            length = None
 
         if algorithm == 'crypto':
             gen = generator.CryptoPassphraseGenerator()
         elif algorithm == 'passphrase':
-            pp_opts = generator.parse_passphrase_gen_parameters(parameters)
+            pp_opts, pp_error = generator.parse_passphrase_gen_parameters(parameters)
+            if pp_error:
+                return None, pp_error
             if policy and policy.get('passphrase-allow') is False:
                 logging.warning('Passphrase generation is disabled by enterprise policy; using random password.')
                 gen = generator.KeeperPasswordGenerator.create_from_policy(
@@ -450,7 +489,7 @@ class RecordEditMixin:
                 else:
                     length = 20
                 gen = generator.KeeperPasswordGenerator(length=length)
-        return gen.generate()
+        return gen.generate(), None
 
     @staticmethod
     def generate_totp_url():
@@ -569,6 +608,8 @@ class RecordEditMixin:
         parsed_fields = collections.deque(fields)
         while len(parsed_fields) > 0:
             parsed_field = parsed_fields.popleft()
+            if self.warn_wrong_password_gen_field(parsed_field):
+                continue
             field_type = parsed_field.type or 'text'
             field_label = parsed_field.label or ''
             skip_validation = not parsed_field.value or parsed_field.value.startswith('$JSON')
@@ -626,12 +667,20 @@ class RecordEditMixin:
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
-                        value = self.generate_password(action_params, policy=self._password_policy)
+                        value, gen_error = self.generate_password(action_params, policy=self._password_policy)
+                        if gen_error:
+                            self.on_error(gen_error)
+                            continue
                     elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
                     elif record_field.type in ('keyPair', 'privateKey'):
                         should_encrypt = 'enc' in action_params
-                        passphrase = self.generate_password() if should_encrypt else None
+                        passphrase = None
+                        if should_encrypt:
+                            passphrase, gen_error = self.generate_password()
+                            if gen_error:
+                                self.on_error(gen_error)
+                                continue
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')
                         value = self.generate_key_pair(key_type, passphrase)
                         if passphrase:
@@ -906,6 +955,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                     field.required = True
                 record.fields.append(field)
             self.assign_typed_fields(record, record_fields)
+
+        if self.abort_if_errors():
+            return
 
         record_uid = str(kwargs.get('record_uid', ''))
         if RecordV3.is_valid_ref_uid(record_uid):
@@ -1298,6 +1350,9 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             self.assign_typed_fields(record, record_fields)
         else:
             raise CommandError('record-update', f'Record \"{record_name}\" can not be edited.')
+
+        if self.abort_if_errors():
+            return
 
         if isinstance(record, vault.TypedRecord):
             pw_failures = PasswordComplexityEnforcer.validate_record(params, record)

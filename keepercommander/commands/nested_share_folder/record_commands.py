@@ -77,7 +77,12 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         folder_uid = self._resolve_folder(params, kwargs.get('folder_uid'))
 
         data = self._build_record_data(params, record_type, title, notes, record_fields)
+        if self.abort_if_errors():
+            return
         self._check_password_policy(params, data, **kwargs)
+
+        if self.abort_if_errors():
+            return
 
         if self.warnings:
             for w in self.warnings:
@@ -205,8 +210,14 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             return action_params[0] if action_params else None
         action_params.clear()
         if self.is_generate_value(raw, action_params):
+            if self.warn_wrong_password_gen_field(parsed):
+                return None
             if parsed.type == 'password':
-                return self.generate_password(action_params, policy=self._password_policy)
+                password, gen_error = self.generate_password(action_params, policy=self._password_policy)
+                if gen_error:
+                    self.on_error(gen_error)
+                    return None
+                return password
             if parsed.type in ('oneTimeCode', 'otp'):
                 return self.generate_totp_url()
             return raw
@@ -238,6 +249,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
         for spec in [f.strip() for f in kwargs.get('fields', []) if f.strip()]:
             try:
                 parsed = RecordEditMixin.parse_field(spec)
+                if self.warn_wrong_password_gen_field(parsed):
+                    continue
                 value = self._resolve_field_value(parsed)
                 if value is None:
                     continue
@@ -249,6 +262,9 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     fields[parsed.type] = value
             except ValueError as e:
                 raise CommandError('nsf-record-update', f'Invalid field specification: {e}')
+
+        if self.abort_if_errors():
+            return
 
         if self.warnings:
             for w in self.warnings:
