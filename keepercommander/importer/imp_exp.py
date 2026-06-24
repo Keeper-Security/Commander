@@ -133,7 +133,7 @@ def get_folder_path(params, folder_uid):
 
 
 def convert_keeper_record(record, has_attachments=False):
-    # type: (KeeperParams, dict, bool) -> Optional[ImportRecord]
+    # type: (dict, bool) -> Optional[ImportRecord]
     record_uid = record.get('record_uid')
     if not record_uid:
         logging.debug('Invalid Keeper record: no record uid')
