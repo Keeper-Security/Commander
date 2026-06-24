@@ -349,8 +349,8 @@ class TestRegister(TestCase):
 
         self.assertFalse(record_msgs, 'record protos must not carry folder-wide expiration')
 
-    def test_share_folder_prepare_request_skips_record_expiration_when_records_specified(self):
-        """Per-record expiration is routed through the record share API, not SharedFolderUpdateRecord."""
+    def test_share_folder_prepare_request_sets_folder_and_record_expiration_when_records_specified(self):
+        """With -r and --expire-in, folder user and record share both get timers; not SharedFolderUpdateRecord."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
@@ -359,6 +359,9 @@ class TestRegister(TestCase):
         curr_sf.setdefault('users', [])
         curr_sf.setdefault('records', [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}])
         future_ts = int(datetime.datetime.now().timestamp()) + 86_400
+
+        params.key_cache['user2@keepersecurity.com'] = mock.MagicMock(
+            rsa=utils.base64_url_decode(vault_env.encoded_public_key), ec=None)
 
         rq = register.ShareFolderCommand.prepare_request(
             params,
@@ -374,9 +377,11 @@ class TestRegister(TestCase):
         user_msgs = list(rq.sharedFolderAddUser) + list(rq.sharedFolderUpdateUser)
         record_msgs = list(rq.sharedFolderAddRecord) + list(rq.sharedFolderUpdateRecord)
 
+        self.assertTrue(user_msgs, 'expected folder user share with expiration')
         for m in user_msgs:
-            self.assertEqual(m.expiration, 0)
-            self.assertFalse(m.rotateOnExpiration)
+            self.assertGreater(m.expiration, 0)
+            self.assertTrue(m.rotateOnExpiration)
+            self.assertEqual(m.timerNotificationType, record_pb2.NOTIFY_OWNER)
 
         self.assertTrue(record_msgs, 'expected record permission update')
         for m in record_msgs:

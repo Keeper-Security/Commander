@@ -20,7 +20,7 @@ import math
 import re
 import time
 import urllib.parse
-from typing import Optional, Dict, Iterable, Any, Set, List, Union
+from typing import Optional, Dict, Iterable, Any, Set, List, Union, Tuple
 from urllib.parse import urlunparse
 
 from tabulate import tabulate
@@ -256,6 +256,35 @@ def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (
     return expiration_seconds
 
 
+def format_share_expiration_ms(expiration_ms):   # type: (int) -> str
+    if expiration_ms > 0:
+        return str(datetime.datetime.fromtimestamp(expiration_ms / 1000))
+    if expiration_ms < 0:
+        return 'never'
+    return ''
+
+
+def _folder_share_expiration_lookups(rq):   # type: (folder_pb2.SharedFolderUpdateV3Request) -> Tuple[Dict[str, int], Dict[str, int]]
+    user_exp = {}
+    for uo in list(rq.sharedFolderAddUser) + list(rq.sharedFolderUpdateUser):
+        if uo.expiration:
+            user_exp[uo.username.lower()] = uo.expiration
+    team_exp = {}
+    for to in list(rq.sharedFolderAddTeam) + list(rq.sharedFolderUpdateTeam):
+        if to.expiration:
+            team_exp[utils.base64_url_encode(to.teamUid)] = to.expiration
+    return user_exp, team_exp
+
+
+def _record_share_expiration_lookup(rq):   # type: (record_pb2.RecordShareUpdateRequest) -> Dict[Tuple[str, str], int]
+    lookup = {}
+    for attr in ('addSharedRecord', 'updateSharedRecord'):
+        for ro in getattr(rq, attr):
+            if ro.expiration:
+                lookup[(utils.base64_url_encode(ro.recordUid), ro.toUsername.lower())] = ro.expiration
+    return lookup
+
+
 class ShareFolderCommand(Command):
     def get_parser(self):
         return share_folder_parser
@@ -475,7 +504,8 @@ class ShareFolderCommand(Command):
 
         Expiration must not be set on SharedFolderUpdateRecord — that removes the record
         from the shared folder (and the owner's vault) when it expires. Per-user record
-        expiration is applied through the record share API instead.
+        expiration is applied through the record share API; folder user/team expiration
+        is set separately via shared_folder_update_v3 in prepare_request.
 
         When setting a positive expiration, the server only inserts expiration rows on
         create, so we revoke the existing share and re-grant in separate requests.
@@ -588,17 +618,8 @@ class ShareFolderCommand(Command):
         action = kwargs.get('action') or 'grant'
         mr = kwargs.get('manage_records')
         mu = kwargs.get('manage_users')
-        per_record_timer = bool(rec_uids) and isinstance(share_expiration, int)
-
         def apply_share_expiration(target):
-            """Set expiration / timer / rotateOnExpiration on a User/Team share update proto.
-
-            When -r and --expire-in are used together, the timer belongs on the per-user
-            record share (records_share_update), not the folder user share. The server
-            enforces a longer minimum (e.g. 5 minutes) on folder-level ROE timers.
-            """
-            if per_record_timer:
-                return
+            """Set expiration / timer / rotateOnExpiration on a User/Team share update proto."""
             if not isinstance(share_expiration, int):
                 return
             if share_expiration > 0:
@@ -635,8 +656,7 @@ class ShareFolderCommand(Command):
                                                 or (current_user.get('manage_records') is True) == (mr == 'on'))
                                 mu_unchanged = (mu is None
                                                 or (current_user.get('manage_users') is True) == (mu == 'on'))
-                                if mr_unchanged and mu_unchanged and (
-                                        per_record_timer or not isinstance(share_expiration, int)):
+                                if mr_unchanged and mu_unchanged and not isinstance(share_expiration, int):
                                     continue
                         uo.manageRecords = folder_pb2.BOOLEAN_NO_CHANGE if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
                         uo.manageUsers = folder_pb2.BOOLEAN_NO_CHANGE if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
@@ -764,7 +784,8 @@ class ShareFolderCommand(Command):
                 try:
                     rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
                                                rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
-                    for rs in rss.sharedFoldersUpdateV3Response:
+                    for rq_item, rs in zip(chunk, rss.sharedFoldersUpdateV3Response):
+                        user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
                         team_cache = params.available_team_cache or []
                         for attr in (
                                 'sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus',
@@ -776,11 +797,13 @@ class ShareFolderCommand(Command):
                                     team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
                                     if team:
                                         status = t.status
+                                        exp_text = format_share_expiration_ms(team_exp.get(team_uid, 0))
+                                        exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
                                         if status == 'success':
-                                            logging.info('Team share \'%s\' %s', team['team_name'],
+                                            logging.info('Team share \'%s\' %s%s', team['team_name'],
                                                          'added' if attr == 'sharedFolderAddTeamStatus' else
                                                          'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                                         'removed')
+                                                         'removed', exp_suffix)
                                         else:
                                             logging.warning('Team share \'%s\' failed', team['team_name'])
 
@@ -792,11 +815,13 @@ class ShareFolderCommand(Command):
                                 for s in statuses:
                                     username = s.username
                                     status = s.status
+                                    exp_text = format_share_expiration_ms(user_exp.get(username.lower(), 0))
+                                    exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
                                     if status == 'success':
-                                        logging.info('User share \'%s\' %s', username,
+                                        logging.info('User share \'%s\' %s%s', username,
                                                      'added' if attr == 'sharedFolderAddUserStatus' else
                                                      'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                                     'removed')
+                                                     'removed', exp_suffix)
                                     elif status == 'invited':
                                         logging.info('User \'%s\' invited', username)
                                     else:
@@ -1219,6 +1244,7 @@ class ShareRecordCommand(Command):
                 left -= added
 
             rs = api.communicate_rest(params, rq1, 'vault/records_share_update', rs_type=record_pb2.RecordShareUpdateResponse)
+            record_exp = _record_share_expiration_lookup(rq1)
             for attr in ['addSharedRecordStatus', 'updateSharedRecordStatus', 'removeSharedRecordStatus']:
                 if hasattr(rs, attr):
                     statuses = getattr(rs, attr)
@@ -1228,7 +1254,11 @@ class ShareRecordCommand(Command):
                         email = status_rs.username
                         if status == 'success':
                             verb = 'granted to' if attr == 'addSharedRecordStatus' else 'changed for' if attr == 'updateSharedRecordStatus' else 'revoked from'
-                            logging.info('Record \"%s\" access permissions has been %s user \'%s\'', record_uid, verb, email)
+                            exp_text = format_share_expiration_ms(
+                                record_exp.get((record_uid, email.lower()), 0))
+                            exp_suffix = f', record access expires {exp_text}' if exp_text else ''
+                            logging.info('Record \"%s\" access permissions has been %s user \'%s\'%s',
+                                         record_uid, verb, email, exp_suffix)
                         else:
                             verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
 
