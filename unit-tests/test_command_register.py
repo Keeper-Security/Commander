@@ -440,7 +440,9 @@ class TestRegister(TestCase):
         )
 
         self.assertFalse(list(rq.sharedFolderUpdateUser))
-        self.assertTrue(list(rq.sharedFolderUpdateRecord))
+        self.assertTrue(list(rq.sharedFolderAddRecord),
+                        'new record grant should update folder record permissions via add')
+        self.assertFalse(list(rq.sharedFolderUpdateRecord))
 
     def test_share_folder_prepare_request_updates_user_when_folder_wide_expiration(self):
         """Folder-wide --expire-in (no -r) sets expiration on the folder user share."""
@@ -473,9 +475,10 @@ class TestRegister(TestCase):
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
         cmd = register.ShareFolderCommand()
-        with self.assertRaises(CommandError) as ctx:
-            cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
-                        folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
+        with mock.patch('keepercommander.commands.register.SyncDownCommand.execute'):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
+                            folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
         self.assertIn('pamUser', str(ctx.exception))
 
     @staticmethod
