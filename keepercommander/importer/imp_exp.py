@@ -133,7 +133,7 @@ def get_folder_path(params, folder_uid):
 
 
 def convert_keeper_record(record, has_attachments=False):
-    # type: (dict, bool) -> Optional[ImportRecord]
+    # type: (KeeperParams, dict, bool) -> Optional[ImportRecord]
     record_uid = record.get('record_uid')
     if not record_uid:
         logging.debug('Invalid Keeper record: no record uid')
@@ -155,6 +155,7 @@ def convert_keeper_record(record, has_attachments=False):
     rec.title = data.get('title') or ''
     rec.notes = data.get('notes') or ''
     rec.last_modified = record.get('client_modified_time') or 0
+        
     if version == 2:
         rec.login = data.get('secret1') or ''
         rec.password = data.get('secret2') or ''
@@ -237,9 +238,9 @@ def convert_keeper_record(record, has_attachments=False):
                 rec.fields.append(rf)
                 if field_type == 'script' and has_attachments:
                     pass
+                    
     else:
-        return
-
+        return 
     return rec
 
 
@@ -2071,18 +2072,23 @@ def prepare_record_add_or_update(update_flag, params, records):
         If a 100% match is found for a record, then just skip requesting anything; it doesn't need to be changed.
         Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
-       if a unique field match (on title, login, and url) is found, then request a change in password only.
+       If a unique field match (on title, login, and url) is found, then request a change in password only.
+       Unless the record folder is different, then do not update.
     """
     preexisting_entire_record_hash = {}
     preexisting_partial_record_hash = {}
     for record_uid in params.record_cache:
-        import_record = convert_keeper_record(params.record_cache[record_uid])
+        import_record = convert_keeper_record( params.record_cache[record_uid])
         if import_record:
             record_hash = build_record_hash(tokenize_full_import_record(import_record))
-            preexisting_entire_record_hash[record_hash] = record_uid
+            folder_uids = [x for x in params.subfolder_record_cache if record_uid in params.subfolder_record_cache[x]]
+            preexisting_entire_record_hash[record_hash] = {"uid": record_uid,"folders": folder_uids}
             if update_flag:
                 record_hash = build_record_hash(tokenize_record_key(import_record))
-                preexisting_partial_record_hash[record_hash] = record_uid
+                if record_hash in preexisting_partial_record_hash:
+                    preexisting_partial_record_hash[record_hash].append({"uid": record_uid,"folders": folder_uids})
+                else:
+                    preexisting_partial_record_hash[record_hash] = [{"uid": record_uid,"folders":folder_uids}]
         else:
             pass
 
@@ -2116,7 +2122,7 @@ def prepare_record_add_or_update(update_flag, params, records):
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
-            record_uid = preexisting_entire_record_hash[record_hash]
+            record_uid = preexisting_entire_record_hash[record_hash]["uid"]
             if import_record.uid:
                 external_lookup[import_record.uid] = record_uid
             import_record.uid = record_uid
@@ -2129,15 +2135,24 @@ def prepare_record_add_or_update(update_flag, params, records):
             continue
         elif update_flag:
             record_hash = build_record_hash(tokenize_record_key(import_record))
+            matched_uid = None
             if record_hash in preexisting_partial_record_hash:
-                record_uid = preexisting_partial_record_hash[record_hash]
+                for hash_match in preexisting_partial_record_hash[record_hash]:
+                    existing_folder_uids = hash_match["folders"]
+                    import_folder_uids = [fol.uid for fol in (import_record.folders or []) if fol.uid]
+                    same_folder = any([f in existing_folder_uids for f in import_folder_uids]) if import_folder_uids else True
+                    if same_folder:
+                        matched_uid = hash_match["uid"]
+
+            if matched_uid:
                 if import_record.uid:
-                    external_lookup[import_record.uid] = record_uid
-                if record_uid not in record_uid_to_update:
-                    record_uid_to_update.add(record_uid)
-                    import_record.uid = record_uid
+                    external_lookup[import_record.uid] = matched_uid
+                if matched_uid not in record_uid_to_update:
+                    record_uid_to_update.add(matched_uid)
+                    import_record.uid = matched_uid
                     record_to_import.append(import_record)
                 continue
+            # else: fall through and treat as a brand-new record
 
         record_uid = utils.generate_uid()
         if import_record.uid:
