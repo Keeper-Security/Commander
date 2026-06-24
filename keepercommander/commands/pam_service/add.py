@@ -136,7 +136,7 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         if os_type is None:
             print(self._f("The operating system field of the machine record is blank."))
             return
-        if os_type != "windows":
+        if os_type.lower() != "windows":
             print(self._f("The operating system is not Windows. "
                           "PAM can only rotate the services and scheduled task password on Windows."))
             return
