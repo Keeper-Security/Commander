@@ -190,14 +190,13 @@ def get_team_keys(params, team_uid_b64: str):
             rsa_pub = b''
             ec_pub = b''
             for tk in (rs or {}).get('keys', []):
-                if tk.get('team_uid') != team_uid_b64 or 'key' not in tk:
+                if tk.get('team_uid') != team_uid_b64:
                     continue
-                key_type = tk.get('type')
-                encrypted_key = utils.base64_url_decode(tk['key'])
-                if key_type == -1:
-                    ec_pub = encrypted_key
-                elif key_type == -3:
-                    rsa_pub = encrypted_key
+                pub_rsa, pub_ec = api.parse_team_asymmetric_key_entry(tk)
+                if pub_rsa:
+                    rsa_pub = pub_rsa
+                if pub_ec:
+                    ec_pub = pub_ec
             if rsa_pub or ec_pub:
                 params.key_cache[team_uid_b64] = PublicKeys(
                     aes=existing_aes, rsa=rsa_pub, ec=ec_pub)
