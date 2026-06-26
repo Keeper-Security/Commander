@@ -174,6 +174,7 @@ SYMMETRIC_KEY_LENGTH = RANDOM_LENGTH = 32
 READ_TIMEOUT = 1.5
 KRELAY_URL = 'KRELAY_SERVER'
 GATEWAY_TIMEOUT = int(os.getenv('GATEWAY_TIMEOUT')) if os.getenv('GATEWAY_TIMEOUT') else 30000
+# VERIFY_SSL applies to WebSocket SSL only; HTTP uses params.ssl_verify.
 VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 
 # ICE candidate buffering - store until SDP answer is received
@@ -2475,10 +2476,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             logging.debug("Using shared router tokens for WebSocket and streaming HTTP")
             http_session = requests.Session()
             krouter_host = get_router_url(params)
-            verify_ssl = bool(os.environ.get("VERIFY_SSL", "TRUE").upper() == "TRUE")
             try:
                 bind_url = krouter_host + "/api/user/bind_to_controller/" + gateway_uid
-                http_session.get(bind_url, verify=verify_ssl, timeout=10)
+                http_session.get(bind_url, verify=params.ssl_verify, timeout=10)
             except Exception as e:
                 logging.debug(f"bind_to_controller GET failed (continuing): %s", e)
             if http_session.cookies:

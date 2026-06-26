@@ -19,8 +19,6 @@ from ...error import KeeperApiError
 from ...params import KeeperParams
 from ...proto import pam_pb2, router_pb2
 
-VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
-
 
 # `RouterResponseError` lives in `_layer_b` to avoid the pre-existing circular
 # import chain (gateway_helper -> commands.utils -> ksm -> record). It's raised
@@ -162,7 +160,7 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
         rs = requests.request(method,
                               krouter_host + path,
                               params=query_params,
-                              verify=VERIFY_SSL,
+                              verify=params.ssl_verify,
                               headers={
                                 'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
                                 'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
@@ -359,14 +357,14 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto,
     if http_session is not None:
         rs = http_session.post(
             krouter_host + "/api/user/send_controller_message",
-            verify=VERIFY_SSL,
+            verify=params.ssl_verify,
             headers=headers,
             data=encrypted_payload if rq_proto else None
         )
     else:
         rs = requests.post(
             krouter_host + "/api/user/send_controller_message",
-            verify=VERIFY_SSL,
+            verify=params.ssl_verify,
             headers=headers,
             data=encrypted_payload if rq_proto else None
         )
@@ -406,7 +404,7 @@ def get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, r
     try:
         rs = requests.request('post',
                               krouter_host + path,
-                              verify=VERIFY_SSL,
+                              verify=params.ssl_verify,
                               headers={
                                   'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
                                   'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'

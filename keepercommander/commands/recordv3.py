@@ -380,7 +380,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                     logging.info('Uploading %s ...', file['full_path'])
                     response = requests.post(url, data=form_params, files=form_files,
                                              proxies=params.rest_context.proxies,
-                                             verify=params.rest_context.certificate_check)
+                                             verify=params.ssl_verify)
                     if 'success_action_status' in form_params and str(response.status_code) == form_params['success_action_status']:
                         attachments.append(file)
                         # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])

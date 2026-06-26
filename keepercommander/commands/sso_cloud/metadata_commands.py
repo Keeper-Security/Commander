@@ -112,7 +112,7 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         rs = http_requests.get(
             metadata_url,
             proxies=params.rest_context.proxies,
-            verify=params.rest_context.certificate_check,
+            verify=params.ssl_verify,
             timeout=30,
         )
         if rs.status_code != 200:

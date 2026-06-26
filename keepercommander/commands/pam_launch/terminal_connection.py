@@ -65,7 +65,6 @@ from ..pam.router_helper import (
     router_send_action_to_gateway,
     router_get_relay_access_creds,
     get_router_url,
-    VERIFY_SSL,
 )
 from ...proto import pam_pb2
 from ...display import bcolors
@@ -213,7 +212,7 @@ def _notify_gateway_connection_close(params, router_token, terminated=True):
         response = requests.post(
             f"{router_url}/api/device/connect_state",
             json=payload,
-            verify=VERIFY_SSL,
+            verify=params.ssl_verify,
             timeout=10,
         )
         if response.status_code >= 400:
@@ -1360,7 +1359,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             krouter_host = get_router_url(params)
             try:
                 bind_url = krouter_host + "/api/user/bind_to_controller/" + gateway_uid
-                http_session.get(bind_url, verify=VERIFY_SSL, timeout=10)
+                http_session.get(bind_url, verify=params.ssl_verify, timeout=10)
             except Exception as e:
                 logging.debug("bind_to_controller GET failed (continuing): %s", e)
             if http_session.cookies:

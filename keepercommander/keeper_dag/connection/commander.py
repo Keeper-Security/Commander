@@ -45,7 +45,7 @@ class Connection(ConnectionBase):
                          use_write_protobuf=use_write_protobuf)
 
         self.params = params
-        self.verify_ssl = value_to_boolean(os.environ.get("VERIFY_SSL", verify_ssl))
+        self.verify_ssl = False if verify_ssl is False else utils.resolve_http_ssl_verify(params)
         self.is_ws = is_ws
 
         # Deprecated; setting this will override the per-transaction values.
