@@ -72,6 +72,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         help='Discovery job to process.')
     parser.add_argument('--add-all', required=False, dest='add_all', action='store_true',
                         help='Respond with ADD for all prompts.')
+    parser.add_argument('--rules-only', required=False, dest='rules_only', action='store_true',
+                        help='Auto-process with rules without manual prompts.')
     parser.add_argument('--preview', required=False, dest='do_preview', action='store_true',
                         help='Preview the results')
     parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
@@ -1532,6 +1534,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         do_preview = kwargs.get("do_preview", False)
         job_id = kwargs.get("job_id")
         add_all = kwargs.get("add_all", False)
+        rules_only = kwargs.get("rules_only", False)
         debug_level = kwargs.get("debug_level", 0)
 
         all_gateways = GatewayContext.all_gateways(params)
@@ -1620,6 +1623,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                     # Pass method that will display auto added records.
                     auto_add_result_func=self._display_auto_add_results,
+                    
+                    # Process rules with no prompts.
+                    rules_only=rules_only,
 
                     # Provides a cache of the record key to record UID.
                     record_cache=record_cache,
@@ -1633,6 +1639,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         "add_all": add_all
                     }
                 )
+                return
 
                 logging.debug(f"Results: {results}")
 
