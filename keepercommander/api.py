@@ -361,6 +361,39 @@ def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperP
         return need_share_accept
 
 
+def parse_team_asymmetric_key_entry(team_key_entry):   # type: (dict) -> Tuple[bytes, bytes]
+    """Return RSA/EC public key bytes from a ``team_get_keys`` entry.
+
+    Supports the legacy format (``type`` -1/-3 with key in ``key``) and the
+    newer format (``team_public_key`` + ``team_public_key_type``).
+    """
+    rsa = b''
+    ec = b''
+    team_pub = team_key_entry.get('team_public_key')
+    team_pub_type = team_key_entry.get('team_public_key_type')
+    if team_pub:
+        try:
+            pub_bytes = utils.base64_url_decode(team_pub)
+            if team_pub_type == -1:
+                ec = pub_bytes
+            elif team_pub_type == -3:
+                rsa = pub_bytes
+        except Exception:
+            pass
+    if not rsa and not ec and 'key' in team_key_entry:
+        key_type = team_key_entry.get('type')
+        if key_type in (-1, -3):
+            try:
+                key_bytes = utils.base64_url_decode(team_key_entry['key'])
+                if key_type == -1:
+                    ec = key_bytes
+                elif key_type == -3:
+                    rsa = key_bytes
+            except Exception:
+                pass
+    return rsa, ec
+
+
 def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]) -> None
     s = set(team_uids)
     s.difference_update(params.key_cache.keys())
@@ -418,6 +451,11 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                             ec = encrypted_key
                         elif key_type == -3:
                             rsa = encrypted_key
+                        pub_rsa, pub_ec = parse_team_asymmetric_key_entry(tk)
+                        if pub_rsa:
+                            rsa = pub_rsa
+                        if pub_ec:
+                            ec = pub_ec
                         params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes, ec=ec)
                     except Exception as e:
                         logging.debug(e)

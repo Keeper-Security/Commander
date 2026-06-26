@@ -173,6 +173,49 @@ def resolve_team_identifier(params, team_identifier: str) -> Optional[Tuple[str,
     return utils.base64_url_encode(uid_bytes), uid_bytes
 
 
+def resolve_team_display_name(params, team_uid_b64: str) -> str:
+    """Return the team name for *team_uid_b64*, or the UID if unknown."""
+    if not team_uid_b64:
+        return team_uid_b64
+
+    team_cache = getattr(params, 'team_cache', None) or {}
+    cached = team_cache.get(team_uid_b64)
+    if cached:
+        name = cached.get('name') if isinstance(cached, dict) else getattr(cached, 'name', None)
+        if name:
+            return name
+
+    try:
+        share_objects = api.get_share_objects(params).get('teams', {}) or {}
+    except Exception:
+        share_objects = {}
+    team = share_objects.get(team_uid_b64)
+    if isinstance(team, dict):
+        name = team.get('name')
+        if name:
+            return name
+
+    if getattr(params, 'available_team_cache', None) is None:
+        try:
+            api.load_available_teams(params)
+        except Exception:
+            pass
+    for t in (getattr(params, 'available_team_cache', None) or []):
+        if t.get('team_uid') == team_uid_b64:
+            name = t.get('team_name')
+            if name:
+                return name
+
+    enterprise = getattr(params, 'enterprise', None) or {}
+    for t in enterprise.get('teams', []):
+        if t.get('team_uid') == team_uid_b64:
+            name = t.get('name') or t.get('team_name')
+            if name:
+                return name
+
+    return team_uid_b64
+
+
 def get_team_keys(params, team_uid_b64: str):
     """Return the cached ``PublicKeys`` for a team, loading them if needed.
     """
@@ -190,14 +233,13 @@ def get_team_keys(params, team_uid_b64: str):
             rsa_pub = b''
             ec_pub = b''
             for tk in (rs or {}).get('keys', []):
-                if tk.get('team_uid') != team_uid_b64 or 'key' not in tk:
+                if tk.get('team_uid') != team_uid_b64:
                     continue
-                key_type = tk.get('type')
-                encrypted_key = utils.base64_url_decode(tk['key'])
-                if key_type == -1:
-                    ec_pub = encrypted_key
-                elif key_type == -3:
-                    rsa_pub = encrypted_key
+                pub_rsa, pub_ec = api.parse_team_asymmetric_key_entry(tk)
+                if pub_rsa:
+                    rsa_pub = pub_rsa
+                if pub_ec:
+                    ec_pub = pub_ec
             if rsa_pub or ec_pub:
                 params.key_cache[team_uid_b64] = PublicKeys(
                     aes=existing_aes, rsa=rsa_pub, ec=ec_pub)

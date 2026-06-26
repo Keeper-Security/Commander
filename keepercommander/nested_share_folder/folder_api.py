@@ -21,6 +21,7 @@ from .common import (
     resolve_uid_email, encrypt_for_recipient, load_user_public_key,
     parse_folder_access_result,
     resolve_team_identifier, get_team_keys, encrypt_for_team,
+    resolve_team_display_name,
     handle_share_invite,
 )
 from .permissions import (
@@ -298,7 +299,8 @@ def _resolve_accessor(params, accessor_uid, as_team):
         if not resolved:
             raise ValueError(f"Team '{accessor_uid}' not found")
         team_uid_b64, team_uid_bytes = resolved
-        return team_uid_bytes, team_uid_b64, folder_pb2.AT_TEAM
+        label = resolve_team_display_name(params, team_uid_b64)
+        return team_uid_bytes, label, folder_pb2.AT_TEAM
 
     is_email = '@' in accessor_uid
     if is_email:
@@ -334,7 +336,7 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
             team_keys = get_team_keys(params, team_uid_b64)
         access_type_enum = folder_pb2.AT_TEAM
         access_type_label = 'AT_TEAM'
-        identifier_label = team_uid_b64
+        identifier_label = resolve_team_display_name(params, team_uid_b64)
     else:
         is_email = '@' in user_uid
         user_email = user_uid if is_email else None
@@ -594,7 +596,8 @@ def manage_folder_access_batch_v3(params, access_grants=None,
         folder_access_updates=updates or None,
         folder_access_removes=removes or None)
 
-    results = [{'operation': op, 'folder_uid': f, 'user_uid': u,
+    results = [{'operation': op, 'folder_uid': f,
+                'user_uid': (resolve_team_display_name(params, u) if at else u),
                 'access_type': 'AT_TEAM' if at else 'AT_USER',
                 'status': 'SUCCESS', 'message': f'{op.capitalize()} completed', 'success': True}
                for op, f, u, _, at in tracking]

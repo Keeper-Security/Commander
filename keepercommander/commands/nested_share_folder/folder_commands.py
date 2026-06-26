@@ -432,16 +432,19 @@ class NestedShareFolderShareCommand(Command):
         if action == 'grant' and expiration is not None:
             kw['expiration_timestamp'] = expiration
         kind = 'Team' if as_team else 'User'
+        display = (_nsf.resolve_team_display_name(params, recipient)
+                   if as_team else recipient)
         try:
             result = api_func(**kw)
+            label = result.get('user_uid', display)
             if result['success']:
                 taken = result.get('action_taken', verb)
                 if taken == 'already_had_access':
-                    logging.info("%s '%s' already has access", kind, recipient)
+                    logging.info("%s '%s' already has access", kind, label)
                 else:
-                    logging.info("%s share '%s' %s", kind, recipient, verb)
+                    logging.info("%s share '%s' %s", kind, label, verb)
             else:
-                logging.warning("%s share '%s' failed", kind, recipient)
+                logging.warning("%s share '%s' failed", kind, label)
         except ValueError as e:
             logging.warning("nsf-share-folder: %s", e)
         except Exception as e:
