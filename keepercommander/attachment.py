@@ -129,6 +129,7 @@ class UploadTask(abc.ABC):
         self.name = ''
         self.title = ''
         self.thumbnail = None   # type: Optional[bytes]
+        self.is_script = False
 
     def prepare(self):
         pass
@@ -150,10 +151,11 @@ class BytesUploadTask(UploadTask):
 
 
 class FileUploadTask(UploadTask):
-    def __init__(self, file_path):
+    def __init__(self, file_path, is_script=False):
         super().__init__()
         self.file_path = file_path
         self.name = os.path.basename(self.file_path)
+        self.is_script = is_script
 
     def prepare(self):
         self.file_path = os.path.expanduser(self.file_path)
@@ -247,6 +249,7 @@ def upload_attachments(params, record, attachments):
             file.record_uid = file_uid
             file.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
             file.fileSize = task.size + 100
+            file.is_script = task.is_script
             file_data = {
                 'title': task.title or task.name,
                 'name': task.name or '',
@@ -267,6 +270,9 @@ def upload_attachments(params, record, attachments):
             file_uid = uo.record_uid
             task = file_tasks[file_uid]
             if uo.status != record_pb2.FA_SUCCESS:
+                if task.is_script:
+                    raise Exception(
+                        f'Uploading rotation script {task.name}: only the record owner can attach post-rotation scripts.')
                 raise Exception(f'Uploading file {task.name}: Get upload URL error.')
 
             file_key = file_keys[file_uid]
@@ -278,7 +284,7 @@ def upload_attachments(params, record, attachments):
                 }
                 response = requests.post(uo.url, files=files, data=json.loads(uo.parameters),
                                          proxies=params.rest_context.proxies,
-                                         verify=params.rest_context.certificate_check)
+                                         verify=params.ssl_verify)
                 if response.status_code == uo.success_status_code:
                     facade.file_ref.append(file_ref)
                     if record.linked_keys is None:
@@ -295,7 +301,7 @@ def upload_attachments(params, record, attachments):
                         }
                         requests.post(uo.url, files=files, data=json.loads(uo.thumbnail_parameters),
                                       proxies=params.rest_context.proxies,
-                                      verify=params.rest_context.certificate_check)
+                                      verify=params.ssl_verify)
                 except Exception as e:
                     logging.warning('Error uploading thumbnail: %s', e)
     else:
