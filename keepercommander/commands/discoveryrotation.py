@@ -2222,6 +2222,8 @@ domain_group.add_argument('--domain-network-cidr', dest='domain_network_cidr', a
                           help='Domain Network CIDR')
 domain_group.add_argument('--domain-admin', dest='domain_administrative_credential', action='store',
                           help='Domain administrative credential')
+domain_group.add_argument('--domain-user-match', dest='domain_user_match', action='store',
+                          help='Domain user match filter')
 oci_group = common_parser.add_argument_group('oci', 'OCI configuration')
 oci_group.add_argument('--oci-id', dest='oci_id', action='store', help='OCI ID')
 oci_group.add_argument('--oci-admin-id', dest='oci_admin_id', action='store', help='OCI Admin ID')
@@ -2448,6 +2450,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
             domain_network_cidr = kwargs.get('domain_network_cidr')
             if domain_network_cidr:
                 extra_properties.append(f'text.networkCIDR={domain_network_cidr}')
+            domain_user_match = kwargs.get('domain_user_match')
+            if domain_user_match:
+                extra_properties.append(f'text.userMatch={domain_user_match}')
             domain_administrative_credential = kwargs.get('domain_administrative_credential')
             dac = str(domain_administrative_credential or '')
             if dac:
