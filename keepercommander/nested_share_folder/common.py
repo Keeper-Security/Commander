@@ -173,6 +173,49 @@ def resolve_team_identifier(params, team_identifier: str) -> Optional[Tuple[str,
     return utils.base64_url_encode(uid_bytes), uid_bytes
 
 
+def resolve_team_display_name(params, team_uid_b64: str) -> str:
+    """Return the team name for *team_uid_b64*, or the UID if unknown."""
+    if not team_uid_b64:
+        return team_uid_b64
+
+    team_cache = getattr(params, 'team_cache', None) or {}
+    cached = team_cache.get(team_uid_b64)
+    if cached:
+        name = cached.get('name') if isinstance(cached, dict) else getattr(cached, 'name', None)
+        if name:
+            return name
+
+    try:
+        share_objects = api.get_share_objects(params).get('teams', {}) or {}
+    except Exception:
+        share_objects = {}
+    team = share_objects.get(team_uid_b64)
+    if isinstance(team, dict):
+        name = team.get('name')
+        if name:
+            return name
+
+    if getattr(params, 'available_team_cache', None) is None:
+        try:
+            api.load_available_teams(params)
+        except Exception:
+            pass
+    for t in (getattr(params, 'available_team_cache', None) or []):
+        if t.get('team_uid') == team_uid_b64:
+            name = t.get('team_name')
+            if name:
+                return name
+
+    enterprise = getattr(params, 'enterprise', None) or {}
+    for t in enterprise.get('teams', []):
+        if t.get('team_uid') == team_uid_b64:
+            name = t.get('name') or t.get('team_name')
+            if name:
+                return name
+
+    return team_uid_b64
+
+
 def get_team_keys(params, team_uid_b64: str):
     """Return the cached ``PublicKeys`` for a team, loading them if needed.
     """
