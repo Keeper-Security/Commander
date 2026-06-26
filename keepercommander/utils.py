@@ -530,31 +530,42 @@ def value_to_boolean(value):
     else:
         return None
 
-def get_ssl_cert_file():
-    """Resolve the SSL CA bundle path.
+_SSL_CERT_UNSET = object()
+_cached_ssl_cert_file = _SSL_CERT_UNSET
 
-    KEEPER_SSL_CERT_FILE accepts: 'certifi', 'system', 'none'/'false', or a PEM path.
-    Defaults to the bundled certifi store; does not consult SSL_CERT_FILE from the
-    environment to avoid silent trust-store hijacking by unrelated tools.
-    """
+
+def _legacy_ssl_verify_disabled():
+    return os.environ.get('VERIFY_SSL', 'TRUE').upper() == 'FALSE'
+
+
+def get_ssl_cert_file():
+    """Resolve KEEPER_SSL_CERT_FILE to a CA bundle path, or False to disable verification."""
+    global _cached_ssl_cert_file
+    if _cached_ssl_cert_file is not _SSL_CERT_UNSET:
+        return _cached_ssl_cert_file
+
     import certifi
 
     user_cert_file = os.getenv('KEEPER_SSL_CERT_FILE')
     if user_cert_file:
         choice = user_cert_file.lower()
         if choice == 'certifi':
-            return certifi.where()
+            _cached_ssl_cert_file = certifi.where()
+            return _cached_ssl_cert_file
         if choice in ('none', 'false'):
-            return False
+            _cached_ssl_cert_file = False
+            return _cached_ssl_cert_file
         if choice != 'system':
             if os.path.exists(user_cert_file):
-                return user_cert_file
+                _cached_ssl_cert_file = user_cert_file
+                return _cached_ssl_cert_file
             print(
                 f"Warning: KEEPER_SSL_CERT_FILE points to a non-existent file: "
                 f"{user_cert_file}; falling back to the bundled certifi store.",
                 file=sys.stderr,
             )
-            return certifi.where()
+            _cached_ssl_cert_file = certifi.where()
+            return _cached_ssl_cert_file
 
     try:
         system = platform.system()
@@ -575,32 +586,45 @@ def get_ssl_cert_file():
             candidates = ()
         for ca_path in candidates:
             if os.path.exists(ca_path):
-                return ca_path
+                _cached_ssl_cert_file = ca_path
+                return _cached_ssl_cert_file
     except Exception:
         pass
 
-    return certifi.where()
+    _cached_ssl_cert_file = certifi.where()
+    return _cached_ssl_cert_file
+
+
+def resolve_ssl_verify(*, certificate_check_enabled=True):
+    """Return the ``requests`` ``verify`` value (False or a CA bundle path)."""
+    if _legacy_ssl_verify_disabled():
+        return False
+    if not certificate_check_enabled:
+        return False
+    return get_ssl_cert_file()
+
+
+def resolve_http_ssl_verify(params=None):
+    """Resolve HTTP SSL verification for Commander or standalone DAG clients."""
+    if params is not None:
+        return params.ssl_verify
+    return resolve_ssl_verify()
 
 
 def ssl_aware_request(method, url, **kwargs):
     """Make an SSL-aware HTTP request using system CA certificates when available"""
     import requests
-    
-    # Only set verify if not already specified
+
     if 'verify' not in kwargs:
-        cert_file = get_ssl_cert_file()
-        if cert_file is False:
-            kwargs['verify'] = False
-        elif cert_file:
-            kwargs['verify'] = cert_file
-        # If cert_file is None, let requests use its default
-    
+        kwargs['verify'] = resolve_ssl_verify()
+
     return requests.request(method, url, **kwargs)
 
 
 def ssl_aware_get(url, **kwargs):
     """SSL-aware GET request using system CA certificates when available"""
     return ssl_aware_request('GET', url, **kwargs)
+
 
 def is_windows_11():
     if sys.platform != "win32":
