@@ -278,7 +278,7 @@ def upload_attachments(params, record, attachments):
                 }
                 response = requests.post(uo.url, files=files, data=json.loads(uo.parameters),
                                          proxies=params.rest_context.proxies,
-                                         verify=params.rest_context.certificate_check)
+                                         verify=params.ssl_verify)
                 if response.status_code == uo.success_status_code:
                     facade.file_ref.append(file_ref)
                     if record.linked_keys is None:
@@ -295,7 +295,7 @@ def upload_attachments(params, record, attachments):
                         }
                         requests.post(uo.url, files=files, data=json.loads(uo.thumbnail_parameters),
                                       proxies=params.rest_context.proxies,
-                                      verify=params.rest_context.certificate_check)
+                                      verify=params.ssl_verify)
                 except Exception as e:
                     logging.warning('Error uploading thumbnail: %s', e)
     else:
