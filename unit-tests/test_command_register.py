@@ -421,6 +421,51 @@ class TestRegister(TestCase):
             self.assertEqual(sr.timerNotificationType, record_pb2.NOTIFY_OWNER)
             self.assertEqual(utils.base64_url_encode(sr.sharedFolderUid), shared_folder_uid)
 
+    def test_share_folder_prepare_request_remove_user_record_keeps_record_in_folder(self):
+        """Removing user access to one record removes the user from the folder but not the record."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'remove'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+        )
+
+        self.assertTrue(list(rq.sharedFolderRemoveUser))
+        self.assertFalse(list(rq.sharedFolderRemoveRecord))
+
+    def test_share_folder_prepare_record_share_request_remove_user_record(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+
+        rq_list = register.ShareFolderCommand.prepare_record_share_request(
+            params,
+            kwargs={'action': 'remove'},
+            shared_folder_uid=shared_folder_uid,
+            users=['user2@keepersecurity.com'],
+            rec_uids=[record_uid],
+            curr_sf=curr_sf,
+        )
+
+        self.assertIsNotNone(rq_list)
+        self.assertEqual(len(rq_list), 1)
+        self.assertTrue(rq_list[0].removeSharedRecord)
+        self.assertFalse(rq_list[0].addSharedRecord)
+
     def test_share_folder_prepare_request_skips_redundant_user_update_for_record_only(self):
         """When sharing another record without expiration, skip redundant folder user update."""
         params = get_synced_params()
