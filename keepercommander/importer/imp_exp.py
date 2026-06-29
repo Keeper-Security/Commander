@@ -2079,10 +2079,14 @@ def prepare_record_add_or_update(update_flag, params, records):
         import_record = convert_keeper_record(params.record_cache[record_uid])
         if import_record:
             record_hash = build_record_hash(tokenize_full_import_record(import_record))
-            preexisting_entire_record_hash[record_hash] = record_uid
+            folder_uids = [x for x in params.subfolder_record_cache if record_uid in params.subfolder_record_cache[x]]
+            preexisting_entire_record_hash[record_hash] = {"uid": record_uid,"folders": folder_uids}
             if update_flag:
                 record_hash = build_record_hash(tokenize_record_key(import_record))
-                preexisting_partial_record_hash[record_hash] = record_uid
+                if record_hash in preexisting_partial_record_hash:
+                    preexisting_partial_record_hash[record_hash].append({"uid": record_uid,"folders": folder_uids})
+                else:
+                    preexisting_partial_record_hash[record_hash] = [{"uid": record_uid,"folders":folder_uids}]
         else:
             pass
 
