@@ -14,6 +14,11 @@
 from .... import vault
 from ....display import bcolors
 from ...docker import SlackConfig
+from .approvals_setup import (
+    SLACK_APPROVALS_PROFILE,
+    approvals_config_to_record_fields,
+    print_approvals_config,
+)
 from .integration_setup_base import IntegrationSetupCommand
 
 
@@ -24,7 +29,7 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
 
     # ── Slack-specific configuration ──────────────────────────────
 
-    def collect_integration_config(self):
+    def collect_integration_config(self, params):
         print(f"\n{bcolors.BOLD}SLACK_APP_TOKEN:{bcolors.ENDC}")
         print(f"  App-level token for Slack App")
         slack_app_token = self._prompt_with_validation(
@@ -49,13 +54,7 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
             "Invalid Slack Signing Secret (must be exactly 32 characters)"
         )
 
-        print(f"\n{bcolors.BOLD}APPROVALS_CHANNEL_ID:{bcolors.ENDC}")
-        print(f"  Slack channel ID for approval notifications")
-        approvals_channel_id = self._prompt_with_validation(
-            "Channel ID (starts with C):",
-            lambda c: c and c.startswith('C'),
-            "Invalid Approvals Channel ID (must start with 'C')"
-        )
+        approvals = self._collect_approvals_config(params, SLACK_APPROVALS_PROFILE)
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
@@ -66,7 +65,7 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
             slack_app_token=slack_app_token,
             slack_bot_token=slack_bot_token,
             slack_signing_secret=slack_signing_secret,
-            approvals_channel_id=approvals_channel_id,
+            approvals=approvals,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -78,7 +77,7 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
             vault.TypedField.new_field('secret', config.slack_app_token, 'slack_app_token'),
             vault.TypedField.new_field('secret', config.slack_bot_token, 'slack_bot_token'),
             vault.TypedField.new_field('secret', config.slack_signing_secret, 'slack_signing_secret'),
-            vault.TypedField.new_field('text', config.approvals_channel_id, 'approvals_channel_id'),
+            *approvals_config_to_record_fields(config.approvals),
             vault.TypedField.new_field('text', 'true' if config.pedm_enabled else 'false', 'pedm_enabled'),
             vault.TypedField.new_field('text', str(config.pedm_polling_interval), 'pedm_polling_interval'),
             vault.TypedField.new_field('text', 'true' if config.device_approval_enabled else 'false', 'device_approval_enabled'),
@@ -88,7 +87,7 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
     # ── Display ───────────────────────────────────────────────────
 
     def print_integration_specific_resources(self, config):
-        print(f"    • Approvals Channel: {bcolors.OKBLUE}{config.approvals_channel_id}{bcolors.ENDC}")
+        print_approvals_config(config.approvals)
 
     def print_integration_commands(self):
         print(f"\n{bcolors.BOLD}Slack Commands Available:{bcolors.ENDC}")

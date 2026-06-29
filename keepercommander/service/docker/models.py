@@ -11,8 +11,9 @@
 
 """Docker setup data models and constants."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import List
 
 
 # ========================
@@ -78,15 +79,37 @@ class ServiceConfig:
 
 
 @dataclass
+class ApproverTeam:
+    team_uid: str
+    name: str
+    channel_id: str
+    folder_uids: List[str] = field(default_factory=list)
+    record_uids: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ApprovalsConfig:
+    multi_channel_enabled: bool
+    single_channel_id: str = ''
+    teams: List[ApproverTeam] = field(default_factory=list)
+
+
+@dataclass
 class SlackConfig:
     slack_app_token: str
     slack_bot_token: str
     slack_signing_secret: str
-    approvals_channel_id: str
+    approvals: ApprovalsConfig
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+
+    @property
+    def approvals_channel_id(self) -> str:
+        if self.approvals.multi_channel_enabled:
+            return ''
+        return self.approvals.single_channel_id
 
 
 @dataclass

@@ -26,8 +26,9 @@ from ..service_docker_setup import ServiceDockerSetupCommand
 from ...config.config_validation import ConfigValidator, ValidationError
 from ...docker import (
     SetupResult, DockerSetupPrinter, DockerSetupConstants,
-    ServiceConfig, DockerComposeBuilder, DockerSetupBase
+    ServiceConfig, DockerComposeBuilder, DockerSetupBase, ApprovalsConfig,
 )
+from .approvals_setup import ApprovalsChannelProfile, collect_approvals_config
 
 UUID_PATTERN = re.compile(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -48,7 +49,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         """e.g. 'Slack', 'Teams' -- drives all naming conventions."""
 
     @abstractmethod
-    def collect_integration_config(self) -> Any:
+    def collect_integration_config(self, params) -> Any:
         """Prompt user for config values, return a config dataclass."""
 
     @abstractmethod
@@ -138,7 +139,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         )
         parser.add_argument(
             '--config-path', dest='config_path', type=str,
-            help='Path to config.json file (default: ~/.keeper/config.json)'
+            help='Path to config.json file (default: active session config file)'
         )
         parser.add_argument(
             '--timeout', dest='timeout', type=str, default=DockerSetupConstants.DEFAULT_TIMEOUT,
@@ -178,9 +179,11 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, ServiceConfig, str]:
         docker_cmd = ServiceDockerSetupCommand()
 
-        config_path = kwargs.get('config_path') or os.path.expanduser('~/.keeper/config.json')
-        if not os.path.isfile(config_path):
-            raise CommandError(self.get_command_name(), f'Config file not found: {config_path}')
+        config_path = self._require_commander_config_file(
+            self.get_command_name(),
+            kwargs.get('config_path'),
+            params,
+        )
 
         DockerSetupPrinter.print_header("Docker Setup")
 
@@ -248,7 +251,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
 
         DockerSetupPrinter.print_header(f"{name} App Configuration")
-        config = self.collect_integration_config()
+        config = self.collect_integration_config(params)
 
         DockerSetupPrinter.print_step(1, 2, f"Creating {name} config record '{record_name}'...")
         custom_fields = self.build_record_custom_fields(config)
@@ -400,6 +403,26 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return enabled, interval
 
     # -- Input / validation --------------------------------------------
+
+    def _prompt_yes_no(self, question: str, default: bool = False) -> bool:
+        if default:
+            suffix = '[Press Enter for Yes] (y/n):'
+        else:
+            suffix = '[Press Enter for No] (y/n):'
+        response = input(
+            f"{bcolors.OKBLUE}{question} {suffix}{bcolors.ENDC} "
+        ).strip().lower()
+        if not response:
+            return default
+        return response == 'y'
+
+    def _collect_approvals_config(self, params, profile: ApprovalsChannelProfile) -> ApprovalsConfig:
+        return collect_approvals_config(
+            params=params,
+            prompt_yes_no=self._prompt_yes_no,
+            prompt_with_validation=self._prompt_with_validation,
+            profile=profile,
+        )
 
     def _prompt_with_validation(self, prompt: str, validator, error_msg: str) -> str:
         while True:

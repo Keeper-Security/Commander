@@ -47,7 +47,7 @@ service_docker_setup_parser.add_argument(
 )
 service_docker_setup_parser.add_argument(
     '--config-path', dest='config_path', type=str,
-    help='Path to config.json file (default: ~/.keeper/config.json)'
+    help='Path to config.json file (default: active session config file)'
 )
 service_docker_setup_parser.add_argument(
     '--timeout', dest='timeout', type=str, default=DockerSetupConstants.DEFAULT_TIMEOUT,
@@ -72,7 +72,11 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         self._require_file_based_config(params, 'service-docker-setup')
 
         # Parse arguments
-        config_path = self._get_config_path(kwargs.get('config_path') or params.config_filename)
+        config_path = self._require_commander_config_file(
+            'service-docker-setup',
+            kwargs.get('config_path'),
+            params,
+        )
         
         # Print header
         DockerSetupPrinter.print_header("Docker Setup")
@@ -351,10 +355,4 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
 
     def _get_config_path(self, config_path: str = None) -> str:
         """Get and validate config file path"""
-        if not config_path:
-            config_path = os.path.expanduser('~/.keeper/config.json')
-        
-        if not os.path.isfile(config_path):
-            raise CommandError('service-docker-setup', f'Config file not found: {config_path}')
-        
-        return config_path
+        return self._require_commander_config_file('service-docker-setup', config_path)

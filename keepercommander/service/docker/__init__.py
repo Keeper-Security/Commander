@@ -19,7 +19,10 @@ This module provides reusable components for Docker-based integrations:
 - Docker Compose generation
 """
 
-from .models import DockerSetupConstants, SetupResult, ServiceConfig, SlackConfig, TeamsConfig, SetupStep
+from .models import (
+    DockerSetupConstants, SetupResult, ServiceConfig, SlackConfig, TeamsConfig, SetupStep,
+    ApproverTeam, ApprovalsConfig,
+)
 from .printer import DockerSetupPrinter
 from .setup_base import DockerSetupBase
 from .compose_builder import DockerComposeBuilder
@@ -30,6 +33,8 @@ __all__ = [
     'ServiceConfig',
     'SlackConfig',
     'TeamsConfig',
+    'ApproverTeam',
+    'ApprovalsConfig',
     'SetupStep',
     'DockerSetupPrinter',
     'DockerSetupBase',
