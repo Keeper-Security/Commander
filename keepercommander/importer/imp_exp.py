@@ -2129,15 +2129,24 @@ def prepare_record_add_or_update(update_flag, params, records):
             continue
         elif update_flag:
             record_hash = build_record_hash(tokenize_record_key(import_record))
+            matched_uid = None
             if record_hash in preexisting_partial_record_hash:
-                record_uid = preexisting_partial_record_hash[record_hash]
+                for hash_match in preexisting_partial_record_hash[record_hash]:
+                    existing_folder_uids = hash_match["folders"]
+                    import_folder_uids = [fol.uid for fol in (import_record.folders or []) if fol.uid]
+                    same_folder = any([f in existing_folder_uids for f in import_folder_uids]) if import_folder_uids else True
+                    if same_folder:
+                        matched_uid = hash_match["uid"]
+
+            if matched_uid:
                 if import_record.uid:
-                    external_lookup[import_record.uid] = record_uid
-                if record_uid not in record_uid_to_update:
-                    record_uid_to_update.add(record_uid)
-                    import_record.uid = record_uid
+                    external_lookup[import_record.uid] = matched_uid
+                if matched_uid not in record_uid_to_update:
+                    record_uid_to_update.add(matched_uid)
+                    import_record.uid = matched_uid
                     record_to_import.append(import_record)
                 continue
+            # else: fall through and treat as a brand-new record
 
         record_uid = utils.generate_uid()
         if import_record.uid:
