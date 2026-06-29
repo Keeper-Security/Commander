@@ -3695,7 +3695,7 @@ def add_pam_scripts(params, record, scripts):
             facade = record_facades.FileRefRecordFacade()
             facade.record = rec
             pre = set(facade.file_ref)
-            upload_task = attachment.FileUploadTask(full_name)
+            upload_task = attachment.FileUploadTask(full_name, is_script=True)
             attachment.upload_attachments(params, rec, [upload_task])
             post = set(facade.file_ref)
             df = post.difference(pre)

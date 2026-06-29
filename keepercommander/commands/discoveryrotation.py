@@ -3069,7 +3069,7 @@ class PAMScriptAddCommand(Command):
         facade = record_facades.FileRefRecordFacade()
         facade.record = record
         pre = set(facade.file_ref)
-        upload_task = attachment.FileUploadTask(full_name)
+        upload_task = attachment.FileUploadTask(full_name, is_script=True)
         attachment.upload_attachments(params, record, [upload_task])
         post = set(facade.file_ref)
         df = post.difference(pre)
