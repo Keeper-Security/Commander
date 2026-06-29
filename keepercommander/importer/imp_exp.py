@@ -2120,7 +2120,7 @@ def prepare_record_add_or_update(update_flag, params, records):
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
-            record_uid = preexisting_entire_record_hash[record_hash]
+            record_uid = preexisting_entire_record_hash[record_hash]["uid"]
             if import_record.uid:
                 external_lookup[import_record.uid] = record_uid
             import_record.uid = record_uid
