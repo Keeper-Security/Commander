@@ -243,19 +243,30 @@ class TestNestedShareFolderFolderCommands(TestCase):
             cmd.execute(_make_params(), folder='NewFolder')
         mock_create.assert_called_once()
 
-    def test_mkdir_rejects_uid_in_path(self):
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_resolves_parent_uid_in_path(self, mock_create):
         from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
         parent_uid = 'tY6D-RanxY252zzBY_xU4A'
+        child_uid = utils.generate_uid()
+        mock_create.return_value = {
+            'folder_uid': child_uid, 'status': 'SUCCESS',
+            'message': '', 'success': True,
+        }
         parent_fuid, parent_fobj = _make_folder(
             folder_uid=parent_uid, name='Real Parent')
         cmd = NestedShareFolderMkdirCommand()
-        with self.assertRaises(CommandError) as ctx:
+        with mock.patch('builtins.print'):
             cmd.execute(
                 _make_params(nested_share_folders={parent_uid: parent_fobj}),
                 folder=f'{parent_uid}/My Child Folder',
             )
-        self.assertIn('folder names only', str(ctx.exception))
-        self.assertIn('not UIDs', str(ctx.exception))
+        mock_create.assert_called_once_with(
+            params=mock.ANY,
+            folder_name='My Child Folder',
+            parent_uid=parent_uid,
+            color=None,
+            inherit_permissions=True,
+        )
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_resolves_parent_name_in_path(self, mock_create):
