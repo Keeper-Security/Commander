@@ -7,7 +7,7 @@ Behavior matrix:
 
 | Case                              | configure_resource sent? | connectUsers.uids       | meta has version=1? | local link_user(belongs_to=True) follow-up? |
 | --------------------------------- | ------------------------ | ----------------------- | ------------------- | ------------------------------------------- |
-| set, Layer-B enabled, success     | yes                      | [launch_uid bytes]      | yes                 | yes (preserve legacy parity)                |
+| set, Layer-B enabled, success     | yes                      | [launch_uid bytes]      | yes                 | yes (belongs_to + is_launch_credential)     |
 | clear, Layer-B enabled, success   | yes                      | []                      | yes                 | no (no launch user to mark)                 |
 | set, Layer-B feature-disabled     | no                       | n/a                     | n/a                 | legacy fallback (link+clear+meta)           |
 | set, Layer-B RRC_NOT_ALLOWED + FB | yes (then fall back)     | n/a                     | n/a                 | legacy fallback                             |
@@ -104,11 +104,13 @@ def test_set_path_builds_proto_with_launch_uid_and_meta_v1():
     assert len(rq.connectUsers.uids[0]) == 16  # decoded launch_uid
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    # belongs_to=True follow-up fires only for SET path.
+    # Follow-up preserves krouter flags (KC-1330).
     tdag.link_user.assert_called_once()
     args, kwargs = tdag.link_user.call_args
     assert args[0] == LAUNCH_UID
     assert kwargs.get('belongs_to') is True
+    assert kwargs.get('is_launch_credential') is True
+    assert 'is_admin' not in kwargs
     # No legacy fallback paths invoked.
     tdag.clear_launch_credential_for_resource.assert_not_called()
     tdag.link_user_to_resource.assert_not_called()
@@ -188,9 +190,8 @@ def test_set_path_sends_version_only_meta_and_does_not_clobber_allowed_settings(
 
 
 def test_set_path_with_admin_sends_admin_uid_alongside_connect_users():
-    """Admin + launch in one configure_resource: connectUsers carries the launch
-    uid AND adminUid is set (so krouter flips is_admin even on an existing edge),
-    with admin NOT in connectUsers (so it does not also become a launch cred)."""
+    """Admin + launch (different users): connectUsers carries the launch uid AND
+    adminUid is set; follow-up preserves is_launch_credential on the launch edge."""
     tdag, _ = _make_tdag(initial_meta={'allowedSettings': {'connections': True}})
 
     captured = {}
@@ -212,8 +213,38 @@ def test_set_path_with_admin_sends_admin_uid_alongside_connect_users():
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
     assert meta['allowedSettings'] == {}
-    # belongs_to follow-up fires for the launch user only.
     tdag.link_user.assert_called_once()
+    _, kwargs = tdag.link_user.call_args
+    assert kwargs.get('belongs_to') is True
+    assert kwargs.get('is_launch_credential') is True
+    assert 'is_admin' not in kwargs
+
+
+def test_set_path_same_admin_and_launch_preserves_both_flags_in_follow_up():
+    """Same pamUser for admin + launch: krouter sets both flags; follow-up must
+    not clobber is_admin (KC-1330)."""
+    tdag, _ = _make_tdag(initial_meta={'allowedSettings': {'connections': True}})
+
+    captured = {}
+
+    def _capture(params, rq):
+        captured['rq'] = rq
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=_capture):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=LAUNCH_UID, admin_uid=LAUNCH_UID)
+
+    rq = captured['rq']
+    assert len(rq.connectUsers.uids) == 1
+    assert bytes(rq.adminUid) == bytes(rq.connectUsers.uids[0])
+    tdag.link_user.assert_called_once()
+    args, kwargs = tdag.link_user.call_args
+    assert args[0] == LAUNCH_UID
+    assert kwargs.get('belongs_to') is True
+    assert kwargs.get('is_launch_credential') is True
+    assert kwargs.get('is_admin') is True
 
 
 def test_admin_only_sends_admin_uid_with_empty_connect_users():
