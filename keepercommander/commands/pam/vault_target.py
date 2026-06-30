@@ -6,6 +6,7 @@ from ... import api, record_management, utils, vault, vault_extensions
 from ...error import CommandError
 from ...proto import record_pb2
 from ...subfolder import BaseFolderNode, get_folder_path, try_resolve_path
+from .config_facades import PamConfigurationRecordFacade
 
 
 def is_nested_share_folder(params, folder_uid):
@@ -50,6 +51,167 @@ def resolve_pam_folder_uid(params, folder_name, allow_legacy_user=False):
         return nsf_matches[0]
 
     return None
+
+
+def pam_folder_exists(params, folder_uid):
+    if not folder_uid:
+        return False
+    if folder_uid in getattr(params, 'folder_cache', {}):
+        return True
+    if folder_uid in getattr(params, 'nested_share_folders', {}):
+        return True
+    subfolder = getattr(params, 'subfolder_cache', {}).get(folder_uid)
+    return isinstance(subfolder, dict) and subfolder.get('source') == 'nested_share_folder'
+
+
+def get_pam_folder_path(params, folder_uid, delimiter='/'):
+    if not folder_uid:
+        return ''
+
+    parts = []
+    uid = folder_uid
+    seen = set()
+    while uid and uid not in seen:
+        seen.add(uid)
+        folder = getattr(params, 'folder_cache', {}).get(uid)
+        if folder is not None:
+            name = str(folder.name or '').replace(delimiter, delimiter * 2)
+            parts.insert(0, name)
+            uid = folder.parent_uid
+            continue
+
+        nsf = getattr(params, 'nested_share_folders', {}).get(uid)
+        if nsf:
+            name = str(nsf.get('name', '')).replace(delimiter, delimiter * 2)
+            parts.insert(0, name)
+            uid = nsf.get('parent_uid')
+            continue
+        break
+
+    if parts:
+        return delimiter.join(parts)
+    return get_folder_path(params, folder_uid, delimiter=delimiter)
+
+
+def resolve_pam_application_folder(params, pam_config_uid, command='pam'):
+    pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
+    if not pam_config_record:
+        raise CommandError(command, f'PAM Configuration not found: {pam_config_uid}')
+
+    facade = PamConfigurationRecordFacade()
+    facade.record = pam_config_record
+    facade.load_typed_fields()
+    folder_uid = facade.folder_uid
+    if not folder_uid:
+        raise CommandError(
+            command,
+            f"PAM Configuration '{pam_config_record.title}' has no application folder configured.\n"
+            f'Please configure the application folder in the PAM Configuration record.')
+
+    if not pam_folder_exists(params, folder_uid):
+        raise CommandError(
+            command,
+            f'Application folder (UID: {folder_uid}) not found in vault.\n'
+            f'Ensure the folder is shared with you.')
+
+    return folder_uid, get_pam_folder_path(params, folder_uid)
+
+
+def find_nsf_users_subfolder(params, parent_uid):
+    if not parent_uid:
+        return None
+
+    for uid, folder in getattr(params, 'nested_share_folders', {}).items():
+        if folder.get('parent_uid') == parent_uid and str(folder.get('name', '')).endswith(' - Users'):
+            return uid
+
+    for uid, folder in getattr(params, 'folder_cache', {}).items():
+        if folder.parent_uid == parent_uid and str(folder.name or '').endswith(' - Users'):
+            return uid
+
+    return None
+
+
+def records_in_folder(params, folder_uid):
+    records = set(getattr(params, 'subfolder_record_cache', {}).get(folder_uid, set()) or set())
+    nsf_records = getattr(params, 'nested_share_folder_records', {})
+    if folder_uid in nsf_records:
+        records.update(nsf_records[folder_uid])
+    return records
+
+
+def resolve_provision_target_folder(params, pam_config_uid, folder_spec=None, department='Default',
+                                      command='pam'):
+    app_uid, app_path = resolve_pam_application_folder(params, pam_config_uid, command=command)
+
+    if folder_spec:
+        folder_spec = str(folder_spec).strip()
+        resolved = resolve_pam_folder_uid(params, folder_spec, allow_legacy_user=True)
+        if resolved:
+            return resolved
+        if folder_spec in getattr(params, 'shared_folder_cache', {}):
+            return folder_spec
+        relative = folder_spec.strip('/')
+        if is_nested_share_folder(params, app_uid):
+            return ensure_pam_folder_path(params, app_uid, relative, command=command)
+        if app_path:
+            return _ensure_legacy_folder_path(params, f'{app_path}/{relative}', command=command)
+        return _ensure_legacy_folder_path(params, relative, command=command)
+
+    if is_nested_share_folder(params, app_uid):
+        users_uid = find_nsf_users_subfolder(params, app_uid)
+        if users_uid:
+            return users_uid
+        return ensure_pam_folder_path(params, app_uid, f'PAM Users/{department}', command=command)
+
+    target_path = f'{app_path}/PAM Users/{department}' if app_path else f'PAM Users/{department}'
+    return _ensure_legacy_folder_path(params, target_path, command=command)
+
+
+def resolve_access_user_save_folder(params, config_uid, folder_spec=None, command='pam-access-user-provision'):
+    if folder_spec:
+        folder_uid = resolve_pam_folder_uid(params, folder_spec, allow_legacy_user=True)
+        if not folder_uid:
+            raise CommandError(command, f'Folder not found: {folder_spec}')
+        return folder_uid
+
+    app_uid, _ = resolve_pam_application_folder(params, config_uid, command=command)
+    if is_nested_share_folder(params, app_uid):
+        return find_nsf_users_subfolder(params, app_uid) or app_uid
+    return app_uid
+
+
+def _ensure_legacy_folder_path(params, folder_path, command='pam'):
+    folder_uid = None
+    rs = try_resolve_path(params, folder_path)
+    if rs:
+        folder_node, remainder = rs
+        if folder_node and not remainder:
+            folder_uid = folder_node.uid
+
+    if folder_uid:
+        return folder_uid
+
+    from ..folder import FolderMakeCommand
+    components = [x.strip() for x in str(folder_path or '').replace('\\', '/').split('/') if x.strip()]
+    current_path = ''
+    for i, component in enumerate(components):
+        current_path = f'{current_path}/{component}' if current_path else component
+        rs = try_resolve_path(params, current_path)
+        if rs and rs[0] and not rs[1]:
+            continue
+        FolderMakeCommand().execute(
+            params,
+            folder=current_path,
+            shared_folder=(i == 0),
+            user_folder=(i != 0),
+        )
+        api.sync_down(params)
+
+    rs = try_resolve_path(params, folder_path)
+    if rs and rs[0] and not rs[1]:
+        return rs[0].uid
+    raise CommandError(command, f'Folder path creation succeeded but final UID not found: {folder_path}')
 
 
 def _find_child_folder_uid(params, parent_uid, name):
