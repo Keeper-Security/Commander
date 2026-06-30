@@ -47,11 +47,12 @@ from keepercommander.commands.base import Command, suppress_exit, raise_parse_ex
 from .. import api, vault, vault_extensions, crypto, utils, generator
 from ..error import CommandError
 from ..params import KeeperParams
-from ..subfolder import try_resolve_path, get_folder_path
-from ..record_management import add_record_to_folder
+from ..subfolder import try_resolve_path
 from ..record_facades import LoginRecordFacade
 from ..proto import APIRequest_pb2
 from ..commands.folder import FolderMakeCommand
+from ..commands.pam.vault_target import (
+    create_record_in_folder, records_in_folder, resolve_provision_target_folder)
 
 # RecordLink and discoveryrotation require pydantic (Python 3.8+)
 try:
@@ -1313,35 +1314,20 @@ class CredentialProvisionCommand(Command):
         username = config['account']['username']
         pam_config_uid = config['account']['pam_config_uid']
 
-        # Get the same folder path that will be used for PAM User creation
         try:
-            gateway_folder_uid, gateway_folder_path = self._get_gateway_application_folder(pam_config_uid, params)
-        except Exception as e:
+            folder_uid = self._resolve_pam_user_folder_uid(config, params)
+        except Exception:
             return False
-
-        # Determine target folder (same logic as _create_pam_user)
-        user_specified_folder = config.get('vault', {}).get('folder')
-
-        if user_specified_folder:
-            target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
-        else:
-            department = config['user'].get('department', 'Default')
-            target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
-
-        # Get folder UID
-        folder_uid = self._get_folder_uid(target_folder_path, params)
 
         if not folder_uid:
             return False
 
-        # Get all records in this folder
-        records_in_folder = params.subfolder_record_cache.get(folder_uid, set())
-
-        if not records_in_folder:
+        records_in_folder_set = records_in_folder(params, folder_uid)
+        if not records_in_folder_set:
             return False
 
         # Search for PAM Users in folder with matching username
-        for record_uid in records_in_folder:
+        for record_uid in records_in_folder_set:
             try:
                 record = vault.KeeperRecord.load(params, record_uid)
 
@@ -1358,7 +1344,7 @@ class CredentialProvisionCommand(Command):
                 if facade.login == username:
                     logging.error(f'❌ Duplicate PAM User found (by username in folder):')
                     logging.error(f'   Username: {username}')
-                    logging.error(f'   Folder: {target_folder_path}')
+                    logging.error(f'   Folder UID: {folder_uid}')
                     logging.error(f'   Existing UID: {record_uid}')
                     logging.error(f'   Title: {record.title}')
                     return True
@@ -1481,28 +1467,7 @@ class CredentialProvisionCommand(Command):
         username = config['account']['username']
         pam_config_uid = config['account']['pam_config_uid']
 
-        # Get gateway application folder from PAM Config
-        gateway_folder_uid, gateway_folder_path = self._get_gateway_application_folder(pam_config_uid, params)
-
-        # Determine target folder
-        user_specified_folder = config.get('vault', {}).get('folder')
-
-        if user_specified_folder:
-            # Check if the value is a folder UID (exists in folder cache)
-            if user_specified_folder in params.folder_cache:
-                folder_uid = user_specified_folder
-            elif user_specified_folder in params.shared_folder_cache:
-                folder_uid = user_specified_folder
-            else:
-                # Treat as a relative folder path
-                self._validate_folder_path(user_specified_folder)
-                target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
-                folder_uid = self._ensure_folder_exists(target_folder_path, params)
-        else:
-            # Auto-generate subfolder based on department
-            department = config['user'].get('department', 'Default')
-            target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
-            folder_uid = self._ensure_folder_exists(target_folder_path, params)
+        folder_uid = self._resolve_pam_user_folder_uid(config, params)
 
         # Create PAM User typed record
         pam_user = vault.TypedRecord()
@@ -1576,7 +1541,7 @@ class CredentialProvisionCommand(Command):
         try:
 
             # Create record in vault and add to folder
-            add_record_to_folder(params, pam_user, folder_uid)
+            create_record_in_folder(params, pam_user, folder_uid, command='credential-provision')
 
             # Sync to get the record UID
             api.sync_down(params)
@@ -1619,6 +1584,20 @@ class CredentialProvisionCommand(Command):
                 f"Example: 'PAM Users/Engineering' (not '/Shared Folders/...')"
             )
 
+    def _resolve_pam_user_folder_uid(self, config: Dict[str, Any], params: KeeperParams) -> str:
+        pam_config_uid = config['account']['pam_config_uid']
+        user_specified_folder = config.get('vault', {}).get('folder')
+        if user_specified_folder:
+            self._validate_folder_path(user_specified_folder)
+        department = config.get('user', {}).get('department', 'Default')
+        return resolve_provision_target_folder(
+            params,
+            pam_config_uid,
+            folder_spec=user_specified_folder,
+            department=department,
+            command='credential-provision',
+        )
+
     def _get_gateway_application_folder(self, pam_config_uid: str, params: KeeperParams) -> Tuple[str, str]:
         """
         Get gateway application folder from PAM Configuration.
@@ -1636,35 +1615,11 @@ class CredentialProvisionCommand(Command):
         Raises:
             ValueError: If PAM Config not found or folder not accessible
         """
-
-        # Load PAM Config record
-        pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
-        if not pam_config_record:
-            raise ValueError(f"PAM Configuration not found: {pam_config_uid}")
-
-        # Use facade to access folder_uid
-        facade = PamConfigurationRecordFacade()
-        facade.record = pam_config_record
-        facade.load_typed_fields()
-
-        folder_uid = facade.folder_uid
-
-        if not folder_uid:
-            raise ValueError(
-                f"PAM Configuration '{pam_config_record.title}' has no application folder configured.\n"
-                f"Please configure the application folder in the PAM Configuration record."
-            )
-
-        # Get folder path from folder_uid using existing utility
-        if folder_uid not in params.folder_cache:
-            raise ValueError(
-                f"Application folder (UID: {folder_uid}) not found in vault.\n"
-                f"Ensure the folder is shared with you."
-            )
-
-        folder_path = get_folder_path(params, folder_uid)
-
-        return folder_uid, folder_path
+        from ..commands.pam.vault_target import resolve_pam_application_folder
+        try:
+            return resolve_pam_application_folder(params, pam_config_uid, command='credential-provision')
+        except CommandError as exc:
+            raise ValueError(str(exc)) from exc
 
     def _ensure_folder_exists(self, folder_path: str, params: KeeperParams) -> Optional[str]:
         """
