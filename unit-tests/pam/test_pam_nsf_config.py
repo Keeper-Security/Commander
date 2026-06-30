@@ -86,21 +86,29 @@ class TestPamVaultTarget(unittest.TestCase):
 
         mock_add_record.assert_called_once_with(params, record, 'legacy_folder')
 
-    @mock.patch('keepercommander.commands.pam.vault_target.place_record_in_folder')
-    @mock.patch('keepercommander.commands.pam.vault_target.record_management.add_record_to_folder')
-    def test_create_record_in_folder_creates_root_then_places_for_nsf_folder(self, mock_add_record, mock_place):
+    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.nested_share_folder.record_api.create_record_v3',
+                return_value={'success': True, 'record_uid': 'nsf_record_uid'})
+    @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
+                return_value={'type': 'pamUser', 'title': 'Test', 'fields': [], 'custom': []})
+    def test_create_record_in_folder_uses_v3_add_for_nsf_folder(self, _extract, mock_create, _sync):
         params = _make_params()
+        params.nested_share_folders['nsf_folder'] = {
+            'name': 'Project - Users',
+            'parent_uid': 'app_uid',
+            'folder_key_unencrypted': b'0' * 32,
+        }
         folder = NestedShareFolderNode()
         folder.uid = 'nsf_folder'
         params.folder_cache[folder.uid] = folder
         record = vault.TypedRecord()
-        record.record_uid = 'record_uid'
 
         create_record_in_folder(params, record, folder.uid, command='pam-access-user-provision')
 
-        mock_add_record.assert_called_once_with(params, record)
-        mock_place.assert_called_once_with(
-            params, 'record_uid', 'nsf_folder', command='pam-access-user-provision')
+        mock_create.assert_called_once()
+        self.assertEqual(mock_create.call_args.kwargs['folder_uid'], 'nsf_folder')
+        self.assertEqual(record.record_uid, 'nsf_record_uid')
+        _sync.assert_called_once_with(params)
 
     def test_resolve_pam_folder_uid_finds_root_nsf_folder_by_name(self):
         params = _make_params()

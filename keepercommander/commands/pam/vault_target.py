@@ -284,8 +284,21 @@ def place_record_in_folder(params, record_uid, folder_uid, command='pam'):
 
 def create_record_in_folder(params, record, folder_uid=None, command='pam'):
     if folder_uid and is_nested_share_folder(params, folder_uid):
-        record_management.add_record_to_folder(params, record)
-        place_record_in_folder(params, record.record_uid, folder_uid, command=command)
+        from ... import vault_extensions
+        from ...nested_share_folder.record_api import create_record_v3
+
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError(command, 'Nested Share Folder record creation requires a typed record')
+
+        result = create_record_v3(
+            params,
+            folder_uid=folder_uid,
+            record_data=vault_extensions.extract_typed_record_data(record),
+        )
+        if not result.get('success'):
+            raise CommandError(command, result.get('message') or 'Failed to create record in Nested Share Folder')
+        record.record_uid = result['record_uid']
+        api.sync_down(params)
     else:
         record_management.add_record_to_folder(params, record, folder_uid)
 
