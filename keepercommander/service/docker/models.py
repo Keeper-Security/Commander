@@ -107,8 +107,6 @@ class SlackConfig:
 
     @property
     def approvals_channel_id(self) -> str:
-        if self.approvals.multi_channel_enabled:
-            return ''
         return self.approvals.single_channel_id
 
 

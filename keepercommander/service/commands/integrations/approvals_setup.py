@@ -257,8 +257,17 @@ def collect_approvals_config(
     if specify_boundaries:
         teams = _collect_team_boundaries(params, teams)
 
+    print(f"\n{bcolors.BOLD}DEFAULT {profile.channel_header}:{bcolors.ENDC}")
+    print(f"  {profile.channel_description} for users not assigned to any approver team")
+    default_channel_id = prompt_with_validation(
+        profile.channel_prompt,
+        profile.validate_channel,
+        profile.channel_error,
+    )
+
     return ApprovalsConfig(
         multi_channel_enabled=True,
+        single_channel_id=default_channel_id,
         teams=teams,
     )
 
@@ -321,7 +330,7 @@ def approvals_config_to_record_fields(config: ApprovalsConfig) -> List:
         ),
         vault.TypedField.new_field(
             'text',
-            '' if config.multi_channel_enabled else config.single_channel_id,
+            config.single_channel_id,
             'approvals_channel_id',
         ),
         vault.TypedField.new_field('multiline', teams_json, 'approvals_teams'),
@@ -334,6 +343,7 @@ def print_approvals_config(config: ApprovalsConfig) -> None:
         return
 
     print(f"    • Multi-Channel Approvers: {bcolors.OKBLUE}enabled ({len(config.teams)} teams){bcolors.ENDC}")
+    print(f"    • Default Approvals Channel: {bcolors.OKBLUE}{config.single_channel_id}{bcolors.ENDC}")
     for team in config.teams:
         print(f"    • {team.name} ({team.team_uid}): channel {bcolors.OKBLUE}{team.channel_id}{bcolors.ENDC}")
         if team.folder_uids:

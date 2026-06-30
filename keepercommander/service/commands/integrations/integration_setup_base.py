@@ -384,7 +384,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _collect_pedm_config(self) -> Tuple[bool, int]:
         print(f"\n{bcolors.BOLD}EPM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
         print(f"  Integrate with Keeper EPM for privilege elevation")
-        enabled = input(f"{bcolors.OKBLUE}Enable EPM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        enabled = self._prompt_yes_no('Enable EPM?', default=False)
         interval = 120
         if enabled:
             interval_input = input(f"{bcolors.OKBLUE}EPM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
@@ -395,7 +395,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
         print(f"\n{bcolors.BOLD}SSO Cloud Device Approval Integration (optional):{bcolors.ENDC}")
         print(f"  Approve SSO Cloud device registrations via {name}")
-        enabled = input(f"{bcolors.OKBLUE}Enable Device Approval? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        enabled = self._prompt_yes_no('Enable Device Approval?', default=False)
         interval = 120
         if enabled:
             interval_input = input(f"{bcolors.OKBLUE}Device approval polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
@@ -405,16 +405,18 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     # -- Input / validation --------------------------------------------
 
     def _prompt_yes_no(self, question: str, default: bool = False) -> bool:
-        if default:
-            suffix = '[Press Enter for Yes] (y/n):'
-        else:
-            suffix = '[Press Enter for No] (y/n):'
-        response = input(
-            f"{bcolors.OKBLUE}{question} {suffix}{bcolors.ENDC} "
-        ).strip().lower()
-        if not response:
-            return default
-        return response == 'y'
+        suffix = '[Press Enter for Yes] (y/n):' if default else '[Press Enter for No] (y/n):'
+        while True:
+            response = input(
+                f"{bcolors.OKBLUE}{question} {suffix}{bcolors.ENDC} "
+            ).strip().lower()
+            if not response:
+                return default
+            if response == 'y':
+                return True
+            if response == 'n':
+                return False
+            print(f"{bcolors.FAIL}Error: Enter y, n, or press Enter for default{bcolors.ENDC}")
 
     def _collect_approvals_config(self, params, profile: ApprovalsChannelProfile) -> ApprovalsConfig:
         return collect_approvals_config(
