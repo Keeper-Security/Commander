@@ -104,20 +104,28 @@ class TestPamProvisionNsf(unittest.TestCase):
         self.assertEqual(mock_create.call_args.args[2], 'nsf_users_uid')
         self.assertEqual(mock_create.call_args.kwargs['command'], 'credential-provision')
 
-    @mock.patch('keepercommander.commands.pam.vault_target.record_management.add_record_to_folder')
-    def test_create_record_in_folder_for_access_user_provision_nsf(self, mock_add):
+    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.nested_share_folder.record_api.create_record_v3',
+                return_value={'success': True, 'record_uid': 'nsf_record_uid'})
+    @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
+                return_value={'type': 'pamUser', 'title': 'Test', 'fields': [], 'custom': []})
+    def test_create_record_in_folder_for_access_user_provision_nsf(self, _extract, mock_create, _sync):
         params = _make_params()
+        params.nested_share_folders['nsf_folder'] = {
+            'name': 'Project - Users',
+            'parent_uid': 'app_uid',
+            'folder_key_unencrypted': b'0' * 32,
+        }
         folder = NestedShareFolderNode()
         folder.uid = 'nsf_folder'
         params.folder_cache[folder.uid] = folder
         record = vault.TypedRecord()
-        record.record_uid = 'record_uid'
 
-        with mock.patch('keepercommander.commands.pam.vault_target.place_record_in_folder') as mock_place:
-            create_record_in_folder(params, record, folder.uid, command='pam-access-user-provision')
-            mock_add.assert_called_once_with(params, record)
-            mock_place.assert_called_once_with(
-                params, 'record_uid', 'nsf_folder', command='pam-access-user-provision')
+        create_record_in_folder(params, record, folder.uid, command='pam-access-user-provision')
+
+        mock_create.assert_called_once()
+        self.assertEqual(mock_create.call_args.kwargs['folder_uid'], 'nsf_folder')
+        self.assertEqual(record.record_uid, 'nsf_record_uid')
 
     def test_resolve_access_user_save_folder_rejects_unknown_folder(self):
         params = _make_params()

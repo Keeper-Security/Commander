@@ -71,11 +71,15 @@ class TestPamVaultTarget(unittest.TestCase):
     @mock.patch('keepercommander.commands.pam.vault_target._create_typed_record_in_nsf', return_value='record_uid')
     def test_create_record_in_folder_creates_directly_in_nsf(self, mock_create_nsf):
         params = _make_params()
+        params.nested_share_folders['nsf_folder'] = {
+            'name': 'Project - Users',
+            'parent_uid': 'app_uid',
+            'folder_key_unencrypted': b'0' * 32,
+        }
         folder = NestedShareFolderNode()
         folder.uid = 'nsf_folder'
         params.folder_cache[folder.uid] = folder
         record = vault.TypedRecord()
-        record.record_uid = 'record_uid'
 
         uid = create_record_in_folder(params, record, folder.uid, command='pam-access-user-provision')
 
