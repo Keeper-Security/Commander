@@ -253,6 +253,7 @@ _You can have only one `pam_configuration` section and the only required paramet
 		"dom_use_ssl": true,
 		"dom_scan_dc_cidr": true,
 		"dom_network_cidr": "192.168.1.0/28",
+		"dom_user_match": "OU=Office Users,DC=example,DC=com",
 		"dom_administrative_credential": "admin1"
 	}
 }
