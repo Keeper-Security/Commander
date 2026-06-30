@@ -86,6 +86,7 @@ from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
 from .pam_service.enable import PAMActionServiceEnableCommand
 from .pam_service.disable import PAMActionServiceDisableCommand
+from .pam_service.map import PAMActionUserServiceMapCommand
 from .pam_saas.set import PAMActionSaasSetCommand
 from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
@@ -304,6 +305,8 @@ class PAMActionServiceCommand(GroupCommand):
                               'Enable service password rotation on a machine or user', 'e')
         self.register_command('disable', PAMActionServiceDisableCommand(),
                               'Disable service password rotation on a machine or user', 'd')
+        self.register_command('map', PAMActionUserServiceMapCommand(),
+                              'Map users to discovered services.', 'm')
         self.default_verb = 'list'
 
 
