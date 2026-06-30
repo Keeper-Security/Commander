@@ -733,13 +733,16 @@ class TunnelDAG:
         ALREADY-EXISTING ACL edge: a standalone configure_resource(adminUid) with no
         connectUsers no-ops on an existing edge (UserRest.kt:331-341 only touches
         is_launch_credential), whereas adminUid alongside connectUsers flips is_admin
-        on that edge (UserRest.kt:295-318). Sent on a user NOT in connectUsers so the
-        admin does not also become a launch credential.
+        on that edge (UserRest.kt:295-318). When admin and launch are different
+        users, adminUid must not appear in connectUsers. When they are the same
+        pamUser, krouter sets both is_admin and is_launch_credential on one edge
+        (UserRest.kt:258-273).
 
         For a fresh launch_uid (no existing edge), krouter creates the new edge with
-        belongs_to=null; a follow-up local DAG-write of belongs_to=True preserves
-        legacy parity. For existing edges, krouter preserves belongs_to already so
-        the follow-up is a no-op.
+        belongs_to=null; a follow-up local DAG-write must set belongs_to=True AND
+        preserve is_launch_credential (and is_admin when admin_uid == launch_uid).
+        Writing belongs_to alone clobbers krouter flags (KC-1330). For existing
+        edges where belongs_to is already true, an unchanged follow-up is a no-op.
 
         Fallback on RRC_NOT_ALLOWED* (or feature-disabled) with KEEPER_DAG_LB_FALLBACK
         enabled: legacy clear + link (if set) + admin link (if set) + meta-upgrade.
@@ -775,7 +778,10 @@ class TunnelDAG:
                     f"launch_uid={launch_uid} admin_uid={admin_uid} via configure_resource"
                 )
                 if launch_uid is not None:
-                    self.link_user(launch_uid, resource_vertex, belongs_to=True)
+                    link_kwargs = dict(belongs_to=True, is_launch_credential=True)
+                    if admin_uid is not None and admin_uid == launch_uid:
+                        link_kwargs['is_admin'] = True
+                    self.link_user(launch_uid, resource_vertex, **link_kwargs)
                 return
             except Exception as err:
                 if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
