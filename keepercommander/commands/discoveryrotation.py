@@ -2353,6 +2353,19 @@ class PamConfigurationEditMixin(RecordEditMixin):
                 rec = recs[0]
         return rec
 
+    @staticmethod
+    def _domain_kwarg_supplied(kwargs, key, config_edit):
+        """Return whether a domain text kwarg should be applied to the record.
+
+        pam config new only sets non-empty values; omitted or empty strings are skipped.
+        pam config edit must support unsetting: an explicit empty string clears the field,
+        while a missing kwarg (None) leaves the existing value unchanged.
+        """
+        val = kwargs.get(key)
+        if config_edit:
+            return val is not None
+        return bool(val)
+
     def parse_properties(self, params, record, **kwargs):  # type: (KeeperParams, vault.TypedRecord, ...) -> None
         extra_properties = []
         self.parse_pam_configuration(params, record, **kwargs)
@@ -2431,14 +2444,35 @@ class PamConfigurationEditMixin(RecordEditMixin):
                 rg = '\n'.join(resource_groups)
                 extra_properties.append(f'multiline.resourceGroups={rg}')
         elif record.record_type == 'pamDomainConfiguration':
+            config_edit = kwargs.get('config_edit', False) is True
             domain_id = kwargs.get('domain_id')
-            if domain_id:
+            if self._domain_kwarg_supplied(kwargs, 'domain_id', config_edit):
                 extra_properties.append(f'text.pamDomainId={domain_id}')
-            host = str(kwargs.get('domain_hostname') or '').strip()
-            port = str(kwargs.get('domain_port') or '').strip()
-            if host or port:
-                val = json.dumps({"hostName": host, "port": port})
-                extra_properties.append(f"f.pamHostname=$JSON:{val}")
+            domain_hostname = kwargs.get('domain_hostname')
+            domain_port = kwargs.get('domain_port')
+            if config_edit:
+                if domain_hostname is not None or domain_port is not None:
+                    existing_host = ''
+                    existing_port = ''
+                    pam_host_field = record.get_typed_field('pamHostname')
+                    if pam_host_field:
+                        current = pam_host_field.get_default_value(dict) or {}
+                        if isinstance(current, dict):
+                            existing_host = str(current.get('hostName') or '').strip()
+                            existing_port = str(current.get('port') or '').strip()
+                    host = str(domain_hostname or '').strip() if domain_hostname is not None else existing_host
+                    port = str(domain_port or '').strip() if domain_port is not None else existing_port
+                    if host or port:
+                        val = json.dumps({"hostName": host, "port": port})
+                        extra_properties.append(f"f.pamHostname=$JSON:{val}")
+                    else:
+                        extra_properties.append('f.pamHostname=')
+            else:
+                host = str(domain_hostname or '').strip()
+                port = str(domain_port or '').strip()
+                if host or port:
+                    val = json.dumps({"hostName": host, "port": port})
+                    extra_properties.append(f"f.pamHostname=$JSON:{val}")
             domain_use_ssl = utils.value_to_boolean(kwargs.get('domain_use_ssl'))
             if domain_use_ssl is not None:
                 val = 'true' if domain_use_ssl else 'false'
@@ -2448,10 +2482,10 @@ class PamConfigurationEditMixin(RecordEditMixin):
                 val = 'true' if domain_scan_dc_cidr else 'false'
                 extra_properties.append(f'checkbox.scanDCCIDR={val}')
             domain_network_cidr = kwargs.get('domain_network_cidr')
-            if domain_network_cidr:
+            if self._domain_kwarg_supplied(kwargs, 'domain_network_cidr', config_edit):
                 extra_properties.append(f'text.networkCIDR={domain_network_cidr}')
             domain_user_match = kwargs.get('domain_user_match')
-            if domain_user_match:
+            if self._domain_kwarg_supplied(kwargs, 'domain_user_match', config_edit):
                 extra_properties.append(f'text.userMatch={domain_user_match}')
             domain_administrative_credential = kwargs.get('domain_administrative_credential')
             dac = str(domain_administrative_credential or '')
@@ -2739,7 +2773,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             orig_shared_folder_uid = value.get('folderUid') or ''
             orig_admin_cred_ref = value.get('adminCredentialRef') or ''
 
-        self.parse_properties(params, configuration, **kwargs)
+        self.parse_properties(params, configuration, config_edit=True, **kwargs)
         self.verify_required(configuration)
 
         record_management.update_record(params, configuration)
