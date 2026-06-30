@@ -156,6 +156,7 @@ class PamConfigEnvironment():
         self.dom_use_ssl: bool = False          # required, checkbox:useSSL
         self.dom_scan_dc_cidr: bool = False     # optional, checkbox:scanDCCIDR
         self.dom_network_cidr: str = ""         # optional, text:networkCIDR
+        self.dom_user_match: str = ""           # optional, text:userMatch
         self.dom_administrative_credential: str = ""  # required, existing pamUser: pamResources.value[0][adminCredentialRef]
         self.admin_credential_ref: str = ""     # UID resolved from dom_administrative_credential by record title
         # Domain Administrator User: pamUser record should have an ACL edge to the pamDomainConfiguration record with is_admin = True
@@ -303,6 +304,8 @@ class PamConfigEnvironment():
             if isinstance(val, bool): self.dom_scan_dc_cidr = val
             val = settings.get("dom_network_cidr", None) # optional
             if isinstance(val, str): self.dom_network_cidr = val
+            val = settings.get("dom_user_match", None) # optional
+            if isinstance(val, str): self.dom_user_match = val
             val = settings.get("dom_administrative_credential", None) # required, existing pamUser
             if isinstance(val, str): self.dom_administrative_credential = val
             # self.admin_credential_ref - will be resolved from dom_administrative_credential (later)
