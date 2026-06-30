@@ -115,9 +115,12 @@ share_folder_parser.add_argument('-f', '--force', dest='force', action='store_tr
                                       'initial sharing action')
 expiration = share_folder_parser.add_mutually_exclusive_group()
 expiration.add_argument('--expire-at', dest='expire_at', action='store', metavar='TIMESTAMP',
-                        help='share expiration: never or ISO datetime (yyyy-MM-dd[ hh:mm:ss])')
+                        help='folder access expiration: never or ISO datetime (yyyy-MM-dd[ hh:mm:ss]). '
+                             'Records inherit folder timing; -r sets record permissions only.')
 expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar='PERIOD',
-                        help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
+                        help='folder access expiration: never or period '
+                             '(<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours|(mi)nutes]). '
+                             'Records inherit folder timing; -r sets record permissions only.')
 share_folder_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
                                  help='rotate the password when the share access expires. '
                                       'Only valid on grant; requires a positive --expire-at/--expire-in '
@@ -489,19 +492,13 @@ class ShareFolderCommand(Command):
                     group_idx += 1
         self.send_requests(params, rq_groups)
 
-        if record_uids and as_users and (
-                action == 'remove'
-                or (action == 'grant' and isinstance(share_expiration, int))):
-            if action == 'grant':
-                api.load_user_public_keys(params, list(as_users), send_invites=False)
-                SyncDownCommand().execute(params, force=True)
+        if record_uids and as_users and action == 'remove':
             record_share_requests = []
             for sf_uid in shared_folder_uids:
                 sh_fol = params.shared_folder_cache.get(sf_uid, {'shared_folder_uid': sf_uid})
                 rs_rqs = ShareFolderCommand.prepare_record_share_request(
                     params, kwargs, sf_uid, list(as_users), list(record_uids),
-                    curr_sf=sh_fol, share_expiration=share_expiration,
-                    rotate_on_expiration=rotate_on_expiration)
+                    curr_sf=sh_fol)
                 if rs_rqs:
                     record_share_requests.extend(rs_rqs)
             if record_share_requests:
@@ -510,127 +507,31 @@ class ShareFolderCommand(Command):
 
     @staticmethod
     def prepare_record_share_request(params, kwargs, shared_folder_uid, users, rec_uids, *,
-                                     curr_sf, share_expiration=None, rotate_on_expiration=False):
-        """Build RecordShareUpdateRequest(s) for shared-folder record access changes.
+                                     curr_sf):
+        """Build RecordShareUpdateRequest(s) to revoke per-user record access on remove.
 
-        Grant with expiration: per-user record timers via records_share_update (not
-        SharedFolderUpdateRecord, which removes the record from the folder when it
-        expires). Positive expiration uses revoke-then-grant because the server only
-        inserts expiration rows on create.
+        --expire-in/--expire-at apply to folder user access only (via
+        shared_folder_update_v3). Records in the folder inherit folder timing; -r sets
+        record permissions only (can_edit/can_share) on SharedFolderUpdateRecord.
 
         Remove with user and record: removeSharedRecord for that user only; does not
-        remove the record from the folder or the user from the folder.
+        remove the record from the folder or the owner's vault.
         """
         if not rec_uids or not users:
             return None
-        action = kwargs.get('action') or 'grant'
+        if (kwargs.get('action') or 'grant') != 'remove':
+            return None
         sf_uid_bytes = utils.base64_url_decode(shared_folder_uid)
 
-        if action == 'remove':
-            rq_remove = record_pb2.RecordShareUpdateRequest()
-            for record_uid in rec_uids:
-                for email in users:
-                    shared_record = record_pb2.SharedRecord()
-                    shared_record.toUsername = email
-                    shared_record.recordUid = utils.base64_url_decode(record_uid)
-                    shared_record.sharedFolderUid = sf_uid_bytes
-                    rq_remove.removeSharedRecord.append(shared_record)
-            return [rq_remove] if rq_remove.removeSharedRecord else None
-
-        if not isinstance(share_expiration, int):
-            return None
-
-        ce = kwargs.get('can_edit')
-        cs = kwargs.get('can_share')
-        regrant_for_expiration = share_expiration > 0
-
-        def apply_share_expiration(shared_record):
-            # type: (record_pb2.SharedRecord) -> None
-            """Set expiration / ROE fields on a SharedRecord proto."""
-            if share_expiration > 0:
-                shared_record.expiration = share_expiration * 1000
-                shared_record.timerNotificationType = record_pb2.NOTIFY_OWNER
-                if rotate_on_expiration:
-                    shared_record.rotateOnExpiration = True
-            elif share_expiration < 0:
-                shared_record.expiration = -1
-
-        def build_shared_record(email, record_uid, rec, existing=None):
-            # type: (str, str, dict, Optional[dict]) -> Optional[record_pb2.SharedRecord]
-            """Build a SharedRecord proto for addSharedRecord with keys and permissions."""
-            shared_record = record_pb2.SharedRecord()
-            shared_record.toUsername = email
-            shared_record.recordUid = utils.base64_url_decode(record_uid)
-            shared_record.sharedFolderUid = sf_uid_bytes
-            record_key = rec.get('record_key_unencrypted')
-            keys = params.key_cache.get(email)
-            if not record_key or not keys or not (keys.rsa or keys.ec):
-                return None
-            if params.forbid_rsa and keys.ec:
-                ec_key = crypto.load_ec_public_key(keys.ec)
-                shared_record.recordKey = crypto.encrypt_ec(record_key, ec_key)
-                shared_record.useEccKey = True
-            elif not params.forbid_rsa and keys.rsa:
-                rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                shared_record.recordKey = crypto.encrypt_rsa(record_key, rsa_key)
-                shared_record.useEccKey = False
-            if existing:
-                shared_record.editable = ce == 'on' if ce is not None else existing.get('editable', False)
-                shared_record.shareable = cs == 'on' if cs is not None else existing.get('shareable', False)
-            else:
-                default_ce = curr_sf.get('default_can_edit') is True
-                default_cs = curr_sf.get('default_can_share') is True
-                shared_record.editable = ce == 'on' if ce is not None else default_ce
-                shared_record.shareable = cs == 'on' if cs is not None else default_cs
-            apply_share_expiration(shared_record)
-            return shared_record
-
         rq_remove = record_pb2.RecordShareUpdateRequest()
-        rq_add = record_pb2.RecordShareUpdateRequest()
-        rq_update = record_pb2.RecordShareUpdateRequest()
         for record_uid in rec_uids:
-            if record_uid not in params.record_cache:
-                continue
-            rec = params.record_cache[record_uid]
-            existing_shares = {}
-            shares = rec.get('shares') or {}
-            for po in shares.get('user_permissions') or []:
-                existing_shares[po['username'].lower()] = po
-
             for email in users:
-                email_key = email.lower()
-                existing = existing_shares.get(email_key)
-                if regrant_for_expiration:
-                    remove_shared_record = record_pb2.SharedRecord()
-                    remove_shared_record.toUsername = email
-                    remove_shared_record.recordUid = utils.base64_url_decode(record_uid)
-                    remove_shared_record.sharedFolderUid = sf_uid_bytes
-                    rq_remove.removeSharedRecord.append(remove_shared_record)
-                    add_shared_record = build_shared_record(email, record_uid, rec, existing)
-                    if add_shared_record:
-                        rq_add.addSharedRecord.append(add_shared_record)
-                elif existing:
-                    shared_record = record_pb2.SharedRecord()
-                    shared_record.toUsername = email
-                    shared_record.recordUid = utils.base64_url_decode(record_uid)
-                    shared_record.sharedFolderUid = sf_uid_bytes
-                    shared_record.editable = ce == 'on' if ce is not None else existing.get('editable', False)
-                    shared_record.shareable = cs == 'on' if cs is not None else existing.get('shareable', False)
-                    apply_share_expiration(shared_record)
-                    rq_update.updateSharedRecord.append(shared_record)
-                else:
-                    add_shared_record = build_shared_record(email, record_uid, rec)
-                    if add_shared_record:
-                        rq_add.addSharedRecord.append(add_shared_record)
-
-        result = []
-        if rq_remove.removeSharedRecord:
-            result.append(rq_remove)
-        if rq_add.addSharedRecord:
-            result.append(rq_add)
-        if rq_update.updateSharedRecord:
-            result.append(rq_update)
-        return result or None
+                shared_record = record_pb2.SharedRecord()
+                shared_record.toUsername = email
+                shared_record.recordUid = utils.base64_url_decode(record_uid)
+                shared_record.sharedFolderUid = sf_uid_bytes
+                rq_remove.removeSharedRecord.append(shared_record)
+        return [rq_remove] if rq_remove.removeSharedRecord else None
 
     @staticmethod
     def prepare_request(params, kwargs, curr_sf, users, teams, rec_uids, *,

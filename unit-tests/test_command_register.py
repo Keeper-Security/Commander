@@ -350,7 +350,7 @@ class TestRegister(TestCase):
         self.assertFalse(record_msgs, 'record protos must not carry folder-wide expiration')
 
     def test_share_folder_prepare_request_sets_folder_and_record_expiration_when_records_specified(self):
-        """With -r and --expire-in, folder user and record share both get timers; not SharedFolderUpdateRecord."""
+        """With -r and --expire-in, only folder user gets a timer; record protos are permissions-only."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
@@ -388,12 +388,12 @@ class TestRegister(TestCase):
             self.assertEqual(m.expiration, 0)
             self.assertFalse(m.rotateOnExpiration)
 
-    def test_share_folder_prepare_record_share_request_sets_expiration(self):
+    def test_share_folder_prepare_record_share_request_ignores_grant_expiration(self):
+        """Grant with --expire-in does not create per-record share timers; folder timing only."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
         curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
-        future_ts = int(datetime.datetime.now().timestamp()) + 86_400
 
         params.key_cache['user2@keepersecurity.com'] = mock.MagicMock(
             rsa=utils.base64_url_decode(vault_env.encoded_public_key), ec=None)
@@ -405,21 +405,9 @@ class TestRegister(TestCase):
             users=['user2@keepersecurity.com'],
             rec_uids=[record_uid],
             curr_sf=curr_sf,
-            share_expiration=future_ts,
-            rotate_on_expiration=True,
         )
 
-        self.assertIsNotNone(rq)
-        self.assertEqual(len(rq), 2, 'positive expiration must revoke then re-grant')
-        self.assertTrue(rq[0].removeSharedRecord)
-        self.assertTrue(rq[1].addSharedRecord)
-        shared_records = list(rq[1].addSharedRecord)
-        self.assertTrue(shared_records)
-        for sr in shared_records:
-            self.assertGreater(sr.expiration, 0)
-            self.assertTrue(sr.rotateOnExpiration)
-            self.assertEqual(sr.timerNotificationType, record_pb2.NOTIFY_OWNER)
-            self.assertEqual(utils.base64_url_encode(sr.sharedFolderUid), shared_folder_uid)
+        self.assertIsNone(rq)
 
     def test_share_folder_prepare_request_remove_user_record_keeps_record_in_folder(self):
         """Removing user access to one record removes the user from the folder but not the record."""
