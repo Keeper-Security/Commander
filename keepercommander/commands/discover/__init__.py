@@ -6,6 +6,7 @@ from ..base import Command
 from ..pam.config_facades import PamConfigurationRecordFacade
 from ..pam.router_helper import get_response_payload
 from ..pam.gateway_helper import get_all_gateways
+from ..pam.router_helper import router_send_action_to_gateway
 from ..ksm import KSMCommand
 from ... import utils, vault_extensions
 from ... import vault
@@ -14,16 +15,18 @@ from ...crypto import encrypt_aes_v2, decrypt_aes_v2
 from ...display import bcolors
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...utils import value_to_boolean
+from ...proto import pam_pb2
 import json
 import base64
 import re
+from packaging import version as packaging_version
 
 from typing import List, Optional, Union, Callable, Tuple, Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import KeeperRecord, ApplicationRecord
-    from ...proto import pam_pb2
+
 
 
 class MultiConfigurationException(Exception):
@@ -63,6 +66,7 @@ class GatewayContext:
         self.gateway = gateway
         self.application = application
         self._shared_folders = None
+        self._info: Optional[Dict] = None
 
     @staticmethod
     def all_gateways(params: KeeperParams):
@@ -293,6 +297,66 @@ class GatewayContext:
                             "folder": cached_shared_folder
                         })
         return self._shared_folders
+
+    def info(self, params: KeeperParams) -> Optional[Dict]:
+        if self._info is None:
+            from ..pam.pam_dto import GatewayActionGatewayInfo
+
+            if self.gateway_uid is None:
+                raise Exception("Gateway UID is not set for getting Gateway info.")
+
+            router_response = router_send_action_to_gateway(
+                params=params,
+                gateway_action=GatewayActionGatewayInfo(is_scheduled=False),
+                message_type=pam_pb2.CMT_GENERAL,
+                is_streaming=False,
+                destination_gateway_uid_str=self.gateway_uid
+            )
+
+            if router_response is None:
+                print(f"{bcolors.FAIL}Did not get router response.{bcolors.ENDC}")
+                return
+
+            response = router_response.get("response")
+            logging.debug(f"Router Response: {response}")
+            payload = get_response_payload(router_response)
+            data = payload.get("data")
+            if data is None:
+                print(f"{bcolors.FAIL}The router returned a failure.{bcolors.ENDC}")
+                return
+            elif data.get("success") is False:
+                error = data.get("error")
+                logging.debug(f"gateway returned: {error}")
+                print(f"{bcolors.FAIL}Could not map users to Windows services.{bcolors.ENDC}")
+
+            self._info = data
+
+        return self._info
+
+    def _gateway_version(self, params: KeeperParams) -> Optional[packaging_version.Version]:
+
+        try:
+            info = self.info(params)
+            gateway_version_str = info["gateway-config"]['version']["current"]
+            logging.debug(f"gateway version is {gateway_version_str}")
+            return packaging_version.parse(gateway_version_str)
+        except Exception as err:
+            logging.debug(f"got getting trying to get gateway version: {err}")
+            return None
+
+    def gateway_version_gte(self, params: KeeperParams, require_version_str: str) -> bool:
+        gateway_version = self._gateway_version(params)
+        if gateway_version is None:
+            return False
+        require_version = packaging_version.parse(require_version_str)
+        return gateway_version >= require_version
+
+    def gateway_version_lte(self, params: KeeperParams, require_version_str: str) -> bool:
+        gateway_version = self._gateway_version(params)
+        if gateway_version is None:
+            return False
+        require_version = packaging_version.parse(require_version_str)
+        return gateway_version <= require_version
 
     def decrypt(self, cipher_base64: bytes) -> dict:
         ciphertext = base64.b64decode(cipher_base64.decode())
