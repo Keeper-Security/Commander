@@ -707,6 +707,7 @@ class PAMProjectImportCommand(Command):
                 if pce.dom_use_ssl is not None: args["domain_use_ssl"] = pce.dom_use_ssl
                 if pce.dom_scan_dc_cidr is not None: args["domain_scan_dc_cidr"] = pce.dom_scan_dc_cidr
                 if pce.dom_network_cidr: args["domain_network_cidr"] = pce.dom_network_cidr
+                if pce.dom_user_match: args["domain_user_match"] = pce.dom_user_match
                 if pce.admin_credential_ref:
                     args["domain_administrative_credential"] = pce.admin_credential_ref
                     args["force_domain_admin"] = True  # add now - ACL link later
