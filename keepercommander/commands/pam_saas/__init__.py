@@ -7,11 +7,11 @@ from ...proto import pam_pb2
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.record_link import RecordLink
-from ... import utils
 import logging
 import hmac
 import hashlib
 import os
+import requests
 from pydantic import BaseModel
 from typing import Optional, List, Any, TYPE_CHECKING
 
@@ -237,7 +237,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
 
     # Get the latest release of the catalog.json
     api_url = f"https://api.github.com/repos/{CATALOG_REPO}/releases/latest"
-    res = utils.ssl_aware_get(api_url)
+    res = requests.get(api_url, verify=params.ssl_verify)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not get plugin catalog from GitHub.{bcolors.ENDC}")
@@ -251,7 +251,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
     logging.debug(f"download {asset['name']} from {download_url}")
 
     # Download the latest the catalog.yml
-    res = utils.ssl_aware_get(download_url)
+    res = requests.get(download_url, verify=params.ssl_verify)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not download the plugin catalog from GitHub.{bcolors.ENDC}")

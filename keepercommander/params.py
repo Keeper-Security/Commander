@@ -134,6 +134,7 @@ class RestApiContext:
 
     @property
     def certificate_check(self):
+        """Return the ``requests`` ``verify`` value (False or a CA bundle path)."""
         if self._resolved_verify is None:
             from . import utils
             self._resolved_verify = utils.resolve_ssl_verify(

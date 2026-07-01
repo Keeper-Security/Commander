@@ -611,21 +611,6 @@ def resolve_http_ssl_verify(params=None):
     return resolve_ssl_verify()
 
 
-def ssl_aware_request(method, url, **kwargs):
-    """Make an SSL-aware HTTP request using system CA certificates when available"""
-    import requests
-
-    if 'verify' not in kwargs:
-        kwargs['verify'] = resolve_ssl_verify()
-
-    return requests.request(method, url, **kwargs)
-
-
-def ssl_aware_get(url, **kwargs):
-    """SSL-aware GET request using system CA certificates when available"""
-    return ssl_aware_request('GET', url, **kwargs)
-
-
 def is_windows_11():
     if sys.platform != "win32":
         return False
