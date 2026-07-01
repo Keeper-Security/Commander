@@ -1,7 +1,6 @@
 from __future__ import annotations
 from . import ConnectionBase
 from ..utils import value_to_boolean
-from ... import utils as commander_utils
 from ..exceptions import DAGException, DAGConnectionException
 
 from cryptography.hazmat.primitives import hashes
@@ -71,9 +70,11 @@ class Connection(ConnectionBase):
         if isinstance(config, dict) is False and isinstance(config, KeyValueStorage) is False:
             raise DAGException("The configuration is not a dictionary.")
 
-        self.verify_ssl = False if verify_ssl is False else commander_utils.resolve_http_ssl_verify()
+        if verify_ssl is None:
+            verify_ssl = value_to_boolean(os.environ.get("VERIFY_SSL", "TRUE"))
 
         self.config = config
+        self.verify_ssl = verify_ssl
         self._signature = None
         self._challenge_str = None
 
