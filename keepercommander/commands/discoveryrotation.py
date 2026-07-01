@@ -198,6 +198,18 @@ def parse_schedule_data(kwargs):
     return schedule_data
 
 
+def resolve_record_rotation_revision(params, record_uid):
+    # type: (KeeperParams, str) -> int
+    """Return server-assigned rotation revision from cache, syncing when missing (not sequential)."""
+    cached = params.record_rotation_cache.get(record_uid)
+    if cached is None or cached.get('revision') is None:
+        api.sync_down(params)
+        cached = params.record_rotation_cache.get(record_uid)
+    if cached is None or cached.get('revision') is None:
+        return 0
+    return cached['revision']
+
+
 def schedule_from_pam_config(record_pam_config):
     # type: (Optional[vault.TypedRecord]) -> Optional[List]
     """Return rotation schedule list from a PAM configuration defaultRotationSchedule field."""
@@ -778,8 +790,11 @@ class PAMCreateRecordRotationCommand(Command):
                             str(noop_field.value[0]).upper() == 'TRUE'):
                         noop_rotation = True
 
+                rotation_revision = resolve_record_rotation_revision(params, target_record.record_uid)
+                current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
+
                 rq = router_pb2.RouterRecordRotationRequest()
-                rq.revision = current_record_rotation.get('revision', 0)
+                rq.revision = rotation_revision
                 rq.recordUid = utils.base64_url_decode(target_record.record_uid)
                 rq.configurationUid = utils.base64_url_decode(record_config_uid)
                 rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
@@ -815,6 +830,9 @@ class PAMCreateRecordRotationCommand(Command):
                         _dag.unlink_user_from_resource(target_record.record_uid, old_resource_uid)
                     _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
                 _dag.link_user_to_config(target_record.record_uid)
+
+            rotation_revision = resolve_record_rotation_revision(params, target_record.record_uid)
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
             # 1. PAM Configuration UID
             record_config_uid = _dag.record.record_uid
@@ -913,8 +931,7 @@ class PAMCreateRecordRotationCommand(Command):
 
             # 6. Construct Request object for IAM: empty resourceUid and noop=False
             rq = router_pb2.RouterRecordRotationRequest()
-            if current_record_rotation:
-                rq.revision = current_record_rotation.get('revision', 0)
+            rq.revision = rotation_revision
             rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
             rq.resourceUid = b''  # non-empty resourceUid sets is as General rotation
