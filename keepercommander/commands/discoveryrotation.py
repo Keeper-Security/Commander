@@ -225,6 +225,30 @@ def refresh_vault_for_schedule_config(params):
     api.sync_down(params)
 
 
+def uses_default_rotation_schedule(params, record_uid, configuration_uid):
+    # type: (KeeperParams, str, str) -> bool
+    """True when stored rotation schedule matches PAM config default (Web Vault parity)."""
+    config_record = vault.KeeperRecord.load(params, configuration_uid)
+    if not isinstance(config_record, vault.TypedRecord):
+        return False
+    default_schedule = schedule_from_pam_config(config_record)
+    if not default_schedule:
+        return False
+    cached_rotation = params.record_rotation_cache.get(record_uid)
+    if not cached_rotation:
+        return False
+    schedule_str = cached_rotation.get('schedule')
+    if not schedule_str:
+        return False
+    try:
+        record_schedule = json.loads(schedule_str)
+    except Exception:
+        return False
+    if not isinstance(record_schedule, list) or len(record_schedule) == 0:
+        return False
+    return record_schedule == default_schedule
+
+
 def register_commands(commands):
     commands['pam'] = PAMControllerCommand()
 
@@ -3117,6 +3141,8 @@ class PAMRouterGetRotationInfo(Command):
                     'password_complexity_detail': pwd_complexity_detail,
                     'schedule_type': schedule_type,
                     'schedule_data': schedule_data,
+                    'use_default_rotation_schedule': uses_default_rotation_schedule(
+                        params, record_uid, configuration_uid),
                     'disabled': rri.disabled,
                     'script_name': rri.scriptName if rri.scriptName else None,
                 }
@@ -3173,7 +3199,11 @@ class PAMRouterGetRotationInfo(Command):
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
             if format_type == 'json':
-                return json.dumps({'status': rri_status_name, 'ready_to_rotate': False})
+                return json.dumps({
+                    'status': rri_status_name,
+                    'ready_to_rotate': False,
+                    'use_default_rotation_schedule': False,
+                })
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
 
 

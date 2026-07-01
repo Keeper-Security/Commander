@@ -59,7 +59,8 @@ from keepercommander.commands.discoveryrotation import (PAMCreateRecordRotationC
                                                         PAMGatewayListCommand, PAMRouterGetRotationInfo,
                                                         resolve_record_schedule_data, schedule_from_pam_config,
                                                         resolve_record_rotation_revision,
-                                                        refresh_vault_for_schedule_config)
+                                                        refresh_vault_for_schedule_config,
+                                                        uses_default_rotation_schedule)
 
 class TestPAMCreateRecordRotationCommand(unittest.TestCase):
 
@@ -625,6 +626,29 @@ class TestPAMRouterGetRotationInfo(unittest.TestCase):
         self.assertEqual(data['gateway_name'], 'gw-test')
         self.assertIn('schedule_type', data)
         self.assertEqual(data['schedule_type'], 'scheduled')
+        self.assertIn('use_default_rotation_schedule', data)
+        self.assertFalse(data['use_default_rotation_schedule'])
+
+    @patch('keepercommander.commands.discoveryrotation.uses_default_rotation_schedule', return_value=True)
+    @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+    @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
+    def test_json_includes_use_default_rotation_schedule(self, mock_rrg, mock_schedules, _mock_default):
+        from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+        record_uid = 'test_record_uid_'
+        record_uid_bytes = url_safe_str_to_bytes(record_uid)
+
+        mock_rrg.return_value = self._make_rri('RRS_ONLINE')
+        sched_mock = MagicMock()
+        sched_mock.schedules = [self._make_schedule(record_uid_bytes)]
+        mock_schedules.return_value = sched_mock
+
+        mock_params = create_mock_params()
+        mock_params.record_cache = {}
+
+        cmd = PAMRouterGetRotationInfo()
+        result = cmd.execute(mock_params, record_uid=record_uid, format='json')
+        data = json.loads(result)
+        self.assertTrue(data['use_default_rotation_schedule'])
 
     @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
     @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
@@ -643,6 +667,8 @@ class TestPAMRouterGetRotationInfo(unittest.TestCase):
         data = json.loads(result)
         self.assertIn('status', data)
         self.assertFalse(data['ready_to_rotate'])
+        self.assertIn('use_default_rotation_schedule', data)
+        self.assertFalse(data['use_default_rotation_schedule'])
 
     @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
     @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
@@ -664,6 +690,65 @@ class TestPAMRouterGetRotationInfo(unittest.TestCase):
         cmd = PAMRouterGetRotationInfo()
         result = cmd.execute(mock_params, record_uid=record_uid, format='table')
         self.assertIsNone(result)
+
+
+class TestUsesDefaultRotationSchedule(unittest.TestCase):
+
+    DEFAULT_SCHEDULE = [{"type": "CRON", "cron": "0 0 3 ? * 2", "tz": "Etc/UTC"}]
+    CUSTOM_SCHEDULE = [{"type": "CRON", "cron": "0 0 4 ? * 3", "tz": "Etc/UTC"}]
+    CONFIG_UID = 'config_uid_____'
+    RECORD_UID = 'test_record_uid_'
+
+    def _params_with_rotation(self, schedule_json):
+        params = create_mock_params()
+        params.record_rotation_cache = {
+            self.RECORD_UID: {
+                'schedule': schedule_json,
+                'configuration_uid': self.CONFIG_UID,
+            }
+        }
+        config = MagicMock(spec=vault.TypedRecord)
+        field = MagicMock()
+        field.value = self.DEFAULT_SCHEDULE
+        config.get_typed_field.return_value = field
+        params.record_cache = {
+            self.CONFIG_UID: {
+                'record_uid': self.CONFIG_UID,
+                'version': 6,
+                'data_unencrypted': json.dumps({'type': 'pamMachineConfiguration', 'title': 'cfg'}),
+                'record_key_unencrypted': b'key',
+            }
+        }
+        return params, config
+
+    @patch('keepercommander.commands.discoveryrotation.vault.KeeperRecord.load')
+    def test_true_when_schedule_matches_config_default(self, mock_load):
+        params, config = self._params_with_rotation(json.dumps(self.DEFAULT_SCHEDULE))
+        mock_load.return_value = config
+        self.assertTrue(uses_default_rotation_schedule(params, self.RECORD_UID, self.CONFIG_UID))
+
+    @patch('keepercommander.commands.discoveryrotation.vault.KeeperRecord.load')
+    def test_false_when_schedule_differs(self, mock_load):
+        params, config = self._params_with_rotation(json.dumps(self.CUSTOM_SCHEDULE))
+        mock_load.return_value = config
+        self.assertFalse(uses_default_rotation_schedule(params, self.RECORD_UID, self.CONFIG_UID))
+
+    @patch('keepercommander.commands.discoveryrotation.vault.KeeperRecord.load')
+    def test_false_when_on_demand_empty_schedule(self, mock_load):
+        params, config = self._params_with_rotation('')
+        mock_load.return_value = config
+        self.assertFalse(uses_default_rotation_schedule(params, self.RECORD_UID, self.CONFIG_UID))
+
+    @patch('keepercommander.commands.discoveryrotation.vault.KeeperRecord.load')
+    def test_false_when_config_has_no_default_schedule(self, mock_load):
+        params = create_mock_params()
+        params.record_rotation_cache = {
+            self.RECORD_UID: {'schedule': json.dumps(self.DEFAULT_SCHEDULE)},
+        }
+        config = MagicMock(spec=vault.TypedRecord)
+        config.get_typed_field.return_value = None
+        mock_load.return_value = config
+        self.assertFalse(uses_default_rotation_schedule(params, self.RECORD_UID, self.CONFIG_UID))
 
 
 class TestResolveRecordScheduleData(unittest.TestCase):
