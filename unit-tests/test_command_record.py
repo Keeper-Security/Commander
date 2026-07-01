@@ -304,6 +304,25 @@ class TestRecord(TestCase):
             cmd.execute(params, uid=shared_folder_uid)
             cmd.execute(params, format='json', uid=shared_folder_uid)
 
+    def test_get_user_folder_json_consistent_by_name_and_uid(self):
+        params = get_synced_params()
+        cmd = record.RecordGetUidCommand()
+        user_folder = next(
+            x for x in params.folder_cache.values()
+            if x.type == 'user_folder')
+        captured = []
+        with mock.patch('builtins.print', side_effect=captured.append):
+            cmd.execute(params, uid=user_folder.uid, format='json')
+            by_uid = json.loads(captured[-1])
+            cmd.execute(params, uid=user_folder.name, format='json')
+            by_name = json.loads(captured[-1])
+        self.assertEqual(by_name, by_uid)
+        self.assertEqual(by_uid['type'], 'classic_folder')
+        self.assertIn('path', by_uid)
+        self.assertIn('parent_uid', by_uid)
+        self.assertIn('folder', by_uid)
+        self.assertIn('records', by_uid)
+
     def test_get_team_uid(self):
         params = get_synced_params()
         cmd = record.RecordGetUidCommand()

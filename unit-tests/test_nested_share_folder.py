@@ -231,7 +231,7 @@ class TestNestedShareFolderFolderCommands(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
-    @patch('keepercommander.nested_share_folder.folder_api.create_folder_v3')
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir(self, mock_create):
         from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
         mock_create.return_value = {
@@ -242,6 +242,88 @@ class TestNestedShareFolderFolderCommands(TestCase):
         with mock.patch('builtins.print'):
             cmd.execute(_make_params(), folder='NewFolder')
         mock_create.assert_called_once()
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_resolves_parent_uid_in_path(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        parent_uid = 'tY6D-RanxY252zzBY_xU4A'
+        child_uid = utils.generate_uid()
+        mock_create.return_value = {
+            'folder_uid': child_uid, 'status': 'SUCCESS',
+            'message': '', 'success': True,
+        }
+        parent_fuid, parent_fobj = _make_folder(
+            folder_uid=parent_uid, name='Real Parent')
+        cmd = NestedShareFolderMkdirCommand()
+        with mock.patch('builtins.print'):
+            cmd.execute(
+                _make_params(nested_share_folders={parent_uid: parent_fobj}),
+                folder=f'{parent_uid}/My Child Folder',
+            )
+        mock_create.assert_called_once_with(
+            params=mock.ANY,
+            folder_name='My Child Folder',
+            parent_uid=parent_uid,
+            color=None,
+            inherit_permissions=True,
+        )
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_resolves_parent_name_in_path(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        parent_fuid, parent_fobj = _make_folder(name='Engineering')
+        child_uid = utils.generate_uid()
+        mock_create.return_value = {
+            'folder_uid': child_uid, 'status': 'SUCCESS',
+            'message': '', 'success': True,
+        }
+        cmd = NestedShareFolderMkdirCommand()
+        with mock.patch('builtins.print'):
+            cmd.execute(
+                _make_params(nested_share_folders={parent_fuid: parent_fobj}),
+                folder='Engineering/New Folder KD 1 June',
+            )
+        mock_create.assert_called_once_with(
+            params=mock.ANY,
+            folder_name='New Folder KD 1 June',
+            parent_uid=parent_fuid,
+            color=None,
+            inherit_permissions=True,
+        )
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_creates_intermediate_name_segments(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        eng_uid = utils.generate_uid()
+        child_uid = utils.generate_uid()
+        mock_create.side_effect = [
+            {
+                'folder_uid': eng_uid, 'status': 'SUCCESS',
+                'message': '', 'success': True,
+            },
+            {
+                'folder_uid': child_uid, 'status': 'SUCCESS',
+                'message': '', 'success': True,
+            },
+        ]
+        cmd = NestedShareFolderMkdirCommand()
+        with mock.patch('builtins.print'):
+            cmd.execute(_make_params(), folder='Engineering/New Folder KD 1 June')
+        self.assertEqual(mock_create.call_count, 2)
+        mock_create.assert_any_call(
+            params=mock.ANY,
+            folder_name='Engineering',
+            parent_uid=None,
+            color=None,
+            inherit_permissions=True,
+        )
+        mock_create.assert_any_call(
+            params=mock.ANY,
+            folder_name='New Folder KD 1 June',
+            parent_uid=eng_uid,
+            color=None,
+            inherit_permissions=True,
+        )
 
     @patch('keepercommander.nested_share_folder.folder_api.update_folder_v3')
     def test_update_folder(self, mock_update):
