@@ -823,6 +823,20 @@ class TestTunnelGraphIamUserMigration:
         # Critical: legacy link_user did NOT run
         link_user_mock.assert_not_called()
 
+    def test_link_user_to_config_noop_writes_dag_without_set_record_rotation(self):
+        """link_user_to_config_noop() writes the noop ACL locally; rotation is saved separately."""
+        tg, config_vertex = self._build_tg()
+        tg.linking_dag.has_graph = True
+        user_vertex = MagicMock()
+        tg.linking_dag.get_vertex.side_effect = lambda uid: user_vertex if uid == USER_UID_STR else config_vertex
+        tg.linking_dag.add_vertex.return_value = user_vertex
+        user_vertex.get_edge.return_value = None
+
+        with patch('keepercommander.commands.pam.router_helper.router_set_record_rotation_information') as set_rotation:
+            assert tg.link_user_to_config_noop(USER_UID_STR) is True
+            set_rotation.assert_not_called()
+        tg.linking_dag.save.assert_called_once()
+
     def test_link_user_to_config_with_options_iam_user_true_permission_checks(self):
         """link_user_to_config_with_options(is_iam_user=True) routes through
         set_record_rotation BEFORE the local ACL mutation. is_admin and

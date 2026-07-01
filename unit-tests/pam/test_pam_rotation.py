@@ -56,7 +56,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from keepercommander import crypto, utils
 from keepercommander.commands.discoveryrotation import (PAMCreateRecordRotationCommand, PAMListRecordRotationCommand,
-                                                        PAMGatewayListCommand, PAMRouterGetRotationInfo)
+                                                        PAMGatewayListCommand, PAMRouterGetRotationInfo,
+                                                        resolve_record_schedule_data, schedule_from_pam_config,
+                                                        resolve_record_rotation_revision,
+                                                        refresh_vault_for_schedule_config)
 
 class TestPAMCreateRecordRotationCommand(unittest.TestCase):
 
@@ -661,4 +664,87 @@ class TestPAMRouterGetRotationInfo(unittest.TestCase):
         cmd = PAMRouterGetRotationInfo()
         result = cmd.execute(mock_params, record_uid=record_uid, format='table')
         self.assertIsNone(result)
+
+
+class TestResolveRecordScheduleData(unittest.TestCase):
+
+    DEFAULT_SCHEDULE = [{"type": "DAILY", "utcTime": "03:00", "intervalCount": 1, "tz": "Etc/UTC"}]
+    EXISTING_SCHEDULE = [{"type": "WEEKLY", "utcTime": "12:00", "weekday": "MONDAY", "intervalCount": 1, "tz": "Etc/UTC"}]
+
+    def _pam_config_with_schedule(self, schedule=None):
+        config = MagicMock(spec=vault.TypedRecord)
+        field = MagicMock()
+        field.value = schedule if schedule is not None else self.DEFAULT_SCHEDULE
+        config.get_typed_field.return_value = field
+        return config
+
+    def test_explicit_schedule_data_takes_precedence(self):
+        explicit = self.EXISTING_SCHEDULE
+        current = {'schedule': json.dumps(self.DEFAULT_SCHEDULE)}
+        result = resolve_record_schedule_data(explicit, current, True, self._pam_config_with_schedule())
+        self.assertEqual(result, explicit)
+
+    def test_schedule_config_overrides_existing_on_demand(self):
+        current = {'schedule': ''}
+        config = self._pam_config_with_schedule()
+        result = resolve_record_schedule_data(None, current, True, config)
+        self.assertEqual(result, self.DEFAULT_SCHEDULE)
+
+    def test_preserves_existing_schedule_without_schedule_config(self):
+        current = {'schedule': json.dumps(self.EXISTING_SCHEDULE)}
+        config = self._pam_config_with_schedule()
+        result = resolve_record_schedule_data(None, current, False, config)
+        self.assertEqual(result, self.EXISTING_SCHEDULE)
+
+    def test_new_record_without_schedule_config_uses_pam_config_default(self):
+        config = self._pam_config_with_schedule()
+        result = resolve_record_schedule_data(None, None, False, config)
+        self.assertEqual(result, self.DEFAULT_SCHEDULE)
+
+    def test_schedule_from_pam_config_ignores_on_demand_string(self):
+        config = self._pam_config_with_schedule(schedule=['On-Demand'])
+        self.assertIsNone(schedule_from_pam_config(config))
+
+    def test_schedule_from_pam_config_returns_full_schedule_array(self):
+        multi = self.DEFAULT_SCHEDULE + [{"type": "CRON", "cron": "0 0 * * *", "tz": "Etc/UTC"}]
+        config = self._pam_config_with_schedule(schedule=multi)
+        self.assertEqual(schedule_from_pam_config(config), multi)
+
+
+class TestRefreshVaultForScheduleConfig(unittest.TestCase):
+
+    def test_syncs_vault(self):
+        params = MagicMock()
+        with patch('keepercommander.commands.discoveryrotation.api.sync_down') as sync_down:
+            refresh_vault_for_schedule_config(params)
+        sync_down.assert_called_once_with(params)
+
+
+class TestResolveRecordRotationRevision(unittest.TestCase):
+
+    def test_returns_cached_revision_without_sync(self):
+        params = MagicMock()
+        params.record_rotation_cache = {'record_uid': {'revision': 42}}
+        with patch('keepercommander.commands.discoveryrotation.api.sync_down') as sync_down:
+            revision = resolve_record_rotation_revision(params, 'record_uid')
+        self.assertEqual(revision, 42)
+        sync_down.assert_not_called()
+
+    def test_syncs_when_revision_missing_from_cache(self):
+        params = MagicMock()
+        params.record_rotation_cache = {}
+
+        def _sync(p):
+            params.record_rotation_cache['record_uid'] = {'revision': 17}
+
+        with patch('keepercommander.commands.discoveryrotation.api.sync_down', side_effect=_sync):
+            revision = resolve_record_rotation_revision(params, 'record_uid')
+        self.assertEqual(revision, 17)
+
+    def test_returns_zero_when_no_rotation_after_sync(self):
+        params = MagicMock()
+        params.record_rotation_cache = {}
+        with patch('keepercommander.commands.discoveryrotation.api.sync_down'):
+            revision = resolve_record_rotation_revision(params, 'record_uid')
+        self.assertEqual(revision, 0)
 

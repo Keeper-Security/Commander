@@ -375,6 +375,18 @@ class TunnelDAG:
             resource_vertex.belongs_to(config_vertex, EdgeType.LINK)
             self.linking_dag.save()
 
+    def user_linked_to_config_for_noop(self, user_uid):
+        if not self.linking_dag.has_graph:
+            return False
+        user_vertex = self.linking_dag.get_vertex_by_uid(user_uid)
+        config_vertex = self.linking_dag.get_vertex_by_uid(self.record.record_uid)
+        if not (user_vertex and config_vertex and config_vertex.has(user_vertex, EdgeType.ACL)):
+            return False
+        acl_edge = user_vertex.get_edge(config_vertex, EdgeType.ACL)
+        content = acl_edge.content_as_dict or {}
+        rotation_settings = content.get('rotation_settings') or {}
+        return bool(rotation_settings.get('noop'))
+
     def link_user_to_config(self, user_uid):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
@@ -386,6 +398,41 @@ class TunnelDAG:
         # - if the call fails, propagate so the unauthorized link is never written.
         self._permission_check_iam_user_link(user_uid)
         self.link_user(user_uid, config_vertex, belongs_to=True, is_iam_user=True)
+
+    def link_user_to_config_noop(self, user_uid):
+        """Link a pamUser to a PAM configuration for scripts-only (noop) rotation."""
+        if not self.linking_dag.has_graph:
+            logging.error("linking graph is empty")
+            return False
+
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
+
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        if user_vertex is None:
+            user_vertex = self.linking_dag.add_vertex(uid=user_uid, vertex_type=RefType.PAM_USER)
+
+        acl_edge = user_vertex.get_edge(vertex=config_vertex, edge_type=EdgeType.ACL)
+        if acl_edge is not None:
+            acl = acl_edge.content_as_object(UserAcl)
+        else:
+            acl = UserAcl.default()
+
+        if acl is not None and acl.rotation_settings is None:
+            acl.rotation_settings = UserAclRotationSettings()
+
+        acl.belongs_to = False
+        acl.rotation_settings.noop = True
+        acl.is_iam_user = False
+        acl.is_admin = False
+
+        user_vertex.belongs_to(vertex=config_vertex,
+                               edge_type=EdgeType.ACL,
+                               content=acl,
+                               is_encrypted=False)
+        self.linking_dag.save()
+        return True
 
     def _permission_check_iam_user_link(self, user_uid):
         """Call set_record_rotation(recordUid=user_uid, noop=False) to permission-check
