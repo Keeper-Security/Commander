@@ -27,7 +27,7 @@ from .helpers import (
     command_error_handler, check_result,
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
-    ensure_nested_share_folder,
+    ensure_nested_share_folder, is_nested_share_folder,
 )
 from .parsers import (
     nested_share_folder_mkdir_parser,
@@ -69,7 +69,7 @@ class NestedShareFolderMkdirCommand(Command):
 
         for idx, segment in enumerate(segments):
             is_leaf = (idx == last_idx)
-            existing_uid = self._find_existing_child(params, segment, parent_uid)
+            existing_uid = self._resolve_segment(params, segment, parent_uid)
             if existing_uid:
                 if is_leaf:
                     logging.warning('nsf-mkdir: Folder "%s" already exists', segment)
@@ -133,6 +133,18 @@ class NestedShareFolderMkdirCommand(Command):
         if folder_key:
             entry['folder_key_unencrypted'] = folder_key
         nsf[folder_uid] = entry
+
+    @staticmethod
+    def _resolve_segment(params, segment, parent_uid):
+        """Resolve *segment* to an existing NSF folder UID.
+
+        UID segments are resolved globally, matching legacy ``mkdir`` path
+        behavior. Name segments are matched as children of *parent_uid*.
+        """
+        if is_nested_share_folder(params, segment):
+            return segment
+        return NestedShareFolderMkdirCommand._find_existing_child(
+            params, segment, parent_uid)
 
     @staticmethod
     def _find_existing_child(params, folder_name, parent_uid):
