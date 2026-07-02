@@ -137,7 +137,7 @@ class LastPassImporter(BaseImporter):
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):
             request_settings['proxies'] = params.rest_context.proxies
-            request_settings['certificate_check'] = params.rest_context.certificate_check
+            request_settings['certificate_check'] = params.ssl_verify
         if 'filter_folder' in kwargs and kwargs['filter_folder']:
             request_settings['filter_folder'] = kwargs['filter_folder']
 
@@ -711,7 +711,7 @@ class LastpassMembershipDownload(BaseDownloadMembership):
         session = None
         request_settings = {
             'proxies': params.rest_context.proxies,
-            'certificate_check': params.rest_context.certificate_check
+            'certificate_check': params.ssl_verify
         }
         try:
             session = fetcher.login(username, password, twofa_code, **request_settings)

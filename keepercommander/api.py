@@ -754,7 +754,7 @@ def execute_router_rest(params: KeeperParams, endpoint: str, payload: Optional[b
     if payload is not None:
         payload = crypto.encrypt_aes_v2(payload, transmission_key)
     rs = requests.post(url, data=payload, headers=headers, proxies=params.rest_context.proxies,
-                       verify=params.rest_context.certificate_check)
+                       verify=params.ssl_verify)
     if rs.status_code == 200:
         rs_body = rs.content
         if rs_body:

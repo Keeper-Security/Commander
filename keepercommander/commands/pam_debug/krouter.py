@@ -46,16 +46,15 @@ class PAMDebugKRouterCommand(Command):
             url = get_router_url(params)
         url = url.rstrip('/') + '/healthcheck'
 
-        verify_ssl = os.environ.get('VERIFY_SSL', 'TRUE') == 'TRUE'
         timeout = kwargs.get('timeout') or 10.0
         raw = bool(kwargs.get('raw'))
 
         try:
-            rs = requests.get(url, verify=verify_ssl, timeout=timeout)
+            rs = requests.get(url, verify=params.ssl_verify, timeout=timeout)
             rs.raise_for_status()
         except requests.exceptions.SSLError as err:
             print(f"{bcolors.FAIL}SSL verification failed: {err}{bcolors.ENDC}")
-            print('  Set VERIFY_SSL=FALSE to bypass for development krouter builds.')
+            print('  Set VERIFY_SSL=FALSE or KEEPER_SSL_CERT_FILE=none to bypass SSL verification.')
             return
         except requests.exceptions.ConnectionError as err:
             print(f"{bcolors.FAIL}Cannot reach krouter at {url}: {err}{bcolors.ENDC}")
