@@ -595,9 +595,9 @@ def _extract_kubernetes_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
         'namespace': connection.get('namespace', 'default'),
         'pod': connection.get('pod', ''),
         'container': connection.get('container', ''),
-        'ignoreServerCertificate': connection.get('ignoreServerCertificate', False),
-        'caCertificate': connection.get('caCertificate', ''),
-        'clientCertificate': connection.get('clientCertificate', ''),
+        'ignoreServerCertificate': connection.get('ignoreCert', False),
+        'caCertificate': connection.get('caCert', ''),
+        'clientCertificate': connection.get('clientCert', ''),
         'clientKey': connection.get('clientKey', ''),
     }
 
