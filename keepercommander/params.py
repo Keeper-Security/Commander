@@ -13,7 +13,7 @@ import sqlite3
 import threading
 import warnings
 from datetime import datetime
-from typing import Dict, NamedTuple, Optional, Set
+from typing import Dict, NamedTuple, Optional, Set, Union
 from urllib.parse import urlparse, urlunparse
 
 from urllib3.exceptions import InsecureRequestWarning
@@ -133,8 +133,27 @@ class RestApiContext:
             self.proxies = None
 
     @property
-    def certificate_check(self):
-        """Return the ``requests`` ``verify`` value (False or a CA bundle path)."""
+    def certificate_check(self) -> Union[bool, str]:
+        """SSL verification value for ``requests``' ``verify=`` parameter.
+
+        Despite the name and the plain-bool ``_certificate_check`` backing field,
+        this getter never returns a bare ``True``/``bool``. It resolves
+        ``_certificate_check`` (and the ``KEEPER_SSL_CERT_FILE`` env var, via
+        ``utils.resolve_ssl_verify``/``utils.get_ssl_cert_file``) into one of:
+
+          - ``False`` - certificate verification disabled.
+          - ``str``   - path to the CA bundle to verify against (the default
+                        system/certifi bundle, or a user override).
+
+        In practice the return type is ``False | str`` (never ``True``), even
+        though the hint is the more permissive ``Union[bool, str]``. Callers
+        must not do ``is True`` checks against this value - it will always be
+        false. Use ``if certificate_check:`` to test enabled/disabled, or
+        ``isinstance(certificate_check, str)`` to detect a resolved bundle
+        path. The old plain-bool value is still available as the private
+        ``_certificate_check`` attribute for code that only cares about the
+        user's on/off intent, not the resolved ``requests`` verify value.
+        """
         if self._resolved_verify is None:
             from . import utils
             self._resolved_verify = utils.resolve_ssl_verify(
