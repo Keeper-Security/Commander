@@ -879,6 +879,7 @@ class _EnterpriseManagedCompanyEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'paused', proto_entity.isExpired)
         _set_or_remove(keeper_entity, 'tree_key', proto_entity.treeKey if proto_entity.treeKey else None)
         _set_or_remove(keeper_entity, 'tree_key_role', proto_entity.tree_key_role)
+        _set_or_remove(keeper_entity, 'tree_key_type_id', proto_entity.treeKeyTypeId)
         _set_or_remove(keeper_entity, 'file_plan_type', proto_entity.filePlanType)
         _set_or_remove(keeper_entity, 'add_ons', [{
             'name': x.name,
