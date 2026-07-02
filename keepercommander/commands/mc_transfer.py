@@ -3,8 +3,8 @@ import enum
 import logging
 from typing import Optional, Tuple, List, Set, Any
 
-from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey, EllipticCurvePrivateKey
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey, RSAPrivateKey
 
 from . import base, enterprise_common
 from .helpers import report_utils
@@ -314,6 +314,9 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
             else:
                 raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
 
+            enterprise_rsa_key: Optional[RSAPrivateKey] = None
+            enterprise_ec_key: Optional[EllipticCurvePrivateKey] = None
+
             enterprise_tree_key = params.enterprise['unencrypted_tree_key']
             transfer_self = False
             if len(transfer.mcTransferEnterprises) > 0:
@@ -325,11 +328,28 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                         transfer_self = True
                     else:
                         mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == id_mc), None)
-                        if mc:
+                        if isinstance(mc, dict):
                             encrypted_tree_key = utils.base64_url_decode(mc['tree_key'])
+                            tree_key_type_id = mc.get('tree_key_type_id') or 0
                             if enterprise_tree_key:
                                 try:
-                                    tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
+                                    if tree_key_type_id == 1 or len(encrypted_tree_key) > 200:    # RSA
+                                        if enterprise_rsa_key is None:
+                                            private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['rsa_encrypted_private_key'])
+                                            private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, enterprise_tree_key)
+                                            enterprise_rsa_key = crypto.load_rsa_private_key(private_key_bytes)
+                                        assert isinstance(enterprise_rsa_key, RSAPrivateKey)
+                                        tree_key = crypto.decrypt_rsa(encrypted_tree_key, enterprise_rsa_key)
+                                    elif tree_key_type_id == 4 or len(encrypted_tree_key) == 125:    # EC
+                                        if enterprise_ec_key is None:
+                                            private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+                                            private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, enterprise_tree_key)
+                                            enterprise_ec_key = crypto.load_ec_private_key(private_key_bytes)
+                                        assert isinstance(enterprise_ec_key, EllipticCurvePrivateKey)
+                                        tree_key = crypto.decrypt_ec(encrypted_tree_key, enterprise_ec_key)
+                                    else:
+                                        tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
+
                                     key = MCTransfer_pb2.MCTransferTreeKey()
                                     key.enterpriseId = id_mc
                                     if ec_key:
