@@ -45,6 +45,7 @@ class RestApiContext:
         self.__store_server_key = False
         self.proxies = None
         self._certificate_check = True
+        self._resolved_verify = None
         self.fail_on_throttle = False
         self.client_ec_private_key = None  # EC private key for QRC ECDH exchange
     
@@ -133,12 +134,18 @@ class RestApiContext:
 
     @property
     def certificate_check(self):
-        return self._certificate_check
+        """Return the ``requests`` ``verify`` value (False or a CA bundle path)."""
+        if self._resolved_verify is None:
+            from . import utils
+            self._resolved_verify = utils.resolve_ssl_verify(
+                certificate_check_enabled=self._certificate_check)
+        return self._resolved_verify
 
     @certificate_check.setter
     def certificate_check(self, value):
         if isinstance(value, bool):
             self._certificate_check = value
+            self._resolved_verify = None
             if value:
                 warnings.simplefilter('default', InsecureRequestWarning)
             else:
@@ -362,6 +369,10 @@ class KeeperParams:
     proxy = property(__get_proxy, __set_proxy)
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+    @property
+    def ssl_verify(self):
+        return self.rest_context.certificate_check
 
     def is_feature_disallowed(self, feature_name):    # type: (str) -> bool
         return isinstance(self.disallowed_features, list) and feature_name in self.disallowed_features
