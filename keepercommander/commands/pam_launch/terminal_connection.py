@@ -511,7 +511,7 @@ def extract_terminal_settings(
                 elif protocol == ConnectionProtocol.KUBERNETES.value:
                     settings['protocol_specific'] = _extract_kubernetes_settings(connection)
                 elif protocol in DATABASE:
-                    settings['protocol_specific'] = _extract_database_settings(connection, protocol)
+                    settings['protocol_specific'] = _extract_database_settings(connection)
 
             # allowSupplyHost is at top level of pamSettings value, not inside connection
             settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
@@ -573,28 +573,33 @@ def extract_terminal_settings(
 
 
 def _extract_ssh_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract SSH-specific settings"""
+    """Extract SSH-specific settings from pamSettings.connection (record JSON)."""
+    sftp = connection.get('sftp') or {}
     return {
-        'publicHostKey': connection.get('publicHostKey', ''),
-        'executeCommand': connection.get('executeCommand', ''),
-        'sftpEnabled': connection.get('sftpEnabled', False),
+        'publicHostKey': connection.get('hostKey', ''),
+        'executeCommand': connection.get('command', ''),
+        'sftpEnabled': bool(sftp.get('enableSftp', False)),
+        'sftpRootDirectory': sftp.get('sftpRootDirectory', ''),
     }
 
 
 def _extract_telnet_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract Telnet-specific settings"""
+    """Extract Telnet-specific settings from pamSettings.connection (record JSON)."""
     return {
         'usernameRegex': connection.get('usernameRegex', ''),
         'passwordRegex': connection.get('passwordRegex', ''),
+        'loginSuccessRegex': connection.get('loginSuccessRegex', ''),
+        'loginFailureRegex': connection.get('loginFailureRegex', ''),
     }
 
 
 def _extract_kubernetes_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract Kubernetes-specific settings"""
+    """Extract Kubernetes-specific settings from pamSettings.connection (record JSON)."""
     return {
         'namespace': connection.get('namespace', 'default'),
         'pod': connection.get('pod', ''),
         'container': connection.get('container', ''),
+        'useSSL': connection.get('useSSL', False),
         'ignoreServerCertificate': connection.get('ignoreCert', False),
         'caCertificate': connection.get('caCert', ''),
         'clientCertificate': connection.get('clientCert', ''),
@@ -602,23 +607,13 @@ def _extract_kubernetes_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _extract_database_settings(connection: Dict[str, Any], protocol: str) -> Dict[str, Any]:
-    """Extract database-specific settings"""
-    settings = {
-        'defaultDatabase': connection.get('defaultDatabase', ''),
+def _extract_database_settings(connection: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract database-specific settings from pamSettings.connection (record JSON)."""
+    return {
+        'defaultDatabase': connection.get('database', ''),
         'disableCsvExport': connection.get('disableCsvExport', False),
         'disableCsvImport': connection.get('disableCsvImport', False),
     }
-
-    # Add protocol-specific database settings
-    if protocol == ConnectionProtocol.MYSQL.value:
-        settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ConnectionProtocol.POSTGRESQL.value:
-        settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ConnectionProtocol.SQLSERVER.value:
-        settings['useSSL'] = connection.get('useSSL', True)  # SQL Server typically uses SSL by default
-
-    return settings
 
 
 def create_connection_context(params: KeeperParams,
@@ -1117,6 +1112,8 @@ def _build_guacamole_connection_settings(
         # Enable SFTP if configured
         if protocol_specific.get('sftpEnabled'):
             guacd_params['enable-sftp'] = 'true'
+        if protocol_specific.get('sftpRootDirectory'):
+            guacd_params['sftp-root-directory'] = protocol_specific['sftpRootDirectory']
 
     elif protocol == ConnectionProtocol.TELNET.value:
         # Telnet-specific params
@@ -1124,6 +1121,10 @@ def _build_guacamole_connection_settings(
             guacd_params['username-regex'] = protocol_specific['usernameRegex']
         if protocol_specific.get('passwordRegex'):
             guacd_params['password-regex'] = protocol_specific['passwordRegex']
+        if protocol_specific.get('loginSuccessRegex'):
+            guacd_params['login-success-regex'] = protocol_specific['loginSuccessRegex']
+        if protocol_specific.get('loginFailureRegex'):
+            guacd_params['login-failure-regex'] = protocol_specific['loginFailureRegex']
 
     elif protocol == ConnectionProtocol.KUBERNETES.value:
         # Kubernetes-specific params
@@ -1141,11 +1142,17 @@ def _build_guacamole_connection_settings(
             guacd_params['client-key'] = protocol_specific['clientKey']
         if protocol_specific.get('ignoreServerCertificate'):
             guacd_params['ignore-cert'] = 'true'
+        if protocol_specific.get('useSSL'):
+            guacd_params['use-ssl'] = 'true'
 
     elif protocol in DATABASE:
         # Database-specific params
         if protocol_specific.get('defaultDatabase'):
             guacd_params['database'] = protocol_specific['defaultDatabase']
+        if protocol_specific.get('disableCsvExport'):
+            guacd_params['disable-csv-export'] = 'true'
+        if protocol_specific.get('disableCsvImport'):
+            guacd_params['disable-csv-import'] = 'true'
 
     # CLI mode: named pipe for terminal STDOUT (guacr terminal handlers; not graphical RDP/VNC)
     guacd_params['enable-pipe'] = 'true'

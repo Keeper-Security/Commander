@@ -26,12 +26,14 @@ class TestExtractKubernetesSettings(unittest.TestCase):
             'namespace': 'prod',
             'pod': 'my-pod',
             'container': 'my-container',
+            'useSSL': True,
             'ignoreCert': True,
             'caCert': 'ca-cert-data',
             'clientCert': 'client-cert-data',
             'clientKey': 'client-key-data',
         }
         result = _extract_kubernetes_settings(connection)
+        self.assertTrue(result['useSSL'])
         self.assertEqual(result['ignoreServerCertificate'], True)
         self.assertEqual(result['caCertificate'], 'ca-cert-data')
         self.assertEqual(result['clientCertificate'], 'client-cert-data')
@@ -54,6 +56,7 @@ class TestExtractKubernetesSettings(unittest.TestCase):
         self.assertEqual(result['namespace'], 'default')
         self.assertEqual(result['pod'], '')
         self.assertEqual(result['container'], '')
+        self.assertFalse(result['useSSL'])
         self.assertEqual(result['ignoreServerCertificate'], False)
         self.assertEqual(result['caCertificate'], '')
         self.assertEqual(result['clientCertificate'], '')
