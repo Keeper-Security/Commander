@@ -362,6 +362,10 @@ class NestedShareFolderShareCommand(Command):
             check_folder_share_permission(params, folder_uid, 'nsf-share-folder')
 
             targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
+            if not targets:
+                raise CommandError(
+                    'nsf-share-folder',
+                    f'No valid recipients resolved for folder {folder_arg!r}')
             for recipient, is_team in targets:
                 self._apply(params, action, folder_uid, recipient, role,
                             expiration, as_team=is_team)
@@ -408,24 +412,54 @@ class NestedShareFolderShareCommand(Command):
         """Expand ``@existing`` / ``@current`` into all users and teams currently
         on the folder, excluding the caller. Mirrors legacy behaviour
         (``shared_folder_cache[...]['users']`` + ``['teams']`` union).
+
+        Uses ``get_folder_access_v3`` so sub-folders (whose sync cache only
+        carries the current user's own row) still enumerate every direct
+        accessor that can be removed.
         """
         from keepercommander.proto import folder_pb2
-        accesses = (getattr(params, 'nested_share_folder_accesses', {})
-                    .get(folder_uid, []))
         at_user = int(folder_pb2.AT_USER)
         at_team = int(folder_pb2.AT_TEAM)
 
         result = []
-        for a in accesses:
-            access_type = int(a.get('access_type', 0) or 0)
-            if access_type == at_user:
-                username = a.get('username')
-                if username and username != params.user:
-                    result.append(('user', username))
-            elif access_type == at_team:
-                team_uid = a.get('access_type_uid')
-                if team_uid:
-                    result.append(('team', team_uid))
+        try:
+            info = _nsf.get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
+            for fr in info.get('results', []):
+                if not fr.get('success'):
+                    continue
+                for accessor in fr.get('accessors', []):
+                    if accessor.get('access_type') == 'AT_OWNER':
+                        continue
+                    if accessor.get('inherited'):
+                        continue
+                    if accessor.get('access_type') == 'AT_TEAM':
+                        team_uid = accessor.get('accessor_uid')
+                        if team_uid:
+                            result.append(('team', team_uid))
+                    elif accessor.get('access_type') == 'AT_USER':
+                        username = accessor.get('username')
+                        if username and username != params.user:
+                            result.append(('user', username))
+        except Exception as exc:
+            logging.debug(
+                'nsf-share-folder: get_folder_access_v3 failed for %s: %s',
+                folder_arg, exc)
+
+        if not result:
+            accesses = (getattr(params, 'nested_share_folder_accesses', {})
+                        .get(folder_uid, []))
+            for a in accesses:
+                access_type = int(a.get('access_type', 0) or 0)
+                if a.get('inherited'):
+                    continue
+                if access_type == at_user:
+                    username = a.get('username')
+                    if username and username != params.user:
+                        result.append(('user', username))
+                elif access_type == at_team:
+                    team_uid = a.get('access_type_uid')
+                    if team_uid:
+                        result.append(('team', team_uid))
 
         if not result:
             logging.info("No existing users or teams found in folder '%s'", folder_arg)
@@ -447,6 +481,7 @@ class NestedShareFolderShareCommand(Command):
         try:
             result = api_func(**kw)
             if result['success']:
+                params.sync_data = True
                 taken = result.get('action_taken', verb)
                 if taken == 'already_had_access':
                     logging.info("%s '%s' already has access", kind, recipient)

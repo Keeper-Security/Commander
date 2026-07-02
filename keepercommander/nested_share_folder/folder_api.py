@@ -464,6 +464,37 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
     return result
 
 
+def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_label):
+    """Return a folder accessor row from ``get_folder_access_v3``, if present."""
+    try:
+        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
+        for fr in info.get('results', []):
+            if not fr.get('success'):
+                continue
+            accessors = fr.get('accessors', [])
+            for accessor in accessors:
+                if (accessor.get('accessor_uid') == accessor_uid_b64
+                        and accessor.get('access_type') == access_type_label):
+                    return accessor
+            for accessor in accessors:
+                if accessor.get('accessor_uid') == accessor_uid_b64:
+                    return accessor
+    except Exception as exc:
+        logger.debug('Folder accessor lookup failed for %s: %s', folder_uid, exc)
+    return None
+
+
+def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
+    """Drop a cached folder-access row after a successful revoke."""
+    accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid)
+    if not accesses:
+        return
+    params.nested_share_folder_accesses[folder_uid] = [
+        fa for fa in accesses
+        if fa.get('access_type_uid') != accessor_uid_b64
+    ]
+
+
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
@@ -475,6 +506,25 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     if not actual_uid_bytes:
         raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
 
+    accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
+    access_type_label = folder_pb2.AccessType.Name(access_type_enum)
+    accessor = _lookup_folder_accessor(
+        params, folder_uid, accessor_uid_b64, access_type_label)
+    if accessor and accessor.get('inherited'):
+        kind = 'Team' if as_team else 'User'
+        raise ValueError(
+            f"{kind} '{identifier_label}' has inherited access on this folder; "
+            f"remove access from the parent folder instead")
+    if accessor:
+        server_uid = accessor.get('accessor_uid')
+        if server_uid:
+            actual_uid_bytes = utils.base64_url_decode(server_uid)
+            accessor_uid_b64 = server_uid
+        server_type = accessor.get('access_type')
+        if server_type:
+            access_type_label = server_type
+            access_type_enum = folder_pb2.AccessType.Value(server_type)
+
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
     ad.accessTypeUid = actual_uid_bytes
@@ -483,7 +533,10 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     response = folder_access_update_v3(params, folder_access_removes=[ad])
     result = parse_folder_access_result(response, folder_uid, identifier_label,
                                         'Access revoked successfully')
-    result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    result['access_type'] = access_type_label
+    if result.get('success'):
+        _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64)
+        params.sync_data = True
     return result
 
 
