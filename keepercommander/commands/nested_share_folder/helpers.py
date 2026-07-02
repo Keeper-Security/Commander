@@ -201,8 +201,9 @@ def classify_share_recipient(params, recipient):
     Mirrors the legacy ``share-folder`` resolution exactly:
       1. If *recipient* matches ``EMAIL_PATTERN`` → ``('user', email_lower)``.
       2. Otherwise look it up in ``api.get_share_objects(params)['teams']``
-         (cap of 500 entries) and, if needed, ``params.available_team_cache``.
-         A match by team name *or* team UID returns ``('team', team_uid_b64)``.
+         (cap of 500 entries), ``params.available_team_cache``, and
+         ``resolve_team_identifier`` (``team_cache``). A match by team name
+         *or* team UID returns ``('team', team_uid_b64)``.
       3. No match → logs the same warning as legacy and returns ``None``.
       4. Multiple matches → logs the same warning and returns ``None``.
 

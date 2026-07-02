@@ -496,6 +496,12 @@ def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
 
 
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
+    """Revoke direct user or team access to an NSF folder.
+
+    Looks up the accessor via ``get_folder_access_v3`` so sub-folders use the
+    server-reported UID and access type. Rejects inherited accessors. On
+    success, evicts the local access cache and sets ``params.sync_data``.
+    """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
