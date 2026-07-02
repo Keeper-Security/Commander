@@ -1934,6 +1934,7 @@ class PAMTunnelDiagnoseCommand(Command):
                                 print(f'      {self._green("connection.protocol"):<36}{_val(cn.get("protocol"))}')
                                 print(f'      {self._green("connection.httpCredentialsUid"):<36}{_val(cn.get("httpCredentialsUid") or None)}')
                                 print(f'      {self._green("connection.recordingIncludeKeys"):<36}{_val(cn.get("recordingIncludeKeys"))}')
+                                print(f'      {self._green("connection.ignoreInitialSslCert"):<36}{_val(cn.get("ignoreInitialSslCert"))}')
                             else:
                                 pam_settings_field = record_obj.get_typed_field('pamSettings') if record_obj else None
                                 ps = {}
@@ -1948,6 +1949,8 @@ class PAMTunnelDiagnoseCommand(Command):
                                 print(f'      {self._green("connection.protocol"):<36}{_val(cn.get("protocol"))}')
                                 print(f'      {self._green("connection.allowKeeperDBProxy"):<36}{_val(cn.get("allowKeeperDBProxy"))}')
                                 print(f'      {self._green("connection.recordingIncludeKeys"):<36}{_val(cn.get("recordingIncludeKeys"))}')
+                                print(f'      {self._green("connection.security"):<36}{_val(cn.get("security"))}')
+                                print(f'      {self._green("connection.ignoreCert"):<36}{_val(cn.get("ignoreCert"))}')
                                 print(f'      {self._green("allowSupplyHost"):<36}{_val(ps.get("allowSupplyHost"))}')
                                 if ps.get('configUid'):
                                     print(f'      {self._green("configUid"):<36}{_val(ps.get("configUid"))}')
@@ -2668,6 +2671,13 @@ class PAMConnectionEditCommand(Command):
                         help='Maximum Scrollback Size (terminal history). Integer to set, '
                              'empty string to remove. Supported for pamDatabase (mysql/postgresql/sql-server) '
                              'and pamMachine/pamDirectory (ssh/telnet/kubernetes).')
+    parser.add_argument('--ignore-server-cert', '-isc', required=False, dest='ignore_server_cert', choices=choices,
+                        help='Ignore server certificate errors (on/off/default). Supported for rdp and '
+                             'kubernetes protocols.')
+    parser.add_argument('--security-mode', '-sm', required=False, dest='security_mode',
+                        choices=['any', 'nla', 'tls', 'vmconnect', 'rdp', 'default'],
+                        help='RDP Security Mode (any/nla/tls/vmconnect/rdp, or default to unset). '
+                             'Supported for rdp protocol only.')
     parser.add_argument('--rotate-on-termination', required=False, dest='rotate_on_termination',
                         choices=['on', 'off'],
                         help='Rotate launch credentials when the PAM session ends (DAG resource meta)')
@@ -2716,6 +2726,19 @@ class PAMConnectionEditCommand(Command):
                                    f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
                                    f"pamAzureConfiguration records{bcolors.ENDC}")
 
+        # Effective protocol (existing, or the one being set by this same call via
+        # --connections=on --protocol) — shared by --scrollback, --ignore-server-cert,
+        # and --security-mode gating below.
+        def _get_effective_protocol():
+            existing_ps = record.get_typed_field('pamSettings')
+            existing_protocol = ''
+            if existing_ps and existing_ps.value and isinstance(existing_ps.value[0], dict):
+                existing_protocol = existing_ps.value[0].get('connection', {}).get('protocol') or ''
+            new_protocol_arg = kwargs.get('protocol', None)
+            if kwargs.get('connections') == 'on' and new_protocol_arg is not None:
+                return new_protocol_arg  # may be '' to clear
+            return existing_protocol
+
         # --scrollback: validate record type + effective protocol before any mutation
         scrollback_arg = kwargs.get('scrollback', None)
         scrollback_clear = False
@@ -2732,15 +2755,7 @@ class PAMConnectionEditCommand(Command):
                     f'{bcolors.FAIL}--scrollback is only supported for pamDatabase, pamMachine, and pamDirectory '
                     f'records. Record "{record_uid}" is of type "{record_type}".{bcolors.ENDC}')
 
-            existing_ps = record.get_typed_field('pamSettings')
-            existing_protocol = ''
-            if existing_ps and existing_ps.value and isinstance(existing_ps.value[0], dict):
-                existing_protocol = existing_ps.value[0].get('connection', {}).get('protocol') or ''
-            new_protocol_arg = kwargs.get('protocol', None)
-            if kwargs.get('connections') == 'on' and new_protocol_arg is not None:
-                effective_protocol = new_protocol_arg  # may be '' to clear
-            else:
-                effective_protocol = existing_protocol
+            effective_protocol = _get_effective_protocol()
             if effective_protocol not in allowed_protocols:
                 raise CommandError('pam connection edit',
                     f'{bcolors.FAIL}--scrollback is not supported for protocol "{effective_protocol or "(unset)"}" '
@@ -2759,6 +2774,37 @@ class PAMConnectionEditCommand(Command):
                     raise CommandError('pam connection edit',
                         f'{bcolors.FAIL}--scrollback must be a non-negative integer or empty string. '
                         f'Got: "{scrollback_arg}".{bcolors.ENDC}')
+
+        pam_settings_record_types = ('pamMachine', 'pamDatabase', 'pamDirectory')
+
+        # --ignore-server-cert: validate record type + effective protocol before any mutation
+        ignore_server_cert_arg = kwargs.get('ignore_server_cert', None)
+        if ignore_server_cert_arg is not None:
+            if record_type not in pam_settings_record_types:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--ignore-server-cert is only supported for pamMachine, pamDatabase, and '
+                    f'pamDirectory records. Record "{record_uid}" is of type "{record_type}". For pamRemoteBrowser '
+                    f'records, use `pam rbi edit --ignore-server-cert` instead.{bcolors.ENDC}')
+            effective_protocol = _get_effective_protocol()
+            if effective_protocol not in ('rdp', 'kubernetes'):
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--ignore-server-cert is not supported for protocol '
+                    f'"{effective_protocol or "(unset)"}" on {record_type} records. '
+                    f'Allowed protocols: kubernetes, rdp.{bcolors.ENDC}')
+
+        # --security-mode: validate record type + effective protocol before any mutation
+        security_mode_arg = kwargs.get('security_mode', None)
+        if security_mode_arg is not None:
+            if record_type not in pam_settings_record_types:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--security-mode is only supported for pamMachine, pamDatabase, and '
+                    f'pamDirectory records. Record "{record_uid}" is of type "{record_type}".{bcolors.ENDC}')
+            effective_protocol = _get_effective_protocol()
+            if effective_protocol != 'rdp':
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--security-mode is not supported for protocol '
+                    f'"{effective_protocol or "(unset)"}" on {record_type} records. '
+                    f'Allowed protocols: rdp.{bcolors.ENDC}')
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
@@ -2869,6 +2915,46 @@ class PAMConnectionEditCommand(Command):
                         dirty = True
                     else:
                         logging.debug(f'scrollback is already {scrollback_value} on record={record_uid}')
+
+            # --ignore-server-cert: apply (validated above; record_type + effective protocol already checked)
+            if ignore_server_cert_arg is not None:
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                current_ic = vcon.get('ignoreCert') if isinstance(vcon, dict) else None
+                if ignore_server_cert_arg == 'default':
+                    if current_ic is not None:
+                        pam_settings.value[0]["connection"].pop('ignoreCert', None)
+                        dirty = True
+                    else:
+                        logging.debug(f'ignoreCert is already unset on record={record_uid}')
+                else:
+                    target_ic = value_to_boolean(ignore_server_cert_arg)
+                    if current_ic != target_ic:
+                        pam_settings.value[0]["connection"]["ignoreCert"] = target_ic
+                        dirty = True
+                    else:
+                        logging.debug(f'ignoreCert is already {target_ic} on record={record_uid}')
+
+            # --security-mode: apply (validated above; record_type + effective protocol already checked)
+            if security_mode_arg is not None:
+                from .pam_import.base import RDPSecurity
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                current_sec = vcon.get('security') if isinstance(vcon, dict) else None
+                if security_mode_arg == 'default':
+                    if current_sec is not None:
+                        pam_settings.value[0]["connection"].pop('security', None)
+                        dirty = True
+                    else:
+                        logging.debug(f'security is already unset on record={record_uid}')
+                else:
+                    mapped_security = RDPSecurity.map(security_mode_arg)
+                    target_sec = mapped_security.value if mapped_security else security_mode_arg
+                    if current_sec != target_sec:
+                        pam_settings.value[0]["connection"]["security"] = target_sec
+                        dirty = True
+                    else:
+                        logging.debug(f'security is already {target_sec} on record={record_uid}')
 
             if dirty:
                 record_management.update_record(params, record)
