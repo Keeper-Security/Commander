@@ -1273,8 +1273,8 @@ class PAMRouterScriptCommand(GroupCommand):
     def __init__(self):
         super().__init__()
         self.register_command('list',  PAMScriptListCommand(), 'List script fields')
-        self.register_command('add', PAMScriptAddCommand(), 'List Record Rotation Schedulers')
-        self.register_command('edit', PAMScriptEditCommand(), 'Add, delete, or edit script field')
+        self.register_command('add', PAMScriptAddCommand(), 'Add script to record (record owner only)')
+        self.register_command('edit', PAMScriptEditCommand(), 'Edit script field')
         self.register_command('delete', PAMScriptDeleteCommand(), 'Delete script field')
         self.default_verb = 'list'
 
@@ -1317,7 +1317,8 @@ class PAMScriptListCommand(Command):
 
 
 class PAMScriptAddCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam rotate script add', description='Add script to record')
+    parser = argparse.ArgumentParser(prog='pam rotate script add',
+                                     description='Add script to record (record owner only)')
     parser.add_argument('--script', required=True, dest='script', action='store',
                         help='Script file name')
     parser.add_argument('--add-credential', dest='add_credential', action='append',
