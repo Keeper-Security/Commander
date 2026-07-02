@@ -13,7 +13,15 @@ from unittest import TestCase, mock
 from unittest.mock import Mock, MagicMock, patch
 
 from keepercommander import utils, crypto
+from keepercommander.commands.nested_share_folder import (
+    NestedShareFolderMkdirCommand,
+    NestedShareFolderShareCommand,
+)
+from keepercommander.commands.nested_share_folder.helpers import classify_share_recipient
 from keepercommander.error import CommandError
+from keepercommander.nested_share_folder.common import parse_folder_access_result
+from keepercommander.nested_share_folder.folder_api import revoke_folder_access_v3
+from keepercommander.proto import folder_pb2
 
 
 _DATA_KEY = utils.generate_aes_key()
@@ -245,7 +253,7 @@ class TestNestedShareFolderFolderCommands(TestCase):
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_resolves_parent_uid_in_path(self, mock_create):
-        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        """Parent path segments that are NSF UIDs resolve to the folder, not a name."""
         parent_uid = 'tY6D-RanxY252zzBY_xU4A'
         child_uid = utils.generate_uid()
         mock_create.return_value = {
@@ -270,7 +278,7 @@ class TestNestedShareFolderFolderCommands(TestCase):
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_resolves_parent_name_in_path(self, mock_create):
-        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        """Parent path segments that match an existing folder name resolve by name."""
         parent_fuid, parent_fobj = _make_folder(name='Engineering')
         child_uid = utils.generate_uid()
         mock_create.return_value = {
@@ -293,7 +301,7 @@ class TestNestedShareFolderFolderCommands(TestCase):
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_creates_intermediate_name_segments(self, mock_create):
-        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+        """Multi-segment name paths create missing intermediate folders."""
         eng_uid = utils.generate_uid()
         child_uid = utils.generate_uid()
         mock_create.side_effect = [
@@ -967,9 +975,7 @@ class TestNestedShareFolderFolderApi(TestCase):
     def test_revoke_folder_access_subfolder_team(
             self, mock_resolve_accessor, mock_resolve_folder,
             mock_get_access, mock_access_update):
-        from keepercommander.nested_share_folder.folder_api import revoke_folder_access_v3
-        from keepercommander.proto import folder_pb2
-
+        """Revoking team access on an NSF subfolder uses server accessor UIDs."""
         parent_uid, parent_obj = _make_folder(name='Parent')
         child_uid, child_obj = _make_folder(
             name='Child', parent_uid=parent_uid)
@@ -1018,8 +1024,7 @@ class TestNestedShareFolderFolderApi(TestCase):
     @patch('keepercommander.nested_share_folder.folder_api.revoke_folder_access_v3')
     @patch('keepercommander.api.get_share_objects')
     def test_share_folder_remove_subfolder_team(self, mock_share_objects, mock_revoke):
-        from keepercommander.commands.nested_share_folder import NestedShareFolderShareCommand
-
+        """nsf-share-folder -a remove resolves team names on NSF subfolders."""
         mock_share_objects.return_value = {'teams': {}}
         parent_uid, parent_obj = _make_folder(name='Parent')
         child_uid, child_obj = _make_folder(
@@ -1049,8 +1054,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         )
 
     def test_classify_share_recipient_resolves_team_from_cache(self):
-        from keepercommander.commands.nested_share_folder.helpers import classify_share_recipient
-
+        """Team names fall back to team_cache when share-objects is empty."""
         team_uid = utils.generate_uid()
         params = _make_params(team_cache={
             team_uid: {'name': 'Ops Team', 'team_uid': team_uid},
@@ -1060,9 +1064,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         self.assertEqual(result, ('team', team_uid))
 
     def test_parse_folder_access_result_treats_success_message_as_success(self):
-        from keepercommander.nested_share_folder.common import parse_folder_access_result
-        from keepercommander.proto import folder_pb2
-
+        """SUCCESS status with a non-empty message is still treated as success."""
         response = Mock()
         result = Mock()
         result.status = folder_pb2.SUCCESS
