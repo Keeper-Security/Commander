@@ -451,13 +451,12 @@ def parse_folder_access_result(response, folder_uid, user_uid, default_message):
     if response.folderAccessResults:
         result = response.folderAccessResults[0]
         status_value = result.status
-        is_failure = (status_value != 0) or (result.message and len(result.message) > 0)
-        status_name = (folder_pb2.FolderModifyStatus.Name(status_value)
-                       if status_value != 0 else 'SUCCESS')
+        is_failure = status_value != folder_pb2.SUCCESS
+        status_name = folder_pb2.FolderModifyStatus.Name(status_value)
         return {
             'folder_uid': folder_uid,
             'user_uid': user_uid,
-            'status': 'ERROR' if is_failure and status_value == 0 else status_name,
+            'status': status_name,
             'message': result.message if result.message else default_message,
             'success': not is_failure,
         }
