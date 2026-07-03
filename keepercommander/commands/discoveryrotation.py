@@ -33,7 +33,9 @@ from .pam.vault_target import (
     resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
+    create_record_in_folder, update_pam_record, records_in_folder,
 )
+from .nested_share_folder.helpers import is_nested_share_folder
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
     pam_configuration_create_record_v6, record_rotation_get, \
@@ -1418,7 +1420,7 @@ class PAMCreateRecordRotationCommand(Command):
         if folder_uids:
             regex = re.compile(fnmatch.translate(record_pattern), re.IGNORECASE).match if record_pattern else None
             for folder_uid in folder_uids:
-                folder_records = params.subfolder_record_cache.get(folder_uid)
+                folder_records = records_in_folder(params, folder_uid)
                 if not folder_records:
                     continue
                 if record_pattern and record_pattern in folder_records:
@@ -1634,8 +1636,10 @@ class PAMListRecordRotationCommand(Command):
 
         enterprise_all_controllers = list(gateway_helper.get_all_gateways(params))
         enterprise_controllers_connected_resp = router_get_connected_gateways(params)
-        enterprise_controllers_connected_uids_bytes = \
-            [x.controllerUid for x in enterprise_controllers_connected_resp.controllers]
+        enterprise_controllers_connected_uids_bytes = []
+        if enterprise_controllers_connected_resp and enterprise_controllers_connected_resp.controllers:
+            enterprise_controllers_connected_uids_bytes = \
+                [x.controllerUid for x in enterprise_controllers_connected_resp.controllers]
 
         all_pam_config_records = pam_configurations_get_all(params)
         table = []
@@ -1683,8 +1687,8 @@ class PAMListRecordRotationCommand(Command):
                 continue
 
             row.append(f'{row_color}{record_uid}')
-            row.append(record_title)
-            row.append(record_type)
+            row.append(record_title or '[untitled]')
+            row.append(record_type or '[unknown]')
 
             if s.noSchedule is True:
                 # Per Sergey A:
@@ -1739,17 +1743,22 @@ class PAMListRecordRotationCommand(Command):
                         f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
 
             else:
-                pam_data_decrypted = pam_decrypt_configuration_data(pam_configuration)
-                pam_config_name = pam_data_decrypted.get('title')
-                pam_config_type = pam_data_decrypted.get('type')
-                row.append(f"{pam_config_name} ({pam_config_type})")
+                pam_config_name, pam_config_type = get_vault_record_title_type(params, configuration_uid_str)
+                if pam_config_name == '[record inaccessible]':
+                    try:
+                        pam_data_decrypted = pam_decrypt_configuration_data(pam_configuration)
+                        pam_config_name = pam_data_decrypted.get('title') or pam_config_name
+                        pam_config_type = pam_data_decrypted.get('type') or '[unknown]'
+                    except Exception:
+                        pass
+                row.append(f"{pam_config_name or '[untitled]'} ({pam_config_type or '[unknown]'})")
 
             if is_verbose:
                 row.append(f'{utils.base64_url_encode(configuration_uid)}{bcolors.ENDC}')
 
             table.append(row)
 
-        table.sort(key=lambda x: (x[1]))
+        table.sort(key=lambda x: (x[1] or ''))
 
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
@@ -2860,7 +2869,12 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         self.verify_required(record)
 
-        pam_configuration_create_record_v6(params, record, shared_folder_uid)
+        if is_nested_share_folder(params, shared_folder_uid):
+            create_record_in_folder(params, record, shared_folder_uid, command='pam-config-new')
+        else:
+            pam_configuration_create_record_v6(params, record, shared_folder_uid)
+            api.sync_down(params)
+            place_record_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         # Add DAG for configuration
@@ -2879,10 +2893,6 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         if admin_cred_ref:
             tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
         tmp_dag.print_tunneling_config(record.record_uid, None)
-
-        # Moving v6 record into the folder
-        api.sync_down(params)
-        place_record_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
 
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
         params.sync_data = True
@@ -2938,14 +2948,11 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         config_name = kwargs.get('uid')
         if not config_name:
             raise CommandError('pam config edit', 'PAM Configuration UID or Title is required')
-        if config_name in params.record_cache:
-            configuration = vault.KeeperRecord.load(params, config_name)
-        else:
-            l_name = config_name.casefold()
-            for c in vault_extensions.find_records(params, record_version=6):
-                if c.title.casefold() == l_name:
-                    configuration = c
-                    break
+
+        config_uid = PAMConfigurationRemoveCommand._resolve_pam_config_uid(params, config_name)
+        if not config_uid:
+            raise CommandError('pam-config-edit', f'PAM configuration "{config_name}" not found')
+        configuration = vault.KeeperRecord.load(params, config_uid)
         if not configuration:
             raise CommandError('pam-config-edit', f'PAM configuration "{config_name}" not found')
         if not isinstance(configuration, vault.TypedRecord) or configuration.version != 6:
@@ -3000,7 +3007,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         self.parse_properties(params, configuration, config_edit=True, **kwargs)
         self.verify_required(configuration)
 
-        record_management.update_record(params, configuration)
+        update_pam_record(params, configuration, command='pam-config-edit')
 
         admin_cred_ref = ''
         value = field.get_default_value(dict)
