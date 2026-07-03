@@ -157,7 +157,7 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
         field = record.get_typed_field('pamResources')
         self.assertEqual(field.value[0]['folderUid'], 'nsf_folder')
 
-    @mock.patch('keepercommander.commands.pam.vault_target.place_record_in_folder')
+    @mock.patch('keepercommander.commands.discoveryrotation.place_record_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.api.sync_down')
     @mock.patch('keepercommander.commands.discoveryrotation.TunnelDAG')
     @mock.patch('keepercommander.commands.discoveryrotation.get_keeper_tokens',
@@ -189,7 +189,7 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
 
 class TestPamConfigEditNsfPlacement(unittest.TestCase):
 
-    @mock.patch('keepercommander.commands.pam.vault_target.place_record_in_folder')
+    @mock.patch('keepercommander.commands.discoveryrotation.place_record_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.record_management.update_record')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
