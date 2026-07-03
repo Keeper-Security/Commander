@@ -29,7 +29,9 @@ class ApprovalsChannelProfile:
     """Platform-specific labels and channel ID validation."""
     platform_name: str
     channel_header: str
+    single_channel_description: str
     channel_description: str
+    default_channel_description: str
     channel_prompt: str
     validate_channel: Callable[[str], bool]
     channel_error: str
@@ -38,7 +40,12 @@ class ApprovalsChannelProfile:
 SLACK_APPROVALS_PROFILE = ApprovalsChannelProfile(
     platform_name='Slack',
     channel_header='APPROVALS_CHANNEL_ID',
-    channel_description='Slack channel ID for approval notifications',
+    single_channel_description='Slack channel ID for approval notifications',
+    channel_description='Slack channel where approval requests for this approver team are sent',
+    default_channel_description=(
+        'Default channel for EPM privilege requests, SSO Cloud device approvals, '
+        'and approval requests from users not assigned to an approver team'
+    ),
     channel_prompt='Channel ID (starts with C):',
     validate_channel=lambda c: bool(c and c.startswith('C')),
     channel_error="Invalid Approvals Channel ID (must start with 'C')",
@@ -203,6 +210,21 @@ def _prompt_vault_uid_list(
         return uids
 
 
+def _prompt_channel(
+    profile: ApprovalsChannelProfile,
+    prompt_with_validation: Callable[[str, Callable[[str], bool], str], str],
+    description: str,
+    header: Optional[str] = None,
+) -> str:
+    print(f"\n{bcolors.BOLD}{header or profile.channel_header}:{bcolors.ENDC}")
+    print(f"  {description}")
+    return prompt_with_validation(
+        profile.channel_prompt,
+        profile.validate_channel,
+        profile.channel_error,
+    )
+
+
 def collect_approvals_config(
     params: 'KeeperParams',
     prompt_yes_no: Callable[[str, bool], bool],
@@ -215,12 +237,10 @@ def collect_approvals_config(
     multi_channel = prompt_yes_no('Enable multi-channel approvers?', default=False)
 
     if not multi_channel:
-        print(f"\n{bcolors.BOLD}{profile.channel_header}:{bcolors.ENDC}")
-        print(f"  {profile.channel_description}")
-        single_channel_id = prompt_with_validation(
-            profile.channel_prompt,
-            profile.validate_channel,
-            profile.channel_error,
+        single_channel_id = _prompt_channel(
+            profile,
+            prompt_with_validation,
+            profile.single_channel_description,
         )
         return ApprovalsConfig(
             multi_channel_enabled=False,
@@ -257,12 +277,11 @@ def collect_approvals_config(
     if specify_boundaries:
         teams = _collect_team_boundaries(params, teams)
 
-    print(f"\n{bcolors.BOLD}DEFAULT {profile.channel_header}:{bcolors.ENDC}")
-    print(f"  {profile.channel_description} for users not assigned to any approver team")
-    default_channel_id = prompt_with_validation(
-        profile.channel_prompt,
-        profile.validate_channel,
-        profile.channel_error,
+    default_channel_id = _prompt_channel(
+        profile,
+        prompt_with_validation,
+        profile.default_channel_description,
+        header=f'DEFAULT {profile.channel_header}',
     )
 
     return ApprovalsConfig(
