@@ -134,7 +134,7 @@ record_access = share_folder_parser.add_argument_group(
     'record permissions', 'Can edit and can share for records in the folder')
 record_access.add_argument(
     '-r', '--record', dest='record', action='append',
-    help='record name or UID, @existing for all records in the folder, '
+    help='record name or UID already in the folder, @existing for all records in the folder, '
          'or \'*\' as default record permission')
 record_access.add_argument(
     '-s', '--can-share', dest='can_share', action='store',
@@ -513,6 +513,10 @@ class ShareFolderCommand(Command):
             default_record=default_record,
             all_records=all_records)
 
+        if record_uids and not default_record and not all_records:
+            ShareFolderCommand._validate_records_in_shared_folders(
+                params, shared_folder_uids, record_uids)
+
         if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and \
                 not default_record and not default_account and \
                 not all_users and not all_records:
@@ -586,6 +590,30 @@ class ShareFolderCommand(Command):
             raise CommandError(
                 'share-folder',
                 '-d and -s require a record target: -r <RECORD>, -r *, or -r @existing.')
+
+    @staticmethod
+    def _validate_records_in_shared_folders(params, shared_folder_uids, record_uids):
+        # type: (KeeperParams, Set[str], Set[str]) -> None
+        """Reject -r targets that are not already linked to the shared folder."""
+        for sf_uid in shared_folder_uids:
+            sh_fol = params.shared_folder_cache.get(sf_uid)
+            if not sh_fol:
+                raise CommandError(
+                    'share-folder',
+                    f'Shared folder "{sf_uid}" is not loaded. Sync down and retry.')
+            folder_record_uids = {x['record_uid'] for x in sh_fol.get('records', [])}
+            missing = record_uids - folder_record_uids
+            if not missing:
+                continue
+            labels = []
+            for uid in sorted(missing):
+                rec = params.record_cache.get(uid)
+                title = rec.get('title_unencrypted') if rec else None
+                labels.append(title or uid)
+            folder_name = sh_fol.get('name_unencrypted') or sf_uid
+            raise CommandError(
+                'share-folder',
+                f'Record(s) not in shared folder "{folder_name}": ' + ', '.join(labels))
 
     @staticmethod
     def _confirm_folder_user_removals(params, shared_folder_uids, users_to_remove, *, force=False):
@@ -767,19 +795,9 @@ class ShareFolderCommand(Command):
                     folder_record_update.canShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
                     rq.sharedFolderUpdateRecord.append(folder_record_update)
                 else:
-                    default_ce = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_edit') is True else folder_pb2.BOOLEAN_FALSE
-                    default_cs = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_share') is True else folder_pb2.BOOLEAN_FALSE
-                    folder_record_update.canEdit = default_ce if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
-                    folder_record_update.canShare = default_cs if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
-                    sf_key = curr_sf.get('shared_folder_key_unencrypted')
-                    if sf_key:
-                        rec = params.record_cache[record_uid]
-                        rec_key = rec['record_key_unencrypted']
-                        if rec.get('version', 0) < 3:
-                            folder_record_update.encryptedRecordKey = crypto.encrypt_aes_v1(rec_key, sf_key)
-                        else:
-                            folder_record_update.encryptedRecordKey = crypto.encrypt_aes_v2(rec_key, sf_key)
-                    rq.sharedFolderAddRecord.append(folder_record_update)
+                    logging.debug(
+                        'Record %s is not in shared folder %s; skipping record permission update',
+                        record_uid, curr_sf.get('shared_folder_uid'))
         return rq
 
     @staticmethod

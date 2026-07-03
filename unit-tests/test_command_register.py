@@ -353,11 +353,10 @@ class TestRegister(TestCase):
         """With -r and --expire-in, only folder user gets a timer; record protos are permissions-only."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
-        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
 
         curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
         curr_sf.setdefault('users', [])
-        curr_sf.setdefault('records', [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}])
         future_ts = int(datetime.datetime.now().timestamp()) + 86_400
 
         params.key_cache['user2@keepersecurity.com'] = mock.MagicMock(
@@ -446,6 +445,25 @@ class TestRegister(TestCase):
                 force=True,
             )
         self.assertIn('-d and -s require a record target', str(ctx.exception))
+
+    def test_share_folder_rejects_record_not_in_folder(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        folder_record_uids = {x['record_uid'] for x in params.shared_folder_cache[shared_folder_uid]['records']}
+        foreign_record_uid = next(
+            uid for uid in params.record_cache if uid not in folder_record_uids)
+        cmd = register.ShareFolderCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                action='grant',
+                folder=shared_folder_uid,
+                record=[foreign_record_uid],
+                can_edit='on',
+                force=True,
+            )
+        self.assertIn('not in shared folder', str(ctx.exception))
 
     def test_share_folder_prepare_request_remove_user_only(self):
         """Remove with -e revokes folder access only; no record protos are sent."""
@@ -543,7 +561,7 @@ class TestRegister(TestCase):
         """When sharing another record without expiration, skip redundant folder user update."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
-        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
 
         curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
         curr_sf['users'] = [{
@@ -551,7 +569,6 @@ class TestRegister(TestCase):
             'manage_records': True,
             'manage_users': True,
         }]
-        curr_sf.setdefault('records', [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}])
 
         rq = register.ShareFolderCommand.prepare_request(
             params,
@@ -564,15 +581,14 @@ class TestRegister(TestCase):
         )
 
         self.assertFalse(list(rq.sharedFolderUpdateUser))
-        self.assertTrue(list(rq.sharedFolderAddRecord),
-                        'new record grant should update folder record permissions via add')
-        self.assertFalse(list(rq.sharedFolderUpdateRecord))
+        self.assertTrue(list(rq.sharedFolderUpdateRecord))
+        self.assertFalse(list(rq.sharedFolderAddRecord))
 
     def test_share_folder_prepare_request_updates_user_when_explicit_perms_with_record(self):
         """-p/-o with -r must always update folder user permissions."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
-        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
 
         curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
         curr_sf['users'] = [{
@@ -580,7 +596,6 @@ class TestRegister(TestCase):
             'manage_records': True,
             'manage_users': True,
         }]
-        curr_sf.setdefault('records', [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}])
 
         rq = register.ShareFolderCommand.prepare_request(
             params,
