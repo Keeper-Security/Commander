@@ -387,7 +387,11 @@ class ConsoleLoginUi(login_steps.LoginUi):
                     token = pyperclip.paste()
                 except:
                     token = ''
-                    logging.warning('Failed to paste from clipboard')
+                if len(token) < 10:
+                    try:
+                        token = input(f'{Fore.GREEN}Paste SSO Token: {Fore.RESET}').strip()
+                    except KeyboardInterrupt:
+                        token = ''
             else:
                 if len(token) < 10:
                     logging.warning(f'Unsupported menu option: {token}')
