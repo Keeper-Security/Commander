@@ -408,6 +408,60 @@ class TestPAMListRecordRotationCommand(unittest.TestCase):
         self.assertTrue(mock_router_get_connected_gateways.called)
         self.assertTrue(mock_pam_configurations_get_all.called)
 
+    @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+    @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
+    @patch('keepercommander.commands.discoveryrotation.pam_configurations_get_all')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.dump_report_data')
+    def test_execute_reads_nsf_config_without_encrypted_data_field(
+            self, mock_dump_report_data, mock_get_all_gateways, mock_pam_configurations_get_all,
+            mock_router_get_connected_gateways, mock_router_get_rotation_schedules):
+        rec_uid = 'rec123456789012345678901'
+        cfg_uid = 'cfg123456789012345678901'
+        mock_params = create_mock_params()
+        mock_params.record_cache = {
+            rec_uid: {
+                'record_uid': rec_uid,
+                'version': 6,
+                'record_key_unencrypted': b'0' * 32,
+                'data_unencrypted': json.dumps({'title': 'PAM User', 'type': 'pamUser'}),
+            },
+            cfg_uid: {
+                'record_uid': cfg_uid,
+                'version': 6,
+                'data': None,
+                'record_key_unencrypted': b'1' * 32,
+                'data_unencrypted': json.dumps({
+                    'title': 'PAM NSF Test Configuration',
+                    'type': 'pamNetworkConfiguration',
+                }),
+            },
+        }
+
+        mock_router_get_rotation_schedules.return_value.schedules = [
+            MagicMock(
+                recordUid=utils.base64_url_decode(rec_uid),
+                controllerUid=utils.base64_url_decode('controller_uid'),
+                configurationUid=utils.base64_url_decode(cfg_uid),
+                noSchedule=False,
+                scheduleData='RotateActionJob|daily.0.12.1',
+            )
+        ]
+        mock_get_all_gateways.return_value = [
+            MagicMock(controllerUid=utils.base64_url_decode('controller_uid'), controllerName='Gateway')
+        ]
+        mock_router_get_connected_gateways.return_value.controllers = []
+        mock_pam_configurations_get_all.return_value = [mock_params.record_cache[cfg_uid]]
+
+        self.command.execute(mock_params, is_verbose=False)
+
+        self.assertTrue(mock_dump_report_data.called)
+        table = mock_dump_report_data.call_args[0][0]
+        self.assertEqual(
+            table[0][5],
+            'PAM NSF Test Configuration (pamNetworkConfiguration)',
+        )
+
 
 class TestPAMGatewayListCommand(unittest.TestCase):
 

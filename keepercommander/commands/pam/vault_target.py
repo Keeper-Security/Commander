@@ -352,12 +352,12 @@ def get_vault_record_title_type(params, record_uid):
     # type: (...) -> tuple
     rec = vault.KeeperRecord.load(params, record_uid)
     if rec:
-        return rec.title, rec.record_type
+        return rec.title or '[untitled]', rec.record_type or '[unknown]'
     nsf_data = getattr(params, 'nested_share_record_data', {}).get(record_uid, {})
     data_json = nsf_data.get('data_json', {}) if isinstance(nsf_data, dict) else {}
     if isinstance(data_json, dict) and data_json:
-        return (data_json.get('title', '[record inaccessible]'),
-                data_json.get('type', '[record inaccessible]'))
+        return (data_json.get('title') or '[record inaccessible]',
+                data_json.get('type') or '[record inaccessible]')
     return '[record inaccessible]', '[record inaccessible]'
 
 
@@ -607,6 +607,26 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
         return _create_typed_record_in_nsf(params, record, folder_uid, command=command)
 
     record_management.add_record_to_folder(params, record, folder_uid)
+
+
+def update_pam_record(params, record, command='pam'):
+    from ..nested_share_folder.helpers import is_nested_share_record
+    from ...nested_share_folder.record_api import update_record_v3
+
+    if is_nested_share_record(params, record.record_uid):
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError(command, 'Nested Share Folder record update requires a typed record')
+
+        result = update_record_v3(
+            params,
+            record.record_uid,
+            record_data=vault_extensions.extract_typed_record_data(record),
+        )
+        if not result.get('success'):
+            raise CommandError(command, result.get('message') or 'Failed to update record in Nested Share Folder')
+        api.sync_down(params)
+    else:
+        record_management.update_record(params, record)
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
