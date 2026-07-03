@@ -24,12 +24,16 @@ import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser,
-                   json_output_parser, field_to_title,
-                   FolderMixin, RecordMixin, toggle_pam_legacy_commands)
-from .folder import FolderMoveCommand
+                   json_output_parser, field_to_title, toggle_pam_legacy_commands)
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
+from .pam.vault_target import (
+    format_pam_folder_display, resolve_pam_folder_uid,
+    resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
+    get_vault_record_title_type, find_pam_records_by_search,
+    resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
+)
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
     pam_configuration_create_record_v6, record_rotation_get, \
@@ -57,7 +61,7 @@ from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2, APIRequest_pb2
-from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
+from ..subfolder import try_resolve_path, BaseFolderNode
 from ..vault import TypedField
 from ..discovery_common.record_link import RecordLink
 from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
@@ -488,8 +492,8 @@ class PAMCreateRecordRotationCommand(Command):
     record_group.add_argument('--record', '-r', dest='record_name', action='store',
                               help='Record UID, name, or pattern to be rotated manually or via schedule')
     record_group.add_argument('--folder', '-fd', dest='folder_name', action='store',
-                              help='Used for bulk rotation setup. The folder UID or name that holds records to be '
-                                   'configured')
+                              help='Used for bulk rotation setup. The folder UID or name (including Nested Share '
+                                   'Folders) that holds records to be configured')
     parser.add_argument('--force', '-f', dest='force', action='store_true', help='Do not ask for confirmation')
     parser.add_argument('--config', '-c', required=False, dest='config', action='store',
                         help='UID or path of the configuration record.')
@@ -558,7 +562,7 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag.link_resource_to_config(target_record.record_uid)
 
             admin = kwargs.get('admin')
-            adm_rec = RecordMixin.resolve_single_record(params, kwargs.get('admin', None))
+            adm_rec = resolve_pam_record(params, kwargs.get('admin', None), rec_type='pamUser')
             if adm_rec and isinstance(adm_rec, vault.TypedRecord):
                 admin = adm_rec.record_uid
 
@@ -1380,7 +1384,10 @@ class PAMCreateRecordRotationCommand(Command):
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_name:
-            if record_name in params.record_cache:
+            rec = resolve_pam_record(params, record_name)
+            if rec:
+                record_uids.add(rec.record_uid)
+            elif record_name in params.record_cache:
                 record_uids.add(record_name)
             else:
                 rs = try_resolve_path(params, record_name, find_all_matches=True)
@@ -1399,24 +1406,11 @@ class PAMCreateRecordRotationCommand(Command):
 
         folder_name = kwargs.get('folder_name')
         if folder_name:
-            if folder_name in params.folder_cache:
-                folder_uids.add(folder_name)
+            collected = collect_pam_folder_uids(params, folder_name)
+            if collected:
+                folder_uids.update(collected)
             else:
-                rs = try_resolve_path(params, folder_name, find_all_matches=True)
-                if rs is not None:
-                    folder, record_title = rs
-                    if not record_title:
-
-                        def add_folders(sub_folder):  # type: (BaseFolderNode) -> None
-                            folder_uids.add(sub_folder.uid or '')
-
-                        if isinstance(folder, BaseFolderNode):
-                            folder = [folder]
-                        if isinstance(folder, list):
-                            for f in folder:
-                                FolderMixin.traverse_folder_tree(params, f.uid, add_folders)
-                    else:
-                        logging.warning('Folder \"%s\" not found. Skipping.', folder_name)
+                logging.warning('Folder \"%s\" not found. Skipping.', folder_name)
 
         if record_name and folder_name:
             raise CommandError('', 'Cannot use both --record and --folder at the same time.')
@@ -1460,7 +1454,7 @@ class PAMCreateRecordRotationCommand(Command):
                               isinstance(x, vault.TypedRecord)}
 
         config_uid = kwargs.get('config')
-        cfg_rec = RecordMixin.resolve_single_record(params, kwargs.get('config', None))
+        cfg_rec = resolve_pam_record(params, kwargs.get('config', None))
         if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
             config_uid = cfg_rec.record_uid
 
@@ -1504,7 +1498,7 @@ class PAMCreateRecordRotationCommand(Command):
                 pwd_complexity_rule_list = {}
 
         resource_uid = kwargs.get('resource')
-        res_rec = RecordMixin.resolve_single_record(params, kwargs.get('resource', None))
+        res_rec = resolve_pam_record(params, kwargs.get('resource', None))
         if res_rec and isinstance(res_rec, vault.TypedRecord):
             resource_uid = res_rec.record_uid
 
@@ -1676,19 +1670,11 @@ class PAMListRecordRotationCommand(Command):
                 (poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
 
             row_color = ''
-            if record_uid in params.record_cache:
+            if record_exists_in_vault(params, record_uid):
                 row_color = bcolors.HIGHINTENSITYWHITE
-                rec = params.record_cache[record_uid]
-
-                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else \
-                    rec['data_unencrypted']
-                data = json.loads(data_json)
-
-                record_title = data.get('title')
-                record_type = data.get('type') or ''
+                record_title, record_type = get_vault_record_title_type(params, record_uid)
             else:
                 row_color = bcolors.WHITE
-
                 record_title = '[record inaccessible]'
                 record_type = '[record inaccessible]'
 
@@ -2256,25 +2242,20 @@ class PAMConfigurationListCommand(Command):
         facade = PamConfigurationRecordFacade()
         facade.record = configuration
 
-        folder_uid = facade.folder_uid
-        sf = None
-        if folder_uid in params.shared_folder_cache:
-            sf = api.get_shared_folder(params, folder_uid)
+        folder_info = resolve_pam_config_folder_info(
+            params, facade, configuration.record_uid)
 
         if format_type == 'json':
             config_data = {
                 "uid": configuration.record_uid,
                 "name": configuration.title,
                 "config_type": configuration.record_type,
-                "shared_folder": {
-                    "name": sf.name if sf else None,
-                    "uid": sf.shared_folder_uid if sf else None
-                } if sf else None,
                 "gateway_uid": facade.controller_uid,
                 "gateway_name": facade.title,
                 "resource_record_uids": facade.resource_ref,
                 "fields": {}
             }
+            config_data.update(pam_folder_json_payload(folder_info))
 
             for field in itertools.chain(configuration.fields, configuration.custom):
                 if field.type in ('pamResources', 'fileRef'):
@@ -2303,7 +2284,7 @@ class PAMConfigurationListCommand(Command):
             table.append(['UID', configuration.record_uid])
             table.append(['Name', configuration.title])
             table.append(['Config Type', configuration.record_type])
-            table.append(['Shared Folder', f'{sf.name} ({sf.shared_folder_uid})' if sf else ''])
+            table.append(['Folder', format_pam_folder_display(folder_info)])
             table.append(['Gateway UID', facade.controller_uid])
             table.append(['Resource Record UIDs', facade.resource_ref])
 
@@ -2329,11 +2310,11 @@ class PAMConfigurationListCommand(Command):
         table = []
 
         if format_type == 'json':
-            headers = ['uid', 'config_name', 'config_type', 'shared_folder', 'gateway_uid', 'resource_record_uids']
+            headers = ['uid', 'config_name', 'config_type', 'folder', 'gateway_uid', 'resource_record_uids']
             if is_verbose:
                 headers.append('fields')
         else:
-            headers = ['UID', 'Config Name', 'Config Type', 'Shared Folder', 'Gateway UID', 'Resource Record UIDs']
+            headers = ['UID', 'Config Name', 'Config Type', 'Folder', 'Gateway UID', 'Resource Record UIDs']
             if is_verbose:
                 headers.append('Fields')
 
@@ -2342,22 +2323,20 @@ class PAMConfigurationListCommand(Command):
                                  'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
                                  'pamGitHubConfiguration'):
                 facade.record = c
-                shared_folder_parents = find_parent_top_folder(params, c.record_uid)
-                if shared_folder_parents:
-                    sf = shared_folder_parents[0]
+                folder_info = resolve_pam_config_folder_info(
+                    params, facade, c.record_uid)
+                if folder_info and folder_info.get('type') != 'unknown':
+                    folder_display = format_pam_folder_display(folder_info)
 
                     if format_type == 'json':
                         config_data = {
                             "uid": c.record_uid,
                             "config_name": c.title,
                             "config_type": c.record_type,
-                            "shared_folder": {
-                                "name": sf.name,
-                                "uid": sf.uid
-                            },
                             "gateway_uid": facade.controller_uid,
                             "resource_record_uids": facade.resource_ref
                         }
+                        config_data.update(pam_folder_json_payload(folder_info))
 
                         if is_verbose:
                             fields = {}
@@ -2371,7 +2350,7 @@ class PAMConfigurationListCommand(Command):
 
                         configs_data.append(config_data)
                     else:
-                        row = [c.record_uid, c.title, c.record_type, f'{sf.name} ({sf.uid})',
+                        row = [c.record_uid, c.title, c.record_type, folder_display,
                                facade.controller_uid, facade.resource_ref]
 
                         if is_verbose:
@@ -2386,7 +2365,7 @@ class PAMConfigurationListCommand(Command):
 
                         table.append(row)
                 else:
-                    logging.warning('Following configuration is not in the shared folder: UID: %s, Title: %s',
+                    logging.warning(f'Following configuration folder was not found: UID: %s, Title: %s',
                                     c.record_uid, c.title)
             else:
                 logging.warning('Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid,
@@ -2406,8 +2385,8 @@ common_parser.add_argument('--environment', '-env', dest='config_type', action='
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
-                           help='Share Folder where this PAM Configuration is stored. Should be one of the folders to '
-                                'which the gateway has access to.')
+                           help='Shared Folder or Nested Share Folder where this PAM Configuration is stored. '
+                                'Should be one of the folders to which the gateway has access.')
 common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store',
                            help='Default Schedule: Use CRON syntax')
 common_parser.add_argument('--port-mapping', '-pm', dest='port_mapping', action='append', help='Port Mapping')
@@ -2521,7 +2500,6 @@ class PamConfigurationEditMixin(RecordEditMixin):
         shared_folder_uid = None  # type: Optional[str]
         folder_name = kwargs.get('shared_folder_uid')  # type: Optional[str]
         if folder_name:
-            from .pam.vault_target import resolve_pam_folder_uid
             shared_folder_uid = resolve_pam_folder_uid(params, folder_name)
             if not shared_folder_uid:
                 for sf_uid in params.shared_folder_cache:
@@ -2543,9 +2521,23 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if rrr:
             pam_record_lookup = {}
             rti = PamConfigurationEditMixin.get_pam_record_types(params)
+            rti_set = set(rti)
             for r in vault_extensions.find_records(params, record_type=rti):
                 pam_record_lookup[r.record_uid] = r.record_uid
                 pam_record_lookup[r.title.lower()] = r.record_uid
+            nsf_data = getattr(params, 'nested_share_record_data', {})
+            for uid in getattr(params, 'nested_share_records', {}):
+                rec = vault.KeeperRecord.load(params, uid)
+                if not rec or rec.record_type not in rti_set:
+                    continue
+                pam_record_lookup[rec.record_uid] = rec.record_uid
+                rd = nsf_data.get(uid, {})
+                data_json = rd.get('data_json', {}) if isinstance(rd, dict) else {}
+                title = data_json.get('title', '') if isinstance(data_json, dict) else ''
+                if title:
+                    pam_record_lookup[title.lower()] = rec.record_uid
+                elif rec.title:
+                    pam_record_lookup[rec.title.lower()] = rec.record_uid
 
             record_uids = set()
             if 'resourceRef' in value:
@@ -2566,17 +2558,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
     @staticmethod
     def resolve_single_record(params, record_name,
                               rec_type=''):  # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
-        rec = RecordMixin.resolve_single_record(params, record_name)
-        if not rec:
-            recs = []
-            for rec in params.record_cache:
-                vrec = vault.KeeperRecord.load(params, rec)
-                if vrec and vrec.title == record_name and (not rec_type or rec_type == vrec.record_type):
-                    recs.append(vrec)
-                    if len(recs) > 1: break
-            if len(recs) == 1:
-                rec = recs[0]
-        return rec
+        return resolve_pam_record(params, record_name, rec_type=rec_type or None)
 
     @staticmethod
     def _domain_kwarg_supplied(kwargs, key, config_edit):
@@ -2844,11 +2826,14 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         # resolve folder path to UID
         sf_name = kwargs.get('shared_folder_uid', '')
         if sf_name:
-            fpath = try_resolve_path(params, sf_name)
-            # [-1] == '' -> existing folder, 'path/' -> non-existing folder
-            if fpath and len(fpath) >= 2 and fpath[-1] == '':
-                sfuid = fpath[-2].uid
-                if sfuid: kwargs['shared_folder_uid'] = sfuid
+            sfuid = resolve_pam_folder_uid(params, sf_name, allow_legacy_user=True)
+            if not sfuid:
+                fpath = try_resolve_path(params, sf_name)
+                # [-1] == '' -> existing folder, 'path/' -> non-existing folder
+                if fpath and len(fpath) >= 2 and fpath[-1] == '':
+                    sfuid = fpath[-2].uid
+            if sfuid:
+                kwargs['shared_folder_uid'] = sfuid
 
         self.parse_properties(params, record, **kwargs)
 
@@ -2897,7 +2882,6 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         # Moving v6 record into the folder
         api.sync_down(params)
-        from .pam.vault_target import place_record_in_folder
         place_record_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
 
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
@@ -3029,7 +3013,6 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 api.communicate_rest(params, pcc, 'pam/set_configuration_controller')
             shared_folder_uid = value.get('folderUid') or ''
             if shared_folder_uid != orig_shared_folder_uid:
-                from .pam.vault_target import place_record_in_folder
                 place_record_in_folder(params, configuration.record_uid, shared_folder_uid, command='pam-config-edit')
             if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin',
                                                                                       False) is True:
@@ -3072,25 +3055,55 @@ class PAMConfigurationRemoveCommand(Command):
                         help='PAM Configuration UID. To view all rotation settings with their UIDs, use command '
                              '`pam config list`')
 
+    _PAM_CONFIG_TYPES = frozenset({
+        'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
+        'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
+    })
+
     def get_parser(self):
         return PAMConfigurationRemoveCommand.parser
+
+    @classmethod
+    def _resolve_pam_config_uid(cls, params, identifier):
+        # type: (KeeperParams, str) -> Optional[str]
+        if identifier in params.record_cache:
+            rec = vault.KeeperRecord.load(params, identifier)
+            if isinstance(rec, vault.TypedRecord) and rec.version == 6 and rec.record_type in cls._PAM_CONFIG_TYPES:
+                return rec.record_uid
+
+        from ..nested_share_folder import removal_api as _nsf
+        resolved_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+        if resolved_uid:
+            rec = vault.KeeperRecord.load(params, resolved_uid)
+            if isinstance(rec, vault.TypedRecord) and rec.version == 6 and rec.record_type in cls._PAM_CONFIG_TYPES:
+                return resolved_uid
+
+        l_name = identifier.casefold()
+        matches = []
+        for config in vault_extensions.find_records(params, record_version=6):
+            if config.record_type not in cls._PAM_CONFIG_TYPES:
+                continue
+            if config.record_uid == identifier:
+                return config.record_uid
+            if config.title.casefold() == l_name:
+                matches.append(config.record_uid)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise CommandError('pam config remove',
+                               f'"{identifier}" matches multiple configurations. Use a UID.')
+        return None
 
     def execute(self, params, **kwargs):
         pam_config_name = kwargs.get('uid')
         if not pam_config_name:
-            raise CommandError('pam config edit', 'PAM Configuration UID is required')
-        pam_config_uid = None
-        for config in vault_extensions.find_records(params, record_version=6):
-            if config.record_uid == pam_config_name:
-                pam_config_uid = config.record_uid
-                break
-            if config.title.casefold() == pam_config_name.casefold():
-                pass
-        if not pam_config_name:
-            raise Exception(f'Configuration "{pam_config_name}" not found')
+            raise CommandError('pam config remove', 'PAM Configuration UID is required')
+        pam_config_uid = self._resolve_pam_config_uid(params, pam_config_name)
+        if not pam_config_uid:
+            raise CommandError('pam config remove', f'Configuration "{pam_config_name}" not found')
         pam_config = vault.KeeperRecord.load(params, pam_config_uid)
         if not pam_config:
-            raise Exception(f'Configuration "{pam_config_uid}" not found')
+            raise CommandError('pam config remove', f'Configuration "{pam_config_uid}" not found')
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config.record_uid,
                             is_config=True, transmission_key=transmission_key)
@@ -3124,7 +3137,7 @@ class PAMRouterGetRotationInfo(Command):
             gateway_uid = utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-'
 
             def is_resource_ok(resource_id, params, configuration_uid):
-                if resource_id not in params.record_cache:
+                if not record_exists_in_vault(params, resource_id):
                     return False
                 configuration = vault.KeeperRecord.load(params, configuration_uid)
                 if not isinstance(configuration, vault.TypedRecord):
@@ -3148,6 +3161,8 @@ class PAMRouterGetRotationInfo(Command):
             if pwd_complexity_raw:
                 try:
                     record = params.record_cache.get(record_uid)
+                    if not record:
+                        record = getattr(params, 'nested_share_records', {}).get(record_uid)
                     if record:
                         complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(pwd_complexity_raw),
                                                            record['record_key_unencrypted'])
@@ -3272,8 +3287,8 @@ class PAMScriptListCommand(Command):
 
         table = []
         header = ['record_uid', 'title', 'record_type', 'script_uid', 'script_name', 'records', 'command']
-        for record in vault_extensions.find_records(params, search_str=pattern, record_version=3,
-                                                    record_type=('pamUser', 'pamDirectory')):
+        for record in find_pam_records_by_search(params, pattern, record_version=3,
+                                                 record_types=('pamUser', 'pamDirectory')):
             if not isinstance(record, vault.TypedRecord):
                 continue
             for field in (x for x in record.fields if x.type == 'script'):
@@ -3314,8 +3329,8 @@ class PAMScriptAddCommand(Command):
         record_name = kwargs.get('record')
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
-        records = list(vault_extensions.find_records(
-            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        records = find_pam_records_by_search(params, record_name, record_version=3,
+                                             record_types=('pamUser', 'pamDirectory'))
         if len(records) == 0:
             raise CommandError('rotate script', f'Record "{record_name}" not found')
         if len(records) > 1:
@@ -3353,7 +3368,10 @@ class PAMScriptAddCommand(Command):
             record_refs = kwargs.get('add_credential')
             if isinstance(record_refs, list):
                 for ref in record_refs:
-                    if ref in params.record_cache:
+                    resolved_ref = resolve_pam_record(params, ref)
+                    if resolved_ref:
+                        script_value['recordRef'].append(resolved_ref.record_uid)
+                    elif record_exists_in_vault(params, ref):
                         script_value['recordRef'].append(ref)
             cmd = kwargs.get('script_command')
             if cmd:
@@ -3387,8 +3405,8 @@ class PAMScriptEditCommand(Command):
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
-        records = list(vault_extensions.find_records(
-            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        records = find_pam_records_by_search(params, record_name, record_version=3,
+                                             record_types=('pamUser', 'pamDirectory'))
         if len(records) == 0:
             raise CommandError('rotate script', f'Record "{record_name}" not found')
         if len(records) > 1:
@@ -3424,11 +3442,21 @@ class PAMScriptEditCommand(Command):
             refs.update(record_refs)
         remove_credential = kwargs.get('remove_credential')
         if isinstance(remove_credential, list) and remove_credential:
-            refs.difference_update(remove_credential)
+            for ref in remove_credential:
+                resolved_ref = resolve_pam_record(params, ref)
+                if resolved_ref:
+                    refs.discard(resolved_ref.record_uid)
+                else:
+                    refs.discard(ref)
             modified = True
         add_credential = kwargs.get('add_credential')
         if isinstance(add_credential, list) and add_credential:
-            refs.update(add_credential)
+            for ref in add_credential:
+                resolved_ref = resolve_pam_record(params, ref)
+                if resolved_ref:
+                    refs.add(resolved_ref.record_uid)
+                elif record_exists_in_vault(params, ref):
+                    refs.add(ref)
             modified = True
         if modified:
             script_value['recordRef'] = list(refs)
@@ -3462,8 +3490,8 @@ class PAMScriptDeleteCommand(Command):
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
-        records = list(vault_extensions.find_records(
-            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        records = find_pam_records_by_search(params, record_name, record_version=3,
+                                             record_types=('pamUser', 'pamDirectory'))
         if len(records) == 0:
             raise CommandError('rotate script', f'Record "{record_name}" not found')
         if len(records) > 1:

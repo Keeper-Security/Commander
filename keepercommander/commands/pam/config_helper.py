@@ -1,11 +1,9 @@
-import base64
 import json
 import logging
 import os
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 
-from ..folder import FolderMoveCommand
 from ..record import RecordRemoveCommand
 from ... import api, crypto, utils, vault, vault_extensions
 from ...params import KeeperParams
@@ -162,10 +160,35 @@ def pam_configurations_get_all(params):
 
 def pam_configuration_remove(params, configuration_uid):
     # TODO: Check if there are record rotations associated with this config and warn user about that before removing.
-    RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
+    from ..nested_share_folder.helpers import is_nested_share_record
+    from ... import nested_share_folder as _nsf
+    from ...subfolder import find_folders
+    from .config_facades import PamConfigurationRecordFacade
+
+    if is_nested_share_record(params, configuration_uid):
+        folder_uids = list(find_folders(params, configuration_uid))
+        folder_uid = folder_uids[0] if folder_uids else None
+        if not folder_uid:
+            config = vault.KeeperRecord.load(params, configuration_uid)
+            if config and isinstance(config, vault.TypedRecord):
+                facade = PamConfigurationRecordFacade()
+                facade.record = config
+                folder_uid = facade.folder_uid
+        result = _nsf.remove_record_v3(params, [{
+            'record_uid': configuration_uid,
+            'folder_uid': folder_uid,
+            'operation_type': 'owner-trash',
+        }], dry_run=False)
+        if not result.get('confirmed'):
+            logging.warning('PAM Configuration NSF removal was not confirmed by the server.')
+    else:
+        RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
 
     if configuration_uid in params.record_cache:
         del params.record_cache[configuration_uid]
+    nested_recs = getattr(params, 'nested_share_records', {})
+    if configuration_uid in nested_recs:
+        del nested_recs[configuration_uid]
 
     logging.info('PAM Configuration was removed successfully.')
 

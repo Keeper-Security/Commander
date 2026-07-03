@@ -1,5 +1,5 @@
 from ..folder import FolderMoveCommand
-from ... import api, record_management, vault
+from ... import api, record_management, vault, vault_extensions
 from ...error import CommandError
 from ...nested_share_folder.folder_record_api import move_record_v3
 from ...subfolder import BaseFolderNode, get_folder_path, try_resolve_path
@@ -26,6 +26,9 @@ def resolve_pam_folder_uid(params, folder_name, allow_legacy_user=False):
         return None
 
     if folder_name in getattr(params, 'shared_folder_cache', {}):
+        return folder_name
+
+    if allow_legacy_user and folder_name in getattr(params, 'folder_cache', {}):
         return folder_name
 
     if is_nested_share_folder(params, folder_name):
@@ -55,10 +58,7 @@ def pam_folder_exists(params, folder_uid):
         return False
     if folder_uid in getattr(params, 'folder_cache', {}):
         return True
-    if folder_uid in getattr(params, 'nested_share_folders', {}):
-        return True
-    subfolder = getattr(params, 'subfolder_cache', {}).get(folder_uid)
-    return isinstance(subfolder, dict) and subfolder.get('source') == 'nested_share_folder'
+    return is_nested_share_folder(params, folder_uid)
 
 
 def get_pam_folder_path(params, folder_uid, delimiter='/'):
@@ -114,19 +114,34 @@ def resolve_pam_application_folder(params, pam_config_uid, command='pam'):
     return folder_uid, get_pam_folder_path(params, folder_uid)
 
 
-def find_nsf_users_subfolder(params, parent_uid):
+def _find_child_folder(params, parent_uid, name=None, name_suffix=None):
     if not parent_uid:
         return None
 
-    for uid, folder in getattr(params, 'nested_share_folders', {}).items():
-        if folder.get('parent_uid') == parent_uid and str(folder.get('name', '')).endswith(' - Users'):
+    parent_uid = parent_uid or None
+    for uid, folder in getattr(params, 'folder_cache', {}).items():
+        if folder.parent_uid != parent_uid:
+            continue
+        folder_name = str(folder.name or '')
+        if name is not None and folder_name == name:
+            return uid
+        if name_suffix is not None and folder_name.endswith(name_suffix):
             return uid
 
-    for uid, folder in getattr(params, 'folder_cache', {}).items():
-        if folder.parent_uid == parent_uid and str(folder.name or '').endswith(' - Users'):
+    for uid, folder in getattr(params, 'nested_share_folders', {}).items():
+        if folder.get('parent_uid') != parent_uid:
+            continue
+        folder_name = str(folder.get('name', ''))
+        if name is not None and folder_name == name:
+            return uid
+        if name_suffix is not None and folder_name.endswith(name_suffix):
             return uid
 
     return None
+
+
+def find_nsf_users_subfolder(params, parent_uid):
+    return _find_child_folder(params, parent_uid, name_suffix=' - Users')
 
 
 def records_in_folder(params, folder_uid):
@@ -211,17 +226,196 @@ def _ensure_legacy_folder_path(params, folder_path, command='pam'):
     raise CommandError(command, f'Folder path creation succeeded but final UID not found: {folder_path}')
 
 
-def _find_child_folder_uid(params, parent_uid, name):
-    parent_uid = parent_uid or None
-    for uid, folder in getattr(params, 'folder_cache', {}).items():
-        if folder.parent_uid == parent_uid and folder.name == name:
-            return uid
+def get_pam_folder_info(params, folder_uid):
+    # type: (...) -> Optional[dict]
+    """Return folder name, uid, and type for a PAM configuration target folder."""
+    if not folder_uid:
+        return None
+    if folder_uid in getattr(params, 'shared_folder_cache', {}):
+        sf = api.get_shared_folder(params, folder_uid)
+        return {
+            'uid': folder_uid,
+            'name': sf.name if sf else folder_uid,
+            'type': 'shared_folder',
+        }
+    if is_nested_share_folder(params, folder_uid):
+        nsf = getattr(params, 'nested_share_folders', {}).get(folder_uid, {})
+        return {
+            'uid': folder_uid,
+            'name': nsf.get('name', folder_uid),
+            'type': 'nested_share_folder',
+        }
+    folder = getattr(params, 'folder_cache', {}).get(folder_uid)
+    if folder:
+        return {
+            'uid': folder_uid,
+            'name': folder.name,
+            'type': 'user_folder',
+        }
+    return {'uid': folder_uid, 'name': folder_uid, 'type': 'unknown'}
 
-    for uid, folder in getattr(params, 'nested_share_folders', {}).items():
-        if folder.get('parent_uid') == parent_uid and folder.get('name') == name:
-            return uid
 
+def format_pam_folder_display(folder_info):
+    # type: (Optional[dict]) -> str
+    if not folder_info:
+        return ''
+    suffix = ' [NSF]' if folder_info.get('type') == 'nested_share_folder' else ''
+    return f'{folder_info["name"]} ({folder_info["uid"]}){suffix}'
+
+
+def resolve_pam_config_folder_info(params, facade, record_uid):
+    # type: (...) -> Optional[dict]
+    from ...subfolder import find_parent_top_folder
+
+    folder_info = get_pam_folder_info(params, facade.folder_uid)
+    if folder_info and folder_info.get('type') != 'unknown':
+        return folder_info
+    shared_folder_parents = find_parent_top_folder(params, record_uid)
+    if shared_folder_parents:
+        sf = shared_folder_parents[0]
+        return {'uid': sf.uid, 'name': sf.name, 'type': 'shared_folder'}
+    return folder_info
+
+
+def pam_folder_json_payload(folder_info):
+    # type: (Optional[dict]) -> dict
+    payload = {}
+    if not folder_info:
+        return payload
+    payload['folder'] = folder_info
+    if folder_info.get('type') == 'shared_folder':
+        payload['shared_folder'] = {
+            'name': folder_info.get('name'),
+            'uid': folder_info.get('uid'),
+        }
+    return payload
+
+
+def record_exists_in_vault(params, record_uid):
+    # type: (...) -> bool
+    from ..nested_share_folder.helpers import is_nested_share_record
+
+    if not record_uid:
+        return False
+    return (record_uid in getattr(params, 'record_cache', {})
+            or is_nested_share_record(params, record_uid))
+
+
+def resolve_pam_record(params, identifier, rec_type=None):
+    # type: (...) -> Optional[vault.KeeperRecord]
+    """Resolve a record by UID, folder path, or title including Nested Share Records."""
+    if not identifier:
+        return None
+
+    if identifier in getattr(params, 'record_cache', {}):
+        rec = vault.KeeperRecord.load(params, identifier)
+        if rec and (not rec_type or rec.record_type == rec_type):
+            return rec
+
+    from ...nested_share_folder import removal_api as _nsf
+    resolved_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+    if resolved_uid:
+        rec = vault.KeeperRecord.load(params, resolved_uid)
+        if rec and (not rec_type or rec.record_type == rec_type):
+            return rec
+
+    rs = try_resolve_path(params, identifier)
+    if rs is not None:
+        folder, record_title = rs
+        if folder is not None and record_title is not None:
+            folder_uid = folder.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                for uid in params.subfolder_record_cache[folder_uid]:
+                    record = vault.KeeperRecord.load(params, uid)
+                    if record and record.title.casefold() == record_title.casefold():
+                        if not rec_type or record.record_type == rec_type:
+                            return record
+
+    l_name = identifier.casefold()
+    matches = []
+    for record_uid in getattr(params, 'record_cache', {}):
+        record = vault.KeeperRecord.load(params, record_uid)
+        if record and record.title.casefold() == l_name:
+            if not rec_type or record.record_type == rec_type:
+                matches.append(record)
+                if len(matches) > 1:
+                    break
+    if len(matches) == 1:
+        return matches[0]
     return None
+
+
+def get_vault_record_title_type(params, record_uid):
+    # type: (...) -> tuple
+    rec = vault.KeeperRecord.load(params, record_uid)
+    if rec:
+        return rec.title, rec.record_type
+    nsf_data = getattr(params, 'nested_share_record_data', {}).get(record_uid, {})
+    data_json = nsf_data.get('data_json', {}) if isinstance(nsf_data, dict) else {}
+    if isinstance(data_json, dict) and data_json:
+        return (data_json.get('title', '[record inaccessible]'),
+                data_json.get('type', '[record inaccessible]'))
+    return '[record inaccessible]', '[record inaccessible]'
+
+
+def traverse_pam_folder_subtree(params, root_folder_uid, callback):
+    # type: (...) -> None
+    seen = set()
+    queue = [root_folder_uid]
+    while queue:
+        f_uid = queue.pop(0)
+        if not f_uid or f_uid in seen:
+            continue
+        seen.add(f_uid)
+        callback(f_uid)
+        folder = getattr(params, 'folder_cache', {}).get(f_uid)
+        if folder and folder.subfolders:
+            for child_uid in folder.subfolders:
+                if child_uid not in seen:
+                    queue.append(child_uid)
+        for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
+            if nsf.get('parent_uid') == f_uid and uid not in seen:
+                queue.append(uid)
+
+
+def collect_pam_folder_uids(params, folder_name):
+    # type: (...) -> set
+    folder_uids = set()
+    if not folder_name:
+        return folder_uids
+
+    resolved = resolve_pam_folder_uid(params, folder_name, allow_legacy_user=True)
+    if resolved:
+        traverse_pam_folder_subtree(params, resolved, folder_uids.add)
+        return folder_uids
+
+    rs = try_resolve_path(params, folder_name, find_all_matches=True)
+    if rs is not None:
+        folder, record_title = rs
+        if not record_title:
+            folders = folder if isinstance(folder, list) else [folder]
+            for f in folders:
+                if isinstance(f, BaseFolderNode) and f.uid:
+                    traverse_pam_folder_subtree(params, f.uid, folder_uids.add)
+
+    return folder_uids
+
+
+def find_pam_records_by_search(params, search_str, record_version=3, record_types=None):
+    # type: (...) -> list
+    types = tuple(record_types) if record_types else None
+    records = list(vault_extensions.find_records(
+        params, search_str=search_str, record_version=record_version, record_type=types))
+    if search_str and len(records) == 0:
+        rec = resolve_pam_record(params, search_str)
+        if isinstance(rec, vault.TypedRecord):
+            if rec.version == record_version and (not types or rec.record_type in types):
+                records = [rec]
+    return [r for r in records if isinstance(r, vault.TypedRecord)]
+
+
+def _find_child_folder_uid(params, parent_uid, name):
+    return _find_child_folder(params, parent_uid, name=name)
 
 
 def ensure_pam_folder_path(params, base_folder_uid, relative_path, command='pam'):
