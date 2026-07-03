@@ -6,7 +6,7 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, VaultEnvironment
 from keepercommander.commands import register
 from keepercommander.error import CommandError
-from keepercommander.proto import APIRequest_pb2, record_pb2
+from keepercommander.proto import APIRequest_pb2, folder_pb2, record_pb2
 from keepercommander import utils
 from keepercommander.subfolder import NestedShareFolderNode
 
@@ -555,8 +555,7 @@ class TestRegister(TestCase):
 
         rq = register.ShareFolderCommand.prepare_request(
             params,
-            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on',
-                    'can_edit': 'on', 'can_share': 'on'},
+            kwargs={'action': 'grant', 'can_edit': 'on', 'can_share': 'on'},
             curr_sf=curr_sf,
             users=['user2@keepersecurity.com'],
             teams=[],
@@ -568,6 +567,59 @@ class TestRegister(TestCase):
         self.assertTrue(list(rq.sharedFolderAddRecord),
                         'new record grant should update folder record permissions via add')
         self.assertFalse(list(rq.sharedFolderUpdateRecord))
+
+    def test_share_folder_prepare_request_updates_user_when_explicit_perms_with_record(self):
+        """-p/-o with -r must always update folder user permissions."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+        curr_sf.setdefault('records', [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}])
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on',
+                    'can_edit': 'on', 'can_share': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+            share_expiration=None,
+        )
+
+        user_msgs = list(rq.sharedFolderUpdateUser)
+        self.assertTrue(user_msgs, 'explicit -p/-o must update folder user even with -r')
+        self.assertEqual(user_msgs[0].manageRecords, folder_pb2.BOOLEAN_TRUE)
+        self.assertEqual(user_msgs[0].manageUsers, folder_pb2.BOOLEAN_TRUE)
+
+    def test_share_folder_prepare_request_case_insensitive_user_lookup(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'User2@KeeperSecurity.com',
+            'manage_records': False,
+            'manage_users': False,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[],
+        )
+
+        user_msgs = list(rq.sharedFolderUpdateUser)
+        self.assertEqual(len(user_msgs), 1)
+        self.assertEqual(user_msgs[0].username, 'User2@KeeperSecurity.com')
 
     def test_share_folder_prepare_request_updates_user_when_folder_wide_expiration(self):
         """Folder-wide --expire-in (no -r) sets expiration on the folder user share."""

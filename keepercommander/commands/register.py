@@ -253,6 +253,7 @@ def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (
         return
 
     dt = None      # type: Optional[datetime.datetime]
+    now_ms = None  # type: Optional[int]
     if isinstance(expire_at, str):
         if expire_at == 'never':
             return -1
@@ -266,14 +267,16 @@ def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (
                 cmd_name,
                 'Share expiration must be at least 1 minute.',
             )
-        dt = datetime.datetime.now() + td
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_ms = int(now_utc.timestamp() * 1000)
+        dt = now_utc + td
     if dt is None:
         raise ValueError(f'Incorrect expiration: {expire_at or expire_in}')
 
-    expiration_seconds = int(dt.timestamp())
+    expiration_ms = int(dt.timestamp() * 1000)
     from .nested_share_folder.helpers import validate_share_expiration_timestamp
-    validate_share_expiration_timestamp(expiration_seconds * 1000, cmd_name)
-    return expiration_seconds
+    validate_share_expiration_timestamp(expiration_ms, cmd_name, now_ms=now_ms)
+    return expiration_ms // 1000
 
 
 def _as_append_list(value):
@@ -286,6 +289,16 @@ def _as_append_list(value):
 def _folder_has_record_permission_target(record_uids, default_record, all_records):
     # type: (Set[str], bool, bool) -> bool
     return bool(record_uids or default_record or all_records)
+
+
+def _folder_user_lookup(shared_folder, email):
+    # type: (dict, str) -> Optional[dict]
+    """Find a folder user entry by email (case-insensitive)."""
+    email_lower = email.lower()
+    for user in shared_folder.get('users', []):
+        if user.get('username', '').lower() == email_lower:
+            return user
+    return None
 
 
 def format_share_expiration_ms(expiration_ms):
@@ -559,7 +572,7 @@ class ShareFolderCommand(Command):
                 for u_chunk in user_chunks:
                     sf_info = sh_fol.copy()
                     if group_idx:
-                        del sf_info['revision']
+                        sf_info.pop('revision', None)
                     rq_groups[group_idx].append(prep_rq(r_chunk, u_chunk, sf_info))
                     group_idx += 1
         self.send_requests(params, rq_groups)
@@ -645,23 +658,20 @@ class ShareFolderCommand(Command):
                 rq.defaultManageUsers = folder_pb2.BOOLEAN_NO_CHANGE
 
         if len(users) > 0:
-            existing_users = {x['username'] for x in curr_sf.get('users', [])}
             for email in users:
+                current_user = _folder_user_lookup(curr_sf, email)
+                if current_user:
+                    email = current_user['username']
                 uo = folder_pb2.SharedFolderUpdateUser()
                 uo.username = email
                 apply_share_expiration(uo)
-                if email in existing_users:
+                if current_user:
                     if action == 'grant':
-                        if rec_uids:
-                            current_user = next(
-                                (x for x in curr_sf.get('users', []) if x['username'] == email), None)
-                            if current_user:
-                                mr_unchanged = (mr is None
-                                                or (current_user.get('manage_records') is True) == (mr == 'on'))
-                                mu_unchanged = (mu is None
-                                                or (current_user.get('manage_users') is True) == (mu == 'on'))
-                                if mr_unchanged and mu_unchanged and not isinstance(share_expiration, int):
-                                    continue
+                        if rec_uids and mr is None and mu is None:
+                            mr_unchanged = (current_user.get('manage_records') is True)
+                            mu_unchanged = (current_user.get('manage_users') is True)
+                            if mr_unchanged and mu_unchanged and not isinstance(share_expiration, int):
+                                continue
                         uo.manageRecords = folder_pb2.BOOLEAN_NO_CHANGE if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
                         uo.manageUsers = folder_pb2.BOOLEAN_NO_CHANGE if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         rq.sharedFolderUpdateUser.append(uo)
@@ -834,7 +844,8 @@ class ShareFolderCommand(Command):
                                     elif status == 'invited':
                                         logging.info('User \'%s\' invited', username)
                                     else:
-                                        logging.warning('User share \'%s\' failed', username)
+                                        logging.warning(
+                                            'User share \'%s\' failed: %s', username, status)
 
                         for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
                                      'sharedFolderRemoveRecordStatus'):
