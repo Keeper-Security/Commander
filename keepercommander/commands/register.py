@@ -112,7 +112,8 @@ folder_access.add_argument(
     choices=['on', 'off'], help='account permission: can manage records. Requires -e.')
 folder_access.add_argument(
     '-o', '--manage-users', dest='manage_users', action='store',
-    choices=['on', 'off'], help='account permission: can manage users. Requires -e.')
+    choices=['on', 'off'],
+    help='account permission: can manage users. Mutually exclusive with --expire-at/--expire-in. Requires -e.')
 expiration = folder_access.add_mutually_exclusive_group()
 expiration.add_argument(
     '--expire-at', dest='expire_at', action='store', metavar='TIMESTAMP',
