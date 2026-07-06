@@ -6,19 +6,26 @@ from unittest.mock import patch, MagicMock
 from keepercommander.error import CommandError
 import keepercommander.vault as vault
 
+TEST_RECORD_UID = 'OYNvVgpPPJBrVfYOIRtdag'
+TEST_CONFIG_UID = 'bU2LVM6LjX_hmCoSMDA7vg'
+TEST_RESOURCE_UID = 'dU2LVM6LjX_hmCoSMDA7vx'
+TEST_FOLDER_UID = 'M_SR5x7Q4cu9O0-RiLDN4A'
+TEST_ADMIN_UID = 'aU2LVM6LjX_hmCoSMDA7va'
+
+
 def create_mock_params_and_record(record_type='pamUser'):
     mock_params = MagicMock()
     mock_params.rest_context.server_key_id = 8
     mock_params.session_token = 'base64_encoded_session_token'  # Mock a base64 encoded session token
-    mock_params.record_cache = {'record_uid': MagicMock(record_type='pamUser')}
-    mock_params.subfolder_record_cache = {'folder_uid': ['record_uid']}
-    mock_params.folder_cache = {'folder_uid': MagicMock()}
+    mock_params.record_cache = {TEST_RECORD_UID: MagicMock(record_type='pamUser')}
+    mock_params.subfolder_record_cache = {TEST_FOLDER_UID: [TEST_RECORD_UID]}
+    mock_params.folder_cache = {TEST_FOLDER_UID: MagicMock()}
     mock_params.record_rotation_cache = {
-        'record_uid': {
+        TEST_RECORD_UID: {
             'pwd_complexity': 'eyJ0eXBlIjogInBhc3N3b3JkX2NvbXBsZXhpdHkiLCAidmFsdWUiOiAiY29tcGxleGl0eV92YWx1ZSJ9',
-            'configuration_uid': 'config_uid',
+            'configuration_uid': TEST_CONFIG_UID,
             'schedule': '[]',
-            'resourceUid': 'resource_uid',
+            'resourceUid': TEST_RESOURCE_UID,
             'revision': 1  # Ensure revision is set
         }
     }
@@ -26,7 +33,7 @@ def create_mock_params_and_record(record_type='pamUser'):
 
     mock_typed_record = MagicMock(spec=vault.TypedRecord)
     mock_typed_record.record_type = record_type
-    mock_typed_record.record_uid = 'record_uid'
+    mock_typed_record.record_uid = TEST_RECORD_UID
     mock_typed_record.title = 'Mock Title'  # Add the title attribute
     mock_typed_record.record_key = b'\x00' * 16  # Add the record_key attribute
 
@@ -38,12 +45,12 @@ def create_mock_params():
     mock_params.rest_context.server_key_id = 8
     mock_params.session_token = 'base64_encoded_session_token'
     mock_params.record_cache = {
-        'record_uid': {
+        TEST_RECORD_UID: {
             'data_unencrypted': json.dumps({'title': 'Mock Title', 'type': 'pamMachine'})
         }
     }
-    mock_params.subfolder_record_cache = {'folder_uid': ['record_uid']}
-    mock_params.folder_cache = {'folder_uid': MagicMock()}
+    mock_params.subfolder_record_cache = {TEST_FOLDER_UID: [TEST_RECORD_UID]}
+    mock_params.folder_cache = {TEST_FOLDER_UID: MagicMock()}
     mock_params.rest_context.server_base = 'https://fake.keepersecurity.com'
 
     return mock_params
@@ -95,13 +102,13 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_dag_instance = mock_TunnelDAG.return_value
         mock_dag_instance.linking_dag.has_graph = True
         mock_dag_instance.check_if_resource_has_admin.return_value = True
-        mock_dag_instance.get_all_owners.return_value = ['resource_uid']
+        mock_dag_instance.get_all_owners.return_value = [TEST_RESOURCE_UID]
         mock_dag_instance.resource_belongs_to_config.return_value = True
         mock_dag_instance.user_belongs_to_resource.return_value = True
-        mock_dag_instance.record.record_uid = 'config_uid'  # Ensure it returns a string
+        mock_dag_instance.record.record_uid = TEST_CONFIG_UID  # Ensure it returns a string
 
         kwargs = {
-            'folder_name': 'folder_uid',
+            'folder_name': TEST_FOLDER_UID,
             'force': True  # Add force to the kwargs
         }
 
@@ -131,7 +138,7 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_params, _ = create_mock_params_and_record()
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'pwd_complexity': 'invalid_complexity',
             'force': True  # Add force to the kwargs
         }
@@ -150,13 +157,13 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_dag_instance = mock_TunnelDAG.return_value
         mock_dag_instance.linking_dag.has_graph = True
         mock_dag_instance.check_if_resource_has_admin.return_value = True
-        mock_dag_instance.get_all_owners.return_value = ['resource_uid']
+        mock_dag_instance.get_all_owners.return_value = [TEST_RESOURCE_UID]
         mock_dag_instance.resource_belongs_to_config.return_value = True
         mock_dag_instance.user_belongs_to_resource.return_value = True
-        mock_dag_instance.record.record_uid = 'config_uid'  # Ensure it returns a string
+        mock_dag_instance.record.record_uid = TEST_CONFIG_UID  # Ensure it returns a string
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'pwd_complexity': '32,5,5,5,5',
             'force': True  # Add force to the kwargs
         }
@@ -176,13 +183,13 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_dag_instance = mock_TunnelDAG.return_value
         mock_dag_instance.linking_dag.has_graph = True
         mock_dag_instance.check_if_resource_has_admin.return_value = True
-        mock_dag_instance.get_all_owners.return_value = ['resource_uid']
+        mock_dag_instance.get_all_owners.return_value = [TEST_RESOURCE_UID]
         mock_dag_instance.resource_belongs_to_config.return_value = True
         mock_dag_instance.user_belongs_to_resource.return_value = True
-        mock_dag_instance.record.record_uid = 'config_uid'  # Ensure it returns a string
+        mock_dag_instance.record.record_uid = TEST_CONFIG_UID  # Ensure it returns a string
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'force': True  # Add force to the kwargs
         }
 
@@ -219,7 +226,9 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_pam_config_record.get_typed_field.return_value = resource_field
         mock_find_records.return_value = [mock_pam_config_record]
         mock_resolve_pam_record.side_effect = lambda params, identifier, rec_type=None: (
-            mock_typed_record if identifier == record_uid else mock_pam_config_record
+            mock_typed_record if identifier == record_uid
+            else mock_pam_config_record if identifier == config_uid
+            else None
         )
 
         mock_user_dag = MagicMock()
@@ -273,7 +282,9 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_pam_config_record.get_typed_field.return_value = resource_field
         mock_find_records.return_value = [mock_pam_config_record]
         mock_resolve_pam_record.side_effect = lambda params, identifier, rec_type=None: (
-            mock_typed_record if identifier == record_uid else mock_pam_config_record
+            mock_typed_record if identifier == record_uid
+            else mock_pam_config_record if identifier == config_uid
+            else None
         )
 
         mock_user_dag = MagicMock()
@@ -321,14 +332,14 @@ class TestPAMResourceRotateCommand(unittest.TestCase):
         mock_load.return_value = mock_typed_record
 
         mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
-        mock_pam_config_record.record_uid = 'config_uid'
+        mock_pam_config_record.record_uid = TEST_CONFIG_UID
         mock_pam_config_record.record_type = 'pamConfiguration'  # Use a valid PAM configuration record type
         mock_find_records.return_value = [mock_pam_config_record]
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'enable': True,
-            'config_uid': 'config_uid'
+            'config_uid': TEST_CONFIG_UID
         }
 
         self.command.execute(mock_params, **kwargs)
@@ -354,7 +365,7 @@ class TestPAMResourceRotateCommand(unittest.TestCase):
         mock_load.return_value = mock_typed_record
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'enable': True
         }
 
@@ -376,14 +387,14 @@ class TestPAMResourceRotateCommand(unittest.TestCase):
         mock_load.return_value = mock_typed_record
 
         mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
-        mock_pam_config_record.record_uid = 'config_uid'
+        mock_pam_config_record.record_uid = TEST_CONFIG_UID
         mock_pam_config_record.record_type = 'pamConfiguration'  # Use a valid PAM configuration record type
         mock_find_records.return_value = [mock_pam_config_record]
 
         kwargs = {
-                'record_name': 'record_uid',
+                'record_name': TEST_RECORD_UID,
                 'disable': True,
-                'config_uid': 'config_uid'
+                'config_uid': TEST_CONFIG_UID
             }
 
         self.command.execute(mock_params, **kwargs)
@@ -406,22 +417,22 @@ class TestPAMResourceRotateCommand(unittest.TestCase):
         mock_load.return_value = mock_typed_record
 
         mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
-        mock_pam_config_record.record_uid = 'config_uid'
+        mock_pam_config_record.record_uid = TEST_CONFIG_UID
         mock_pam_config_record.record_type = 'pamConfiguration'  # Use a valid PAM configuration record type
         mock_find_records.return_value = [mock_pam_config_record]
 
         kwargs = {
-            'record_name': 'record_uid',
+            'record_name': TEST_RECORD_UID,
             'enable': True,
-            'config_uid': 'config_uid',
-            'admin': 'admin_uid'
+            'config_uid': TEST_CONFIG_UID,
+            'admin': TEST_ADMIN_UID
         }
 
         self.command.execute(mock_params, **kwargs)
         self.assertTrue(mock_load.called)
         self.assertTrue(mock_tunneldag.called)
         self.assertTrue(mock_get_keeper_tokens.called)
-        mock_dag_instance.link_user_to_resource.assert_called_with('admin_uid', 'record_uid', is_admin=True)
+        mock_dag_instance.link_user_to_resource.assert_called_with(TEST_ADMIN_UID, TEST_RECORD_UID, is_admin=True)
 
 
 class TestPAMListRecordRotationCommand(unittest.TestCase):

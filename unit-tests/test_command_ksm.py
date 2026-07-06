@@ -41,7 +41,8 @@ class TestKSMSecretResolution(unittest.TestCase):
     def test_resolve_secret_uid_by_folder_path(self, _mock_resolve_record, mock_resolve_folder):
         params = self._make_params()
         mock_resolve_folder.return_value = 'resolved_folder_uid'
-        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+        with patch('keepercommander.commands.ksm.is_nested_share_folder',
+                   side_effect=lambda _params, uid: uid == 'resolved_folder_uid'):
             with patch('keepercommander.commands.ksm.api.is_shared_folder', return_value=False):
                 self.assertEqual(KSMCommand.resolve_secret_uid(params, 'NSF/Folder'), 'resolved_folder_uid')
 
@@ -77,7 +78,7 @@ class TestKSMSecretResolution(unittest.TestCase):
         params.nested_share_records = {record_uid: {'record_key_unencrypted': b'record_key'}}
         mock_get_app_record.return_value = {
             'record_uid': 'app_uid___________',
-            'record_key_unencrypted': b'app_key' * 2,
+            'record_key_unencrypted': b'a' * 32,
         }
         with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=True):
             KSMCommand.add_app_share(params, [record_uid], 'MyApp', False)
