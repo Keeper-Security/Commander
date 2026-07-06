@@ -33,9 +33,8 @@ from .pam.vault_target import (
     resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
-    create_record_in_folder, update_pam_record, records_in_folder,
+    update_pam_record, records_in_folder,
 )
-from .nested_share_folder.helpers import is_nested_share_folder
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
     pam_configuration_create_record_v6, record_rotation_get, \
@@ -59,6 +58,7 @@ from ..email_service import EmailSender, build_onboarding_email
 from .tunnel.port_forward.TunnelGraph import TunnelDAG, get_vertex_content
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
+from ..recordv3 import RecordV3
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -266,6 +266,22 @@ def uses_default_rotation_schedule(params, record_uid, configuration_uid):
     if not isinstance(record_schedule, list) or len(record_schedule) == 0:
         return False
     return record_schedule == default_schedule
+    
+def _valid_record_uids(uids):
+    return [uid for uid in (uids or []) if RecordV3.is_valid_ref_uid(uid)]
+
+
+def _get_pam_config_resource_uids(pam_config_record):
+    if not pam_config_record:
+        return []
+    resource_field = pam_config_record.get_typed_field('pamResources')
+    if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
+        resources = resource_field.value[0]
+        if isinstance(resources, dict):
+            refs = resources.get('resourceRef')
+            if isinstance(refs, list):
+                return _valid_record_uids(refs)
+    return []
 
 
 def register_commands(commands):
@@ -549,7 +565,7 @@ class PAMCreateRecordRotationCommand(Command):
                 # Add DAG for resource
                 if target_config_uid:
                     _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_config_uid,
-                                     transmission_key=transmission_key)
+                                     is_config=True, transmission_key=transmission_key)
                     _dag.edit_tunneling_config(rotation=True)
                 else:
                     raise CommandError('', f'{bcolors.FAIL}Resource "{target_record.record_uid}" is not associated '
@@ -1203,22 +1219,31 @@ class PAMCreateRecordRotationCommand(Command):
                                            f"--admin-user ADMIN{bcolors.ENDC}")
             current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
-            if not _dag or not _dag.linking_dag.has_graph:
-                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid,
-                                 transmission_key=transmission_key)
+            if target_config_uid and (not _dag or not _dag.linking_dag.has_graph
+                                      or _dag.record.record_uid != target_config_uid):
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_config_uid,
+                                 is_config=True, transmission_key=transmission_key)
                 if not _dag.linking_dag.has_graph:
-                    raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
+                    _dag.edit_tunneling_config(rotation=True)
+            elif not _dag or not _dag.linking_dag.has_graph:
+                if RecordV3.is_valid_ref_uid(target_resource_uid):
+                    _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid,
+                                     transmission_key=transmission_key)
+                if not _dag or not _dag.linking_dag.has_graph:
+                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated '
                                            f'with any configuration. '
-                                           f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
-                                           f'--config CONFIG{bcolors.ENDC}')
+                                           f'{bcolors.OKBLUE}pam rotation edit -r {target_record.record_uid} '
+                                           f'--config CONFIG [--resource RESOURCE]{bcolors.ENDC}')
             # Noop and resource cannot be both assigned
             if noop_rotation:
                 target_resource_uid = target_record.record_uid
                 record_resource_uid = None
             else:
-                if not target_resource_uid:
+                if not RecordV3.is_valid_ref_uid(target_resource_uid):
                     # Get the resource configuration from DAG
-                    resource_uids = _dag.get_all_owners(target_record.record_uid)
+                    resource_uids = _valid_record_uids(_dag.get_all_owners(target_record.record_uid))
+                    if len(resource_uids) == 0 and pam_config:
+                        resource_uids = _get_pam_config_resource_uids(pam_config)
                     if len(resource_uids) > 1:
                         # When processing folders, skip records with multiple resources
                         if folder_name:
@@ -1241,17 +1266,23 @@ class PAMCreateRecordRotationCommand(Command):
                                            f'it.{bcolors.ENDC}')
                     target_resource_uid = resource_uids[0]
 
-                if not _dag.resource_belongs_to_config(target_resource_uid):
+                if (RecordV3.is_valid_ref_uid(target_resource_uid)
+                        and not _dag.resource_belongs_to_config(target_resource_uid)):
                     # some rotations (iam_user/noop) link straight to pamConfiguration
                     if target_resource_uid != _dag.record.record_uid:
-                        raise CommandError('',
-                                           f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
-                                           f'configuration of the user "{target_record.record_uid}". To associated the resources '
-                                           f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
-                                           f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
-                if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
+                        if target_config_uid:
+                            _dag.link_resource_to_config(target_resource_uid)
+                        else:
+                            raise CommandError('',
+                                               f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                                               f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                                               f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                                               f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+                if (RecordV3.is_valid_ref_uid(target_resource_uid)
+                        and not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid)):
                     old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
-                    if old_resource_uid is not None and old_resource_uid != target_resource_uid:
+                    if (RecordV3.is_valid_ref_uid(old_resource_uid)
+                            and old_resource_uid != target_resource_uid):
                         print(
                             f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
                             f'{old_resource_uid}. '
@@ -1878,19 +1909,8 @@ class PAMGatewayListCommand(Command):
                 continue
 
             ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
-            ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
-
-            if ksm_app:
-                ksm_app_data_unencrypted_json = ksm_app.get('data_unencrypted')
-                ksm_app_data_unencrypted_dict = json.loads(ksm_app_data_unencrypted_json)
-                ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
-                ksm_app_info_plain = f'{ksm_app_title} ({ksm_app_uid_str})'
-                ksm_app_name = ksm_app_title
-                ksm_app_accessible = True
-            else:
-                ksm_app_info_plain = f'[APP NOT ACCESSIBLE OR DELETED] ({ksm_app_uid_str})'
-                ksm_app_name = None
-                ksm_app_accessible = False
+            ksm_app_name, ksm_app_accessible, ksm_app_info_plain = KSMCommand.get_ksm_app_display_info(
+                params, ksm_app_uid_str)
 
             # Check if this is gateway pool
             is_pool = len(connected_instances) > 1
@@ -2869,12 +2889,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         self.verify_required(record)
 
-        if is_nested_share_folder(params, shared_folder_uid):
-            create_record_in_folder(params, record, shared_folder_uid, command='pam-config-new')
-        else:
-            pam_configuration_create_record_v6(params, record, shared_folder_uid)
-            api.sync_down(params)
-            place_record_in_folder(params, record.record_uid, shared_folder_uid, command='pam-config-new')
+        pam_configuration_create_record_v6(params, record, shared_folder_uid)
+        api.sync_down(params)
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         # Add DAG for configuration
@@ -4262,8 +4278,9 @@ class PAMCreateGatewayCommand(Command):
                                              help='Name of the Gateway',
                                              action='store')
     dr_create_controller_parser.add_argument('--application', '-a', required=True, dest='ksm_app',
-                                             help='KSM Application name or UID. Use command `sm app list` to view '
-                                                  'available KSM Applications.', action='store')
+                                             help='KSM Application name, UID, or NSF path. Use '
+                                                  '`secrets-manager app list` to view available applications.',
+                                             action='store')
     dr_create_controller_parser.add_argument('--token-expires-in-min', '-e', type=int, dest='token_expire_in_min',
                                              action='store',
                                              help='Time for the one time token to expire. Maximum 1440 minutes (24 hrs). Default: 60',
@@ -4291,12 +4308,24 @@ class PAMCreateGatewayCommand(Command):
         logging.debug(f'ksm_app =[{ksm_app}]')
         logging.debug(f'ott_expire_in_min =[{ott_expire_in_min}]')
 
-        one_time_token = gateway_helper.create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min)
+        ksm_app_record = KSMCommand.get_app_record(params, ksm_app)
+        if not ksm_app_record:
+            raise CommandError(
+                'pam gateway new',
+                f'KSM Application "{ksm_app}" not found. Run sync-down and verify the application '
+                f'exists in your vault or Nested Share Folder.')
+
+        ksm_app_uid = ksm_app_record.get('record_uid', ksm_app)
+        ksm_app_title, _, _ = KSMCommand.get_ksm_app_display_info(params, ksm_app_uid)
+
+        one_time_token = gateway_helper.create_gateway(
+            params, gateway_name, ksm_app_uid, config_init, ott_expire_in_min)
 
         if is_return_value:
             return one_time_token
         else:
-            print(f'The one time token has been created in application [{bcolors.OKBLUE}{ksm_app}{bcolors.ENDC}].\n\n'
+            print(f'The one time token has been created in application '
+                  f'[{bcolors.OKBLUE}{ksm_app_title or ksm_app_uid}{bcolors.ENDC}].\n\n'
                   f'The new Gateway named {bcolors.OKBLUE}{gateway_name}{bcolors.ENDC} will show up in a list '
                   f'of gateways once it is initialized.\n\n')
 

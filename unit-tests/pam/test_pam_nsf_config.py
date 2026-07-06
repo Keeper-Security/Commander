@@ -169,15 +169,15 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
         field = record.get_typed_field('pamResources')
         self.assertEqual(field.value[0]['folderUid'], 'nsf_folder')
 
-    @mock.patch('keepercommander.commands.discoveryrotation.create_record_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.api.sync_down')
     @mock.patch('keepercommander.commands.discoveryrotation.TunnelDAG')
     @mock.patch('keepercommander.commands.discoveryrotation.get_keeper_tokens',
                 return_value=(b'encrypted_session', b'encrypted_key', b'transmission_key'))
+    @mock.patch('keepercommander.commands.discoveryrotation.pam_configuration_create_record_v6')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
     def test_execute_creates_new_config_in_nsf_folder(
-            self, mock_record_fields, mock_tokens, mock_dag, mock_sync, mock_create_in_folder):
+            self, mock_record_fields, mock_create_config, mock_tokens, mock_dag, mock_sync):
         params = _make_params()
         params.nested_share_folders['nsf_folder'] = {
             'name': 'Project - Users',
@@ -193,19 +193,18 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
             record.fields.append(vault.TypedField.new_field(
                 'pamResources', {'folderUid': 'nsf_folder'}))
 
-        def create_in_folder(_, record, folder_uid, command='pam'):
+        def create_config(_, record, folder_uid):
             record.record_uid = 'config_uid'
 
-        mock_create_in_folder.side_effect = create_in_folder
+        mock_create_config.side_effect = create_config
         with mock.patch.object(command, 'parse_properties', side_effect=parse_properties), \
                 mock.patch.object(command, 'verify_required'):
             result = command.execute(params, config_type='local', title='Config')
 
         self.assertEqual(result, 'config_uid')
-        mock_create_in_folder.assert_called_once_with(
-            params, mock.ANY, 'nsf_folder', command='pam-config-new')
+        mock_create_config.assert_called_once_with(params, mock.ANY, 'nsf_folder')
+        mock_sync.assert_called_once_with(params)
 
-    @mock.patch('keepercommander.commands.discoveryrotation.place_record_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.api.sync_down')
     @mock.patch('keepercommander.commands.discoveryrotation.TunnelDAG')
     @mock.patch('keepercommander.commands.discoveryrotation.get_keeper_tokens',
@@ -213,8 +212,8 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
     @mock.patch('keepercommander.commands.discoveryrotation.pam_configuration_create_record_v6')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
-    def test_execute_places_new_config_with_backend_aware_helper(
-            self, mock_record_fields, mock_create_config, mock_tokens, mock_dag, mock_sync, mock_place):
+    def test_execute_creates_new_config_in_legacy_folder(
+            self, mock_record_fields, mock_create_config, mock_tokens, mock_dag, mock_sync):
         params = _make_params()
         folder = SharedFolderNode()
         folder.uid = 'legacy_folder'
@@ -234,9 +233,8 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
             result = command.execute(params, config_type='local', title='Config')
 
         self.assertEqual(result, 'config_uid')
-        mock_create_config.assert_called_once()
-        mock_place.assert_called_once_with(
-            params, 'config_uid', 'legacy_folder', command='pam-config-new')
+        mock_create_config.assert_called_once_with(params, mock.ANY, 'legacy_folder')
+        mock_sync.assert_called_once_with(params)
 
 
 class TestPamConfigEditNsfPlacement(unittest.TestCase):

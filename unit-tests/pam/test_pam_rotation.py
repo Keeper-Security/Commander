@@ -191,6 +191,109 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         self.assertTrue(mock_TunnelDAG.called)
         self.assertEqual(mock_typed_record.record_key, b'\x00' * 16)
 
+    @patch('keepercommander.commands.discoveryrotation.router_set_record_rotation_information')
+    @patch('keepercommander.vault_extensions.find_records')
+    @patch('keepercommander.commands.discoveryrotation.resolve_pam_record')
+    @patch('keepercommander.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.discoveryrotation.get_keeper_tokens')
+    @patch('keepercommander.commands.discoveryrotation.TunnelDAG')
+    @patch('keepercommander.rest_api.SERVER_PUBLIC_KEYS', {8: ec.generate_private_key(ec.SECP256R1()).public_key()})
+    def test_execute_pam_user_with_config_no_resource(self, mock_TunnelDAG, mock_get_keeper_tokens, mock_load,
+                                                      mock_resolve_pam_record, mock_find_records,
+                                                      mock_router_set_rotation):
+        record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
+        config_uid = 'bU2LVM6LjX_hmCoSMDA7vg'
+        resource_uid = 'dU2LVM6LjX_hmCoSMDA7vx'
+
+        mock_params, mock_typed_record = create_mock_params_and_record()
+        mock_params.record_rotation_cache = {}
+        mock_typed_record.record_uid = record_uid
+        mock_load.return_value = mock_typed_record
+
+        mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
+        mock_pam_config_record.record_uid = config_uid
+        mock_pam_config_record.record_type = 'pamAwsConfiguration'
+        mock_pam_config_record.version = 6
+        resource_field = MagicMock()
+        resource_field.value = [{'resourceRef': [resource_uid]}]
+        mock_pam_config_record.get_typed_field.return_value = resource_field
+        mock_find_records.return_value = [mock_pam_config_record]
+        mock_resolve_pam_record.side_effect = lambda params, identifier, rec_type=None: (
+            mock_typed_record if identifier == record_uid else mock_pam_config_record
+        )
+
+        mock_user_dag = MagicMock()
+        mock_user_dag.linking_dag.has_graph = False
+        mock_config_dag = MagicMock()
+        mock_config_dag.linking_dag.has_graph = True
+        mock_config_dag.get_all_owners.return_value = []
+        mock_config_dag.resource_belongs_to_config.return_value = False
+        mock_config_dag.user_belongs_to_resource.return_value = False
+        mock_config_dag.get_resource_uid.return_value = None
+        mock_config_dag.record.record_uid = config_uid
+        mock_TunnelDAG.side_effect = [mock_user_dag, mock_config_dag]
+        mock_get_keeper_tokens.return_value = (b'token', b'encrypted_key', b'transmission_key')
+
+        kwargs = {
+            'record_name': record_uid,
+            'config': config_uid,
+            'force': True,
+        }
+
+        self.command.execute(mock_params, **kwargs)
+        mock_config_dag.edit_tunneling_config.assert_not_called()
+        mock_config_dag.link_resource_to_config.assert_called_once_with(resource_uid)
+        mock_config_dag.link_user_to_resource.assert_called_once_with(record_uid, resource_uid, belongs_to=True)
+        self.assertTrue(mock_router_set_rotation.called)
+        config_call = mock_TunnelDAG.call_args_list[1]
+        self.assertTrue(config_call.kwargs.get('is_config'))
+
+    @patch('keepercommander.vault_extensions.find_records')
+    @patch('keepercommander.commands.discoveryrotation.resolve_pam_record')
+    @patch('keepercommander.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.discoveryrotation.get_keeper_tokens')
+    @patch('keepercommander.commands.discoveryrotation.TunnelDAG')
+    @patch('keepercommander.rest_api.SERVER_PUBLIC_KEYS', {8: ec.generate_private_key(ec.SECP256R1()).public_key()})
+    def test_execute_pam_user_with_config_empty_resource_ref(self, mock_TunnelDAG, mock_get_keeper_tokens, mock_load,
+                                                             mock_resolve_pam_record, mock_find_records):
+        record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
+        config_uid = 'bU2LVM6LjX_hmCoSMDA7vg'
+
+        mock_params, mock_typed_record = create_mock_params_and_record()
+        mock_params.record_rotation_cache = {}
+        mock_typed_record.record_uid = record_uid
+        mock_load.return_value = mock_typed_record
+
+        mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
+        mock_pam_config_record.record_uid = config_uid
+        mock_pam_config_record.record_type = 'pamAwsConfiguration'
+        mock_pam_config_record.version = 6
+        resource_field = MagicMock()
+        resource_field.value = [{'resourceRef': ['']}]
+        mock_pam_config_record.get_typed_field.return_value = resource_field
+        mock_find_records.return_value = [mock_pam_config_record]
+        mock_resolve_pam_record.side_effect = lambda params, identifier, rec_type=None: (
+            mock_typed_record if identifier == record_uid else mock_pam_config_record
+        )
+
+        mock_user_dag = MagicMock()
+        mock_user_dag.linking_dag.has_graph = False
+        mock_config_dag = MagicMock()
+        mock_config_dag.linking_dag.has_graph = True
+        mock_config_dag.get_all_owners.return_value = []
+        mock_config_dag.record.record_uid = config_uid
+        mock_TunnelDAG.side_effect = [mock_user_dag, mock_config_dag]
+        mock_get_keeper_tokens.return_value = (b'token', b'encrypted_key', b'transmission_key')
+
+        kwargs = {
+            'record_name': record_uid,
+            'config': config_uid,
+            'force': True,
+        }
+
+        with self.assertRaises(CommandError):
+            self.command.execute(mock_params, **kwargs)
+
 
 class TestPAMResourceRotateCommand(unittest.TestCase):
 
@@ -484,9 +587,9 @@ class TestPAMGatewayListCommand(unittest.TestCase):
     @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
     @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')
     @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
-    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_ksm_app_display_info')
     @patch('keepercommander.commands.discoveryrotation.dump_report_data')
-    def test_execute(self, mock_dump_report_data, mock_get_app_record, mock_get_all_gateways,
+    def test_execute(self, mock_dump_report_data, mock_get_ksm_app_display_info, mock_get_all_gateways,
                      mock_get_router_url, mock_router_get_connected_gateways):
         mock_params = create_mock_params()
 
@@ -508,9 +611,7 @@ class TestPAMGatewayListCommand(unittest.TestCase):
             )
         ]
 
-        mock_get_app_record.return_value = {
-            'data_unencrypted': json.dumps({'title': 'App Title'})
-        }
+        mock_get_ksm_app_display_info.return_value = ('App Title', True, 'App Title (app_uid)')
 
         kwargs = {'is_force': True, 'is_verbose': True}
         self.command.execute(mock_params, **kwargs)
@@ -519,7 +620,7 @@ class TestPAMGatewayListCommand(unittest.TestCase):
         self.assertTrue(mock_router_get_connected_gateways.called)
         self.assertTrue(mock_get_all_gateways.called)
         self.assertTrue(mock_get_router_url.called)
-        self.assertTrue(mock_get_app_record.called)
+        self.assertTrue(mock_get_ksm_app_display_info.called)
 
     @patch('keepercommander.commands.discoveryrotation.router_get_connected_gateways')
     @patch('keepercommander.commands.discoveryrotation.router_helper.get_router_url')

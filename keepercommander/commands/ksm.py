@@ -26,6 +26,11 @@ from typing import Sequence, List, Optional
 
 from .base import Command, dump_report_data, user_choice, as_boolean
 from . import record
+from ..nested_share_folder.common import get_folder_key, get_record_key
+from .nested_share_folder.helpers import (
+    is_nested_share_folder, is_nested_share_record, load_record_metadata, resolve_folder_uid)
+from ..nested_share_folder.removal_api import (
+    resolve_nested_share_folder_uid, resolve_nested_share_record_uid)
 from .. import api, utils, crypto, vault
 from ..params import KeeperParams
 from ..display import bcolors
@@ -90,7 +95,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --force : Do not prompt for confirmation
 
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH]{bcolors.ENDC}
     Options: 
       --editable : Allow secrets to be editable by the client
 
@@ -130,7 +135,7 @@ ksm_parser.add_argument('command', type=str, action='store', nargs="*",
                     help='One of: "app list", "app get", "app create", "app update", "app remove", "app share", ' +
                              '"app unshare", "client add", "client remove", "share add", "share update", "share remove" or "token add"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
-                        help='Record UID')
+                        help='Record, shared folder, or Nested Share Folder (NSF) UID or path')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
                         help='Application Name or UID')
 ksm_parser.add_argument('--client', '-i', type=str, dest='client_names_or_ids', action='append', required=False,
@@ -593,11 +598,15 @@ class KSMCommand(Command):
         app_record_uid = rec_cache_val.get('record_uid')
         master_key = rec_cache_val.get('record_key_unencrypted')
 
+        resolved_uids = KSMCommand.resolve_secret_uids(params, secret_uids)
+        if not resolved_uids:
+            return
+
         KSMCommand.share_secret(
             params=params,
             app_uid=app_record_uid,
             master_key=master_key,
-            secret_uids=secret_uids,
+            secret_uids=resolved_uids,
             is_editable=is_editable
         )
 
@@ -838,8 +847,6 @@ class KSMCommand(Command):
                     print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
 
                 if ai.shares:
-                    recs = params.record_cache
-
                     for s in ai.shares:
                         uid_str = utils.base64_url_encode(s.secretUid)
                         sht = APIRequest_pb2.ApplicationShareType.Name(s.shareType)
@@ -851,18 +858,17 @@ class KSMCommand(Command):
                         }
 
                         if sht == 'SHARE_TYPE_RECORD':
-                            rec = recs.get(uid_str)
-                            if rec:
-                                record_data_dict = KSMCommand.record_data_as_dict(rec)
-                                share_data["title"] = record_data_dict.get('title')
-                                share_data["type"] = "RECORD"
+                            share_data["title"] = KSMCommand.get_secret_title(params, uid_str, sht)
+                            share_data["type"] = "RECORD"
+                            #ToDo: check if type nsf record is valid here
+                            if is_nested_share_record(params, uid_str):
+                                share_data["type"] = "NSF RECORD"
                         elif sht == 'SHARE_TYPE_FOLDER':
-                            if uid_str in params.shared_folder_cache:
-                                cached_sf = params.shared_folder_cache[uid_str]
-                                share_data["title"] = cached_sf.get('name_unencrypted')
-                                share_data["type"] = "FOLDER"
-                            else:
-                                continue
+                            share_data["title"] = KSMCommand.get_secret_title(params, uid_str, sht)
+                            share_data["type"] = "FOLDER"
+                            #ToDo: check if type nsf folder is valid here
+                            if is_nested_share_folder(params, uid_str):
+                                share_data["type"] = "NSF FOLDER"
                         else:
                             logging.warning("Unknown Share Type %s" % sht)
                             continue
@@ -901,6 +907,96 @@ class KSMCommand(Command):
                 return json.dumps({"applications": result_data}, indent=2)
 
     @staticmethod
+    def _secret_in_cache(params, uid):
+        if uid in getattr(params, 'record_cache', {}):
+            return True
+        if uid in getattr(params, 'nested_share_records', {}):
+            return True
+        if api.is_shared_folder(params, uid):
+            return True
+        if is_nested_share_folder(params, uid):
+            return True
+        return False
+
+    @staticmethod
+    def resolve_secret_uid(params, identifier):
+        if not identifier:
+            return None
+        if KSMCommand._secret_in_cache(params, identifier):
+            return identifier
+        record_uid = resolve_nested_share_record_uid(params, identifier)
+        if record_uid:
+            return record_uid
+        folder_uid = resolve_folder_uid(params, identifier)
+        if folder_uid and (api.is_shared_folder(params, folder_uid)
+                           or is_nested_share_folder(params, folder_uid)):
+            return folder_uid
+        folder_uid = resolve_nested_share_folder_uid(params, identifier)
+        if folder_uid and is_nested_share_folder(params, folder_uid):
+            return folder_uid
+        return None
+
+    @staticmethod
+    def resolve_secret_uids(params, identifiers):
+        if not identifiers:
+            return []
+        if isinstance(identifiers, str):
+            identifiers = [identifiers]
+        resolved = []
+        for ident in identifiers:
+            uid = KSMCommand.resolve_secret_uid(params, ident)
+            if uid:
+                resolved.append(uid)
+            else:
+                logging.warning('Could not resolve secret "%s". Run sync-down and try again.', ident)
+        return resolved
+
+    @staticmethod
+    def classify_secret(params, uid):
+        share_key = None
+        share_type = None
+
+        if uid in getattr(params, 'record_cache', {}) or is_nested_share_record(params, uid):
+            share_type = 'SHARE_TYPE_RECORD'
+            if uid in params.record_cache:
+                share_key = params.record_cache[uid].get('record_key_unencrypted')
+            if not share_key:
+                share_key = get_record_key(params, uid, raise_on_missing=False)
+        elif api.is_shared_folder(params, uid) or is_nested_share_folder(params, uid):
+            share_type = 'SHARE_TYPE_FOLDER'
+            cached_sf = getattr(params, 'shared_folder_cache', {}).get(uid, {})
+            share_key = cached_sf.get('shared_folder_key_unencrypted')
+            if not share_key:
+                share_key = get_folder_key(params, uid, raise_on_missing=False)
+
+        if share_type and share_key:
+            return {'uid': uid, 'share_type': share_type, 'share_key': share_key}
+        return None
+
+    @staticmethod
+    def get_secret_title(params, uid, share_type):
+        if share_type == 'SHARE_TYPE_RECORD':
+            rec = getattr(params, 'record_cache', {}).get(uid)
+            if rec and rec.get('data_unencrypted'):
+                try:
+                    return KSMCommand.record_data_as_dict(rec).get('title', uid)
+                except Exception:
+                    pass
+            if is_nested_share_record(params, uid):
+                return load_record_metadata(params, uid).get('title', uid)
+        elif share_type == 'SHARE_TYPE_FOLDER':
+            cached_sf = getattr(params, 'shared_folder_cache', {}).get(uid, {})
+            if cached_sf.get('name_unencrypted'):
+                return cached_sf.get('name_unencrypted')
+            nsf = getattr(params, 'nested_share_folders', {}).get(uid, {})
+            if nsf.get('name'):
+                return nsf.get('name')
+            folder = getattr(params, 'folder_cache', {}).get(uid)
+            if folder and getattr(folder, 'name', None):
+                return folder.name
+        return uid
+
+    @staticmethod
     def share_secret(params, app_uid, master_key, secret_uids, is_editable=False):
 
         app_shares = []
@@ -908,24 +1004,16 @@ class KSMCommand(Command):
         added_secret_uids_type_pairs = []
 
         for uid in secret_uids:
-            is_record = uid in params.record_cache
-            is_shared_folder = api.is_shared_folder(params, uid)
-
-            if is_record:
-                rec = params.record_cache[uid]
-                share_key_decrypted = rec['record_key_unencrypted']
-                share_type = 'SHARE_TYPE_RECORD'
-            elif is_shared_folder:
-                cached_sf = params.shared_folder_cache[uid]
-                shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
-                share_key_decrypted = shared_folder_key_unencrypted
-                share_type = 'SHARE_TYPE_FOLDER'
-            else:
-                print(f"""{bcolors.WARNING}\tUID="{uid}" is not a Record nor Shared Folder. Only individual records or 
-                Shared Folders can be added to the application.{bcolors.ENDC} Make sure your local cache is up to date by
+            secret = KSMCommand.classify_secret(params, uid)
+            if not secret:
+                print(f"""{bcolors.WARNING}\tUID="{uid}" is not a Record, Shared Folder, or Nested Share Folder record.
+                Only individual records or folders can be added to the application.{bcolors.ENDC} Make sure your local cache is up to date by
                 running 'sync-down' command and trying again.""")
-
                 continue
+
+            share_type = secret['share_type']
+            share_key_decrypted = secret['share_key']
+            uid = secret['uid']
 
             added_secret_uids_type_pairs.append((uid, share_type))
 
@@ -950,7 +1038,10 @@ class KSMCommand(Command):
             api.communicate_rest(params, app_share_add_rq, 'vault/app_share_add')
             print(bcolors.OKGREEN + f'\nSuccessfully added secrets to app uid={app_uid}, '
                                     f'editable=' + bcolors.BOLD + f'{is_editable}:' + bcolors.ENDC)
-            print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + ('Record' if ('RECORD' in str(x[1])) else 'Shared Folder'), added_secret_uids_type_pairs)))
+            print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + (
+                'Record' if 'RECORD' in str(x[1]) else
+                'Nested Share Folder' if is_nested_share_folder(params, x[0]) else 'Shared Folder'),
+                added_secret_uids_type_pairs)))
             print('\n')
             return True
         except KeeperApiError as kae:
@@ -962,19 +1053,123 @@ class KSMCommand(Command):
         return False
 
     @staticmethod
+    def _is_ksm_app_data(data_dict):
+        return isinstance(data_dict, dict) and data_dict.get('type') == 'app'
+
+    @staticmethod
+    def _app_record_from_cache_entry(rec_cache_val):
+        if not rec_cache_val or rec_cache_val.get('version') != 5:
+            return None
+        data_unencrypted = rec_cache_val.get('data_unencrypted')
+        if not data_unencrypted:
+            return None
+        try:
+            data_dict = json.loads(data_unencrypted.decode('utf-8'))
+        except Exception:
+            return None
+        if KSMCommand._is_ksm_app_data(data_dict):
+            return rec_cache_val
+        return None
+
+    @staticmethod
+    def _normalize_nsf_app_record(params, record_uid):
+        nsf_rec = getattr(params, 'nested_share_records', {}).get(record_uid)
+        if not nsf_rec:
+            return None
+
+        nsf_data = getattr(params, 'nested_share_record_data', {}).get(record_uid, {})
+        data_json = nsf_data.get('data_json', {})
+        if not KSMCommand._is_ksm_app_data(data_json):
+            return None
+
+        record_key = nsf_rec.get('record_key_unencrypted')
+        if not record_key:
+            record_key = get_record_key(params, record_uid, raise_on_missing=False)
+        if not record_key:
+            return None
+
+        return {
+            'record_uid': record_uid,
+            'version': nsf_rec.get('version', 5),
+            'revision': nsf_rec.get('revision', 0),
+            'record_key_unencrypted': record_key,
+            'data_unencrypted': json.dumps(data_json).encode('utf-8'),
+            'source': 'nested_share_folder',
+        }
+
+    @staticmethod
     def get_app_record(params, app_name_or_uid):
+        if not app_name_or_uid:
+            return None
+
+        if app_name_or_uid in getattr(params, 'record_cache', {}):
+            rec = KSMCommand._app_record_from_cache_entry(params.record_cache[app_name_or_uid])
+            if rec:
+                return rec
+
+        nsf_rec = KSMCommand._normalize_nsf_app_record(params, app_name_or_uid)
+        if nsf_rec:
+            return nsf_rec
 
         for rec_cache_val in params.record_cache.values():
+            rec = KSMCommand._app_record_from_cache_entry(rec_cache_val)
+            if not rec:
+                continue
+            r_uid = rec.get('record_uid')
+            try:
+                r_unencr_dict = json.loads(rec.get('data_unencrypted').decode('utf-8'))
+            except Exception:
+                continue
+            if r_unencr_dict.get('title') == app_name_or_uid or r_uid == app_name_or_uid:
+                return rec
 
-            if rec_cache_val.get('version') == 5:
-                r_uid = rec_cache_val.get('record_uid')
-                r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-                r_unencr_dict = json.loads(r_unencr_json_data)
-
-                if r_unencr_dict.get('title') == app_name_or_uid or r_uid == app_name_or_uid:
-                    return rec_cache_val
+        resolved_uid = resolve_nested_share_record_uid(params, app_name_or_uid)
+        if resolved_uid:
+            if resolved_uid in getattr(params, 'record_cache', {}):
+                rec = KSMCommand._app_record_from_cache_entry(params.record_cache[resolved_uid])
+                if rec:
+                    return rec
+            nsf_rec = KSMCommand._normalize_nsf_app_record(params, resolved_uid)
+            if nsf_rec:
+                return nsf_rec
 
         return None
+
+    @staticmethod
+    def get_app_title(params, app_uid):
+        rec = KSMCommand.get_app_record(params, app_uid)
+        if rec and rec.get('data_unencrypted'):
+            try:
+                return json.loads(rec.get('data_unencrypted').decode('utf-8')).get('title', app_uid)
+            except Exception:
+                pass
+
+        if is_nested_share_record(params, app_uid):
+            meta = load_record_metadata(params, app_uid)
+            if meta.get('type') == 'app':
+                return meta.get('title', app_uid)
+
+        nsf_data = getattr(params, 'nested_share_record_data', {}).get(app_uid, {})
+        data_json = nsf_data.get('data_json', {})
+        if isinstance(data_json, dict) and data_json.get('type') == 'app':
+            return data_json.get('title', app_uid)
+        return None
+
+    @staticmethod
+    def get_ksm_app_display_info(params, app_uid_str):
+        ksm_app = KSMCommand.get_app_record(params, app_uid_str)
+        if ksm_app:
+            try:
+                title = json.loads(ksm_app.get('data_unencrypted').decode('utf-8')).get('title', app_uid_str)
+            except Exception:
+                title = app_uid_str
+            return title, True, f'{title} ({app_uid_str})'
+
+        title = KSMCommand.get_app_title(params, app_uid_str)
+        if title:
+            return title, False, f'{title} ({app_uid_str})'
+
+        return None, False, f'[APP NOT ACCESSIBLE OR DELETED] ({app_uid_str})'
 
     @staticmethod
     def search_app_records(params, search_str):
@@ -1163,6 +1358,10 @@ class KSMCommand(Command):
         app_record_uid = rec_cache_val.get('record_uid')
         master_key = rec_cache_val.get('record_key_unencrypted')
 
+        resolved_secret_uids = KSMCommand.resolve_secret_uids(params, secret_uids)
+        if not resolved_secret_uids:
+            return
+
         app_info = KSMCommand.get_app_info(params, app_record_uid)
         existing_shares = {
             utils.base64_url_encode(s.secretUid): s
@@ -1170,7 +1369,7 @@ class KSMCommand(Command):
         }
 
         uids_to_update = []
-        for uid in secret_uids:
+        for uid in resolved_secret_uids:
             if uid not in existing_shares:
                 logging.warning('Secret "%s" is not currently shared with this application. '
                                 'Use "share add" to add it first.' % uid)
@@ -1198,18 +1397,14 @@ class KSMCommand(Command):
 
         app_shares = []
         for uid in uids_to_update:
-            is_record = uid in params.record_cache
-            is_shared_folder = api.is_shared_folder(params, uid)
-
-            if is_record:
-                share_key = params.record_cache[uid]['record_key_unencrypted']
-                share_type = 'SHARE_TYPE_RECORD'
-            elif is_shared_folder:
-                share_key = params.shared_folder_cache[uid].get('shared_folder_key_unencrypted')
-                share_type = 'SHARE_TYPE_FOLDER'
-            else:
+            secret = KSMCommand.classify_secret(params, uid)
+            if not secret:
                 logging.warning('UID "%s" not found in local cache. Run sync-down and try again.' % uid)
                 continue
+
+            share_key = secret['share_key']
+            share_type = secret['share_type']
+            uid = secret['uid']
 
             encrypted_secret_key = crypto.encrypt_aes_v2(share_key, master_key)
 
@@ -1248,10 +1443,14 @@ class KSMCommand(Command):
 
         app_uid = app.get('record_uid')
 
+        resolved_uids = KSMCommand.resolve_secret_uids(params, secret_uids)
+        if not resolved_uids:
+            raise Exception("No valid record or folder secrets were found for removal")
+
         rq = APIRequest_pb2.RemoveAppSharesRequest()
 
         rq.appRecordUid = utils.base64_url_decode(app_uid)
-        rq.shares.extend((utils.base64_url_decode(x) for x in secret_uids))
+        rq.shares.extend((utils.base64_url_decode(x) for x in resolved_uids))
         api.communicate_rest(params, rq, 'vault/app_share_remove')
         print(bcolors.OKGREEN + "Secret share was successfully removed from the application\n" + bcolors.ENDC)
 
