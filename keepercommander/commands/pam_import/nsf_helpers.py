@@ -182,9 +182,8 @@ def get_records_in_folder(params, folder_uid: str) -> list:
 def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
                          folder_uid: Optional[str] = None) -> str:
     """Create an NSF subfolder; returns folder UID."""
-    from ... import nested_share_folder as _nsf
     from ...nested_share_folder.folder_api import _prepare_folder_for_creation, folder_add_v3
-    from ...nested_share_folder.helpers import command_error_handler, check_result
+    from ..nested_share_folder.helpers import command_error_handler, check_result
     from ...proto import folder_pb2
 
     name = str(folder_name or '').strip()
@@ -245,7 +244,7 @@ def extend_create_record(params, obj, folder_uid: str) -> Optional[str]:
         obj.create_record(params, folder_uid)
 
     from ..nested_share_folder.record_commands import NestedShareRecordAddCommand
-    from ...nested_share_folder.helpers import command_error_handler, check_result
+    from ..nested_share_folder.helpers import command_error_handler, check_result
     from ...nested_share_folder.record_api import create_record_v3
 
     cmd = NestedShareRecordAddCommand()
