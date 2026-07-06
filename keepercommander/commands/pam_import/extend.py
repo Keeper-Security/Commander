@@ -54,6 +54,16 @@ from .keeper_ai_settings import (
     refresh_link_to_config_to_latest,
 )
 from .workflow_apply import apply_workflow, validate_workflow_principals
+from .nsf_helpers import (
+    build_folder_tree,
+    create_nsf_subfolder,
+    extend_create_record,
+    find_pam_configuration,
+    get_folder_record_uids,
+    get_ksm_app_folders,
+    get_records_in_folder,
+)
+from .record_loader import load_pam_record
 from ...keeper_dag import EdgeType
 from ...keeper_dag.types import RefType
 from ..base import Command
@@ -64,12 +74,12 @@ from ..pam.vault_target import is_nested_share_folder
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
-from ... import api, crypto, utils, vault, vault_extensions, record_management
+from ... import api, crypto, utils, vault, record_management
 from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ...proto import APIRequest_pb2, enterprise_pb2, pam_pb2, record_pb2
+from ...proto import enterprise_pb2, pam_pb2, record_pb2
 from ...recordv3 import RecordV3
 from ...subfolder import BaseFolderNode, find_folders as find_record_folders
 
@@ -192,23 +202,8 @@ def process_folder_paths(folder_paths, ksm_shared_folders):
     return good_paths, bad_paths
 
 def build_tree_recursive(params, folder_uid: str):
-    """Recursively build tree for a folder and its subfolders"""
-    tree = {}
-    folder = params.folder_cache.get(folder_uid)
-    if not folder:
-        return tree
-
-    for subfolder_uid in folder.subfolders:
-        subfolder = params.folder_cache.get(subfolder_uid)
-        if subfolder:
-            folder_name = subfolder.name or ''
-            tree[folder_name] = {
-                'uid': subfolder.uid,
-                'name': folder_name,
-                'subfolders': build_tree_recursive(params, subfolder.uid)
-            }
-
-    return tree
+    """Recursively build tree for a folder and its subfolders (classic or NSF)."""
+    return build_folder_tree(params, folder_uid)
 
 
 def _collect_path_to_uid_from_tree(path_prefix: str, tree: dict, path_to_uid: dict, only_existing: bool) -> None:
@@ -296,35 +291,14 @@ def _get_ksm_app_record_uids(params, ksm_shared_folders: list) -> set:
     """Return set of all record UIDs in any folder shared to the KSM app."""
     folder_uids = _collect_all_folder_uids_under_ksm(ksm_shared_folders)
     record_uids = set()
-    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
     for fuid in folder_uids:
-        if fuid in subfolder_record_cache:
-            record_uids.update(subfolder_record_cache[fuid])
+        record_uids.update(get_folder_record_uids(params, fuid))
     return record_uids
 
 
 def _get_records_in_folder(params, folder_uid: str):
-    """Return list of (record_uid, title, record_type, login) for records in folder_uid.
-    record_type from record for autodetect (e.g. pamUser, pamMachine, login)."""
-    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
-    result = []
-    for ruid in subfolder_record_cache.get(folder_uid, []):
-        try:
-            rec = vault.KeeperRecord.load(params, ruid)
-            title = getattr(rec, "title", "") or ""
-            rtype = ""
-            if hasattr(rec, "record_type"):
-                rtype = getattr(rec, "record_type", "") or ""
-            login = ""
-            fields = getattr(rec, "fields", None)
-            if isinstance(fields, list):
-                field = next((x for x in fields if getattr(x, "type", "") == "login"), None)
-                if field and hasattr(field, "get_default_value"):
-                    login = (field.get_default_value() or "") or ""
-            result.append((ruid, title, rtype, login))
-        except Exception:
-            pass
-    return result
+    """Return list of (record_uid, title, record_type, login) for records in folder_uid."""
+    return get_records_in_folder(params, folder_uid)
 
 
 def _get_all_ksm_app_records(params, ksm_shared_folders: list) -> list:
@@ -416,15 +390,7 @@ class PAMProjectExtendCommand(Command):
         # no need to populate params.enterprise (users/teams caches).
         # since extend only adds new records to existing folders
 
-        configuration = None
-        if config_name in params.record_cache:
-            configuration = vault.KeeperRecord.load(params, config_name)
-        else:
-            l_name = config_name.casefold()
-            for c in vault_extensions.find_records(params, record_version=6):
-                if c.title.casefold() == l_name:
-                    configuration = c
-                    break
+        configuration = find_pam_configuration(params, config_name)
 
         if not (configuration and isinstance(configuration, vault.TypedRecord) and configuration.version == 6):
             raise CommandError("pam project extend", f"""PAM configuration not found: "{config_name}" """)
@@ -561,32 +527,9 @@ class PAMProjectExtendCommand(Command):
         self.process_data(params, project)
 
     def get_app_shared_folders(self, params, ksm_app_uid: str, configuration_uid: Optional[str]=None) -> list[dict]:
-        ksm_shared_folders = []
-
-        try:
-            app_info_list = KSMCommand.get_app_info(params, ksm_app_uid)
-            if app_info_list and len(app_info_list) > 0:
-                app_info = app_info_list[0]
-                shares = [x for x in app_info.shares if x.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER] # pylint: disable=no-member
-                for share in shares:
-                    folder_uid = utils.base64_url_encode(share.secretUid)
-                    if folder_uid in params.shared_folder_cache:
-                        cached_sf = params.shared_folder_cache[folder_uid]
-                        folder_name = cached_sf.get('name_unencrypted', 'Unknown')
-                        is_editable = share.editable if hasattr(share, 'editable') else False
-
-                        ksm_shared_folders.append({
-                            'uid': folder_uid,
-                            'name': folder_name,
-                            'editable': is_editable,
-                            'permissions': "Editable" if is_editable else "Read-Only"
-                        })
-        except Exception as e:
-            logging.error(f"Could not retrieve KSM application shares: {e}")
-
+        ksm_shared_folders = get_ksm_app_folders(params, ksm_app_uid)
         if not ksm_shared_folders and configuration_uid:
             ksm_shared_folders.extend(self.get_nsf_project_folders(params, configuration_uid))
-
         return ksm_shared_folders
 
     @staticmethod
@@ -1148,7 +1091,6 @@ class PAMProjectExtendCommand(Command):
         step3_errors = []
         folders_out = project.get("folders") or {}
         ksm_shared_folders = project.get("ksm_shared_folders") or []
-        subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
 
         new_no_path = []
         for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
@@ -1182,7 +1124,7 @@ class PAMProjectExtendCommand(Command):
         non_empty = []
         for shf in ksm_shared_folders:
             uids = _folder_uids_under_shf(shf)
-            if any(subfolder_record_cache.get(fuid) for fuid in uids):
+            if any(get_folder_record_uids(params, fuid) for fuid in uids):
                 non_empty.append(shf)
         if len(non_empty) == 0:
             step3_errors.append("Autodetect: no folders contain records; cannot assign resources/users folders.")
@@ -1235,6 +1177,8 @@ class PAMProjectExtendCommand(Command):
 
         name = str(folder_name or "").strip()
         if is_nested_share_folder(params, parent_uid):
+            if folder_uid:
+                return create_nsf_subfolder(params, name, parent_uid, folder_uid=folder_uid)
             from ...nested_share_folder.folder_api import create_folder_v3
             result = create_folder_v3(params, name, parent_uid=parent_uid)
             if isinstance(result, dict) and result.get('success') is False:
@@ -1450,7 +1394,7 @@ class PAMProjectExtendCommand(Command):
             logging.warning(f"Processing external users: {len(new_users)}")
             for n, user in enumerate(new_users):
                 folder_uid = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, folder_uid)
+                extend_create_record(params, user, folder_uid)
                 if n % pdelta == 0:
                     print(f"{n}/{len(new_users)}")
             print(f"{len(new_users)}/{len(new_users)}\n")
@@ -1465,7 +1409,7 @@ class PAMProjectExtendCommand(Command):
                 print(f"{n}/{len(new_resources)}")
             folder_uid = getattr(mach, "resolved_folder_uid", None) or shfres
             admin_uid = get_admin_credential(mach, True)
-            mach.create_record(params, folder_uid)
+            extend_create_record(params, mach, folder_uid)
             tdag.link_resource_to_config(mach.uid)
             if isinstance(mach, PamRemoteBrowserObject):
                 args = parse_command_options(mach, True)
@@ -1532,7 +1476,7 @@ class PAMProjectExtendCommand(Command):
                 if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, ufolder)
+                extend_create_record(params, user, ufolder)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1567,7 +1511,7 @@ class PAMProjectExtendCommand(Command):
                 if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, ufolder)
+                extend_create_record(params, user, ufolder)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1613,7 +1557,7 @@ class PAMProjectExtendCommand(Command):
         if pce and getattr(pce, "environment", "") == "domain":
             if getattr(pce, "admin_credential_ref", None):
                 pcuid = (project.get("pam_config") or {}).get("pam_config_uid")
-                pcrec = vault.KeeperRecord.load(params, pcuid) if pcuid else None
+                pcrec = load_pam_record(params, pcuid) if pcuid else None
                 if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
                     if pcrec.record_type == "pamDomainConfiguration":
                         prf = pcrec.get_typed_field("pamResources")

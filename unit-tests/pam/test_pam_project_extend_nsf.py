@@ -53,7 +53,7 @@ def test_get_nsf_project_folders_from_config_folder_siblings():
 def test_get_app_shared_folders_falls_back_to_nsf_project_folders():
     params = _params()
 
-    with patch('keepercommander.commands.pam_import.extend.KSMCommand.get_app_info',
+    with patch('keepercommander.commands.ksm.KSMCommand.get_app_info',
                return_value=[]):
         folders = PAMProjectExtendCommand().get_app_shared_folders(params, 'ksm_uid', 'config_uid')
 
@@ -66,10 +66,22 @@ def test_create_subfolder_uses_nsf_api_under_nsf_parent():
     with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
                return_value={'success': True, 'folder_uid': 'child_nsf'}) as create_folder, \
             patch('keepercommander.commands.pam_import.extend.api.sync_down'):
-        uid = PAMProjectExtendCommand().create_subfolder(params, 'Child', 'users_nsf', folder_uid='pre_generated')
+        uid = PAMProjectExtendCommand().create_subfolder(params, 'Child', 'users_nsf')
 
     assert uid == 'child_nsf'
     create_folder.assert_called_once_with(params, 'Child', parent_uid='users_nsf')
+
+
+def test_create_subfolder_uses_pre_generated_uid_for_nsf():
+    params = _params()
+
+    with patch('keepercommander.commands.pam_import.extend.create_nsf_subfolder',
+               return_value='pre_generated') as create_sub:
+        uid = PAMProjectExtendCommand().create_subfolder(
+            params, 'Child', 'users_nsf', folder_uid='pre_generated')
+
+    assert uid == 'pre_generated'
+    create_sub.assert_called_once_with(params, 'Child', 'users_nsf', folder_uid='pre_generated')
 
 
 def test_process_folders_creates_new_nsf_folder_paths():

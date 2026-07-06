@@ -96,8 +96,8 @@ def record_update_v3(params, records, client_time=None, security_data_key_type=N
 
 def create_record_v3(params, record_type='', title='', fields=None,
                      folder_uid=None, notes=None, custom_fields=None,
-                     record_data=None):
-    uid = utils.generate_uid()
+                     record_data=None, record_uid=None):
+    uid = record_uid or utils.generate_uid()
     rk = os.urandom(32)
 
     if record_data is not None:
