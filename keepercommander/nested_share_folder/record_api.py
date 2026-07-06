@@ -91,6 +91,9 @@ def pam_configuration_add_v3(params, records, client_time=None, security_data_ke
                                 rs_type=record_pb2.RecordsModifyResponse)
 
 
+record_add_pam_configuration_v3 = pam_configuration_add_v3
+
+
 def record_update_v3(params, records, client_time=None, security_data_key_type=None):
     if not records or len(records) > 1000:
         raise ValueError("Provide 1..1000 records")

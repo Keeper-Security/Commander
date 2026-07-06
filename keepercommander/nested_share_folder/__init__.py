@@ -37,7 +37,7 @@ _SUBMODULE_MAP = {
         'get_folder_access_v3',
     ],
     'record_api': [
-        'create_record_data_v3', 'record_add_v3', 'record_update_v3',
+        'create_record_data_v3', 'record_add_v3', 'record_add_pam_configuration_v3', 'record_update_v3',
         'create_record_v3', 'update_record_v3', 'create_records_batch_v3',
         'get_record_details_v3', 'get_record_accesses_v3',
         'find_direct_user_share_access', 'is_record_share_update_noop',

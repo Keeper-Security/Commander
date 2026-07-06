@@ -4,10 +4,12 @@ from unittest import mock
 import keepercommander.commands.record  # noqa: F401
 from keepercommander import vault
 from keepercommander.proto import record_pb2
-from keepercommander.commands.discoveryrotation import PAMConfigurationEditCommand, PAMConfigurationNewCommand
+from keepercommander.commands.discoveryrotation import (
+    PAMConfigurationEditCommand, PAMConfigurationNewCommand, PAMConfigurationRemoveCommand,
+    PAMCreateRecordRotationCommand)
 from keepercommander.commands.pam.vault_target import (
     create_record_in_folder, place_record_in_folder, place_pam_configuration_in_folder,
-    resolve_pam_folder_uid)
+    resolve_pam_folder_uid, records_in_folder)
 from keepercommander.error import CommandError
 from keepercommander.subfolder import NestedShareFolderNode, RootFolderNode, SharedFolderNode
 
@@ -103,6 +105,16 @@ class TestPamVaultTarget(unittest.TestCase):
 
         self.assertEqual(resolve_pam_folder_uid(params, 'testpam'), 'nsf_folder')
 
+    def test_records_in_folder_merges_legacy_and_nsf_membership(self):
+        params = _make_params()
+        params.subfolder_record_cache = {'nsf_folder': {'legacy_rec_uid'}}
+        params.nested_share_folder_records = {'nsf_folder': {'nsf_rec_uid'}}
+
+        self.assertEqual(
+            records_in_folder(params, 'nsf_folder'),
+            {'legacy_rec_uid', 'nsf_rec_uid'},
+        )
+
 
 class TestPamConfigPlacement(unittest.TestCase):
 
@@ -134,14 +146,11 @@ class TestPamConfigPlacement(unittest.TestCase):
 
 class TestPamConfigurationCreateNsf(unittest.TestCase):
 
-    @mock.patch('keepercommander.commands.pam.config_helper.api.sync_down')
-    @mock.patch('keepercommander.nested_share_folder.record_api.pam_configuration_add_v3')
-    @mock.patch('keepercommander.nested_share_folder.record_api.create_record_data_v3')
-    @mock.patch('keepercommander.nested_share_folder.common.get_folder_key', return_value=b'folder_key')
-    @mock.patch('keepercommander.commands.pam.config_helper.is_nested_share_folder', return_value=True)
+    @mock.patch('keepercommander.commands.pam.config_helper.record_add_pam_configuration_v3')
+    @mock.patch('keepercommander.commands.pam.config_helper.create_record_data_v3')
+    @mock.patch('keepercommander.commands.pam.config_helper.get_folder_key', return_value=b'folder_key')
     def test_create_uses_add_pam_configuration_for_nsf(
-            self, mock_is_nsf, mock_get_folder_key, mock_create_record_data,
-            mock_add_pam_configuration, mock_sync):
+            self, mock_get_folder_key, mock_create_record_data, mock_add_pam_configuration):
         from keepercommander.commands.pam.config_helper import pam_configuration_create_record_v6
 
         params = _make_params()
@@ -156,31 +165,49 @@ class TestPamConfigurationCreateNsf(unittest.TestCase):
         status.message = ''
         response = mock.MagicMock()
         response.records = [status]
+        response.revision = 1
         mock_add_pam_configuration.return_value = response
 
         pam_configuration_create_record_v6(params, record, 'nsf_folder')
 
+        mock_get_folder_key.assert_called_once_with(params, 'nsf_folder', raise_on_missing=False)
         mock_add_pam_configuration.assert_called_once()
-        mock_sync.assert_called_once_with(params)
         self.assertTrue(record.record_uid)
         self.assertTrue(record.record_key)
+        self.assertEqual(record.revision, 1)
 
-    @mock.patch('keepercommander.commands.pam.config_helper.api.communicate_rest')
-    @mock.patch('keepercommander.commands.pam.config_helper.is_nested_share_folder', return_value=False)
-    def test_create_uses_legacy_endpoint_for_shared_folder(
-            self, mock_is_nsf, mock_communicate):
+    @mock.patch('keepercommander.commands.pam.config_helper.record_add_pam_configuration_v3')
+    @mock.patch('keepercommander.commands.pam.config_helper.create_record_data_v3')
+    @mock.patch('keepercommander.commands.pam.config_helper.get_folder_key', return_value=None)
+    def test_create_uses_v3_add_for_shared_folder(
+            self, mock_get_folder_key, mock_create_record_data, mock_add_pam_configuration):
         from keepercommander.commands.pam.config_helper import pam_configuration_create_record_v6
 
         params = _make_params()
         params.data_key = b'0' * 32
+        folder = SharedFolderNode()
+        folder.uid = 'legacy_folder'
+        params.folder_cache[folder.uid] = folder
+        params.shared_folder_cache = {
+            'legacy_folder': {'shared_folder_key_unencrypted': b'0' * 32},
+        }
         record = vault.TypedRecord(version=6)
         record.type_name = 'pamNetworkConfiguration'
         record.title = 'Config'
+        mock_create_record_data.return_value = mock.MagicMock()
+
+        status = mock.MagicMock()
+        status.status = record_pb2.RS_SUCCESS
+        status.message = ''
+        response = mock.MagicMock()
+        response.records = [status]
+        response.revision = 1
+        mock_add_pam_configuration.return_value = response
 
         pam_configuration_create_record_v6(params, record, 'legacy_folder')
 
-        mock_communicate.assert_called_once()
-        self.assertEqual(mock_communicate.call_args[0][2], 'pam/add_configuration_record')
+        mock_add_pam_configuration.assert_called_once()
+        self.assertEqual(record.revision, 1)
 
 
 class TestPamConfigNewNsfPlacement(unittest.TestCase):
@@ -213,6 +240,42 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
         field = record.get_typed_field('pamResources')
         self.assertEqual(field.value[0]['folderUid'], 'nsf_folder')
 
+    @mock.patch('keepercommander.commands.discoveryrotation.api.sync_down')
+    @mock.patch('keepercommander.commands.discoveryrotation.TunnelDAG')
+    @mock.patch('keepercommander.commands.discoveryrotation.get_keeper_tokens',
+                return_value=(b'encrypted_session', b'encrypted_key', b'transmission_key'))
+    @mock.patch('keepercommander.commands.discoveryrotation.pam_configuration_create_record_v6')
+    @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
+                return_value=[])
+    def test_execute_creates_new_config_in_nsf_folder(
+            self, mock_record_fields, mock_create_config, mock_tokens, mock_dag, mock_sync):
+        params = _make_params()
+        params.nested_share_folders['nsf_folder'] = {
+            'name': 'Project - Users',
+            'parent_uid': 'app_uid',
+            'folder_key_unencrypted': b'0' * 32,
+        }
+        folder = NestedShareFolderNode()
+        folder.uid = 'nsf_folder'
+        params.folder_cache[folder.uid] = folder
+        command = PAMConfigurationNewCommand()
+
+        def parse_properties(_, record, **kwargs):
+            record.fields.append(vault.TypedField.new_field(
+                'pamResources', {'folderUid': 'nsf_folder'}))
+
+        def create_config(_, record, folder_uid):
+            record.record_uid = 'config_uid'
+
+        mock_create_config.side_effect = create_config
+        with mock.patch.object(command, 'parse_properties', side_effect=parse_properties), \
+                mock.patch.object(command, 'verify_required'):
+            result = command.execute(params, config_type='local', title='Config')
+
+        self.assertEqual(result, 'config_uid')
+        mock_create_config.assert_called_once_with(params, mock.ANY, 'nsf_folder')
+        mock_sync.assert_any_call(params)
+
     @mock.patch('keepercommander.commands.pam.vault_target.place_pam_configuration_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.api.sync_down')
     @mock.patch('keepercommander.commands.discoveryrotation.TunnelDAG')
@@ -221,7 +284,7 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
     @mock.patch('keepercommander.commands.discoveryrotation.pam_configuration_create_record_v6')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
-    def test_execute_places_new_config_with_backend_aware_helper(
+    def test_execute_creates_new_config_in_legacy_folder(
             self, mock_record_fields, mock_create_config, mock_tokens, mock_dag, mock_sync, mock_place):
         params = _make_params()
         folder = SharedFolderNode()
@@ -242,15 +305,16 @@ class TestPamConfigNewNsfPlacement(unittest.TestCase):
             result = command.execute(params, config_type='local', title='Config')
 
         self.assertEqual(result, 'config_uid')
-        mock_create_config.assert_called_once()
+        mock_create_config.assert_called_once_with(params, mock.ANY, 'legacy_folder')
         mock_place.assert_called_once_with(
             params, 'config_uid', 'legacy_folder', command='pam-config-new')
+        mock_sync.assert_any_call(params)
 
 
 class TestPamConfigEditNsfPlacement(unittest.TestCase):
 
     @mock.patch('keepercommander.commands.pam.vault_target.place_pam_configuration_in_folder')
-    @mock.patch('keepercommander.commands.discoveryrotation.record_management.update_record')
+    @mock.patch('keepercommander.commands.discoveryrotation.update_pam_record')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
     @mock.patch('keepercommander.vault.KeeperRecord.load')
@@ -287,7 +351,7 @@ class TestPamConfigEditNsfPlacement(unittest.TestCase):
         mock_place.assert_called_once_with(
             params, 'config_uid', 'nsf_folder', command='pam-config-edit')
 
-    @mock.patch('keepercommander.commands.discoveryrotation.place_record_in_folder')
+    @mock.patch('keepercommander.commands.pam.vault_target.place_pam_configuration_in_folder')
     @mock.patch('keepercommander.commands.discoveryrotation.update_pam_record')
     @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
                 return_value=[])
