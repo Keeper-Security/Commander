@@ -102,14 +102,11 @@ def test_process_folders_creates_new_nsf_folder_paths():
         'error_count': 0,
     }
 
-    def create_folder(params_arg, folder_name, parent_uid=None):
-        params_arg.nested_share_folders['admins_nsf'] = {'name': folder_name, 'parent_uid': parent_uid}
-        return {'success': True, 'folder_uid': 'admins_nsf'}
-
-    with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
-               side_effect=create_folder), \
+    with patch('keepercommander.commands.pam_import.extend.create_nsf_subfolder',
+               return_value='admins_nsf') as create_sub, \
             patch('keepercommander.commands.pam_import.extend.api.sync_down'):
         folders = PAMProjectExtendCommand().process_folders(params, project)
 
+    create_sub.assert_called_once()
     assert folders['path_to_folder_uid']['NSF Project - Users/Admins'] == 'admins_nsf'
     assert project['error_count'] == 0
