@@ -73,7 +73,7 @@ Keeper Vault/
 |---|---|---|
 | address | host | resource |
 | platformAccountProperties.Port | port | resource + pam_settings.connection |
-| platformAccountProperties.LogonDomain | domain_name | resource (pamMachine only) |
+| platformAccountProperties.LogonDomain  | domain_name | resource (pamMachine only) |
 | platformAccountProperties.Database | connect_database | pamUser (pamDatabase only) |
 | platformAccountProperties.DistinguishedName | distinguished_name | pamUser |
 | userName | login | pamUser (prefixed with LogonDomain\ if present) |
