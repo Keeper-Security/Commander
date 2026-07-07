@@ -178,6 +178,11 @@ def get_team_keys(params, team_uid_b64: str):
     """
     from ..params import PublicKeys
 
+    cached = params.key_cache.get(team_uid_b64)
+    has_asym = bool(cached and (getattr(cached, 'rsa', None) or getattr(cached, 'ec', None)))
+    if cached and has_asym:
+        return cached
+
     api.load_team_keys(params, [team_uid_b64])
     keys = params.key_cache.get(team_uid_b64)
 
@@ -186,21 +191,47 @@ def get_team_keys(params, team_uid_b64: str):
         try:
             rq = {'command': 'team_get_keys', 'teams': [team_uid_b64]}
             rs = api.communicate(params, rq)
-            existing_aes = getattr(keys, 'aes', None) if keys else None
-            rsa_pub = b''
-            ec_pub = b''
+            merged = {
+                'aes': getattr(keys, 'aes', b'') or b'' if keys else b'',
+                'rsa': getattr(keys, 'rsa', b'') or b'' if keys else b'',
+                'ec': getattr(keys, 'ec', b'') or b'' if keys else b'',
+            }
             for tk in (rs or {}).get('keys', []):
-                if tk.get('team_uid') != team_uid_b64 or 'key' not in tk:
+                if tk.get('team_uid') != team_uid_b64:
                     continue
-                key_type = tk.get('type')
-                encrypted_key = utils.base64_url_decode(tk['key'])
-                if key_type == -1:
-                    ec_pub = encrypted_key
-                elif key_type == -3:
-                    rsa_pub = encrypted_key
-            if rsa_pub or ec_pub:
+                # Symmetric/wrapped key in 'key' field
+                if 'key' in tk:
+                    try:
+                        key_type = tk.get('type')
+                        encrypted_key = utils.base64_url_decode(tk['key'])
+                        if key_type == 1:
+                            merged['aes'] = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+                        elif key_type == 2:
+                            merged['aes'] = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                        elif key_type == 3:
+                            merged['aes'] = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                        elif key_type == 4:
+                            merged['aes'] = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                        elif key_type == -1:
+                            merged['ec'] = encrypted_key
+                        elif key_type == -3:
+                            merged['rsa'] = encrypted_key
+                    except Exception as e:
+                        logger.debug('team_get_keys key decode failed: %s', e)
+                # Raw public key in 'team_public_key' field (separate from 'key')
+                if 'team_public_key' in tk:
+                    try:
+                        pub_key_bytes = utils.base64_url_decode(tk['team_public_key'])
+                        pub_key_type = tk.get('team_public_key_type')
+                        if pub_key_type == -3:
+                            merged['rsa'] = pub_key_bytes
+                        elif pub_key_type == -1:
+                            merged['ec'] = pub_key_bytes
+                    except Exception as e:
+                        logger.debug('team_get_keys public key decode failed: %s', e)
+            if any(merged.values()):
                 params.key_cache[team_uid_b64] = PublicKeys(
-                    aes=existing_aes, rsa=rsa_pub, ec=ec_pub)
+                    aes=merged['aes'], rsa=merged['rsa'], ec=merged['ec'])
                 keys = params.key_cache[team_uid_b64]
         except Exception as exc:
             logger.debug("team_get_keys fallback failed for %s: %s",
@@ -215,6 +246,10 @@ def encrypt_for_team(plaintext_key: bytes, team_keys,
                      prefer_aes: bool = False,
                      forbid_rsa: bool = False) -> Tuple[bytes, int]:
     """Encrypt *plaintext_key* using the best available team key.
+
+    Mirrors legacy ``share-folder``: prefer the team AES key when
+    *prefer_aes* is set, otherwise try asymmetric keys first, then fall
+    back to AES when no public key is available (common for enterprise teams).
     """
     aes = getattr(team_keys, 'aes', None)
     ec_bytes = getattr(team_keys, 'ec', None)
@@ -237,7 +272,9 @@ def encrypt_for_team(plaintext_key: bytes, team_keys,
         return (crypto.encrypt_ec(plaintext_key, ec_key),
                 folder_pb2.encrypted_by_public_key_ecc)
 
-    raise ValueError("No public key found for team")
+    raise ValueError(
+        "No public key found for team; NSF folder sharing requires the "
+        "team's RSA or ECC public key (server requires key type 2)")
 
 
 def resolve_uid_email(params, user_identifier: str) -> Tuple[Optional[bytes], str]:

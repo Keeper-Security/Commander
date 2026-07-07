@@ -390,8 +390,6 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
         fk = get_folder_key(params, folder_uid)
         ek = folder_pb2.EncryptedDataKey()
         if as_team:
-            # v3 folder team grants must use the team's *asymmetric* public
-            # key (server rejects AES with "Key type 2 required").
             efk, key_type = encrypt_for_team(
                 fk, team_keys, prefer_aes=False,
                 forbid_rsa=getattr(params, 'forbid_rsa', False))
@@ -484,6 +482,35 @@ def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_la
     return None
 
 
+def _find_direct_access_ancestor(params, folder_uid, accessor_uid_b64, access_type_label):
+    """Walk up the NSF folder tree to find the ancestor where the accessor has direct (non-inherited) access.
+
+    Returns the ancestor folder UID, or ``None`` if no such ancestor is found.
+    Used when a remove is requested on a subfolder but the access is inherited from a parent.
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    visited = set()
+    current_uid = folder_uid
+
+    while current_uid:
+        if current_uid in visited:
+            break
+        visited.add(current_uid)
+
+        parent_uid = nsf_folders.get(current_uid, {}).get('parent_uid') or ''
+        if not parent_uid or parent_uid not in nsf_folders:
+            break
+
+        accessor = _lookup_folder_accessor(
+            params, parent_uid, accessor_uid_b64, access_type_label)
+        if accessor and not accessor.get('inherited'):
+            return parent_uid
+
+        current_uid = parent_uid
+
+    return None
+
+
 def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
     """Drop a cached folder-access row after a successful revoke."""
     accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid)
@@ -496,11 +523,11 @@ def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
 
 
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
-    """Revoke direct user or team access to an NSF folder.
+    """Revoke user or team access to an NSF folder.
 
     Looks up the accessor via ``get_folder_access_v3`` so sub-folders use the
-    server-reported UID and access type. Rejects inherited accessors. On
-    success, evicts the local access cache and sets ``params.sync_data``.
+    server-reported UID and access type (including inherited accessors).
+    On success, evicts the local access cache and sets ``params.sync_data``.
     """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
@@ -516,11 +543,6 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     access_type_label = folder_pb2.AccessType.Name(access_type_enum)
     accessor = _lookup_folder_accessor(
         params, folder_uid, accessor_uid_b64, access_type_label)
-    if accessor and accessor.get('inherited'):
-        kind = 'Team' if as_team else 'User'
-        raise ValueError(
-            f"{kind} '{identifier_label}' has inherited access on this folder; "
-            f"remove access from the parent folder instead")
     if accessor:
         server_uid = accessor.get('accessor_uid')
         if server_uid:
@@ -530,6 +552,22 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
         if server_type:
             access_type_label = server_type
             access_type_enum = folder_pb2.AccessType.Value(server_type)
+
+        if accessor.get('inherited'):
+            kind = 'Team' if as_team else 'User'
+            ancestor_uid = _find_direct_access_ancestor(
+                params, folder_uid, accessor_uid_b64, access_type_label)
+            nsf_folders = getattr(params, 'nested_share_folders', {})
+            if ancestor_uid:
+                ancestor_name = nsf_folders.get(ancestor_uid, {}).get('name') or ancestor_uid
+                raise ValueError(
+                    f"{kind} '{identifier_label}' has inherited access on this folder. "
+                    f"To remove it, run: nsf-share-folder {ancestor_name!r} "
+                    f"-e {identifier_label} -a remove")
+            else:
+                raise ValueError(
+                    f"{kind} '{identifier_label}' has inherited access on this folder. "
+                    f"Remove it from the parent folder where access was originally granted.")
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
