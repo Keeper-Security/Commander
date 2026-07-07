@@ -171,18 +171,37 @@ def parse_schedule_data(kwargs):
     schedule_cron_data = kwargs.get('schedule_cron_data')
     schedule_on_demand = kwargs.get('on_demand') is True
     schedule_data = None  # type: Optional[List]
+    # Accept ``schedule_json_data`` as a single string for programmatic
+    # callers that don't go through argparse (which appends -sj into a
+    # list). String input is wrapped here so a single dict-as-JSON works
+    # the same as the CLI list form.
+    if isinstance(schedule_json_data, str):
+        schedule_json_data = [schedule_json_data]
     if isinstance(schedule_json_data, list):
         schedule_data = [json.loads(x) for x in schedule_json_data]
-    elif isinstance(schedule_cron_data, list):
-        # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
-        if schedule_cron_data and isinstance(schedule_cron_data[0], str):
-            valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
-            if valid:
-                schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
-            else:
-                logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
-    elif schedule_on_demand is True:
-        schedule_data = []
+    else:
+        # ``schedule_cron_data`` is fed by argparse with action='append'
+        # which produces a list, but the pam_import edit/extend paths
+        # invoke this command programmatically and historically passed a
+        # bare string, which the original isinstance(list) check silently
+        # dropped. That made the new-record branch fall through to the
+        # PAM Configuration's ``defaultRotationSchedule`` typed-field
+        # whose value carries empty ``time``/``month`` keys from the
+        # schedule field schema and triggers a 500 server response on
+        # ``/api/user/set_record_rotation``. Coerce a string into a list
+        # so both call shapes go through the same validated CRON branch.
+        if isinstance(schedule_cron_data, str):
+            schedule_cron_data = [schedule_cron_data]
+        if isinstance(schedule_cron_data, list):
+            # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+            if schedule_cron_data and isinstance(schedule_cron_data[0], str):
+                valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
+                if valid:
+                    schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
+                else:
+                    logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+        elif schedule_on_demand is True:
+            schedule_data = []
     return schedule_data
 
 

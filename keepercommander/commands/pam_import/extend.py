@@ -1486,12 +1486,24 @@ class PAMProjectExtendCommand(Command):
                         key = {"on": "enable", "off": "disable"}.get(enabled, "")
                         if key:
                             args[key] = True
+                        # Schedule type comparison is case-insensitive;
+                        # CyberArk emits "CRON" while older paths emit
+                        # "cron". ``schedule_cron_data`` MUST be a list to
+                        # match ``parse_schedule_data``'s isinstance check
+                        # — passing a bare string causes the cron branch
+                        # to be silently skipped and the caller falls
+                        # through to the PAM Configuration's
+                        # ``defaultRotationSchedule`` typed-field (which
+                        # carries empty ``time``/``month`` keys from the
+                        # schedule field schema and triggers a 500 from
+                        # ``set_record_rotation``).
                         schedule = getattr(rs, "schedule", None)
                         schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        if schedule_type == "on-demand":
+                        schedule_type_lc = (schedule_type or "").lower()
+                        if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
-                        elif schedule_type == "cron" and schedule and getattr(schedule, "cron", None):
-                            args["schedule_cron_data"] = rs.schedule.cron
+                        elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
+                            args["schedule_cron_data"] = [rs.schedule.cron]
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
@@ -1521,12 +1533,16 @@ class PAMProjectExtendCommand(Command):
                         key = {"on": "enable", "off": "disable"}.get(enabled, "")
                         if key:
                             args[key] = True
+                        # See note on the new-resources branch above for
+                        # why this comparison is lowercase and why
+                        # ``schedule_cron_data`` is wrapped in a list.
                         schedule = getattr(rs, "schedule", None)
                         schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        if schedule_type == "on-demand":
+                        schedule_type_lc = (schedule_type or "").lower()
+                        if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
-                        elif schedule_type == "cron" and schedule and getattr(schedule, "cron", None):
-                            args["schedule_cron_data"] = rs.schedule.cron
+                        elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
+                            args["schedule_cron_data"] = [rs.schedule.cron]
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
