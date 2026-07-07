@@ -18,6 +18,7 @@ enforced here (and centrally in the server) before any Commander code runs.
 """
 
 import io
+import logging
 import shlex
 import sys
 from typing import Optional
@@ -29,19 +30,45 @@ from ..params import KeeperParams
 
 
 def run_cli_command(params, command):  # type: (KeeperParams, str) -> str
-    """Run a Commander command, capturing stdout. Mirrors the service-mode adapter."""
+    """Run a Commander command and return its output.
+
+    Captures stdout, stderr, and log output (mirrors the service-mode adapter). Many
+    commands report failures/warnings through logging or stderr rather than stdout, so
+    returning stdout alone would hide errors from the agent (e.g. a blocked record-add
+    would look like an empty success). We therefore return stdout when it is non-empty
+    (this keeps JSON-emitting commands parseable), and otherwise fall back to the
+    combined stderr + log text so the agent sees why nothing happened.
+    """
     from .. import cli
-    buf = io.StringIO()
-    old_stdout = sys.stdout
+
+    out_buf, err_buf, log_buf = io.StringIO(), io.StringIO(), io.StringIO()
+    log_handler = logging.StreamHandler(log_buf)
+    log_handler.setFormatter(logging.Formatter('%(message)s'))
+    root_logger = logging.getLogger()
+    old_level = root_logger.level
+    old_stdout, old_stderr = sys.stdout, sys.stderr
     old_service_mode = getattr(params, 'service_mode', False)
-    sys.stdout = buf
+
+    sys.stdout, sys.stderr = out_buf, err_buf
     params.service_mode = True
+    root_logger.addHandler(log_handler)
+    if old_level > logging.INFO or old_level == logging.NOTSET:
+        root_logger.setLevel(logging.INFO)
     try:
         cli.do_command(params, command)
     finally:
-        sys.stdout = old_stdout
+        sys.stdout, sys.stderr = old_stdout, old_stderr
         params.service_mode = old_service_mode
-    return buf.getvalue().strip()
+        root_logger.removeHandler(log_handler)
+        root_logger.setLevel(old_level)
+        log_handler.close()
+
+    stdout = out_buf.getvalue().strip()
+    if stdout:
+        return stdout
+    # No stdout: surface stderr/log so failures and warnings are not silently swallowed.
+    diagnostics = '\n'.join(s for s in (err_buf.getvalue().strip(), log_buf.getvalue().strip()) if s)
+    return diagnostics
 
 
 def _join(parts):  # type: (list) -> str
@@ -231,16 +258,17 @@ def ksm_manage_app(params, config, grant, args):
 #
 # Verb mapping reconciled against discoveryrotation.py::GatewayActionCommand and
 # tunnel_and_connections.py::PAMTunnelCommand:
-#   pam_rotate         -> "pam action rotate --record-uid <uid> [--dry-run]"   (exists)
-#   pam_launch_session -> "pam tunnel start <uid> [--reason ... --ticket ...]" (exists)
-#   pam_exec_command   -> "pam action exec  --record-uid <uid> --command <c>"  (PLANNED)
-#   pam_db_query       -> "pam action query --record-uid <uid> --query <q>"    (PLANNED)
+#   pam_rotate         -> "pam action rotate --record-uid <uid> [--dry-run]"
+#   pam_launch_session -> "pam tunnel start <uid> [--reason ... --ticket ...]"
+#   pam_exec_command   -> "pam action exec  --record-uid <uid> --command <c>"
+#   pam_db_query       -> "pam action query --record-uid <uid> --query <q>"
 #
-# "pam action exec" and "pam action query" are not yet registered under GatewayActionCommand.
-# When they are added (matching the flags above), the MCP tools light up automatically;
-# until then _require_pam_action_verb returns a clear, auditable "not available" error.
-# These two are the ideal channel for running DB queries / remote commands against
-# protected resources, since every call flows through the gateway with full auditing.
+# "pam action exec" and "pam action query" are currently stub commands returning synthetic
+# data (see PAMGatewayActionExecCommand / PAMGatewayActionQueryCommand). _require_pam_action_verb
+# still guards them, so if a build ever drops those verbs the tools return a clear, auditable
+# "not available" error instead of failing obscurely. These two are the ideal channel for
+# running DB queries / remote commands against protected resources, since every call flows
+# through the gateway with full auditing.
 # --------------------------------------------------------------------------------------
 
 def _pam_action_verbs(params):  # type: (KeeperParams) -> set
