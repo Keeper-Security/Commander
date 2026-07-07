@@ -551,7 +551,12 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
         server_type = accessor.get('access_type')
         if server_type:
             access_type_label = server_type
-            access_type_enum = folder_pb2.AccessType.Value(server_type)
+            try:
+                access_type_enum = folder_pb2.AccessType.Value(server_type)
+            except ValueError:
+                raise ValueError(
+                    f"Unrecognised access type '{server_type}' returned by server "
+                    f"for folder '{folder_uid}'")
 
         if accessor.get('inherited'):
             kind = 'Team' if as_team else 'User'
