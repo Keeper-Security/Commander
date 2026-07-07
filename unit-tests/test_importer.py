@@ -230,3 +230,13 @@ class TestImporterUtils(TestCase):
         self.assertEqual(sc.get('type'), 'MONTHLY_BY_WEEKDAY')
         self.assertEqual(sc.get('weekday'), 'WEDNESDAY')
         self.assertEqual(sc.get('occurrence'), 'SECOND')
+
+    def test_export_schedule_field_preserves_quartz_cron_seconds(self):
+        schedule = {"type": "CRON", "cron": "1 5 1 * * ?", "tz": "Etc/UTC"}
+        self.assertEqual(vault.TypedField.export_schedule_field(schedule), '1 5 1 * * ?')
+
+        schedule = {"type": "CRON", "cron": "0 5 1 * * ?"}
+        self.assertEqual(vault.TypedField.export_schedule_field(schedule), '0 5 1 * * ?')
+
+        schedule = {"type": "CRON", "cron": "5 1 * * ?"}
+        self.assertEqual(vault.TypedField.export_schedule_field(schedule), '5 1 * * ?')

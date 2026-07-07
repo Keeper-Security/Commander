@@ -475,8 +475,7 @@ class TypedField(object):
                 cron = value.get('cron')
                 if isinstance(cron, str):
                     comps = [x for x in cron.split(' ') if x]
-                    if len(comps) >= 6:
-                        comps = comps[1:6]
+                    if comps:
                         return ' '.join(comps)
                 return ''
 
