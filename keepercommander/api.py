@@ -377,8 +377,12 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                     encrypted_team_key = t.get('encrypted_team_key')
                     if encrypted_team_key:
                         team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(encrypted_team_key), tree_key)
-                        params.key_cache[team_uid] = PublicKeys(aes=team_key)
-                        s.remove(team_uid)
+                        existing = params.key_cache.get(team_uid)
+                        params.key_cache[team_uid] = PublicKeys(
+                            aes=team_key,
+                            rsa=getattr(existing, 'rsa', b'') or b'',
+                            ec=getattr(existing, 'ec', b'') or b'')
+                        # Still fetch asymmetric public keys via team_get_keys below.
                 except Exception as e:
                     logging.debug('Team UID \"%s\": Decrypt key error: %s', team_uid, str(e))
 
@@ -397,30 +401,51 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
         }
         rs = communicate(params, rq)
         if 'keys' in rs:
+            merged = {}  # team_uid -> PublicKeys fields
             for tk in rs['keys']:
+                team_uid = tk.get('team_uid')
+                if not team_uid:
+                    continue
+                if team_uid not in merged:
+                    existing = params.key_cache.get(team_uid)
+                    merged[team_uid] = {
+                        'aes': getattr(existing, 'aes', b'') or b'',
+                        'rsa': getattr(existing, 'rsa', b'') or b'',
+                        'ec': getattr(existing, 'ec', b'') or b'',
+                    }
+                # Read the symmetric/wrapped team key from the 'key' field
                 if 'key' in tk:
-                    team_uid = tk['team_uid']
                     try:
-                        aes = b''
-                        rsa = b''
-                        ec = b''
                         encrypted_key = utils.base64_url_decode(tk['key'])
-                        key_type = tk['type']
+                        key_type = tk.get('type')
                         if key_type == 1:
-                            aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+                            merged[team_uid]['aes'] = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                         elif key_type == 2:
-                            aes = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                            merged[team_uid]['aes'] = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                         elif key_type == 3:
-                            aes = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                            merged[team_uid]['aes'] = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
                         elif key_type == 4:
-                            aes = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                            merged[team_uid]['aes'] = crypto.decrypt_ec(encrypted_key, params.ecc_key)
                         elif key_type == -1:
-                            ec = encrypted_key
+                            merged[team_uid]['ec'] = encrypted_key
                         elif key_type == -3:
-                            rsa = encrypted_key
-                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes, ec=ec)
+                            merged[team_uid]['rsa'] = encrypted_key
                     except Exception as e:
                         logging.debug(e)
+                # Read the raw team public key from 'team_public_key' field (separate from 'key')
+                if 'team_public_key' in tk:
+                    try:
+                        pub_key_bytes = utils.base64_url_decode(tk['team_public_key'])
+                        pub_key_type = tk.get('team_public_key_type')
+                        if pub_key_type == -3:
+                            merged[team_uid]['rsa'] = pub_key_bytes
+                        elif pub_key_type == -1:
+                            merged[team_uid]['ec'] = pub_key_bytes
+                    except Exception as e:
+                        logging.debug(e)
+            for team_uid, kd in merged.items():
+                params.key_cache[team_uid] = PublicKeys(
+                    rsa=kd['rsa'], aes=kd['aes'], ec=kd['ec'])
 
 
 def load_available_teams(params):

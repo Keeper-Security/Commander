@@ -866,6 +866,19 @@ class TestNestedShareFolderSharingCommands(TestCase):
 
 class TestNestedShareFolderFolderApi(TestCase):
 
+    def test_encrypt_for_team_uses_rsa_public_key(self):
+        """Team grants use the RSA public key when available (server requires key type 2)."""
+        from keepercommander.nested_share_folder.common import encrypt_for_team
+        from keepercommander.params import PublicKeys
+
+        rsa_priv, rsa_pub = crypto.generate_rsa_key()
+        rsa_pub_bytes = crypto.unload_rsa_public_key(rsa_pub)
+        folder_key = utils.generate_aes_key()
+        team_keys = PublicKeys(aes=utils.generate_aes_key(), rsa=rsa_pub_bytes, ec=b'')
+        encrypted, key_type = encrypt_for_team(folder_key, team_keys)
+        self.assertEqual(key_type, folder_pb2.encrypted_by_public_key)
+        self.assertEqual(crypto.decrypt_rsa(encrypted, rsa_priv), folder_key)
+
     @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
     @patch('keepercommander.nested_share_folder.folder_api.handle_share_invite')
     @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
@@ -1020,6 +1033,87 @@ class TestNestedShareFolderFolderApi(TestCase):
             utils.base64_url_encode(ad.accessTypeUid), team_uid)
         self.assertEqual(
             utils.base64_url_encode(ad.folderUid), child_uid)
+
+    @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
+    @patch('keepercommander.nested_share_folder.folder_api.get_folder_access_v3')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    @patch('keepercommander.nested_share_folder.folder_api._resolve_accessor')
+    def test_revoke_folder_access_subfolder_team_inherited(
+            self, mock_resolve_accessor, mock_resolve_folder,
+            mock_get_access, mock_access_update):
+        """Inherited access with no resolvable parent raises a generic error."""
+        parent_uid, parent_obj = _make_folder(name='Parent')
+        child_uid, child_obj = _make_folder(
+            name='Child', parent_uid=parent_uid)
+        team_uid = utils.generate_uid()
+        team_uid_bytes = utils.base64_url_decode(team_uid)
+        # Only child is in nested_share_folders — parent lookup will find no direct access
+        params = _make_params(nested_share_folders={child_uid: child_obj})
+        mock_resolve_folder.return_value = child_uid
+        mock_resolve_accessor.return_value = (
+            team_uid_bytes, team_uid, folder_pb2.AT_TEAM)
+        mock_get_access.return_value = {
+            'results': [{
+                'folder_uid': child_uid,
+                'success': True,
+                'accessors': [{
+                    'accessor_uid': team_uid,
+                    'access_type': 'AT_TEAM',
+                    'role': 'VIEWER',
+                    'inherited': True,
+                }],
+            }],
+        }
+
+        with self.assertRaises(ValueError) as ctx:
+            revoke_folder_access_v3(params, child_uid, team_uid, as_team=True)
+
+        self.assertIn('inherited', str(ctx.exception))
+        mock_access_update.assert_not_called()
+
+    @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
+    @patch('keepercommander.nested_share_folder.folder_api.get_folder_access_v3')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    @patch('keepercommander.nested_share_folder.folder_api._resolve_accessor')
+    def test_revoke_inherited_access_raises_with_parent_hint(
+            self, mock_resolve_accessor, mock_resolve_folder,
+            mock_get_access, mock_access_update):
+        """Revoking inherited team access raises an error that names the parent folder."""
+        parent_uid, parent_obj = _make_folder(name='ParentFolder')
+        child_uid, child_obj = _make_folder(name='Child', parent_uid=parent_uid)
+        team_uid = utils.generate_uid()
+        team_uid_bytes = utils.base64_url_decode(team_uid)
+        params = _make_params(nested_share_folders={
+            parent_uid: parent_obj,
+            child_uid: child_obj,
+        })
+        mock_resolve_folder.return_value = child_uid
+        mock_resolve_accessor.return_value = (
+            team_uid_bytes, team_uid, folder_pb2.AT_TEAM)
+
+        def get_access_side_effect(p, folder_uids, **kw):
+            uid = folder_uids[0]
+            if uid == child_uid:
+                return {'results': [{'folder_uid': uid, 'success': True, 'accessors': [{
+                    'accessor_uid': team_uid, 'access_type': 'AT_TEAM',
+                    'role': 'VIEWER', 'inherited': True,
+                }]}]}
+            if uid == parent_uid:
+                return {'results': [{'folder_uid': uid, 'success': True, 'accessors': [{
+                    'accessor_uid': team_uid, 'access_type': 'AT_TEAM',
+                    'role': 'VIEWER', 'inherited': False,
+                }]}]}
+            return {'results': []}
+
+        mock_get_access.side_effect = get_access_side_effect
+
+        with self.assertRaises(ValueError) as ctx:
+            revoke_folder_access_v3(params, child_uid, team_uid, as_team=True)
+
+        error = str(ctx.exception)
+        self.assertIn('inherited', error)
+        self.assertIn('ParentFolder', error)
+        mock_access_update.assert_not_called()
 
     @patch('keepercommander.nested_share_folder.folder_api.revoke_folder_access_v3')
     @patch('keepercommander.api.get_share_objects')

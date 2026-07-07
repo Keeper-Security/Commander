@@ -414,8 +414,8 @@ class NestedShareFolderShareCommand(Command):
         (``shared_folder_cache[...]['users']`` + ``['teams']`` union).
 
         Uses ``get_folder_access_v3`` so sub-folders (whose sync cache only
-        carries the current user's own row) still enumerate every direct
-        accessor that can be removed.
+        carries the current user's own row) still enumerate every accessor
+        that can be removed, including inherited access.
         """
         from keepercommander.proto import folder_pb2
         at_user = int(folder_pb2.AT_USER)
@@ -429,8 +429,6 @@ class NestedShareFolderShareCommand(Command):
                     continue
                 for accessor in fr.get('accessors', []):
                     if accessor.get('access_type') == 'AT_OWNER':
-                        continue
-                    if accessor.get('inherited'):
                         continue
                     if accessor.get('access_type') == 'AT_TEAM':
                         team_uid = accessor.get('accessor_uid')
@@ -450,8 +448,6 @@ class NestedShareFolderShareCommand(Command):
                         .get(folder_uid, []))
             for a in accesses:
                 access_type = int(a.get('access_type', 0) or 0)
-                if a.get('inherited'):
-                    continue
                 if access_type == at_user:
                     username = a.get('username')
                     if username and username != params.user:
