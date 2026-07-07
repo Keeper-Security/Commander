@@ -1796,7 +1796,7 @@ def value_to_token(value): # type: (any) -> str
     return str(value)
 
 
-def tokenize_record_key(record):   # type: (ImportRecord) -> Iterator[str]
+def tokenize_record_key(record, folder):   # type: (ImportRecord, str) -> Iterator[str]
     """
     Turn a record-to-import into an iterable of str's for hashing.  This is really about import --update.
 
@@ -1807,6 +1807,7 @@ def tokenize_record_key(record):   # type: (ImportRecord) -> Iterator[str]
     yield f'$title:{record.title or ""}'
     yield f'$login:{record.login or ""}'
     yield f'$url:{record.login_url or ""}'
+    yield f'$folder:{folder}'
 
     if record_type in {'', 'login'}:
         return
@@ -2071,7 +2072,7 @@ def prepare_record_add_or_update(update_flag, params, records):
         If a 100% match is found for a record, then just skip requesting anything; it doesn't need to be changed.
         Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
-       if a unique field match (on title, login, and url) is found, then request a change in password only.
+       if a unique field match (on title, login, url, and folder) is found, then request a change in password only.
     """
     preexisting_entire_record_hash = {}
     preexisting_partial_record_hash = {}
@@ -2081,8 +2082,13 @@ def prepare_record_add_or_update(update_flag, params, records):
             record_hash = build_record_hash(tokenize_full_import_record(import_record))
             preexisting_entire_record_hash[record_hash] = record_uid
             if update_flag:
-                record_hash = build_record_hash(tokenize_record_key(import_record))
-                preexisting_partial_record_hash[record_hash] = record_uid
+                folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+                folders = [x for x in folders if x]
+                if len(folders) == 0:
+                    folders.append(record_uid)
+                for folder in folders:
+                    record_hash = build_record_hash(tokenize_record_key(import_record, folder))
+                    preexisting_partial_record_hash[record_hash] = record_uid
         else:
             pass
 
@@ -2128,15 +2134,26 @@ def prepare_record_add_or_update(update_flag, params, records):
             record_to_import.append(import_record)
             continue
         elif update_flag:
-            record_hash = build_record_hash(tokenize_record_key(import_record))
-            if record_hash in preexisting_partial_record_hash:
-                record_uid = preexisting_partial_record_hash[record_hash]
-                if import_record.uid:
-                    external_lookup[import_record.uid] = record_uid
-                if record_uid not in record_uid_to_update:
-                    record_uid_to_update.add(record_uid)
-                    import_record.uid = record_uid
-                    record_to_import.append(import_record)
+            folders = []
+            if import_record.folders:
+                folders.extend([x.get_folder_path() for x in import_record.folders])
+            folders = [x for x in folders if x]
+            if len(folders) == 0:
+                folders.append('')
+            found = False
+            for folder in folders:
+                record_hash = build_record_hash(tokenize_record_key(import_record, folder))
+                if record_hash in preexisting_partial_record_hash:
+                    record_uid = preexisting_partial_record_hash[record_hash]
+                    if import_record.uid:
+                        external_lookup[import_record.uid] = record_uid
+                    if record_uid not in record_uid_to_update:
+                        record_uid_to_update.add(record_uid)
+                        import_record.uid = record_uid
+                        record_to_import.append(import_record)
+                    found = True
+                    break
+            if found:
                 continue
 
         record_uid = utils.generate_uid()
