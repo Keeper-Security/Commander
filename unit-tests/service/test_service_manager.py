@@ -115,9 +115,9 @@ class TestServiceManagement(unittest.TestCase):
             status_cmd.execute(self.params)
             mock_print.assert_called_with("Current status: No Commander Service is running currently")
 
-    def test_service_status_does_not_require_auth(self):
-        """service-status reads local process info only — must not require login or sync."""
-        self.assertFalse(ServiceStatus().is_authorised())
+    def test_service_status_skips_sync_on_auth(self):
+        """service-status still requires login but must not trigger a full vault sync."""
+        self.assertTrue(ServiceStatus.skip_sync_on_auth)
 
     def test_process_info_save_load(self):
         """Test ProcessInfo save and load operations"""

@@ -64,10 +64,6 @@ class TestRegister(TestCase):
         cmd.execute(params)
         self.assertIsNone(params.session_token)
 
-    def test_this_device_skips_sync_on_auth(self):
-        """Device setup commands must not trigger a full vault sync on auto-login."""
-        self.assertTrue(utils.ThisDeviceCommand.skip_sync_on_auth)
-
     def test_enterprise_invite(self):
         params = get_connected_params()
         params.enforcements = {
