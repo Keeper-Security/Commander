@@ -16,7 +16,7 @@ import logging
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
-from .parse_keeper_response import parse_keeper_response
+from .parse_keeper_response import parse_keeper_response, ensure_record_add_json_format
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
@@ -129,7 +129,7 @@ class CommandExecutor:
             if params:
                 params.service_mode = True
 
-            command = html.unescape(command)
+            command = ensure_record_add_json_format(html.unescape(command))
             return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 

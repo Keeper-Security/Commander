@@ -610,13 +610,20 @@ class KeeperResponseParser:
             "command": "record-add",
             "data": None
         }
-        
-        # Check if response is a share URL (starts with https:// and contains /vault/share)
-        if response_str.startswith('https://') and '/vault/share' in response_str:
+
+        lines = [line.strip() for line in response_str.splitlines() if line.strip()]
+        if (len(lines) == 2 and lines[1].startswith('https://')
+                and '/vault/share' in lines[1]):
+            result["data"] = {
+                "record_uid": lines[0],
+                "share_url": lines[1]
+            }
+        # Check if response is a share URL only (legacy single-line output)
+        elif response_str.startswith('https://') and '/vault/share' in response_str:
             result["data"] = {
                 "share_url": response_str
             }
-        elif re.match(r'^[a-zA-Z0-9_-]+$', response_str):
+        elif re.match(r'^[A-Za-z0-9_+/=-]+$', response_str):
             result["data"] = {
                 "record_uid": response_str
             }
@@ -1211,6 +1218,14 @@ class KeeperResponseParser:
         
         return '\n'.join(filtered_lines)
 
+
+
+def ensure_record_add_json_format(command: str) -> str:
+    if not command.strip().startswith('record-add'):
+        return command
+    if '--format=json' in command or '--format json' in command:
+        return command
+    return f'{command} --format=json'
 
 
 def parse_keeper_response(command: str, response: Any, log_output: str = None) -> Dict[str, Any]:
