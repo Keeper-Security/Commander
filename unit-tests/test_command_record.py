@@ -304,6 +304,27 @@ class TestRecord(TestCase):
             cmd.execute(params, uid=shared_folder_uid)
             cmd.execute(params, format='json', uid=shared_folder_uid)
 
+    def test_get_shared_folder_json_includes_owner_flag(self):
+        params = get_synced_params()
+        cmd = record.RecordGetUidCommand()
+        shared_folder_uid = next(iter(params.shared_folder_cache))
+        cached_sf = params.shared_folder_cache[shared_folder_uid]
+        owner_account_uid = cached_sf['owner_account_uid']
+
+        captured = []
+        with mock.patch('builtins.print', side_effect=captured.append), \
+                mock.patch('keepercommander.api.get_share_admins_for_shared_folder', return_value=[]):
+            cmd.execute(params, format='json', uid=shared_folder_uid)
+
+        payload = json.loads(captured[-1])
+        self.assertEqual(payload['type'], 'classic_folder')
+        self.assertIn('users', payload)
+        self.assertTrue(payload['users'])
+        owners = [u for u in payload['users'] if u.get('owner')]
+        self.assertEqual(len(owners), 1)
+        self.assertEqual(owners[0]['user_id'], owner_account_uid)
+        self.assertTrue(all('owner' in u for u in payload['users']))
+
     def test_get_user_folder_json_consistent_by_name_and_uid(self):
         params = get_synced_params()
         cmd = record.RecordGetUidCommand()
