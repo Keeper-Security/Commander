@@ -100,7 +100,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "name": "SIEM Tool",
                 "status": "Active",
                 "issued_date": "2025-07-08 14:16:07",
-                "expiration_date": "2026-07-08 14:16:07",
+                "expiration_date": "2030-07-08 14:16:07",
                 "integration": "SIEM:2"
             },
             {
@@ -667,7 +667,7 @@ class TestEnterpriseApiKeys(TestCase):
             token4.name = "SIEM Tool"
             token4.enterprise_id = 8560
             token4.issuedDate = int(datetime.datetime(2025, 7, 8, 14, 16, 7).timestamp() * 1000)
-            token4.expirationDate = int(datetime.datetime(2026, 7, 8, 14, 16, 7).timestamp() * 1000)
+            token4.expirationDate = int(datetime.datetime(2030, 7, 8, 14, 16, 7).timestamp() * 1000)
             integration7 = token4.integrations.add()
             integration7.roleName = "SIEM"
             integration7.apiIntegrationTypeName = "SIEM"
