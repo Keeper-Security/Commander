@@ -90,6 +90,19 @@ def generate_aes_key():         # type: () -> bytes
     return crypto.get_random_bytes(32)
 
 
+def _windows_icacls_principal():     # type: () -> str
+    """Return a DOMAIN\\username principal suitable for icacls /grant on Windows."""
+    username = os.environ.get('USERNAME', '')
+    if not username:
+        username = os.getlogin()
+    if '\\' in username:
+        return username
+    domain = os.environ.get('USERDOMAIN') or os.environ.get('COMPUTERNAME', '')
+    if domain:
+        return f'{domain}\\{username}'
+    return username
+
+
 def set_file_permissions(file_path):     # type: (str) -> None
     """
     Set secure file permissions (600) for configuration files containing sensitive data.
@@ -111,10 +124,10 @@ def set_file_permissions(file_path):     # type: (str) -> None
             os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
             logging.debug(f'Set secure permissions (600) for file: {file_path}')
         else:
-            username = os.getlogin()
+            principal = _windows_icacls_principal()
             subprocess.run(["icacls", file_path, "/inheritance:r"], check=True, capture_output=True)
             subprocess.run(["icacls", file_path, "/remove", "NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"], check=False, capture_output=True)
-            subprocess.run(["icacls", file_path, "/grant", f"{username}:RW"], check=True, capture_output=True)
+            subprocess.run(["icacls", file_path, "/grant", f"{principal}:RW"], check=True, capture_output=True)
             logging.debug(f'Set secure permissions (owner RW only) for Windows file: {file_path}')
     except Exception:
         logging.warning(f'Failed to set file permissions for {file_path}')
