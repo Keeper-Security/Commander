@@ -155,6 +155,37 @@ class TestSetResourceKeeperAiSettingsMigration:
         }).encode()
         meta_mock.assert_called_once()
 
+    def test_happy_path_bundles_current_meta_so_krouter_persists_ai_edge(self):
+        """Regression: krouter's configure_resource only writes a settings edge
+        when it loads loopEdges, which it does only for requests carrying
+        meta/jit/connection (UserRest.kt:497). A keeperAiSettings-only request
+        leaves loopEdges null and the ai_settings write is silently dropped. The
+        Web Vault always sends meta alongside AI settings; Commander must mirror
+        that by bundling the resource's current meta in the same request."""
+        captured = {}
+
+        def _capture(params, rq):
+            captured['rq'] = rq
+            return None
+
+        meta_dict = {'version': 1, 'allowedSettings': {'aiEnabled': True}, 'rotateOnTermination': False}
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'CIPHER_BYTES'), \
+             patch.object(ai_mod, 'get_resource_settings', return_value=meta_dict) as meta_mock, \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource', side_effect=_capture):
+            ok = ai_mod.set_resource_keeper_ai_settings(
+                _mock_params(), RESOURCE_UID_STR, {'level': 'critical'}, config_uid=CONFIG_UID_STR
+            )
+        assert ok is True
+        rq = captured['rq']
+        assert rq.keeperAiSettings == b'CIPHER_BYTES'
+        # The fix: meta must be present so krouter fetches loopEdges and persists
+        # the ai_settings edge. Without it the write is a silent no-op.
+        assert rq.meta == json.dumps(meta_dict).encode()
+        # meta is read from the resource's current 'meta' DATA edge.
+        meta_mock.assert_called_once()
+        assert meta_mock.call_args.args[2] == 'meta'
+
     def test_permission_denied_with_fallback_enabled_calls_legacy(self):
         legacy_called = {'count': 0}
 

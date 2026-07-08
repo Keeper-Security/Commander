@@ -17,8 +17,8 @@ import os.path
 import re
 import time
 from datetime import datetime
+from typing import Dict, Optional, Any, Set, List
 from urllib.parse import urlparse, urlunparse
-from typing import Optional, List
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -93,6 +93,7 @@ from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
 from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
+from .pam.cnapp_commands import PAMCnappCommand
 from .universalsecretsync import (
     PAMUniversalSyncConfigCommand,
     PAMUniversalSyncRunCommand
@@ -287,6 +288,8 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('workflow', PAMWorkflowCommand(), 'Manage PAM Workflows', 'w')
         self.register_command('access', PAMPrivilegedAccessCommand(),
                               'Manage privileged cloud access operations', 'ac')
+        self.register_command('cnapp', PAMCnappCommand(),
+                              'Manage Cloud-Native Application Protection Platform integration', 'cn')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Manage Universal Sync Configurations', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
 
