@@ -6,7 +6,7 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, VaultEnvironment
 from keepercommander.commands import register
 from keepercommander.error import CommandError
-from keepercommander.proto import APIRequest_pb2, record_pb2
+from keepercommander.proto import APIRequest_pb2, folder_pb2, record_pb2
 from keepercommander import utils
 from keepercommander.subfolder import NestedShareFolderNode
 
@@ -305,14 +305,13 @@ class TestRegister(TestCase):
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
         TestRegister.expected_commands.extend(['shared_folder_update_v3'])
-        cmd.execute(params, action='revoke', user=['user2@keepersecurity.com'], folder=shared_folder_uid)
+        cmd.execute(params, action='remove', user=['user2@keepersecurity.com'], folder=shared_folder_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
     def test_share_folder_prepare_request_sets_rotate_on_expiration(self):
-        """SharedFolderUpdateUser/Team/Record all carry rotateOnExpiration when -roe is on."""
+        """Folder-wide expiration/ROE applies to user/team protos, not record protos."""
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
-        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
         team_uid = utils.base64_url_encode(b'a' * 16)
 
         curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
@@ -331,7 +330,7 @@ class TestRegister(TestCase):
             curr_sf=curr_sf,
             users=['user2@keepersecurity.com'],
             teams=[team_uid],
-            rec_uids=[record_uid],
+            rec_uids=[],
             share_expiration=future_ts,
             rotate_on_expiration=True,
         )
@@ -340,7 +339,7 @@ class TestRegister(TestCase):
         team_msgs = list(rq.sharedFolderAddTeam) + list(rq.sharedFolderUpdateTeam)
         record_msgs = list(rq.sharedFolderAddRecord) + list(rq.sharedFolderUpdateRecord)
 
-        for msgs, label in [(user_msgs, 'user'), (team_msgs, 'team'), (record_msgs, 'record')]:
+        for msgs, label in [(user_msgs, 'user'), (team_msgs, 'team')]:
             self.assertTrue(msgs, f'expected at least one {label} proto on the wire')
             for m in msgs:
                 self.assertTrue(m.rotateOnExpiration,
@@ -348,13 +347,330 @@ class TestRegister(TestCase):
                 self.assertGreater(m.expiration, 0)
                 self.assertEqual(m.timerNotificationType, record_pb2.NOTIFY_OWNER)
 
+        self.assertFalse(record_msgs, 'record protos must not carry folder-wide expiration')
+
+    def test_share_folder_prepare_request_expire_in_applies_to_folder_user_only(self):
+        """With -r and --expire-in, only folder user gets a timer; record protos are permissions-only."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf.setdefault('users', [])
+        future_ts = int(datetime.datetime.now().timestamp()) + 86_400
+
+        params.key_cache['user2@keepersecurity.com'] = mock.MagicMock(
+            rsa=utils.base64_url_decode(vault_env.encoded_public_key), ec=None)
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'can_edit': 'on', 'can_share': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+            share_expiration=future_ts,
+            rotate_on_expiration=True,
+        )
+
+        user_msgs = list(rq.sharedFolderAddUser) + list(rq.sharedFolderUpdateUser)
+        record_msgs = list(rq.sharedFolderAddRecord) + list(rq.sharedFolderUpdateRecord)
+
+        self.assertTrue(user_msgs, 'expected folder user share with expiration')
+        for m in user_msgs:
+            self.assertGreater(m.expiration, 0)
+            self.assertTrue(m.rotateOnExpiration)
+            self.assertEqual(m.timerNotificationType, record_pb2.NOTIFY_OWNER)
+
+        self.assertTrue(record_msgs, 'expected record permission update')
+        for m in record_msgs:
+            self.assertEqual(m.expiration, 0)
+            self.assertFalse(m.rotateOnExpiration)
+
+    def test_share_folder_remove_with_record_permissions_combined(self):
+        """-a remove affects -e only; -r/-d/-s update record permissions in the same request."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+        curr_sf['records'] = [{'record_uid': record_uid, 'can_edit': True, 'can_share': True}]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'remove', 'can_edit': 'off'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+        )
+
+        self.assertEqual(list(rq.sharedFolderRemoveUser), ['user2@keepersecurity.com'])
+        self.assertTrue(list(rq.sharedFolderUpdateRecord))
+        self.assertFalse(list(rq.sharedFolderRemoveRecord))
+        self.assertFalse(list(rq.sharedFolderAddRecord))
+
+    def test_share_folder_remove_rejects_record_permissions_without_record_target(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        cmd = register.ShareFolderCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                action='remove',
+                user=['user2@keepersecurity.com'],
+                folder=shared_folder_uid,
+                can_edit='on',
+                force=True,
+            )
+        self.assertIn('-d and -s require a record target', str(ctx.exception))
+
+    def test_share_folder_grant_rejects_record_permissions_without_record_target(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        cmd = register.ShareFolderCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                action='grant',
+                folder=shared_folder_uid,
+                can_edit='on',
+                force=True,
+            )
+        self.assertIn('-d and -s require a record target', str(ctx.exception))
+
+    def test_share_folder_rejects_record_not_in_folder(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        folder_record_uids = {x['record_uid'] for x in params.shared_folder_cache[shared_folder_uid]['records']}
+        foreign_record_uid = next(
+            uid for uid in params.record_cache if uid not in folder_record_uids)
+        cmd = register.ShareFolderCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                action='grant',
+                folder=shared_folder_uid,
+                record=[foreign_record_uid],
+                can_edit='on',
+                force=True,
+            )
+        self.assertIn('not in shared folder', str(ctx.exception))
+
+    def test_share_folder_prepare_request_remove_user_only(self):
+        """Remove with -e revokes folder access only; no record protos are sent."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'remove'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[],
+        )
+
+        self.assertTrue(list(rq.sharedFolderRemoveUser))
+        self.assertFalse(list(rq.sharedFolderRemoveRecord))
+        self.assertFalse(list(rq.sharedFolderUpdateRecord))
+        self.assertFalse(list(rq.sharedFolderAddRecord))
+
+    def test_share_folder_owner_self_remove_blocked_without_backup_manager(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        params.shared_folder_cache[shared_folder_uid]['owner_account_uid'] = utils.base64_url_encode(
+            params.account_uid_bytes)
+        params.shared_folder_cache[shared_folder_uid]['users'] = [{
+            'username': params.user,
+            'manage_records': True,
+            'manage_users': True,
+        }]
+        params.shared_folder_cache[shared_folder_uid]['teams'] = []
+        cmd = register.ShareFolderCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                action='remove',
+                user=[params.user],
+                folder=shared_folder_uid,
+                force=True,
+            )
+        self.assertIn('no other participant has', str(ctx.exception))
+
+    def test_share_folder_participant_self_remove_prompt_declined(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        params.shared_folder_cache[shared_folder_uid]['owner_account_uid'] = utils.generate_uid()
+        params.shared_folder_cache[shared_folder_uid]['users'] = [
+            {'username': params.user, 'manage_records': False, 'manage_users': False},
+            {'username': 'user2@keepersecurity.com', 'manage_records': True, 'manage_users': True},
+        ]
+        params.shared_folder_cache[shared_folder_uid]['teams'] = []
+        cmd = register.ShareFolderCommand()
+
+        with mock.patch('keepercommander.commands.register.user_choice', return_value='n'):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(
+                    params,
+                    action='remove',
+                    user=[params.user],
+                    folder=shared_folder_uid,
+                )
+        self.assertIn('Operation cancelled', str(ctx.exception))
+
+    def test_share_folder_participant_self_remove_prompt_accepted(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        params.shared_folder_cache[shared_folder_uid]['owner_account_uid'] = utils.generate_uid()
+        params.shared_folder_cache[shared_folder_uid]['users'] = [
+            {'username': params.user, 'manage_records': False, 'manage_users': False},
+            {'username': 'user2@keepersecurity.com', 'manage_records': True, 'manage_users': True},
+        ]
+        params.shared_folder_cache[shared_folder_uid]['teams'] = []
+        cmd = register.ShareFolderCommand()
+        TestRegister.expected_commands.extend(['shared_folder_update_v3'])
+
+        with mock.patch('keepercommander.commands.register.user_choice', return_value='y'):
+            cmd.execute(
+                params,
+                action='remove',
+                user=[params.user],
+                folder=shared_folder_uid,
+            )
+        self.assertEqual(len(TestRegister.expected_commands), 0)
+
+    def test_share_folder_prepare_request_skips_redundant_user_update_for_record_only(self):
+        """When sharing another record without expiration, skip redundant folder user update."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'can_edit': 'on', 'can_share': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+            share_expiration=None,
+        )
+
+        self.assertFalse(list(rq.sharedFolderUpdateUser))
+        self.assertTrue(list(rq.sharedFolderUpdateRecord))
+        self.assertFalse(list(rq.sharedFolderAddRecord))
+
+    def test_share_folder_prepare_request_updates_user_when_explicit_perms_with_record(self):
+        """-p/-o with -r must always update folder user permissions."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        record_uid = next(iter(params.shared_folder_cache[shared_folder_uid]['records']))['record_uid']
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on',
+                    'can_edit': 'on', 'can_share': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[record_uid],
+            share_expiration=None,
+        )
+
+        user_msgs = list(rq.sharedFolderUpdateUser)
+        self.assertTrue(user_msgs, 'explicit -p/-o must update folder user even with -r')
+        self.assertEqual(user_msgs[0].manageRecords, folder_pb2.BOOLEAN_TRUE)
+        self.assertEqual(user_msgs[0].manageUsers, folder_pb2.BOOLEAN_TRUE)
+
+    def test_share_folder_prepare_request_case_insensitive_user_lookup(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'User2@KeeperSecurity.com',
+            'manage_records': False,
+            'manage_users': False,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[],
+        )
+
+        user_msgs = list(rq.sharedFolderUpdateUser)
+        self.assertEqual(len(user_msgs), 1)
+        self.assertEqual(user_msgs[0].username, 'User2@KeeperSecurity.com')
+
+    def test_share_folder_prepare_request_updates_user_when_folder_wide_expiration(self):
+        """Folder-wide --expire-in (no -r) sets expiration on the folder user share."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        future_ts = int(datetime.datetime.now().timestamp()) + 86_400
+
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['users'] = [{
+            'username': 'user2@keepersecurity.com',
+            'manage_records': True,
+            'manage_users': True,
+        }]
+
+        rq = register.ShareFolderCommand.prepare_request(
+            params,
+            kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'on'},
+            curr_sf=curr_sf,
+            users=['user2@keepersecurity.com'],
+            teams=[],
+            rec_uids=[],
+            share_expiration=future_ts,
+        )
+
+        user_msgs = list(rq.sharedFolderUpdateUser)
+        self.assertTrue(user_msgs)
+        self.assertGreater(user_msgs[0].expiration, 0)
+
     def test_share_folder_rotate_on_expiration_rejects_folder_without_pam_user(self):
         params = get_synced_params()
         shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
         cmd = register.ShareFolderCommand()
-        with self.assertRaises(CommandError) as ctx:
-            cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
-                        folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
+        with mock.patch('keepercommander.commands.register.SyncDownCommand.execute'):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, action='grant', user=['user2@keepersecurity.com'],
+                            folder=shared_folder_uid, expire_in='1d', rotate_on_expiration=True)
         self.assertIn('pamUser', str(ctx.exception))
 
     @staticmethod
