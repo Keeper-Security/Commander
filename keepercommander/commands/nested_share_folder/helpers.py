@@ -309,12 +309,13 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 # Expiration parsing
 # ═══════════════════════════════════════════════════════════════════════════
 
-def validate_share_expiration_timestamp(expiration_ms, cmd_name):
+def validate_share_expiration_timestamp(expiration_ms, cmd_name, *, now_ms=None):
     """Reject finite expirations that are less than one minute."""
     if expiration_ms is None or expiration_ms == -1:
         return
-    min_allowed = int(datetime.datetime.now(timezone.utc).timestamp() * 1000) + MIN_SHARE_EXPIRATION_MS
-    if expiration_ms < min_allowed:
+    if now_ms is None:
+        now_ms = int(datetime.datetime.now(timezone.utc).timestamp() * 1000)
+    if expiration_ms < now_ms + MIN_SHARE_EXPIRATION_MS:
         raise CommandError(
             cmd_name,
             'Share expiration must be at least 1 minute.',
