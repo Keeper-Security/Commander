@@ -390,8 +390,6 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
         fk = get_folder_key(params, folder_uid)
         ek = folder_pb2.EncryptedDataKey()
         if as_team:
-            # v3 folder team grants must use the team's *asymmetric* public
-            # key (server rejects AES with "Key type 2 required").
             efk, key_type = encrypt_for_team(
                 fk, team_keys, prefer_aes=False,
                 forbid_rsa=getattr(params, 'forbid_rsa', False))
@@ -464,7 +462,73 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
     return result
 
 
+def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_label):
+    """Return a folder accessor row from ``get_folder_access_v3``, if present."""
+    try:
+        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
+        for fr in info.get('results', []):
+            if not fr.get('success'):
+                continue
+            accessors = fr.get('accessors', [])
+            for accessor in accessors:
+                if (accessor.get('accessor_uid') == accessor_uid_b64
+                        and accessor.get('access_type') == access_type_label):
+                    return accessor
+            for accessor in accessors:
+                if accessor.get('accessor_uid') == accessor_uid_b64:
+                    return accessor
+    except Exception as exc:
+        logger.debug('Folder accessor lookup failed for %s: %s', folder_uid, exc)
+    return None
+
+
+def _find_direct_access_ancestor(params, folder_uid, accessor_uid_b64, access_type_label):
+    """Walk up the NSF folder tree to find the ancestor where the accessor has direct (non-inherited) access.
+
+    Returns the ancestor folder UID, or ``None`` if no such ancestor is found.
+    Used when a remove is requested on a subfolder but the access is inherited from a parent.
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    visited = set()
+    current_uid = folder_uid
+
+    while current_uid:
+        if current_uid in visited:
+            break
+        visited.add(current_uid)
+
+        parent_uid = nsf_folders.get(current_uid, {}).get('parent_uid') or ''
+        if not parent_uid or parent_uid not in nsf_folders:
+            break
+
+        accessor = _lookup_folder_accessor(
+            params, parent_uid, accessor_uid_b64, access_type_label)
+        if accessor and not accessor.get('inherited'):
+            return parent_uid
+
+        current_uid = parent_uid
+
+    return None
+
+
+def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
+    """Drop a cached folder-access row after a successful revoke."""
+    accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid)
+    if not accesses:
+        return
+    params.nested_share_folder_accesses[folder_uid] = [
+        fa for fa in accesses
+        if fa.get('access_type_uid') != accessor_uid_b64
+    ]
+
+
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
+    """Revoke user or team access to an NSF folder.
+
+    Looks up the accessor via ``get_folder_access_v3`` so sub-folders use the
+    server-reported UID and access type (including inherited accessors).
+    On success, evicts the local access cache and sets ``params.sync_data``.
+    """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
@@ -475,6 +539,41 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     if not actual_uid_bytes:
         raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
 
+    accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
+    access_type_label = folder_pb2.AccessType.Name(access_type_enum)
+    accessor = _lookup_folder_accessor(
+        params, folder_uid, accessor_uid_b64, access_type_label)
+    if accessor:
+        server_uid = accessor.get('accessor_uid')
+        if server_uid:
+            actual_uid_bytes = utils.base64_url_decode(server_uid)
+            accessor_uid_b64 = server_uid
+        server_type = accessor.get('access_type')
+        if server_type:
+            access_type_label = server_type
+            try:
+                access_type_enum = folder_pb2.AccessType.Value(server_type)
+            except ValueError:
+                raise ValueError(
+                    f"Unrecognised access type '{server_type}' returned by server "
+                    f"for folder '{folder_uid}'")
+
+        if accessor.get('inherited'):
+            kind = 'Team' if as_team else 'User'
+            ancestor_uid = _find_direct_access_ancestor(
+                params, folder_uid, accessor_uid_b64, access_type_label)
+            nsf_folders = getattr(params, 'nested_share_folders', {})
+            if ancestor_uid:
+                ancestor_name = nsf_folders.get(ancestor_uid, {}).get('name') or ancestor_uid
+                raise ValueError(
+                    f"{kind} '{identifier_label}' has inherited access on this folder. "
+                    f"To remove it, run: nsf-share-folder {ancestor_name!r} "
+                    f"-e {identifier_label} -a remove")
+            else:
+                raise ValueError(
+                    f"{kind} '{identifier_label}' has inherited access on this folder. "
+                    f"Remove it from the parent folder where access was originally granted.")
+
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
     ad.accessTypeUid = actual_uid_bytes
@@ -483,7 +582,10 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     response = folder_access_update_v3(params, folder_access_removes=[ad])
     result = parse_folder_access_result(response, folder_uid, identifier_label,
                                         'Access revoked successfully')
-    result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    result['access_type'] = access_type_label
+    if result.get('success'):
+        _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64)
+        params.sync_data = True
     return result
 
 
