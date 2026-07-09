@@ -20,7 +20,7 @@ import math
 import re
 import time
 import urllib.parse
-from typing import Optional, Dict, Iterable, Any, Set, List, Union
+from typing import Optional, Dict, Iterable, Any, Set, List, Union, Tuple
 from urllib.parse import urlunparse
 
 from tabulate import tabulate
@@ -93,37 +93,59 @@ share_record_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_
                                       '(not "never") and a pamUser record with rotation configured.')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
-share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant','remove'],
-                                 default='grant', action='store', help='shared folder action. \'grant\' if omitted')
-share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
-                                 help='account email, team, @existing for all users and teams in the folder, '
-                                      'or \'*\' as default folder permission')
-share_folder_parser.add_argument('-r', '--record', dest='record', action='append',
-                                 help='record name, record UID, @existing for all records in the folder,'
-                                      ' or \'*\' as default folder permission')
-share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store',
-                                 choices=['on', 'off'], help='account permission: can manage records.')
-share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store',
-                                 choices=['on', 'off'], help='account permission: can manage users.')
-share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store',
-                                 choices=['on', 'off'], help='record permission: can be shared')
-share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store',
-                                 choices=['on', 'off'], help='record permission: can be modified.')
-share_folder_parser.add_argument('-f', '--force', dest='force', action='store_true',
-                                 help='Apply permission changes ignoring default folder permissions. Used on the '
-                                      'initial sharing action')
-expiration = share_folder_parser.add_mutually_exclusive_group()
-expiration.add_argument('--expire-at', dest='expire_at', action='store', metavar='TIMESTAMP',
-                        help='share expiration: never or ISO datetime (yyyy-MM-dd[ hh:mm:ss])')
-expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar='PERIOD',
-                        help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
-share_folder_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
-                                 help='rotate the password when the share access expires. '
-                                      'Only valid on grant; requires a positive --expire-at/--expire-in '
-                                      '(not "never") and at least one pamUser record with rotation '
-                                      'configured in the folder.')
-share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
+share_folder_parser = argparse.ArgumentParser(
+    prog='share-folder',
+    description='Manage shared folder access for users and teams, and record permissions in the folder.')
+
+folder_access = share_folder_parser.add_argument_group(
+    'folder access', 'Who can use the folder (grant or remove with -a)')
+folder_access.add_argument(
+    '-a', '--action', dest='action', choices=['grant', 'remove'],
+    default='grant', action='store',
+    help='folder access action for -e users/teams: grant (default) or remove')
+folder_access.add_argument(
+    '-e', '--email', dest='user', action='append',
+    help='account email, team, @existing for all users and teams in the folder, '
+         'or \'*\' as default user permission')
+folder_access.add_argument(
+    '-p', '--manage-records', dest='manage_records', action='store',
+    choices=['on', 'off'], help='account permission: can manage records. Requires -e.')
+folder_access.add_argument(
+    '-o', '--manage-users', dest='manage_users', action='store',
+    choices=['on', 'off'],
+    help='account permission: can manage users. Mutually exclusive with --expire-at/--expire-in. Requires -e.')
+expiration = folder_access.add_mutually_exclusive_group()
+expiration.add_argument(
+    '--expire-at', dest='expire_at', action='store', metavar='TIMESTAMP',
+    help='folder access expiration for -e: never or ISO datetime (yyyy-MM-dd[ hh:mm:ss]). Requires -e.')
+expiration.add_argument(
+    '--expire-in', dest='expire_in', action='store', metavar='PERIOD',
+    help='folder access expiration for -e: never or period '
+         '(<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours|(mi)nutes]). Requires -e.')
+folder_access.add_argument(
+    '-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
+    help='rotate the password when folder access expires. Grant only; requires a positive '
+         '--expire-at/--expire-in (not "never") and a pamUser record with rotation configured. '
+         'Requires -a grant, -e, and --expire-at or --expire-in.')
+folder_access.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='skip confirmation prompts')
+
+record_access = share_folder_parser.add_argument_group(
+    'record permissions', 'Can edit and can share for records in the folder')
+record_access.add_argument(
+    '-r', '--record', dest='record', action='append',
+    help='record name or UID already in the folder, @existing for all records in the folder, '
+         'or \'*\' as default record permission')
+record_access.add_argument(
+    '-s', '--can-share', dest='can_share', action='store',
+    choices=['on', 'off'], help='record permission: can be shared. Requires -r.')
+record_access.add_argument(
+    '-d', '--can-edit', dest='can_edit', action='store',
+    choices=['on', 'off'], help='record permission: can be modified. Requires -r.')
+
+share_folder_parser.add_argument(
+    'folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
 share_report_parser = argparse.ArgumentParser(prog='share-report', description='Generates a report of shared records',
                                               parents=[base.report_output_parser])
@@ -232,6 +254,7 @@ def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (
         return
 
     dt = None      # type: Optional[datetime.datetime]
+    now_ms = None  # type: Optional[int]
     if isinstance(expire_at, str):
         if expire_at == 'never':
             return -1
@@ -244,16 +267,108 @@ def get_share_expiration(expire_at, expire_in, cmd_name='share-record'):     # (
             raise CommandError(
                 cmd_name,
                 'Share expiration must be at least 1 minute.',
-           
             )
-        dt = datetime.datetime.now() + td
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_ms = int(now_utc.timestamp() * 1000)
+        dt = now_utc + td
     if dt is None:
         raise ValueError(f'Incorrect expiration: {expire_at or expire_in}')
 
-    expiration_seconds = int(dt.timestamp())
+    expiration_ms = int(dt.timestamp() * 1000)
     from .nested_share_folder.helpers import validate_share_expiration_timestamp
-    validate_share_expiration_timestamp(expiration_seconds * 1000, cmd_name)
-    return expiration_seconds
+    validate_share_expiration_timestamp(expiration_ms, cmd_name, now_ms=now_ms)
+    return expiration_ms // 1000
+
+
+def _as_append_list(value):
+    # type: (Any) -> List[Any]
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _folder_has_record_permission_target(record_uids, default_record, all_records):
+    # type: (Set[str], bool, bool) -> bool
+    return bool(record_uids or default_record or all_records)
+
+
+def _folder_user_lookup(shared_folder, email):
+    # type: (dict, str) -> Optional[dict]
+    """Find a folder user entry by email (case-insensitive)."""
+    email_lower = email.lower()
+    for user in shared_folder.get('users', []):
+        if user.get('username', '').lower() == email_lower:
+            return user
+    return None
+
+
+def format_share_expiration_ms(expiration_ms):
+    # type: (int) -> str
+    """Format a share expiration timestamp (milliseconds) for log output."""
+    if expiration_ms > 0:
+        return str(datetime.datetime.fromtimestamp(expiration_ms / 1000))
+    if expiration_ms < 0:
+        return 'never'
+    return ''
+
+
+def _folder_share_expiration_lookups(rq):
+    # type: (folder_pb2.SharedFolderUpdateV3Request) -> Tuple[Dict[str, int], Dict[str, int]]
+    """Map folder user/team names to expiration values from an outgoing folder update request."""
+    user_exp = {}
+    for folder_user in list(rq.sharedFolderAddUser) + list(rq.sharedFolderUpdateUser):
+        if folder_user.expiration:
+            user_exp[folder_user.username.lower()] = folder_user.expiration
+    team_exp = {}
+    for folder_team in list(rq.sharedFolderAddTeam) + list(rq.sharedFolderUpdateTeam):
+        if folder_team.expiration:
+            team_exp[utils.base64_url_encode(folder_team.teamUid)] = folder_team.expiration
+    return user_exp, team_exp
+
+
+def _record_share_expiration_lookup(rq):
+    # type: (record_pb2.RecordShareUpdateRequest) -> Dict[Tuple[str, str], int]
+    """Map (record_uid, username) pairs to expiration values from an outgoing record share request."""
+    lookup = {}
+    for attr in ('addSharedRecord', 'updateSharedRecord'):
+        for shared_record in getattr(rq, attr):
+            if shared_record.expiration:
+                lookup[(utils.base64_url_encode(shared_record.recordUid),
+                        shared_record.toUsername.lower())] = shared_record.expiration
+    return lookup
+
+
+def _record_share_log_title(params, record_uid):
+    # type: (KeeperParams, str) -> str
+    if record_uid in params.record_cache:
+        return api.get_record(params, record_uid).title
+    return record_uid
+
+
+def _is_shared_folder_owner(params, shared_folder):
+    # type: (KeeperParams, dict) -> bool
+    owner_uid = shared_folder.get('owner_account_uid')
+    if owner_uid:
+        return owner_uid == utils.base64_url_encode(params.account_uid_bytes)
+    owner_username = shared_folder.get('owner_username')
+    if owner_username and params.user:
+        return owner_username.lower() == params.user.lower()
+    return False
+
+
+def _folder_has_full_manager_excluding(shared_folder, exclude_usernames=()):
+    # type: (dict, Iterable[str]) -> bool
+    exclude = {x.lower() for x in exclude_usernames if x}
+    for user in shared_folder.get('users', []):
+        username = (user.get('username') or '').lower()
+        if username in exclude:
+            continue
+        if user.get('manage_records') and user.get('manage_users'):
+            return True
+    for team in shared_folder.get('teams', []):
+        if team.get('manage_records') and team.get('manage_users'):
+            return True
+    return False
 
 
 class ShareFolderCommand(Command):
@@ -321,6 +436,8 @@ class ShareFolderCommand(Command):
         if action == 'grant':
             share_expiration = get_share_expiration(
                 kwargs.get('expire_at'), kwargs.get('expire_in'), cmd_name='share-folder')
+            if isinstance(share_expiration, int) and (kwargs.get('user') or kwargs.get('record')):
+                SyncDownCommand().execute(params, force=True)
 
         rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
         if rotate_on_expiration:
@@ -347,7 +464,7 @@ class ShareFolderCommand(Command):
         all_users = False
         default_account = False
         if 'user' in kwargs:
-            for u in (kwargs.get('user') or []):
+            for u in _as_append_list(kwargs.get('user')):
                 if u == '*':
                     default_account = True
                 elif u in ('@existing', '@current'):
@@ -378,8 +495,7 @@ class ShareFolderCommand(Command):
         default_record = False
         unresolved_names = []
         if 'record' in kwargs:
-            records = kwargs.get('record') or []
-            for r in records:
+            for r in _as_append_list(kwargs.get('record')):
                 if r == '*':
                     default_record = True
                 elif r in ('@existing', '@current'):
@@ -392,11 +508,25 @@ class ShareFolderCommand(Command):
                 sa_record_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_RECORD)
                 record_uids.update(sa_record_uids or {})
 
+        ShareFolderCommand._validate_share_folder_kwargs(
+            action, kwargs,
+            record_uids=record_uids,
+            default_record=default_record,
+            all_records=all_records)
+
+        if record_uids and not default_record and not all_records:
+            ShareFolderCommand._validate_records_in_shared_folders(
+                params, shared_folder_uids, record_uids)
+
         if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and \
                 not default_record and not default_account and \
                 not all_users and not all_records:
             logging.info('Nothing to do')
             return
+
+        if action == 'remove' and as_users:
+            ShareFolderCommand._confirm_folder_user_removals(
+                params, shared_folder_uids, as_users, force=kwargs.get('force') is True)
 
         rq_groups = []
 
@@ -424,19 +554,20 @@ class ShareFolderCommand(Command):
             else:
                 sh_fol = {
                     'shared_folder_uid': sf_uid,
-                    'users': [{'username': x, 'manage_records': action != 'grant', 'manage_users': action != 'grant'}
+                    'users': [{'username': x, 'manage_records': False, 'manage_users': False}
                               for x in as_users],
-                    'teams': [{'team_uid': x, 'manage_records': action != 'grant', 'manage_users': action != 'grant'}
+                    'teams': [{'team_uid': x, 'manage_records': False, 'manage_users': False}
                               for x in as_teams],
-                    'records': [{'record_uid': x, 'can_share': action != 'grant', 'can_edit': action != 'grant'}
-                                for x in record_uids]
                 }
+                if record_uids:
+                    sh_fol['records'] = [
+                        {'record_uid': x, 'can_share': False, 'can_edit': False} for x in record_uids]
             chunk_size = 500
             rec_list = list(sf_records)
             user_list = list(sf_users)
-            num_rec_chunks = math.ceil(len(sf_records) / chunk_size)
-            num_user_chunks = math.ceil(len(sf_users) / chunk_size)
-            num_rq_groups = num_user_chunks or 1 * num_rec_chunks or 1
+            num_rec_chunks = math.ceil(len(sf_records) / chunk_size) if sf_records else 0
+            num_user_chunks = math.ceil(len(sf_users) / chunk_size) if sf_users else 0
+            num_rq_groups = (num_rec_chunks or 1) * (num_user_chunks or 1)
             while len(rq_groups) < num_rq_groups:
                 rq_groups.append([])
             rec_chunks = [rec_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_rec_chunks)] or [[]]
@@ -446,10 +577,78 @@ class ShareFolderCommand(Command):
                 for u_chunk in user_chunks:
                     sf_info = sh_fol.copy()
                     if group_idx:
-                        del sf_info['revision']
+                        sf_info.pop('revision', None)
                     rq_groups[group_idx].append(prep_rq(r_chunk, u_chunk, sf_info))
                     group_idx += 1
         self.send_requests(params, rq_groups)
+
+    @staticmethod
+    def _validate_share_folder_kwargs(action, kwargs, *, record_uids, default_record, all_records):
+        has_record_target = _folder_has_record_permission_target(record_uids, default_record, all_records)
+        has_record_perms = kwargs.get('can_edit') is not None or kwargs.get('can_share') is not None
+
+        if has_record_perms and not has_record_target:
+            raise CommandError(
+                'share-folder',
+                '-d and -s require a record target: -r <RECORD>, -r *, or -r @existing.')
+
+    @staticmethod
+    def _validate_records_in_shared_folders(params, shared_folder_uids, record_uids):
+        # type: (KeeperParams, Set[str], Set[str]) -> None
+        """Reject -r targets that are not already linked to the shared folder."""
+        for sf_uid in shared_folder_uids:
+            sh_fol = params.shared_folder_cache.get(sf_uid)
+            if not sh_fol:
+                raise CommandError(
+                    'share-folder',
+                    f'Shared folder "{sf_uid}" is not loaded. Sync down and retry.')
+            folder_record_uids = {x['record_uid'] for x in sh_fol.get('records', [])}
+            missing = record_uids - folder_record_uids
+            if not missing:
+                continue
+            labels = []
+            for uid in sorted(missing):
+                rec = params.record_cache.get(uid)
+                title = rec.get('title_unencrypted') if rec else None
+                labels.append(title or uid)
+            folder_name = sh_fol.get('name_unencrypted') or sf_uid
+            raise CommandError(
+                'share-folder',
+                f'Record(s) not in shared folder "{folder_name}": ' + ', '.join(labels))
+
+    @staticmethod
+    def _confirm_folder_user_removals(params, shared_folder_uids, users_to_remove, *, force=False):
+        # type: (KeeperParams, Set[str], Set[str], bool) -> None
+        current_user = (params.user or '').lower()
+        if not current_user or current_user not in {u.lower() for u in users_to_remove}:
+            return
+
+        removing_self_from_shared_folder = False
+        for sf_uid in shared_folder_uids:
+            sh_fol = params.shared_folder_cache.get(sf_uid, {})
+            if _is_shared_folder_owner(params, sh_fol):
+                if not _folder_has_full_manager_excluding(sh_fol, [params.user]):
+                    raise CommandError(
+                        'share-folder',
+                        'Cannot remove yourself from this shared folder: no other participant has '
+                        'manage users and manage records permission.')
+                if not force:
+                    answer = user_choice(
+                        'Removing yourself will relinquish folder ownership. '
+                        'Another participant can manage users and records. Proceed?',
+                        'yn', 'n')
+                    if answer.lower() not in ('y', 'yes'):
+                        raise CommandError('share-folder', 'Operation cancelled.')
+            else:
+                removing_self_from_shared_folder = True
+
+        if removing_self_from_shared_folder and not force:
+            answer = user_choice(
+                'Are you sure that you want to delete yourself from this shared folder? '
+                'You will not be able to add yourself back into the shared folder after removal.',
+                'yn', 'n')
+            if answer.lower() not in ('y', 'yes'):
+                raise CommandError('share-folder', 'Operation cancelled.')
 
     @staticmethod
     def prepare_request(params, kwargs, curr_sf, users, teams, rec_uids, *,
@@ -466,7 +665,7 @@ class ShareFolderCommand(Command):
         mu = kwargs.get('manage_users')
 
         def apply_share_expiration(target):
-            """Set expiration / timer / rotateOnExpiration on a User/Team/Record update proto."""
+            """Set expiration / timer / rotateOnExpiration on a User/Team share update proto."""
             if not isinstance(share_expiration, int):
                 return
             if share_expiration > 0:
@@ -488,13 +687,20 @@ class ShareFolderCommand(Command):
                 rq.defaultManageUsers = folder_pb2.BOOLEAN_NO_CHANGE
 
         if len(users) > 0:
-            existing_users = {x['username'] for x in curr_sf.get('users', [])}
             for email in users:
+                current_user = _folder_user_lookup(curr_sf, email)
+                if current_user:
+                    email = current_user['username']
                 uo = folder_pb2.SharedFolderUpdateUser()
                 uo.username = email
                 apply_share_expiration(uo)
-                if email in existing_users:
+                if current_user:
                     if action == 'grant':
+                        if rec_uids and mr is None and mu is None:
+                            mr_unchanged = (current_user.get('manage_records') is True)
+                            mu_unchanged = (current_user.get('manage_users') is True)
+                            if mr_unchanged and mu_unchanged and not isinstance(share_expiration, int):
+                                continue
                         uo.manageRecords = folder_pb2.BOOLEAN_NO_CHANGE if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
                         uo.manageUsers = folder_pb2.BOOLEAN_NO_CHANGE if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         rq.sharedFolderUpdateUser.append(uo)
@@ -575,39 +781,24 @@ class ShareFolderCommand(Command):
         ce = kwargs.get('can_edit')
         cs = kwargs.get('can_share')
 
-        if default_record and action == 'grant':
+        if default_record:
             rq.defaultCanEdit = folder_pb2.BOOLEAN_NO_CHANGE if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
             rq.defaultCanShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else  folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
 
         if len(rec_uids) > 0:
             existing_records = {x['record_uid'] for x in curr_sf.get('records', [])}
             for record_uid in rec_uids:
-                ro = folder_pb2.SharedFolderUpdateRecord()
-                ro.recordUid = utils.base64_url_decode(record_uid)
-                apply_share_expiration(ro)
+                folder_record_update = folder_pb2.SharedFolderUpdateRecord()
+                folder_record_update.recordUid = utils.base64_url_decode(record_uid)
 
                 if record_uid in existing_records:
-                    if action == 'grant':
-                        ro.canEdit = folder_pb2.BOOLEAN_NO_CHANGE if ce is None else  folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
-                        ro.canShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
-                        rq.sharedFolderUpdateRecord.append(ro)
-                    elif action == 'remove':
-                        rq.sharedFolderRemoveRecord.append(ro.recordUid)
+                    folder_record_update.canEdit = folder_pb2.BOOLEAN_NO_CHANGE if ce is None else  folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
+                    folder_record_update.canShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
+                    rq.sharedFolderUpdateRecord.append(folder_record_update)
                 else:
-                    if action == 'grant':
-                        default_ce = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_edit') is True else folder_pb2.BOOLEAN_FALSE
-                        default_cs = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_can_share') is True else folder_pb2.BOOLEAN_FALSE
-                        ro.canEdit = default_ce if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
-                        ro.canShare = default_cs if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
-                        sf_key = curr_sf.get('shared_folder_key_unencrypted')
-                        if sf_key:
-                            rec = params.record_cache[record_uid]
-                            rec_key = rec['record_key_unencrypted']
-                            if rec.get('version', 0) < 3:
-                                ro.encryptedRecordKey = crypto.encrypt_aes_v1(rec_key, sf_key)
-                            else:
-                                ro.encryptedRecordKey = crypto.encrypt_aes_v2(rec_key, sf_key)
-                        rq.sharedFolderAddRecord.append(ro)
+                    logging.debug(
+                        'Record %s is not in shared folder %s; skipping record permission update',
+                        record_uid, curr_sf.get('shared_folder_uid'))
         return rq
 
     @staticmethod
@@ -622,7 +813,8 @@ class ShareFolderCommand(Command):
                 try:
                     rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
                                                rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
-                    for rs in rss.sharedFoldersUpdateV3Response:
+                    for rq_item, rs in zip(chunk, rss.sharedFoldersUpdateV3Response):
+                        user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
                         team_cache = params.available_team_cache or []
                         for attr in (
                                 'sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus',
@@ -634,11 +826,13 @@ class ShareFolderCommand(Command):
                                     team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
                                     if team:
                                         status = t.status
+                                        exp_text = format_share_expiration_ms(team_exp.get(team_uid, 0))
+                                        exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
                                         if status == 'success':
-                                            logging.info('Team share \'%s\' %s', team['team_name'],
+                                            logging.info('Team share \'%s\' %s%s', team['team_name'],
                                                          'added' if attr == 'sharedFolderAddTeamStatus' else
                                                          'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                                         'removed')
+                                                         'removed', exp_suffix)
                                         else:
                                             logging.warning('Team share \'%s\' failed', team['team_name'])
 
@@ -650,15 +844,27 @@ class ShareFolderCommand(Command):
                                 for s in statuses:
                                     username = s.username
                                     status = s.status
+                                    exp_text = format_share_expiration_ms(user_exp.get(username.lower(), 0))
                                     if status == 'success':
-                                        logging.info('User share \'%s\' %s', username,
-                                                     'added' if attr == 'sharedFolderAddUserStatus' else
-                                                     'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                                     'removed')
+                                        if exp_text and attr in (
+                                                'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus'):
+                                            logging.info(
+                                                'Folder access granted to user \'%s\', expires %s',
+                                                username, exp_text)
+                                        elif attr == 'sharedFolderRemoveUserStatus':
+                                            logging.info(
+                                                'Folder access removed from user \'%s\'', username)
+                                        else:
+                                            exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
+                                            logging.info('User share \'%s\' %s%s', username,
+                                                         'added' if attr == 'sharedFolderAddUserStatus' else
+                                                         'updated' if attr == 'sharedFolderUpdateUserStatus' else
+                                                         'removed', exp_suffix)
                                     elif status == 'invited':
                                         logging.info('User \'%s\' invited', username)
                                     else:
-                                        logging.warning('User share \'%s\' failed', username)
+                                        logging.warning(
+                                            'User share \'%s\' failed: %s', username, status)
 
                         for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
                                      'sharedFolderRemoveRecordStatus'):
@@ -667,11 +873,7 @@ class ShareFolderCommand(Command):
                                 for r in statuses:
                                     record_uid = utils.base64_url_encode(r.recordUid)
                                     status = r.status
-                                    if record_uid in params.record_cache:
-                                        rec = api.get_record(params, record_uid)
-                                        title = rec.title
-                                    else:
-                                        title = record_uid
+                                    title = _record_share_log_title(params, record_uid)
                                     if status == 'success':
                                         logging.info('Record share \'%s\' %s', title,
                                                      'added' if attr == 'sharedFolderAddRecordStatus' else
@@ -1077,6 +1279,7 @@ class ShareRecordCommand(Command):
                 left -= added
 
             rs = api.communicate_rest(params, rq1, 'vault/records_share_update', rs_type=record_pb2.RecordShareUpdateResponse)
+            record_exp = _record_share_expiration_lookup(rq1)
             for attr in ['addSharedRecordStatus', 'updateSharedRecordStatus', 'removeSharedRecordStatus']:
                 if hasattr(rs, attr):
                     statuses = getattr(rs, attr)
@@ -1084,13 +1287,23 @@ class ShareRecordCommand(Command):
                         record_uid = utils.base64_url_encode(status_rs.recordUid)
                         status = status_rs.status
                         email = status_rs.username
-                        if status == 'success':
-                            verb = 'granted to' if attr == 'addSharedRecordStatus' else 'changed for' if attr == 'updateSharedRecordStatus' else 'revoked from'
-                            logging.info('Record \"%s\" access permissions has been %s user \'%s\'', record_uid, verb, email)
-                        else:
-                            verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
-
-                            logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', verb, record_uid, email, status_rs.message)
+                        if status != 'success':
+                            verb = ('grant' if attr == 'addSharedRecordStatus'
+                                    else 'change' if attr == 'updateSharedRecordStatus'
+                                    else 'revoke')
+                            logging.info(
+                                'Failed to %s record \"%s\" access permissions for user \'%s\': %s',
+                                verb, record_uid, email, status_rs.message)
+                            continue
+                        verb = ('granted to' if attr == 'addSharedRecordStatus'
+                                else 'changed for' if attr == 'updateSharedRecordStatus'
+                                else 'revoked from')
+                        exp_text = format_share_expiration_ms(
+                            record_exp.get((record_uid, email.lower()), 0))
+                        exp_suffix = f', record access expires {exp_text}' if exp_text else ''
+                        logging.info(
+                            'Record \"%s\" access permissions has been %s user \'%s\'%s',
+                            record_uid, verb, email, exp_suffix)
             rq = next(requests, None)
 
 
