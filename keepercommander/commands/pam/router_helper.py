@@ -122,6 +122,27 @@ def router_get_rotation_schedules(params, proto_request):
     return _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request, rs_type=pam_pb2.PAMRotationSchedulesResponse)
 
 
+def router_get_recordings_for_users(params, proto_request):
+    return _post_request_to_router(params, 'get_recordings_for_users', rq_proto=proto_request, rs_type=pam_pb2.PAMRecordingsResponse)
+
+
+def router_download_recording(params, connection_uid_bytes, recording_type_ext):
+    # type: (KeeperParams, bytes, str) -> bytes
+    """Download a single recording file. Returns raw file bytes."""
+    import base64
+    uid_b64 = base64.urlsafe_b64encode(connection_uid_bytes).rstrip(b'=').decode()
+    filename = f'{uid_b64}.{recording_type_ext}'
+    rs = _post_request_to_router(params, f'pam_recordings/{filename}', method='get',
+                                 raw_without_status_check_response=True)
+    if rs.status_code == 404:
+        raise KeeperApiError(404, f'Recording not found: {filename}')
+    if rs.status_code == 403:
+        raise KeeperApiError(403, f'Access denied to recording: {filename}')
+    if rs.status_code >= 400:
+        raise KeeperApiError(rs.status_code, f'Download failed ({rs.status_code}): {filename}')
+    return rs.content
+
+
 def router_get_relay_access_creds(params, expire_sec=None):
     query_params = {
         'expire-sec': expire_sec

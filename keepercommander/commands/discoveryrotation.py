@@ -27,6 +27,7 @@ from .base import (Command, GroupCommand, user_choice, dump_report_data, report_
                    json_output_parser, field_to_title, toggle_pam_legacy_commands)
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
+from .pam.recording_commands import PAMGetRecordingsForUsersCommand, PAMDownloadRecordingsCommand
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.vault_target import (
     format_pam_folder_display, resolve_pam_folder_uid, is_nested_share_folder,
@@ -277,7 +278,7 @@ def uses_default_rotation_schedule(params, record_uid, configuration_uid):
     if not isinstance(record_schedule, list) or len(record_schedule) == 0:
         return False
     return record_schedule == default_schedule
-    
+
 def _valid_record_uids(uids):
     return [uid for uid in (uids or []) if RecordV3.is_valid_ref_uid(uid)]
 
@@ -324,6 +325,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Manage Universal Sync Configurations', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
         self.register_command('cnapp', PAMCnappCommand(), 'Manage CNAPP integrations', 'cn')
+        self.register_command('recording', PAMRecordingCommand(), 'Manage PAM Session Recordings', 'rec')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -361,6 +363,17 @@ class PAMRotationCommand(GroupCommand):
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
         self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
         self.default_verb = 'list'
+
+
+class PAMRecordingCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMRecordingCommand, self).__init__()
+        self.register_command('list-by-user', PAMGetRecordingsForUsersCommand(),
+                              'List session recordings for one or more users', 'lbu')
+        self.register_command('download', PAMDownloadRecordingsCommand(),
+                              'Download recording files to a local directory', 'dl')
+        self.default_verb = 'list-by-user'
 
 
 class PAMDiscoveryCommand(GroupCommand):
