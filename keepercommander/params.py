@@ -244,6 +244,11 @@ class KeeperParams:
         self.iterations = 0
         self.biometric = None
         self.via_desktop_login = False
+        self.via_desktop_session_terminated = False
+        self.desktop_account_uid = None
+        self.desktop_user = ''
+        self.desktop_account_username = None
+        self.desktop_account_email = None
         self.service_mode = False  # Flag to indicate if running in service mode
         self.thread_local = threading.local()
         self._pedm_plugin = None    # type:
@@ -332,6 +337,12 @@ class KeeperParams:
             self.tube_registry = None
         self.forbid_rsa = False
         self.biometric = None
+        self.via_desktop_login = False
+        self.via_desktop_session_terminated = False
+        self.desktop_account_uid = None
+        self.desktop_user = ''
+        self.desktop_account_username = None
+        self.desktop_account_email = None
         self._pedm_plugin = None
 
     def __get_rest_context(self):   # type: () -> RestApiContext

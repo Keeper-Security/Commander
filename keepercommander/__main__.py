@@ -93,6 +93,16 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False, d
     return params
 
 
+def apply_keeper_server_env(params):
+    env_server = os.getenv('KEEPER_SERVER')
+    if env_server:
+        resolved_server = resolve_server(env_server)
+        if resolved_server:
+            params.server = resolved_server
+        else:
+            logging.warning('Ignoring invalid KEEPER_SERVER value: %s', env_server)
+
+
 def usage(m):
     """Show full help with all commands - used for 'keeper help' or 'keeper ?'"""
     print(m)
@@ -275,6 +285,8 @@ def main(from_package=False):
 
     if opts.proxy:
         params.proxy = opts.proxy
+
+    apply_keeper_server_env(params)
 
     if opts.server:
         resolved_server = resolve_server(opts.server)

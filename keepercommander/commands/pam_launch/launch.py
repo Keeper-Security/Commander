@@ -64,6 +64,7 @@ from ..tunnel.port_forward.tunnel_helpers import (
     get_keeper_tokens,
     CloseConnectionReasons,
 )
+from ..tunnel import pam_state_bridge
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from .rust_log_filter import (
     enter_pam_launch_terminal_rust_logging,
@@ -113,6 +114,40 @@ def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _approve_pam_launch_if_needed(
+    params: "KeeperParams",
+    record_uid: str,
+    resource_title: Optional[str] = None,
+) -> None:
+    if getattr(params, 'via_desktop_login', False) is not True:
+        return
+
+    approved, approval_message = pam_state_bridge.request_start_tunnel_approval(
+        params=params,
+        action='pam_launch',
+        resource_handle=record_uid,
+        resource_title=resource_title,
+        purpose='Open PAM launch session',
+    )
+    if not approved:
+        if pam_state_bridge.is_duplicate_active_approval_message(approval_message):
+            message = pam_state_bridge.approval_message_display_text(approval_message)
+            raise CommandError('', f'{Fore.YELLOW}{message}{Style.RESET_ALL}')
+        display_message = pam_state_bridge.approval_message_display_text(approval_message)
+        raise CommandError(
+            'pam launch',
+            f'Desktop approval denied or unavailable: {display_message}',
+        )
+
+
+def _is_tube_terminal_state(tube_registry, tube_id: str) -> bool:
+    try:
+        state = tube_registry.get_connection_state(tube_id)
+    except Exception as err:
+        return "not found" in str(err).lower()
+    return str(state or "").lower() in {"closed", "disconnected", "failed", "not_found"}
 
 
 def _parse_host_port(value: str) -> Tuple[str, int]:
@@ -992,6 +1027,8 @@ class PAMLaunchCommand(Command):
                 return
             _exec_tc.checkpoint('protocol_detected_top')
 
+            _approve_pam_launch_if_needed(params, record_uid, getattr(record, 'title', None))
+
             # Optimistic launch cache: the pre-phase (TunnelDAG build +
             # find_gateway + online probe) resolves to values that rarely
             # change between launches of the same record — DAG-linked
@@ -1401,7 +1438,6 @@ class PAMLaunchCommand(Command):
                     print(
                         f'Warning: connection.fontSize={fs_disp} is ignored here; this session uses font size 12 ',
                     )
-
             # Banner + spinner: only after pamSettings record gates (readOnly, disableCopy, disablePaste, etc.),
             # credential/host validation, gateway resolution, optional online probe, and fontSize discrepancy.
             _debug_connect_ui = bool(getattr(params, 'debug', False)) or logging.getLogger().isEnabledFor(
@@ -1625,6 +1661,7 @@ class PAMLaunchCommand(Command):
                 lease_timer.daemon = True
                 lease_timer.start()
 
+        external_shutdown_event = None
         rust_log_token = None
         try:
             rust_log_token = enter_pam_launch_terminal_rust_logging()
@@ -1639,6 +1676,12 @@ class PAMLaunchCommand(Command):
             python_handler = tunnel_result['tunnel'].get('python_handler')
             if not python_handler:
                 raise CommandError('pam launch', 'No python_handler in tunnel result - ensure Rust module supports PythonHandler mode')
+
+            import threading as _threading
+            external_shutdown_event = _threading.Event()
+            launch_session = get_tunnel_session(tube_id)
+            if launch_session:
+                setattr(launch_session, "external_shutdown_event", external_shutdown_event)
 
             # Capture remote close reason from the rust webrtc layer so the
             # finally block below can show a reason-specific notice (KeeperAI,
@@ -2030,24 +2073,28 @@ class PAMLaunchCommand(Command):
 
                 elapsed = 0
                 while not shutdown_requested and python_handler.running:
+                    if external_shutdown_event and external_shutdown_event.is_set():
+                        logging.debug("External PAM shutdown event received - exiting CLI session loop")
+                        shutdown_requested = True
+                        break
                     # Check if tube/connection is closed
-                    try:
-                        state = tube_registry.get_connection_state(tube_id)
-                        if state and state.lower() in ('closed', 'disconnected', 'failed'):
-                            logging.debug(f"Tube/connection closed (state: {state}) - exiting")
-                            # Do not set python_handler.running = False here: the input thread would
-                            # still read stdin and send_key/send_stdin would drop bytes (first key
-                            # "eaten" after return to Commander). Stopping order is input_handler
-                            # first in finally, then python_handler.stop() clears running.
-                            shutdown_requested = True
-                            break
-                    except Exception:
-                        # If we can't check state, continue (tube might be closing)
-                        pass
+                    if _is_tube_terminal_state(tube_registry, tube_id):
+                        logging.debug("Tube/connection closed - exiting CLI session loop")
+                        # Do not set python_handler.running = False here: the input thread would
+                        # still read stdin and send_key/send_stdin would drop bytes (first key
+                        # "eaten" after return to Commander). Stopping order is input_handler
+                        # first in finally, then python_handler.stop() clears running.
+                        shutdown_requested = True
+                        break
                     time.sleep(0.1)
                     elapsed += 0.1
                     # SIGINT may set shutdown_requested during sleep; exit before resize/status work.
-                    if shutdown_requested or not python_handler.running:
+                    if (
+                        shutdown_requested
+                        or not python_handler.running
+                        or (external_shutdown_event and external_shutdown_event.is_set())
+                    ):
+                        shutdown_requested = True
                         break
 
                     # --- Resize polling (Phase 1: cheap cols/rows check) ---
@@ -2158,12 +2205,7 @@ class PAMLaunchCommand(Command):
                 logging.debug("Stopping Python handler...")
                 try:
                     # Check if tube is already closed - if so, skip sending disconnect
-                    try:
-                        state = tube_registry.get_connection_state(tube_id)
-                        skip_disconnect = state and state.lower() in ('closed', 'disconnected', 'failed')
-                    except Exception:
-                        skip_disconnect = False
-
+                    skip_disconnect = _is_tube_terminal_state(tube_registry, tube_id)
                     python_handler.stop(skip_disconnect=skip_disconnect)
                 except Exception as e:
                     logging.debug(f"Error stopping Python handler: {e}")
@@ -2178,6 +2220,13 @@ class PAMLaunchCommand(Command):
 
                 # Clean up registrations
                 try:
+                    launch_session = get_tunnel_session(tube_id)
+                    if (
+                        launch_session
+                        and external_shutdown_event
+                        and getattr(launch_session, "external_shutdown_event", None) is external_shutdown_event
+                    ):
+                        setattr(launch_session, "external_shutdown_event", None)
                     unregister_tunnel_session(tube_id)
                     if conversation_id:
                         unregister_conversation_key(conversation_id)

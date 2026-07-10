@@ -91,6 +91,13 @@ def invalidate(record_uid: str) -> None:
         _CACHE.pop(record_uid, None)
 
 
+def clear() -> None:
+    """Drop all session-scoped launch preflight cache entries."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+        _REFRESHING.clear()
+
+
 def _entries_differ(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """True if any of the load-bearing fields differ between two entries."""
     return any(a.get(k) != b.get(k) for k in _CACHE_VALUE_KEYS)

@@ -14,6 +14,7 @@ import os
 import sys
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -24,9 +25,12 @@ try:
     from keepercommander.commands.pam_launch import launch as launch_mod
     from keepercommander.commands.pam_launch.launch import (
         _print_close_reason_notice,
+        _approve_pam_launch_if_needed,
+        _is_tube_terminal_state,
         EXIT_CODE_AI_TERMINATED,
         EXIT_CODE_ADMIN_TERMINATED,
     )
+    from keepercommander.error import CommandError
 except ImportError as e:  # pragma: no cover
     skip_tests = True
     skip_reason = f"Cannot import pam_launch.launch: {e}"
@@ -90,6 +94,99 @@ class TestPrintCloseReasonNotice(unittest.TestCase):
         rc, out = self._notice('guacd_error', session_established=True, pending_exit_code=7)
         self.assertEqual(out, '')
         self.assertEqual(rc, 7)
+
+
+@unittest.skipIf(skip_tests, skip_reason)
+class TestPamLaunchDesktopApproval(unittest.TestCase):
+
+    def test_plain_commander_launch_does_not_request_desktop_approval(self):
+        params = type('Params', (), {'via_desktop_login': False})()
+        with mock.patch.object(launch_mod.pam_state_bridge, 'request_start_tunnel_approval') as approval:
+            _approve_pam_launch_if_needed(params, 'record-1', 'Record 1')
+
+        approval.assert_not_called()
+
+    def test_via_desktop_launch_requests_approval(self):
+        params = type('Params', (), {'via_desktop_login': True})()
+        with mock.patch.object(
+            launch_mod.pam_state_bridge,
+            'request_start_tunnel_approval',
+            return_value=(True, 'allow'),
+        ) as approval:
+            _approve_pam_launch_if_needed(params, 'record-1', 'Record 1')
+
+        approval.assert_called_once_with(
+            params=params,
+            action='pam_launch',
+            resource_handle='record-1',
+            resource_title='Record 1',
+            purpose='Open PAM launch session',
+        )
+
+    def test_via_desktop_launch_denial_fails_closed(self):
+        params = type('Params', (), {'via_desktop_login': True})()
+        with mock.patch.object(
+            launch_mod.pam_state_bridge,
+            'request_start_tunnel_approval',
+            return_value=(False, 'denied'),
+        ):
+            with self.assertRaises(CommandError) as cm:
+                _approve_pam_launch_if_needed(params, 'record-1', 'Record 1')
+
+        self.assertIn('Desktop approval denied or unavailable: denied', str(cm.exception))
+
+    def test_via_desktop_launch_duplicate_session_is_user_friendly(self):
+        params = type('Params', (), {'via_desktop_login': True})()
+        with mock.patch.object(
+            launch_mod.pam_state_bridge,
+            'request_start_tunnel_approval',
+            return_value=(
+                False,
+                'duplicate_active_session: A PAM launch session is already active for record record-1.',
+            ),
+        ):
+            with self.assertRaises(CommandError) as cm:
+                _approve_pam_launch_if_needed(params, 'record-1', 'Record 1')
+
+        self.assertEqual('', cm.exception.command)
+        self.assertIn('PAM launch session is already active', cm.exception.message)
+        self.assertNotIn('Desktop approval denied or unavailable', cm.exception.message)
+
+
+@unittest.skipIf(skip_tests, skip_reason)
+class TestPamLaunchTubeState(unittest.TestCase):
+
+    def test_terminal_states_are_closed(self):
+        class Registry:
+            def __init__(self, state):
+                self.state = state
+
+            def get_connection_state(self, tube_id):
+                return self.state
+
+        for state in ('closed', 'disconnected', 'failed', 'not_found'):
+            self.assertTrue(_is_tube_terminal_state(Registry(state), 'tube-1'))
+
+    def test_connected_state_is_not_closed(self):
+        class Registry:
+            def get_connection_state(self, tube_id):
+                return 'connected'
+
+        self.assertFalse(_is_tube_terminal_state(Registry(), 'tube-1'))
+
+    def test_missing_tube_is_terminal(self):
+        class Registry:
+            def get_connection_state(self, tube_id):
+                raise RuntimeError('Tube not found')
+
+        self.assertTrue(_is_tube_terminal_state(Registry(), 'tube-1'))
+
+    def test_unknown_state_error_is_not_terminal(self):
+        class Registry:
+            def get_connection_state(self, tube_id):
+                raise RuntimeError('temporary registry failure')
+
+        self.assertFalse(_is_tube_terminal_state(Registry(), 'tube-1'))
 
 
 if __name__ == '__main__':

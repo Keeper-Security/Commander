@@ -297,6 +297,10 @@ login_parser.add_argument('-p', '--pass', dest='password', action='store', help=
 login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
 login_parser.add_argument('--via-desktop', dest='via_desktop', action='store_true',
                           help='Use Keeper Desktop bridge for this login')
+login_parser.add_argument('--no-via-desktop', dest='no_via_desktop', action='store_true',
+                          help='Bypass Keeper Desktop bridge for this login, even in a --via-desktop shell')
+login_parser.add_argument('--force', '-f', dest='force', action='store_true',
+                          help='Stop active PAM tunnels without confirmation when replacing the current login session')
 login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
 login_parser.add_argument('--config-file', dest='config_file', action='store_true',
                           help='Store config in config.json instead of the OS-native keychain '
@@ -310,6 +314,55 @@ login_parser.exit = suppress_exit
 logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper')
 logout_parser.error = raise_parse_exception
 logout_parser.exit = suppress_exit
+
+
+def _prepare_login_session_replacement(params, target_user='', force=False):
+    has_session_state = (
+        bool(getattr(params, 'session_token', None))
+        or getattr(params, 'via_desktop_login', False) is True
+        or bool(getattr(params, 'desktop_account_uid', None))
+        or bool(getattr(params, 'desktop_user', None))
+        or getattr(params, 'tube_registry', None) is not None
+    )
+    if not has_session_state:
+        return True
+
+    try:
+        from .tunnel.tunnel_lifecycle import close_pam_tunnels_on_logout, describe_active_pam_tunnels_on_logout
+        active_tunnels = describe_active_pam_tunnels_on_logout(params)
+    except Exception as exc:
+        logging.debug('Unable to inspect active PAM tunnels before login session replacement: %s', exc)
+        close_pam_tunnels_on_logout = None
+        active_tunnels = []
+
+    if active_tunnels and not force:
+        login_target = target_user or 'another account'
+        logging.warning('Switching to %s will stop %d active PAM tunnel(s):', login_target, len(active_tunnels))
+        for description in active_tunnels:
+            logging.warning('  - %s', description)
+        answer = user_choice('Continue?', 'yn', default='n')
+        if str(answer or '').lower() != 'y':
+            logging.info('Login canceled; active PAM tunnels left running.')
+            return False
+
+    if close_pam_tunnels_on_logout:
+        try:
+            close_pam_tunnels_on_logout(params)
+            if getattr(params, 'tube_registry', None) is not None:
+                params.tube_registry = None
+        except Exception as exc:
+            logging.debug('PAM tunnel teardown failed before login session replacement: %s', exc)
+
+    try:
+        from .tunnel import pam_state_bridge
+        pam_state_bridge.suspend_desktop_bridge_state(params, clear_binding=True)
+    except Exception as exc:
+        logging.debug('Desktop PAM state-sync suspend failed before login session replacement: %s', exc)
+
+    saved_commands = list(params.commands)
+    params.clear_session()
+    params.commands.extend(saved_commands)
+    return True
 
 
 check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements',
@@ -1694,9 +1747,29 @@ class LoginCommand(Command):
         password = kwargs.get('password') or ''
         new_login = kwargs.get('new_login') is True
         skip_sync = kwargs.get('skip_sync') is True
-        via_desktop = kwargs.get('via_desktop') is True or getattr(params, 'via_desktop_login', False) is True
-        if kwargs.get('via_desktop') is True:
+        no_via_desktop = kwargs.get('no_via_desktop') is True
+        explicit_via_desktop = kwargs.get('via_desktop') is True
+        force_login_replacement = kwargs.get('force') is True
+        if explicit_via_desktop and user:
+            raise CommandError(
+                'login',
+                'login --via-desktop cannot be combined with an explicit email. '
+                'Use bare login --via-desktop for Desktop-assisted login, or login <email> for standalone login.'
+            )
+        via_desktop = (
+            not no_via_desktop
+            and (
+                explicit_via_desktop
+                or (
+                    not user
+                    and getattr(params, 'via_desktop_login', False) is True
+                )
+            )
+        )
+        if explicit_via_desktop:
             params.via_desktop_login = True
+        elif no_via_desktop:
+            params.via_desktop_login = False
 
         try:
             if not user and not via_desktop:
@@ -1774,22 +1847,56 @@ class LoginCommand(Command):
                 )
 
         if via_desktop:
+            if not _prepare_login_session_replacement(
+                params,
+                target_user='Vault Desktop account',
+                force=force_login_replacement,
+            ):
+                return
             try:
+                params.via_desktop_login = True
                 from ..auth import desktop_bridge
                 desktop_bridge.login_via_desktop(params)
+            except KeyboardInterrupt:
+                params.via_desktop_login = False
+                logging.info('Desktop bridge login canceled')
+                return
             except desktop_bridge.DesktopBridgeLoginError as exc:
+                params.via_desktop_login = False
                 logging.warning(str(exc))
                 return
+            if not params.session_token:
+                params.via_desktop_login = False
         else:
+            if not _prepare_login_session_replacement(
+                params,
+                target_user=user.lower() if user else 'another account',
+                force=force_login_replacement,
+            ):
+                return
+            if user:
+                params.user = user.lower()
+            params.password = password
+            params.via_desktop_login = False
             try:
                 api.login(params, new_login=new_login)
             except Exception as exc:
+                try:
+                    from .tunnel import pam_state_bridge
+                    pam_state_bridge.suspend_desktop_bridge_state(params, clear_binding=True)
+                except Exception as suspend_exc:
+                    logging.debug('Desktop PAM state-sync suspend failed after standalone login error: %s', suspend_exc)
                 logging.warning(str(exc))
 
         if params.session_token and not skip_sync:
             params.enterprise = None
             params._pedm_plugin = None
             SyncDownCommand().execute(params, force=True)
+            try:
+                from .pam_launch import launch_cache
+                launch_cache.clear()
+            except Exception as e:
+                logging.debug('Unable to clear PAM launch cache after login sync: %s', e)
             if params.is_enterprise_admin:
                 api.query_enterprise(params, True)
             try:
@@ -1914,6 +2021,9 @@ class LogoutCommand(Command):
     skip_sync_on_auth = True
 
     def execute(self, params, **kwargs):
+        from .tunnel.tunnel_lifecycle import close_pam_tunnels_on_logout
+        close_pam_tunnels_on_logout(params)
+
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
@@ -1972,6 +2082,11 @@ class LogoutCommand(Command):
 
         # Preserve commands queue (clear_session() clears it, but we need 'q' to exit)
         saved_commands = list(params.commands)
+        try:
+            from .tunnel import pam_state_bridge
+            pam_state_bridge.suspend_desktop_bridge_state(params, clear_binding=True)
+        except Exception as e:
+            logging.debug('Desktop PAM state-sync suspend error: %s', e)
         params.clear_session()
         params.commands.extend(saved_commands)
 

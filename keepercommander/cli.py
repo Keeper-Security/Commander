@@ -762,6 +762,27 @@ def _first_queued_command_is_login(params):
     return cmd == 'login'
 
 
+def _consume_via_desktop_terminal_command(params, command):
+    if getattr(params, 'via_desktop_session_terminated', False) is not True:
+        return False
+
+    command = (command or '').strip()
+    cmd, _ = command_and_args_from_cmd(command)
+    cmd = cmd.lower()
+    alias = aliases.get(cmd)
+    if isinstance(alias, (tuple, list)):
+        cmd = alias[0]
+    elif isinstance(alias, str):
+        cmd = alias
+
+    params.via_desktop_session_terminated = False
+    if not command or cmd in {'login', 'server', 'q', 'quit'}:
+        return False
+
+    logging.warning('Vault Desktop disconnected; please login again.')
+    return True
+
+
 def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # type: (KeeperParams, bool, bool, bool) -> int  # suppress_goodbye kept for API compat
     global prompt_session
     error_no = 0
@@ -797,13 +818,21 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
         startup_via_desktop = getattr(params, 'via_desktop_login', False) is True
         if (params.user or startup_via_desktop) and not _first_queued_command_is_login(params):
             try:
-                LoginCommand().execute(
-                    params,
-                    email=params.user,
-                    password=params.password,
-                    new_login=new_login,
-                    via_desktop=startup_via_desktop,
-                )
+                if startup_via_desktop:
+                    LoginCommand().execute(params, via_desktop=True, show_help=False)
+                    if params.session_token:
+                        try:
+                            from .commands.tunnel import pam_state_bridge
+                            pam_state_bridge.start_state_sync_worker(params)
+                        except Exception as e:
+                            logging.debug('Desktop PAM state-sync worker did not start: %s', e)
+                else:
+                    LoginCommand().execute(
+                        params,
+                        email=params.user,
+                        password=params.password,
+                        new_login=new_login,
+                    )
             except KeyboardInterrupt:
                 logging.info('')
             except EOFError:
@@ -870,6 +899,8 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
 
             suppress_errno = False
             command = command.strip()
+            if _consume_via_desktop_terminal_command(params, command):
+                continue
             if command.startswith("@"):
                 suppress_errno = True
                 command = command[1:]

@@ -27,6 +27,7 @@ from ....commands.pam.config_helper import configuration_controller_get
 from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
     get_router_ws_url, get_router_url, router_send_action_to_gateway
+from .. import pam_state_bridge
 from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
@@ -323,6 +324,8 @@ class TunnelSession:
         self.record_uid = record_uid
         self.target_host = target_host
         self.target_port = target_port
+        self.owning_account_uid = None
+        self.owning_context = None
         self.buffered_ice_candidates = []
         self.creation_time = time.time()
         self.last_activity = time.time()
@@ -663,6 +666,290 @@ class ConversationType(enum.Enum):
     POSTGRESQL = "postgresql"
 
 
+def _find_pam_control_session(control):
+    identifiers = [
+        getattr(control, "tunnel_id", None),
+        getattr(control, "pam_session_id", None),
+        getattr(control, "resource_handle", None),
+    ]
+    for identifier in identifiers:
+        if identifier:
+            session = get_tunnel_session(identifier)
+            if session:
+                return session
+
+    for session in get_all_tunnel_sessions().values():
+        for attr in ("tube_id", "conversation_id", "record_uid", "record_title"):
+            value = getattr(session, attr, None)
+            if value and value in identifiers:
+                return session
+    return None
+
+
+def _wait_for_tube_closed(tube_registry, tube_id, timeout_seconds=5.0):
+    if not tube_registry or not tube_id or not hasattr(tube_registry, "get_connection_state"):
+        return True
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            state = tube_registry.get_connection_state(tube_id)
+        except Exception as err:
+            if "not found" in str(err).lower():
+                return True
+            logging.debug("Could not observe tube %s close state yet: %s", tube_id, err)
+            time.sleep(0.2)
+            continue
+        if str(state or "").lower() in {"closed", "not_found"}:
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _signal_pam_shutdown_events(session):
+    signaled = False
+    for attr in ("foreground_shutdown_event", "external_shutdown_event"):
+        event = getattr(session, attr, None)
+        if event and hasattr(event, "set"):
+            event.set()
+            signaled = True
+    return signaled
+
+
+def _pam_control_field_value(control, name):
+    value = getattr(control, name, None)
+    return str(value) if value else None
+
+
+def _pam_registry_entry_values(entry, *names):
+    return {
+        str(value)
+        for value in (entry.get(name) for name in names)
+        if value
+    }
+
+
+def _pam_control_registry_match_field(entry, control):
+    tunnel_id = _pam_control_field_value(control, "tunnel_id")
+    if tunnel_id and tunnel_id in _pam_registry_entry_values(entry, "tube_id", "tunnel_id"):
+        return "tunnel_id"
+
+    pam_session_id = _pam_control_field_value(control, "pam_session_id")
+    if pam_session_id and pam_session_id in _pam_registry_entry_values(
+        entry,
+        "pam_session_id",
+        "conversation_id",
+    ):
+        return "pam_session_id"
+
+    resource_handle = _pam_control_field_value(control, "resource_handle")
+    if resource_handle and resource_handle in _pam_registry_entry_values(
+        entry,
+        "resource_handle",
+        "record_uid",
+        "record_title",
+    ):
+        return "resource_handle"
+    return None
+
+
+def _wait_for_registry_pid_stopped(pid, is_pid_alive_fn, unregister_tunnel_fn, timeout_seconds=5.0):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not is_pid_alive_fn(pid):
+            unregister_tunnel_fn(pid)
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _stop_pam_control_registry_entry(entry):
+    from ...tunnel_registry import is_pid_alive, stop_tunnel_process, unregister_tunnel
+
+    pid = entry.get("pid")
+    if not pid:
+        return False, "matching registry tunnel had no PID"
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False, f"matching registry tunnel had invalid PID: {pid}"
+
+    if pid == os.getpid():
+        unregister_tunnel(pid)
+        logging.info("Removed current-process PAM tunnel registry entry during Vault-origin stop: pid=%s", pid)
+        return True, "registry_entry_removed"
+
+    if not is_pid_alive(pid):
+        unregister_tunnel(pid)
+        logging.info("Removed stale PAM tunnel registry entry during Vault-origin stop: pid=%s", pid)
+        return True, "already_stopped"
+
+    if not stop_tunnel_process(pid):
+        if not is_pid_alive(pid):
+            unregister_tunnel(pid)
+            return True, "already_stopped"
+        return False, f"Commander failed to signal matching registry tunnel PID {pid}"
+
+    if _wait_for_registry_pid_stopped(pid, is_pid_alive, unregister_tunnel):
+        logging.info("Stopped matching registry PAM tunnel during Vault-origin stop: pid=%s", pid)
+        return True, "registry_stop_signal_sent"
+
+    return False, f"Commander signaled matching registry tunnel PID {pid} but it did not stop"
+
+
+def _handle_pam_stop_control_registry_fallback(control):
+    from ...tunnel_registry import list_registered_tunnels
+
+    exact_matches = []
+    resource_matches = []
+    for entry in list_registered_tunnels(clean_stale=False):
+        match_field = _pam_control_registry_match_field(entry, control)
+        if match_field in {"tunnel_id", "pam_session_id"}:
+            exact_matches.append(entry)
+        elif match_field == "resource_handle":
+            resource_matches.append(entry)
+
+    matches = exact_matches
+    if not matches:
+        if len(resource_matches) > 1:
+            return False, (
+                "Commander found multiple registry tunnels matching resource_handle; "
+                "refusing to ack ambiguous Vault-origin stop"
+            )
+        matches = resource_matches
+
+    if not matches:
+        return None
+
+    for entry in matches:
+        stopped, message = _stop_pam_control_registry_entry(entry)
+        if not stopped:
+            return False, message
+    return True, "registry_stop_signal_sent"
+
+
+def _handle_pam_stop_control(control):
+    session = _find_pam_control_session(control)
+    if not session:
+        registry_result = _handle_pam_stop_control_registry_fallback(control)
+        if registry_result is not None:
+            return registry_result
+        logging.info(
+            "Vault-origin PAM shutdown signal did not match an active Commander tunnel; "
+            "treating as already stopped: "
+            "pam_session_id=%s tunnel_id=%s resource_handle=%s",
+            getattr(control, "pam_session_id", ""),
+            getattr(control, "tunnel_id", ""),
+            getattr(control, "resource_handle", ""),
+        )
+        return True, "already_stopped"
+
+    tube_id = getattr(session, "tube_id", None)
+    signal_handler = getattr(session, "signal_handler", None)
+    tube_registry = getattr(signal_handler, "tube_registry", None)
+    if not tube_id or not tube_registry:
+        if tube_id:
+            unregister_tunnel_session(tube_id)
+        logging.info(
+            "Vault-origin PAM shutdown signal matched incomplete Commander tunnel state; "
+            "treating as already stopped: "
+            "matched_tube_id=%s session_pam_session_id=%s session_resource=%s",
+            tube_id or "",
+            getattr(session, "conversation_id", ""),
+            getattr(session, "record_uid", ""),
+        )
+        return True, "already_stopped"
+
+    # Vault-origin stop is currently a backend-limited shutdown signal. Vault
+    # records the user intent, but Commander owns the live Rust tube/session and
+    # executes the close until KRouter supports external disconnect by
+    # conversation/capability.
+    logging.info(
+        "\nExecuting Vault-origin PAM shutdown signal: "
+        "intent_actor=vault_desktop executor=commander_leaf "
+        "result_scope=krouter_close_by_leaf+local_cleanup "
+        "pam_session_id=%s tunnel_id=%s resource_handle=%s",
+        getattr(control, "pam_session_id", ""),
+        getattr(control, "tunnel_id", ""),
+        getattr(control, "resource_handle", ""),
+    )
+    setattr(session, "shutdown_initiated", True)
+    setattr(signal_handler, "shutdown_initiated", True)
+    pam_state_bridge.publish_stopping(session)
+    _signal_pam_shutdown_events(session)
+    try:
+        logging.info(
+            "Closing Commander PAM tunnel for Vault-origin shutdown signal: "
+            "matched_tube_id=%s session_pam_session_id=%s session_resource=%s",
+            tube_id,
+            getattr(session, "conversation_id", ""),
+            getattr(session, "record_uid", ""),
+        )
+        try:
+            already_gone = hasattr(tube_registry, "tube_found") and not tube_registry.tube_found(tube_id)
+        except Exception as err:
+            already_gone = "not found" in str(err).lower()
+        if already_gone:
+            unregister_tunnel_session(tube_id)
+            logging.info("Commander PAM tunnel was already stopped: matched_tube_id=%s", tube_id)
+            return True, "already_stopped"
+        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+        signal_handler.tube_close_initiated = True
+        if not _wait_for_tube_closed(tube_registry, tube_id):
+            pam_state_bridge.publish_error(
+                session,
+                {
+                    "code": "vault_origin_stop_close_timeout",
+                    "kind": "timeout",
+                    "message": "Commander issued close_tube but the tube did not report closed",
+                },
+            )
+            logging.warning(
+                "Vault-origin PAM shutdown signal did not observe Commander tunnel closure: "
+                "matched_tube_id=%s",
+                tube_id,
+            )
+            return False, "Commander issued close_tube but the tube did not report closed"
+    except Exception as err:
+        if "not found" in str(err).lower():
+            unregister_tunnel_session(tube_id)
+            logging.info("Commander PAM tunnel was already stopped: matched_tube_id=%s", tube_id)
+            return True, "already_stopped"
+        pam_state_bridge.publish_error(
+            session,
+            {
+                "code": "vault_origin_stop_close_failed",
+                "kind": "internal_error",
+                "message": str(err),
+            },
+        )
+        logging.warning(
+            "Vault-origin PAM shutdown signal failed to close Commander tunnel: "
+            "matched_tube_id=%s error=%s",
+            tube_id,
+            err,
+        )
+        return False, f"Commander failed to close matching PAM tunnel: {err}"
+    foreground_shutdown = getattr(session, "foreground_shutdown_event", None)
+    if foreground_shutdown:
+        foreground_shutdown.set()
+    external_shutdown = getattr(session, "external_shutdown_event", None)
+    if external_shutdown:
+        external_shutdown.set()
+    return True, "fallback_close_executed"
+
+
+_PAM_STOP_CONTROL_HANDLER_REGISTERED = False
+
+
+def register_pam_stop_control_handler():
+    global _PAM_STOP_CONTROL_HANDLER_REGISTERED
+    if _PAM_STOP_CONTROL_HANDLER_REGISTERED:
+        return
+    pam_state_bridge.register_control_handler(_handle_pam_stop_control)
+    _PAM_STOP_CONTROL_HANDLER_REGISTERED = True
+
+
 def generate_random_bytes(pass_length=RANDOM_LENGTH):  # type: (int) -> bytes
     # Generate random bytes without worrying about character decoding
     random_bytes = secrets.token_bytes(pass_length)
@@ -887,8 +1174,8 @@ def get_gateway_uid_from_record(params, vault, record_uid):
         record = vault.KeeperRecord.load(params, pam_config_uid)
         if record:
             field = record.get_typed_field('pamResources')
-            value = field.get_default_value(dict)
-            if value:
+            value = field.get_default_value(dict) if field else None
+            if isinstance(value, dict):
                 gateway_uid = value.get('controllerUid', '') or ''
 
         # Fallback: ask server for controller when config record has no local controllerUid
@@ -936,14 +1223,14 @@ def remove_field(record, field): # type: (vault.TypedRecord, vault.TypedField) -
                 (not field.label or
                 (x.label and field.label.casefold() == x.label.casefold()))), None)
     if fld is not None:
-        record.fields.remove(field)
+        record.fields.remove(fld)
         return True
 
     fld = next((x for x in record.custom if field.type == x.type and
                 (not field.label or
                 (x.label and field.label.casefold() == x.label.casefold()))), None)
     if fld is not None:
-        record.custom.remove(field)
+        record.custom.remove(fld)
         return True
 
     return False
@@ -1589,6 +1876,25 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
     tunnel_session.websocket_stop_event = threading.Event()
 
     # Start a dedicated WebSocket listener thread for this tunnel
+    def _close_dedicated_loop(loop):
+        try:
+            pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            if pending_tasks:
+                for task in pending_tasks:
+                    task.cancel()
+                loop.run_until_complete(
+                    asyncio.gather(*pending_tasks, return_exceptions=True)
+                )
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception as err:
+            logging.debug("Error while cleaning up dedicated WebSocket event loop: %s", err)
+        finally:
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
+            loop.close()
+
     def run_dedicated_websocket():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1603,7 +1909,7 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
         except Exception as e:
             logging.error(f"Dedicated WebSocket listener error for tunnel {tunnel_session.tube_id}: {e}")
         finally:
-            loop.close()
+            _close_dedicated_loop(loop)
             logging.debug(f"Dedicated WebSocket closed for tunnel {tunnel_session.tube_id}")
 
     tunnel_session.websocket_thread = threading.Thread(
@@ -1666,7 +1972,8 @@ class TunnelSignalHandler:
         self.tube_id = tube_id
         self.trickle_ice = trickle_ice
         self.silent = silent  # Suppress connection-established display (probe/stress mode)
-        self.tube_close_initiated = False  # Set when Rust initiates close (AdminClosed/Normal); skip redundant cleanup close_tube call
+        self.tube_close_initiated = False  # Set when close is already initiated; skip redundant cleanup close_tube call
+        self.shutdown_initiated = False  # Set during local or remote shutdown to suppress late ICE traffic
         self.connection_success_shown = False  # Track if we've shown success messages
         self.connection_connected = False  # Track if WebRTC connection is established
         self.ice_sending_in_progress = False  # Serialize ICE candidate sending
@@ -1686,6 +1993,12 @@ class TunnelSignalHandler:
         # WebSocket routing is handled automatically - no setup needed
         if trickle_ice and not WEBSOCKETS_AVAILABLE:
             raise Exception("Trickle ICE requires WebSocket support - install with: pip install websockets")
+
+    def _is_shutdown_initiated(self, tube_id=None):
+        if self.shutdown_initiated or self.tube_close_initiated:
+            return True
+        session = get_tunnel_session(tube_id or self.tube_id) if (tube_id or self.tube_id) else None
+        return bool(getattr(session, "shutdown_initiated", False))
 
     def signal_from_rust(self, response: dict):
         """Signal callback to handle Rust events and gateway communication.
@@ -1721,9 +2034,13 @@ class TunnelSignalHandler:
                     f"No tunnel session found for tube {tube_id} while handling signal '{signal_kind}'"
                 )
 
+        if signal_kind in {"icecandidate", "ice_restart_request", "ice_restart_offer"} and self._is_shutdown_initiated(tube_id):
+            logging.debug(f"Skipping {signal_kind} for tube {tube_id} because tunnel shutdown is in progress")
+            return
+
         # Handle local connection state changes
         if signal_kind == 'connection_state_changed':
-            new_state = data.lower()
+            new_state = str(data or "unknown").lower()
             logging.debug(f"Connection state changed for tube {tube_id}: {new_state}")
 
             # Detailed logging for specific states
@@ -1743,6 +2060,11 @@ class TunnelSignalHandler:
                 # CRITICAL: Mark connection as connected - IMMEDIATELY stop sending ICE candidates
                 self.connection_connected = True
                 self.ice_sending_in_progress = False  # Stop any pending ICE candidate sends
+                pam_state_bridge.publish_tunnel_session_event(
+                    session,
+                    "pam_session_heartbeat",
+                    "active",
+                )
 
                 if not self.connection_success_shown:
                     self.connection_success_shown = True
@@ -1793,6 +2115,7 @@ class TunnelSignalHandler:
                 if tube_id:
                     session = get_tunnel_session(tube_id)
                     if session:
+                        pam_state_bridge.publish_stopped(session)
                         if hasattr(session, 'signal_handler') and session.signal_handler:
                             session.signal_handler.cleanup()
                         if session.websocket_stop_event and session.websocket_thread:
@@ -1836,6 +2159,15 @@ class TunnelSignalHandler:
                 # Handle based on reason type
                 if close_reason.is_critical():
                     logging.error(f"{bcolors.FAIL}Tunnel closed due to critical failure - '{tube_id}': {close_reason.name}{bcolors.ENDC}")
+                    if session:
+                        pam_state_bridge.publish_error(
+                            session,
+                            {
+                                "code": close_reason.name.lower(),
+                                "kind": "launch_failed",
+                                "message": close_reason.name,
+                            },
+                        )
 
                 elif close_reason.is_user_initiated():
                     # Rust is already handling the close — skip redundant close_tube in cleanup()
@@ -1857,6 +2189,7 @@ class TunnelSignalHandler:
                 # Get session before unregistering to access signal handler
                 session = get_tunnel_session(tube_id)
                 if session:
+                    pam_state_bridge.publish_stopped(session)
                     # Cleanup signal handler (conversation keys)
                     if hasattr(session, 'signal_handler') and session.signal_handler:
                         session.signal_handler.cleanup()
@@ -1880,10 +2213,18 @@ class TunnelSignalHandler:
             error_msg = data if data else 'Unknown error'
             logging.error(f"Tunnel error for {tube_id}: {error_msg}")
             # Clean up on error as well
-            if tube_id and data.lower() in ["failed", "closed"]:
+            if tube_id and str(data or "").lower() in ["failed", "closed"]:
                 # Get session before unregistering to access signal handler
                 session = get_tunnel_session(tube_id)
                 if session:
+                    pam_state_bridge.publish_error(
+                        session,
+                        {
+                            "code": "tunnel_error",
+                            "kind": "launch_failed",
+                            "message": error_msg,
+                        },
+                    )
                     # Cleanup signal handler (conversation keys)
                     if hasattr(session, 'signal_handler') and session.signal_handler:
                         session.signal_handler.cleanup()
@@ -2050,6 +2391,19 @@ class TunnelSignalHandler:
             return (-priority_score, candidate_type)
 
         return sorted(candidates, key=priority_key)
+
+    def _build_streaming_router_kwargs(self):
+        kwargs = {}
+        if self.trickle_ice and self._router_transmission_key is not None:
+            kwargs = {
+                "transmission_key": self._router_transmission_key,
+                "encrypted_transmission_key": self._router_encrypted_transmission_key,
+                "encrypted_session_token": self._router_encrypted_session_token,
+            }
+        if self.trickle_ice and getattr(self, "_http_session", None) is not None:
+            kwargs["http_session"] = self._http_session
+        return kwargs
+
     def _send_ice_candidate_immediately(self, candidate_data, tube_id=None):
         """Send a single ICE candidate immediately via HTTP POST to /send_controller_message
 
@@ -2058,6 +2412,10 @@ class TunnelSignalHandler:
 
         Serializes sending to prevent parallel sends and stops immediately if connection is established.
         """
+        if self._is_shutdown_initiated(tube_id):
+            logging.debug(f"Skipping ICE candidate send - shutdown is in progress for tube {tube_id}")
+            return
+
         # CRITICAL: Double-check connection state before sending (connection might have been established)
         if self.connection_connected:
             logging.debug(f"Skipping ICE candidate send - connection already established")
@@ -2076,16 +2434,7 @@ class TunnelSignalHandler:
 
             logging.debug(f"Sending ICE candidate to gateway immediately")
 
-            # Use same router tokens and session as WebSocket when streaming (ALB stickiness)
-            ice_kwargs = {}
-            if self.trickle_ice and self._router_transmission_key is not None:
-                ice_kwargs = {
-                    "transmission_key": self._router_transmission_key,
-                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
-                    "encrypted_session_token": self._router_encrypted_session_token,
-                }
-            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
-                ice_kwargs["http_session"] = self._http_session
+            ice_kwargs = self._build_streaming_router_kwargs()
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -2127,6 +2476,8 @@ class TunnelSignalHandler:
             else:
                 # Other errors - log at error level
                 logging.error(f"Failed to send ICE candidate via HTTP: {e}")
+        finally:
+            self.ice_sending_in_progress = False
 
     def _send_ice_candidates_batch(self, candidates_list, tube_id=None):
         """Send multiple ICE candidates in a single HTTP POST.
@@ -2148,6 +2499,10 @@ class TunnelSignalHandler:
         if not candidates_list:
             return
 
+        if self._is_shutdown_initiated(tube_id):
+            logging.debug(f"Skipping ICE candidate batch send - shutdown is in progress for tube {tube_id}")
+            return
+
         # CRITICAL: Double-check connection state before sending (connection might have been established)
         if self.connection_connected:
             logging.debug(f"Skipping ICE candidate batch send - connection already established")
@@ -2166,16 +2521,7 @@ class TunnelSignalHandler:
 
             logging.debug(f"Sending {len(candidates_list)} ICE candidates to gateway in one batch")
 
-            # Use same router tokens and session as WebSocket when streaming (ALB stickiness)
-            ice_kwargs = {}
-            if self.trickle_ice and self._router_transmission_key is not None:
-                ice_kwargs = {
-                    "transmission_key": self._router_transmission_key,
-                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
-                    "encrypted_session_token": self._router_encrypted_session_token,
-                }
-            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
-                ice_kwargs["http_session"] = self._http_session
+            ice_kwargs = self._build_streaming_router_kwargs()
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -2217,12 +2563,18 @@ class TunnelSignalHandler:
                 logging.debug(f"Bad state when sending ICE candidate batch: {e}")
             else:
                 logging.error(f"Failed to send ICE candidate batch via HTTP: {e}")
+        finally:
+            self.ice_sending_in_progress = False
 
     def _send_restart_offer(self, restart_sdp, tube_id):
         """Send ICE restart offer via HTTP POST to /send_controller_message with encryption
 
         Similar to _send_ice_candidate_immediately but sends an offer instead of candidates.
         """
+        if self._is_shutdown_initiated(tube_id):
+            logging.debug(f"Skipping ICE restart offer send - shutdown is in progress for tube {tube_id}")
+            return
+
         try:
             # Format as offer payload for gateway.
             # restart_sdp arrives base64-encoded from Rust (API contract), but the payload
@@ -2240,15 +2592,7 @@ class TunnelSignalHandler:
 
             logging.debug(f"Sending ICE restart offer to gateway for tube {tube_id}")
 
-            restart_kwargs = {}
-            if self.trickle_ice and self._router_transmission_key is not None:
-                restart_kwargs = {
-                    "transmission_key": self._router_transmission_key,
-                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
-                    "encrypted_session_token": self._router_encrypted_session_token,
-                }
-            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
-                restart_kwargs["http_session"] = self._http_session
+            restart_kwargs = self._build_streaming_router_kwargs()
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -2462,6 +2806,8 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             target_host=target_host,
             target_port=target_port
         )
+        from ..tunnel_lifecycle import apply_tunnel_ownership
+        apply_tunnel_ownership(tunnel_session, params)
 
         # Register the temporary session so ICE candidates can be buffered immediately
         register_tunnel_session(temp_tube_id, tunnel_session)
@@ -2527,6 +2873,14 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             if offer:
                 error_msg = offer.get('error', error_msg)
             # Clean up temporary session on failure
+            pam_state_bridge.publish_error(
+                tunnel_session,
+                {
+                    "code": "create_tube_failed",
+                    "kind": "launch_failed",
+                    "message": error_msg,
+                },
+            )
             unregister_tunnel_session(temp_tube_id)
             return {"success": False, "error": error_msg}
 
@@ -2580,6 +2934,14 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
                 if not websocket_ready:
                     logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
+                    pam_state_bridge.publish_error(
+                        tunnel_session,
+                        {
+                            "code": "websocket_timeout",
+                            "kind": "transport_error",
+                            "message": "WebSocket connection timeout",
+                        },
+                    )
                     signal_handler.cleanup()
                     unregister_tunnel_session(commander_tube_id)
                     return {"success": False, "error": "WebSocket connection timeout"}
@@ -2594,6 +2956,14 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 logging.debug("Backend conversation registration delay complete")
             else:
                 logging.error("No WebSocket ready event available for tunnel")
+                pam_state_bridge.publish_error(
+                    tunnel_session,
+                    {
+                        "code": "websocket_event_missing",
+                        "kind": "internal_error",
+                        "message": "WebSocket event not initialized",
+                    },
+                )
                 signal_handler.cleanup()
                 unregister_tunnel_session(commander_tube_id)
                 return {"success": False, "error": "WebSocket event not initialized"}
@@ -2713,6 +3083,14 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                         logging.error("This may indicate network issues or backend problems")
 
                     logging.error(f"Failed to send offer via HTTP: {error_msg}")
+                    pam_state_bridge.publish_error(
+                        tunnel_session,
+                        {
+                            "code": "send_offer_failed",
+                            "kind": "transport_error" if is_bad_state else "launch_failed",
+                            "message": error_msg,
+                        },
+                    )
 
                     # Cleanup on final failure
                     logging.debug(f"Cleaning up failed tunnel {commander_tube_id}")
@@ -2801,6 +3179,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         )
 
         logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}gathering candidates...")
+        pam_state_bridge.publish_started(tunnel_session)
 
         return {
             "success": True,
@@ -2814,8 +3193,34 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             "local_port": tunnel_session.port,  # Actual bound port (may differ from requested)
         }
 
+    except KeyboardInterrupt:
+        logging.info("Tunnel start canceled by user")
+        if 'conversation_id_original' in locals() and conversation_id_original:
+            unregister_conversation_key(conversation_id_original)
+            standard_conversation_id = conversation_id_original.replace('-', '+').replace('_', '/')
+            padding_needed = (4 - len(standard_conversation_id) % 4) % 4
+            if padding_needed:
+                standard_conversation_id += '=' * padding_needed
+            if standard_conversation_id != conversation_id_original:
+                unregister_conversation_key(standard_conversation_id)
+        if 'signal_handler' in locals():
+            signal_handler.cleanup()
+        if 'commander_tube_id' in locals():
+            unregister_tunnel_session(commander_tube_id)
+        if 'temp_tube_id' in locals():
+            unregister_tunnel_session(temp_tube_id)
+        raise
     except Exception as e:
         logging.error(f"Error in start_rust_tunnel: {e}")
+        if 'tunnel_session' in locals():
+            pam_state_bridge.publish_error(
+                tunnel_session,
+                {
+                    "code": "start_rust_tunnel_failed",
+                    "kind": "launch_failed",
+                    "message": str(e),
+                },
+            )
         # Clean up if needed
         if 'conversation_id_original' in locals() and conversation_id_original:
             unregister_conversation_key(conversation_id_original)

@@ -107,6 +107,10 @@ def register_tunnel(
     target_port=None,
     mode='foreground',
     record_title=None,
+    owning_account_uid=None,
+    owning_context=None,
+    pam_session_id=None,
+    conversation_id=None,
 ):
     """Write a JSON file for an active tunnel so other processes can see it.
 
@@ -146,8 +150,14 @@ def register_tunnel(
         'target_port': target_port,
         'mode': mode,
         'record_title': record_title,
+        'owning_account_uid': owning_account_uid,
+        'owning_context': owning_context,
         'started': time.strftime('%Y-%m-%d %H:%M:%S'),
     }
+    session_id = pam_session_id or conversation_id
+    if session_id:
+        data['pam_session_id'] = session_id
+        data['conversation_id'] = session_id
     tmp_path = path.with_suffix('.json.tmp')
     try:
         with open(tmp_path, 'w', encoding='utf-8') as f:

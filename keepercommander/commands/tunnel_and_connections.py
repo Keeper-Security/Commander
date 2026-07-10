@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import platform
+import shlex
 import signal
 import socket
 import ssl
@@ -35,6 +36,17 @@ from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, 
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
     wait_for_tunnel_connection, create_rust_webrtc_settings, \
     print_above_keeper_prompt
+from .tunnel import pam_state_bridge
+from .tunnel.tunnel_lifecycle import (
+    build_tunnel_ownership,
+    close_tube_idempotently,
+    iter_visible_in_process_tunnels,
+    iter_visible_registry_tunnels,
+    resolve_active_tunnel_scope,
+    tunnel_matches_scope,
+    tunnel_ownership_from_mapping,
+    tunnel_ownership_from_session,
+)
 from .pam.router_helper import get_dag_leafs
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
@@ -119,6 +131,31 @@ class PAMRbiCommand(GroupCommand):
         self.default_verb = 'edit'
 
 
+def _vault_owned_ssh_agent_guidance(projections):
+    lines = []
+    seen = set()
+    for projection in projections:
+        if projection.get('authn_hint') != 'desktop_ssh_agent':
+            continue
+        if projection.get('ssh_agent_available') is not True:
+            continue
+        endpoint = projection.get('ssh_agent_endpoint')
+        if not endpoint:
+            continue
+        endpoint_kind = projection.get('ssh_agent_endpoint_kind') or 'unix_socket'
+        key = (endpoint_kind, endpoint)
+        if key in seen:
+            continue
+        seen.add(key)
+        if endpoint_kind == 'unix_socket':
+            lines.append(f"Keeper Desktop SSH Agent: export SSH_AUTH_SOCK={shlex.quote(str(endpoint))}")
+        elif endpoint_kind == 'windows_named_pipe':
+            lines.append(f"Keeper Desktop SSH Agent: OpenSSH named pipe {endpoint}")
+        else:
+            lines.append(f"Keeper Desktop SSH Agent: endpoint {endpoint}")
+    return lines
+
+
 # Individual Commands
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
@@ -134,11 +171,9 @@ class PAMTunnelListCommand(Command):
         tube_registry = get_or_create_tube_registry(params)
         in_process_tube_ids = set()
         if tube_registry and tube_registry.has_active_tubes():
-            tube_ids = tube_registry.all_tube_ids()
-            for tube_id in tube_ids:
+            for _owner_params, scoped_registry, tube_id, tunnel_session in iter_visible_in_process_tunnels(params):
                 in_process_tube_ids.add(tube_id)
-                conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
-                tunnel_session = get_tunnel_session(tube_id)
+                conversation_ids = scoped_registry.get_conversation_ids_by_tube_id(tube_id)
 
                 record_title = tunnel_session.record_title if tunnel_session and tunnel_session.record_title else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
@@ -155,7 +190,7 @@ class PAMTunnelListCommand(Command):
                 conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
 
                 try:
-                    state = tube_registry.get_connection_state(tube_id)
+                    state = scoped_registry.get_connection_state(tube_id)
                     status_color = f"{bcolors.OKGREEN}" if state.lower() == "connected" else f"{bcolors.WARNING}"
                     status = f"{status_color}{state}{bcolors.ENDC}"
                 except Exception:
@@ -164,7 +199,7 @@ class PAMTunnelListCommand(Command):
                 table.append([record_title, remote_target, local_addr, tube_id, conv_id, status])
 
         # Cross-process tunnels from the file-based registry
-        for entry in list_registered_tunnels():
+        for entry in iter_visible_registry_tunnels(params):
             if entry.get('tube_id') in in_process_tube_ids:
                 continue
             pid = entry.get('pid')
@@ -180,11 +215,50 @@ class PAMTunnelListCommand(Command):
             status = f"{bcolors.OKGREEN}{mode} (PID {pid}){bcolors.ENDC}"
             table.append([rec, remote, local, tid, '', status])
 
+        # Vault-owned sessions projected over the approved KDBC state-sync stream.
+        # These are read-only external projections: Commander does not own a
+        # local Rust tube, PID, or listener for them.
+        if getattr(params, 'via_desktop_login', False) is True:
+            pam_state_bridge.start_state_sync_worker(params)
+        waited_projections = pam_state_bridge.wait_for_external_projections(timeout_seconds=12)
+        active_scope = resolve_active_tunnel_scope(params)
+        external_projections = [
+            projection for projection in waited_projections
+            if tunnel_matches_scope(
+                tunnel_ownership_from_mapping(projection),
+                active_scope,
+                params=params,
+                # Vault-owned projections are already scoped by the approved
+                # Desktop state-sync stream. They must still be visible if
+                # Commander has not downloaded the underlying PAM record.
+                record_uid=None,
+            )
+        ]
+        for projection in external_projections:
+            endpoint = projection.get('local_endpoint') or {}
+            if endpoint.get('host') and endpoint.get('port'):
+                local = f"{bcolors.OKBLUE}{endpoint.get('host')}:{endpoint.get('port')} (external){bcolors.ENDC}"
+            else:
+                local = f"{bcolors.WARNING}external{bcolors.ENDC}"
+            status = projection.get('state') or 'unknown'
+            if projection.get('owner_stop_pending'):
+                status = f"{status} (owner stop pending)"
+            table.append([
+                projection.get('resource_handle') or '?',
+                f"{bcolors.WARNING}Vault-owned{bcolors.ENDC}",
+                local,
+                projection.get('tunnel_id') or '',
+                projection.get('pam_session_id') or '',
+                f"{bcolors.OKBLUE}Vault-owned external: {status}{bcolors.ENDC}",
+            ])
+
         if not table:
             logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
 
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+        for line in _vault_owned_ssh_agent_guidance(external_projections):
+            print(f"{bcolors.OKBLUE}{line}{bcolors.ENDC}")
 
 
 class PAMTunnelStopCommand(Command):
@@ -219,10 +293,22 @@ class PAMTunnelStopCommand(Command):
         if not tube_registry:
             raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
 
+        active_scope = resolve_active_tunnel_scope(params)
+
         # Find matching tubes by tunnel ID (tube_id)
         matching_tubes = tube_registry.find_tubes(uid)
         if not matching_tubes and tube_registry.tube_found(uid):
             matching_tubes = [uid]
+
+        matching_tubes = [
+            tube_id for tube_id in matching_tubes
+            if tunnel_matches_scope(
+                tunnel_ownership_from_session(get_tunnel_session(tube_id)),
+                active_scope,
+                params=params,
+                record_uid=getattr(get_tunnel_session(tube_id), 'record_uid', None),
+            )
+        ]
 
         # If not found by tunnel ID, try looking up by conversation ID
         if not matching_tubes:
@@ -248,13 +334,28 @@ class PAMTunnelStopCommand(Command):
             if tube_id:
                 matching_tubes = [tube_id]
 
+        external_projection = pam_state_bridge.find_external_projection(uid)
+        if external_projection and not matching_tubes:
+            requested, message = pam_state_bridge.request_owner_stop(external_projection)
+            if requested:
+                print(
+                    f"{bcolors.OKBLUE}Requested Vault/Desktop to stop external tunnel; waiting for owner result: "
+                    f"{external_projection.get('tunnel_id') or uid}"
+                    f" ({message}){bcolors.ENDC}"
+                )
+                return
+            raise CommandError('tunnel stop', message)
+
         # Fall back to file-based registry (cross-process tunnels)
         if not matching_tubes:
-            for entry in list_registered_tunnels():
+            for entry in iter_visible_registry_tunnels(params):
                 if uid in (entry.get('tube_id', ''), entry.get('record_uid', ''),
                            entry.get('record_title', '')):
                     pid = entry.get('pid')
-                    if pid and is_pid_alive(pid):
+                    if pid and not is_pid_alive(pid):
+                        unregister_tunnel(pid)
+                        print(f"{bcolors.OKGREEN}Tunnel was already stopped; removed stale registry entry for PID {pid}{bcolors.ENDC}")
+                    elif pid and is_pid_alive(pid):
                         if stop_tunnel_process(pid):
                             print(f"{bcolors.OKGREEN}Sent stop signal to tunnel process "
                                   f"(PID {pid}, {entry.get('mode', '?')} mode){bcolors.ENDC}")
@@ -283,50 +384,39 @@ class PAMTunnelStopCommand(Command):
         # Close all matching tubes
         stopped_count = 0
         for tube_id in matching_tubes:
-            try:
-                tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
+            session = get_tunnel_session(tube_id)
+            pam_state_bridge.publish_stopping(session)
+            ok, message = close_tube_idempotently(tube_registry, tube_id, session)
+            if ok:
+                suffix = " (already stopped)" if message == 'already_stopped' else ""
+                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{suffix}{bcolors.ENDC}")
                 stopped_count += 1
-            except Exception as e:
-                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
+            else:
+                pam_state_bridge.publish_error(
+                    session,
+                    {
+                        "code": "local_stop_failed",
+                        "kind": "internal_error",
+                        "message": message,
+                    },
+                )
+                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {message}{bcolors.ENDC}")
 
         if stopped_count == 0:
             raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
 
     def _stop_all_tunnels(self, params):
         """Stop all active tunnels (in-process and cross-process)."""
-        stopped_count = 0
-        failed_count = 0
+        from .tunnel.tunnel_lifecycle import stop_all_active_pam_tunnels
 
-        # In-process tunnels
-        tube_registry = get_or_create_tube_registry(params)
-        if tube_registry:
-            all_tube_ids = tube_registry.all_tube_ids()
-            if all_tube_ids:
-                print(f"{bcolors.WARNING}Stopping {len(all_tube_ids)} in-process tunnel(s):{bcolors.ENDC}")
-                for tube_id in all_tube_ids:
-                    try:
-                        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-                        print(f"  {bcolors.OKGREEN}Stopped: {tube_id}{bcolors.ENDC}")
-                        stopped_count += 1
-                    except Exception as e:
-                        print(f"  {bcolors.FAIL}Failed: {tube_id}: {e}{bcolors.ENDC}")
-                        failed_count += 1
+        from .tunnel.tunnel_lifecycle import collect_session_tunnel_params
 
-        # Cross-process tunnels from file registry
-        registered = list_registered_tunnels()
-        if registered:
-            print(f"{bcolors.WARNING}Stopping {len(registered)} external tunnel(s):{bcolors.ENDC}")
-            for entry in registered:
-                pid = entry.get('pid')
-                if stop_tunnel_process(pid):
-                    print(f"  {bcolors.OKGREEN}Sent stop signal to PID {pid} "
-                          f"({entry.get('mode', '?')} mode, {entry.get('host')}:{entry.get('port')}){bcolors.ENDC}")
-                    stopped_count += 1
-                else:
-                    print(f"  {bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
-                    failed_count += 1
-                    unregister_tunnel(pid)
+        stopped_count, failed_count = stop_all_active_pam_tunnels(
+            collect_session_tunnel_params(params),
+            verbose=True,
+            reason='user_stop',
+            scope=resolve_active_tunnel_scope(params),
+        )
 
         if stopped_count == 0 and failed_count == 0:
             print(f"{bcolors.WARNING}No active tunnels to stop.{bcolors.ENDC}")
@@ -788,6 +878,32 @@ class PAMTunnelStartCommand(Command):
         pam_settings_value = pam_settings.get_default_value() if pam_settings else {}
         allow_supply_host = pam_settings_value.get('allowSupplyHost', False) if isinstance(pam_settings_value, dict) else False
 
+        external_projection = pam_state_bridge.find_external_projection_for_resource(record_uid)
+        if external_projection and getattr(params, 'via_desktop_login', False) is not True:
+            stop_pending = bool(external_projection.get('owner_stop_pending'))
+            if stop_pending:
+                print(
+                    f"{bcolors.WARNING}A Vault-owned tunnel stop is pending for record "
+                    f"{record_uid}.{bcolors.ENDC}"
+                )
+                control_id = external_projection.get('owner_stop_control_id')
+                if control_id:
+                    print(f"{bcolors.OKBLUE}Owner stop control ID: {control_id}{bcolors.ENDC}")
+            else:
+                print(
+                    f"{bcolors.WARNING}A Vault-owned tunnel is already active for record "
+                    f"{record_uid}.{bcolors.ENDC}"
+                )
+            print(
+                f"{bcolors.WARNING}Commander only has an external projection "
+                f"for this session in the current state-sync connection. Stop it "
+                f"from Vault/Desktop, or wait for the owner stop result, before "
+                f"launching a duplicate tunnel.{bcolors.ENDC}"
+            )
+            if external_projection.get('tunnel_id'):
+                print(f"{bcolors.OKBLUE}External tunnel ID: {external_projection.get('tunnel_id')}{bcolors.ENDC}")
+            return
+
         # --proxy: KeeperDB Proxy mode (gateway substitutes credentials from vault).
         # This is a Commander-side validator/declaration; the gateway currently
         # auto-routes pamDatabase + allowKeeperDBProxy to the proxy regardless of
@@ -918,6 +1034,25 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Gateway not found for record {record_uid}.{bcolors.ENDC}")
             return
 
+        if getattr(params, 'via_desktop_login', False) is True:
+            print(f"{bcolors.OKBLUE}Requesting Vault approval for PAM tunnel start...{bcolors.ENDC}")
+            approved, approval_message = pam_state_bridge.request_start_tunnel_approval(
+                params=params,
+                resource_handle=record_uid,
+                resource_title=record.title,
+                purpose=kwargs.get('workflow_reason') or 'Open PAM tunnel',
+                local_host=host or '127.0.0.1',
+                local_port=port,
+            )
+            if not approved:
+                if pam_state_bridge.is_duplicate_active_approval_message(approval_message):
+                    message = pam_state_bridge.approval_message_display_text(approval_message)
+                    raise CommandError('', f"{bcolors.WARNING}{message}{bcolors.ENDC}")
+                raise CommandError(
+                    'tunnel start',
+                    pam_state_bridge.approval_message_display_text(approval_message),
+                )
+
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
 
@@ -1031,7 +1166,20 @@ class PAMTunnelStartCommand(Command):
                       f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
             return
 
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
+        print(
+            f"{bcolors.OKBLUE}Vault approval received. Establishing tunnel "
+            f"(press Ctrl-C to cancel)...{bcolors.ENDC}"
+        )
+        try:
+            result = start_rust_tunnel(
+                params, record_uid, gateway_uid, host, port, seed, target_host,
+                target_port, socks, trickle_ice, record.title,
+                allow_supply_host=allow_supply_host,
+                two_factor_value=two_factor_value,
+            )
+        except KeyboardInterrupt:
+            print(f"\n{bcolors.WARNING}Tunnel start canceled.{bcolors.ENDC}")
+            return
 
         if result and result.get("success"):
             # When --proxy was used, print the KeeperDB Proxy info banner once.
@@ -1120,9 +1268,13 @@ class PAMTunnelStartCommand(Command):
                     return
 
                 try:
-                    register_tunnel(os.getpid(), record_uid, run_tube_id, host, port,
-                                    target_host, target_port, mode='run',
-                                    record_title=record.title if record else None)
+                    register_tunnel(
+                        os.getpid(), record_uid, run_tube_id, host, port,
+                        target_host, target_port, mode='run',
+                        record_title=record.title if record else None,
+                        pam_session_id=result.get("conversation_id"),
+                        **build_tunnel_ownership(params),
+                    )
                 except CommandError as reg_err:
                     print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
                     if run_tube_registry and run_tube_id:
@@ -1165,6 +1317,26 @@ class PAMTunnelStartCommand(Command):
 
             elif foreground:
                 if not params.batch_mode:
+                    fg_tube_id = result.get("tube_id")
+                    fg_tube_registry = result.get("tube_registry")
+                    try:
+                        register_tunnel(
+                            os.getpid(), record_uid, fg_tube_id, host, port,
+                            target_host, target_port, mode='interactive',
+                            record_title=record.title if record else None,
+                            pam_session_id=result.get("conversation_id"),
+                            **build_tunnel_ownership(params),
+                        )
+                    except CommandError as reg_err:
+                        print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
+                        if fg_tube_registry and fg_tube_id:
+                            try:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            except Exception:
+                                pass
+                        return
+
                     print(f"\n{bcolors.OKBLUE}Note: --foreground is not needed inside the interactive shell.{bcolors.ENDC}")
                     print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
                     print(f"{bcolors.OKBLUE}Use 'pam tunnel list' to see active tunnels, 'pam tunnel stop' to stop them.{bcolors.ENDC}\n")
@@ -1216,9 +1388,16 @@ class PAMTunnelStartCommand(Command):
                             pid_file = None
 
                     try:
-                        register_tunnel(os.getpid(), record_uid, fg_tube_id, host, port,
-                                        target_host, target_port, mode='foreground',
-                                        record_title=record.title if record else None)
+                        register_tunnel(
+                            os.getpid(), record_uid, fg_tube_id, host, port,
+                            target_host, target_port, mode='foreground',
+                            record_title=record.title if record else None,
+                            pam_session_id=result.get("conversation_id"),
+                            **build_tunnel_ownership(params),
+                        )
+                        fg_session = get_tunnel_session(fg_tube_id) if fg_tube_id else None
+                        if fg_session:
+                            fg_session.foreground_shutdown_event = fg_shutdown
                     except CommandError as reg_err:
                         print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
                         signal.signal(signal.SIGTERM, prev_sigterm)
@@ -1253,6 +1432,9 @@ class PAMTunnelStartCommand(Command):
                     finally:
                         _LEASE_SHUTDOWN_EVENTS_BY_RECORD.pop(record_uid, None)
                         unregister_tunnel()
+                        fg_session = get_tunnel_session(fg_tube_id) if fg_tube_id else None
+                        if fg_session and getattr(fg_session, "foreground_shutdown_event", None) is fg_shutdown:
+                            fg_session.foreground_shutdown_event = None
                         signal.signal(signal.SIGTERM, prev_sigterm)
                         signal.signal(signal.SIGINT, prev_sigint)
                         if prev_sighup is not None:
@@ -1267,13 +1449,41 @@ class PAMTunnelStartCommand(Command):
                                 stop_cmd.execute(params, uid=record_uid)
                             print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
                         except Exception as fg_err:
-                            logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
+                            if fg_tube_id and "Tube not found" in str(fg_err):
+                                logging.debug(
+                                    "Foreground tunnel %s was already closed during shutdown: %s",
+                                    fg_tube_id,
+                                    fg_err,
+                                )
+                                print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                            else:
+                                logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
                         finally:
                             if pid_file:
                                 try:
                                     os.remove(pid_file)
                                 except OSError:
                                     pass
+            else:
+                tube_id = result.get("tube_id")
+                tube_registry = result.get("tube_registry")
+                try:
+                    register_tunnel(
+                        os.getpid(), record_uid, tube_id, host, port,
+                        target_host, target_port, mode='interactive',
+                        record_title=record.title if record else None,
+                        pam_session_id=result.get("conversation_id"),
+                        **build_tunnel_ownership(params),
+                    )
+                except CommandError as reg_err:
+                    print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
+                    if tube_registry and tube_id:
+                        try:
+                            tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(tube_id)
+                        except Exception:
+                            pass
+                    return
         else:
             # Print failure message
             error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"
