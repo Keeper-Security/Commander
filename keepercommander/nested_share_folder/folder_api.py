@@ -497,8 +497,6 @@ def _folder_inherits_parent_permissions(params, folder_uid):
 
 def _ensure_folder_direct_permissions(params, folder_uid):
     """Disable parent permission inheritance so folder access changes apply locally.
-
-    Mirrors keepersdk ``ensure_folder_direct_permissions`` (``vault/nsf_common``).
     """
     if not _folder_inherits_parent_permissions(params, folder_uid):
         return False
