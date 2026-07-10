@@ -753,18 +753,30 @@ def _pam_control_registry_match_field(entry, control):
     return None
 
 
-def _wait_for_registry_pid_stopped(pid, is_pid_alive_fn, unregister_tunnel_fn, timeout_seconds=5.0, pid_started_at=None):
+def _wait_for_registry_pid_stopped(
+    pid,
+    is_pid_alive_fn,
+    unregister_tunnel_fn,
+    timeout_seconds=5.0,
+    pid_started_at=None,
+    registry_entry_exists_fn=None,
+):
     deadline = time.monotonic() + timeout_seconds
+    next_pid_check = 0
     while time.monotonic() < deadline:
-        if not is_pid_alive_fn(pid, pid_started_at):
+        if registry_entry_exists_fn and not registry_entry_exists_fn(pid, pid_started_at):
+            return True
+        now = time.monotonic()
+        if now >= next_pid_check and not is_pid_alive_fn(pid, pid_started_at):
             unregister_tunnel_fn(pid)
             return True
+        next_pid_check = now + 1.0
         time.sleep(0.2)
     return False
 
 
 def _stop_pam_control_registry_entry(entry):
-    from ...tunnel_registry import is_pid_alive, stop_tunnel_process, unregister_tunnel
+    from ...tunnel_registry import is_pid_alive, registry_entry_exists, stop_tunnel_process, unregister_tunnel
 
     pid = entry.get("pid")
     if not pid:
@@ -791,7 +803,13 @@ def _stop_pam_control_registry_entry(entry):
             return True, "already_stopped"
         return False, f"Commander failed to signal matching registry tunnel PID {pid}"
 
-    if _wait_for_registry_pid_stopped(pid, is_pid_alive, unregister_tunnel, pid_started_at=pid_started_at):
+    if _wait_for_registry_pid_stopped(
+        pid,
+        is_pid_alive,
+        unregister_tunnel,
+        pid_started_at=pid_started_at,
+        registry_entry_exists_fn=registry_entry_exists,
+    ):
         logging.info("Stopped matching registry PAM tunnel during Vault-origin stop: pid=%s", pid)
         return True, "registry_stop_signal_sent"
 

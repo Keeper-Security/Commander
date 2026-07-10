@@ -183,6 +183,24 @@ def unregister_tunnel(pid=None):
         pass
 
 
+def registry_entry_exists(pid, pid_started_at=None) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    path = tunnel_registry_dir() / f'{pid}.json'
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except OSError:
+        return False
+    except Exception:
+        return False
+    if pid_started_at and data.get('pid_started_at') != pid_started_at:
+        return False
+    return True
+
+
 def process_start_time(pid):
     if os.name == 'nt':
         return None

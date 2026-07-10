@@ -1468,13 +1468,6 @@ def _handle_logout_notice(notice):
     )
 
 
-class _VaultTerminalNotice:
-    reason = "vault_desktop_disconnected"
-    pam_session_id = ""
-    tunnel_id = ""
-    resource_handle = ""
-
-
 def _clear_terminal_via_desktop_session(reason):
     params = _WORKER_PARAMS
     if params is None or getattr(params, "via_desktop_login", False) is not True:
@@ -1624,6 +1617,8 @@ def _state_sync_worker(stop_event=None):
                     _drain_owner_stop_queue(session, kdbc)
                     _publish_periodic_heartbeats(session)
                     frame = session.receive_next_frame(timeout_ms=250)
+                    if stop_event.is_set():
+                        break
                     _handle_frame(session, kdbc, frame)
                 except Exception as err:
                     _handle_vault_terminal_disconnect(err)

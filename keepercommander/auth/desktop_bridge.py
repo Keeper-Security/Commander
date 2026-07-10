@@ -25,6 +25,14 @@ DEFAULT_BRIDGE_TIMEOUT_MS = None
 BRIDGE_LOGIN_TIMEOUT_ENV = 'KDBC_LOGIN_TIMEOUT_MS'
 DEV_BRIDGE_VERIFICATION_POLICY = 'log_only'
 _ALLOWED_VERIFICATION_POLICIES = {'enforce', DEV_BRIDGE_VERIFICATION_POLICY}
+_PRODUCTION_KEEPER_HOST_SUFFIXES = (
+    'keepersecurity.com',
+    'keepersecurity.eu',
+    'keepersecurity.com.au',
+    'keepersecurity.jp',
+    'keepersecurity.ca',
+    'govcloud.keepersecurity.us',
+)
 KDBC_CLIENT_NOT_ENROLLED = 'KDBC_CLIENT_NOT_ENROLLED'
 KDBC_KA_LOGIN_FAILED = 'KDBC_KA_LOGIN_FAILED'
 KDBC_PROTOCOL_ERROR = 'KDBC_PROTOCOL_ERROR'
@@ -814,7 +822,10 @@ def _is_keeper_production_host(server):
     host = _server_hostname(server)
     if not host or _is_keeper_dev_host(host):
         return False
-    return host == 'keepersecurity.com' or host.endswith('.keepersecurity.com')
+    return any(
+        host == suffix or host.endswith(f'.{suffix}')
+        for suffix in _PRODUCTION_KEEPER_HOST_SUFFIXES
+    )
 
 
 def _normalize_verification_policy(server, policy):

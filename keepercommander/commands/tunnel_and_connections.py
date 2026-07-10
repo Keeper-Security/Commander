@@ -79,12 +79,41 @@ _INTERACTIVE_SIGNAL_LOCK = threading.Lock()
 _INTERACTIVE_SIGNAL_EVENT = threading.Event()
 _INTERACTIVE_SIGNAL_WORKER = None
 _INTERACTIVE_SIGNAL_INSTALLED = False
+_INTERACTIVE_PREVIOUS_SIGTERM = None
 _INTERACTIVE_TUNNELS_BY_ID = {}
 
 
-def _interactive_tunnel_signal_handler(_signum, _frame):
+def _restore_interactive_tunnel_signal_handler_unlocked():
+    global _INTERACTIVE_SIGNAL_INSTALLED, _INTERACTIVE_PREVIOUS_SIGTERM
+    if not _INTERACTIVE_SIGNAL_INSTALLED or _INTERACTIVE_TUNNELS_BY_ID:
+        return None
+    previous = _INTERACTIVE_PREVIOUS_SIGTERM
+    signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+    _INTERACTIVE_SIGNAL_INSTALLED = False
+    _INTERACTIVE_PREVIOUS_SIGTERM = None
+    return previous
+
+
+def _delegate_unhandled_sigterm(signum, frame, previous):
+    if callable(previous):
+        previous(signum, frame)
+    elif previous == signal.SIG_IGN:
+        return
+    else:
+        os.kill(os.getpid(), signum)
+
+
+def _interactive_tunnel_signal_handler(signum, frame):
     # SIGTERM carries no tunnel payload. Backup signal handling is therefore
     # coarse: wake a worker to wind down every interactive tunnel in this PID.
+    with _INTERACTIVE_SIGNAL_LOCK:
+        has_tunnels = bool(_INTERACTIVE_TUNNELS_BY_ID)
+        previous = _INTERACTIVE_PREVIOUS_SIGTERM
+    if not has_tunnels:
+        with _INTERACTIVE_SIGNAL_LOCK:
+            previous = _restore_interactive_tunnel_signal_handler_unlocked()
+        _delegate_unhandled_sigterm(signum, frame, previous)
+        return
     _INTERACTIVE_SIGNAL_EVENT.set()
 
 
@@ -129,10 +158,12 @@ def _interactive_tunnel_signal_worker():
             unregister_tunnel()
         except Exception as err:
             logging.debug("Unable to remove current-process PAM tunnel registry after SIGTERM cleanup: %s", err)
+        with _INTERACTIVE_SIGNAL_LOCK:
+            _restore_interactive_tunnel_signal_handler_unlocked()
 
 
 def _install_interactive_tunnel_signal_handler(record_uid, tube_id, tube_registry):
-    global _INTERACTIVE_SIGNAL_WORKER, _INTERACTIVE_SIGNAL_INSTALLED
+    global _INTERACTIVE_SIGNAL_WORKER, _INTERACTIVE_SIGNAL_INSTALLED, _INTERACTIVE_PREVIOUS_SIGTERM
     if platform.system() == 'Windows' or not tube_id or not tube_registry:
         return None
     with _INTERACTIVE_SIGNAL_LOCK:
@@ -148,6 +179,7 @@ def _install_interactive_tunnel_signal_handler(record_uid, tube_id, tube_registr
             )
             _INTERACTIVE_SIGNAL_WORKER.start()
         if not _INTERACTIVE_SIGNAL_INSTALLED:
+            _INTERACTIVE_PREVIOUS_SIGTERM = signal.getsignal(signal.SIGTERM)
             signal.signal(signal.SIGTERM, _interactive_tunnel_signal_handler)
             _INTERACTIVE_SIGNAL_INSTALLED = True
     return _interactive_tunnel_signal_handler

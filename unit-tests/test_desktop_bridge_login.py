@@ -1151,6 +1151,26 @@ class TestDesktopBridgeLogin(TestCase):
 
         self.assertIsNone(config.verification_policy)
 
+    def test_bridge_config_refuses_log_only_environment_on_production_regions(self):
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-[REDACTED_SECRET]'))
+        for server in (
+            'keepersecurity.eu',
+            'keepersecurity.com.au',
+            'keepersecurity.jp',
+            'keepersecurity.ca',
+            'govcloud.keepersecurity.us',
+        ):
+            with self.subTest(server=server), mock.patch.dict(
+                'os.environ',
+                {'KDBC_VERIFICATION_POLICY': 'log_only'},
+                clear=True,
+            ):
+                config = desktop_bridge._build_bridge_config(
+                    bridge_module, KeeperParams(server=server), None, 1234, None,
+                )
+
+            self.assertIsNone(config.verification_policy)
+
     def test_bridge_config_ignores_invalid_environment_policy(self):
         params = KeeperParams(server='keepersecurity.com')
         bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-[REDACTED_SECRET]'))
