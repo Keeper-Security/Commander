@@ -753,10 +753,10 @@ def _pam_control_registry_match_field(entry, control):
     return None
 
 
-def _wait_for_registry_pid_stopped(pid, is_pid_alive_fn, unregister_tunnel_fn, timeout_seconds=5.0):
+def _wait_for_registry_pid_stopped(pid, is_pid_alive_fn, unregister_tunnel_fn, timeout_seconds=5.0, pid_started_at=None):
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        if not is_pid_alive_fn(pid):
+        if not is_pid_alive_fn(pid, pid_started_at):
             unregister_tunnel_fn(pid)
             return True
         time.sleep(0.2)
@@ -779,18 +779,19 @@ def _stop_pam_control_registry_entry(entry):
         logging.info("Removed current-process PAM tunnel registry entry during Vault-origin stop: pid=%s", pid)
         return True, "registry_entry_removed"
 
-    if not is_pid_alive(pid):
+    pid_started_at = entry.get("pid_started_at")
+    if not is_pid_alive(pid, pid_started_at):
         unregister_tunnel(pid)
         logging.info("Removed stale PAM tunnel registry entry during Vault-origin stop: pid=%s", pid)
         return True, "already_stopped"
 
-    if not stop_tunnel_process(pid):
-        if not is_pid_alive(pid):
+    if not stop_tunnel_process(pid, pid_started_at):
+        if not is_pid_alive(pid, pid_started_at):
             unregister_tunnel(pid)
             return True, "already_stopped"
         return False, f"Commander failed to signal matching registry tunnel PID {pid}"
 
-    if _wait_for_registry_pid_stopped(pid, is_pid_alive, unregister_tunnel):
+    if _wait_for_registry_pid_stopped(pid, is_pid_alive, unregister_tunnel, pid_started_at=pid_started_at):
         logging.info("Stopped matching registry PAM tunnel during Vault-origin stop: pid=%s", pid)
         return True, "registry_stop_signal_sent"
 
@@ -910,6 +911,13 @@ def _handle_pam_stop_control(control):
                 tube_id,
             )
             return False, "Commander issued close_tube but the tube did not report closed"
+        pam_state_bridge.publish_stopped(session)
+        unregister_tunnel_session(tube_id)
+        try:
+            from ...tunnel_registry import unregister_tunnel
+            unregister_tunnel()
+        except Exception as err:
+            logging.debug("Unable to remove current-process PAM tunnel registry after protocol stop: %s", err)
     except Exception as err:
         if "not found" in str(err).lower():
             unregister_tunnel_session(tube_id)

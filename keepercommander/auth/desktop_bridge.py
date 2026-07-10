@@ -24,6 +24,7 @@ from ..params import KeeperParams
 DEFAULT_BRIDGE_TIMEOUT_MS = None
 BRIDGE_LOGIN_TIMEOUT_ENV = 'KDBC_LOGIN_TIMEOUT_MS'
 DEV_BRIDGE_VERIFICATION_POLICY = 'log_only'
+_ALLOWED_VERIFICATION_POLICIES = {'enforce', DEV_BRIDGE_VERIFICATION_POLICY}
 KDBC_CLIENT_NOT_ENROLLED = 'KDBC_CLIENT_NOT_ENROLLED'
 KDBC_KA_LOGIN_FAILED = 'KDBC_KA_LOGIN_FAILED'
 KDBC_PROTOCOL_ERROR = 'KDBC_PROTOCOL_ERROR'
@@ -778,30 +779,58 @@ def _build_bridge_config(module, params, bridge_socket, timeout_ms, verification
 
 
 def _resolve_verification_policy(params, verification_policy):
+    server = getattr(params, 'server', '')
     if verification_policy:
-        return verification_policy
+        return _normalize_verification_policy(server, verification_policy)
 
     env_policy = os.environ.get('KDBC_VERIFICATION_POLICY')
     if env_policy:
-        return env_policy
+        return _normalize_verification_policy(server, env_policy)
 
-    if _is_keeper_dev_host(getattr(params, 'server', '')):
+    if _is_keeper_dev_host(server):
         return DEV_BRIDGE_VERIFICATION_POLICY
 
     return None
 
 
-def _is_keeper_dev_host(server):
+def _server_hostname(server):
     if not server:
-        return False
+        return ''
 
     server = str(server).strip().lower()
     if not server:
-        return False
+        return ''
 
     parsed = urlparse(server if '://' in server else f'https://{server}')
-    host = parsed.hostname or ''
-    return host.startswith('dev.keepersecurity.') or host.startswith('govcloud.dev.keepersecurity.')
+    return parsed.hostname or ''
+
+
+def _is_keeper_dev_host(server):
+    host = _server_hostname(server)
+    return host == 'dev.keepersecurity.com' or host.endswith('.dev.keepersecurity.com')
+
+
+def _is_keeper_production_host(server):
+    host = _server_hostname(server)
+    if not host or _is_keeper_dev_host(host):
+        return False
+    return host == 'keepersecurity.com' or host.endswith('.keepersecurity.com')
+
+
+def _normalize_verification_policy(server, policy):
+    policy = str(policy or '').strip().lower()
+    if not policy:
+        return None
+    if policy not in _ALLOWED_VERIFICATION_POLICIES:
+        logging.warning("Ignoring unsupported KDBC verification policy: %s", policy)
+        return None
+    if policy == DEV_BRIDGE_VERIFICATION_POLICY and _is_keeper_production_host(server):
+        logging.warning(
+            "Ignoring KDBC_VERIFICATION_POLICY=log_only for production Keeper host %s",
+            _server_hostname(server) or server,
+        )
+        return None
+    return policy
 
 
 def _translate_bridge_error(exc):

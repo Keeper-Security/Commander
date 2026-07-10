@@ -26,6 +26,7 @@ import logging
 import os
 import platform
 import signal
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -84,7 +85,7 @@ def _clean_stale_registry_files(reg_dir: Path) -> None:
                 with open(fpath, encoding='utf-8') as f:
                     data = json.load(f)
                 pid = data.get('pid')
-                if pid and is_pid_alive(pid):
+                if pid and is_pid_alive(pid, data.get('pid_started_at')):
                     continue
                 os.remove(fpath)
             except Exception as exc:
@@ -153,6 +154,7 @@ def register_tunnel(
         'owning_account_uid': owning_account_uid,
         'owning_context': owning_context,
         'started': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'pid_started_at': process_start_time(pid),
     }
     session_id = pam_session_id or conversation_id
     if session_id:
@@ -181,7 +183,31 @@ def unregister_tunnel(pid=None):
         pass
 
 
-def is_pid_alive(pid) -> bool:
+def process_start_time(pid):
+    if os.name == 'nt':
+        return None
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    try:
+        proc = subprocess.run(
+            ['ps', '-p', str(pid), '-o', 'lstart='],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    value = ' '.join((proc.stdout or '').split())
+    return value or None
+
+
+def is_pid_alive(pid, pid_started_at=None) -> bool:
     """Return True if a process with the given PID is still running."""
     if os.name == 'nt':
         import ctypes
@@ -193,19 +219,21 @@ def is_pid_alive(pid) -> bool:
         return False
     try:
         os.kill(pid, 0)
-        return True
     except OSError:
         return False
+    if pid_started_at:
+        return process_start_time(pid) == pid_started_at
+    return True
 
 
-def stop_tunnel_process(pid: int) -> bool:
+def stop_tunnel_process(pid: int, pid_started_at=None) -> bool:
     """Send termination to a tunnel process. Returns True if a signal was sent.
 
     On Unix, sends SIGTERM for graceful shutdown (target cleans registry/WebRTC).
     On Windows, SIGTERM maps to TerminateProcess; the registry row is removed
     here because the target cannot run cleanup handlers.
     """
-    if not is_pid_alive(pid):
+    if not is_pid_alive(pid, pid_started_at):
         return False
     try:
         if platform.system() == 'Windows':
@@ -235,7 +263,7 @@ def list_registered_tunnels(clean_stale=True):
             with open(fpath, encoding='utf-8') as f:
                 data = json.load(f)
             pid = data.get('pid')
-            if pid and is_pid_alive(pid):
+            if pid and is_pid_alive(pid, data.get('pid_started_at')):
                 result.append(data)
             elif clean_stale:
                 os.remove(fpath)

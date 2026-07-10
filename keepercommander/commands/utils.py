@@ -2022,7 +2022,10 @@ class LogoutCommand(Command):
 
     def execute(self, params, **kwargs):
         from .tunnel.tunnel_lifecycle import close_pam_tunnels_on_logout
-        close_pam_tunnels_on_logout(params)
+        try:
+            close_pam_tunnels_on_logout(params)
+        except Exception as err:
+            logging.warning('Unable to close PAM tunnels during logout: %s', err)
 
         if msp.current_mc_id:
             msp.current_mc_id = None

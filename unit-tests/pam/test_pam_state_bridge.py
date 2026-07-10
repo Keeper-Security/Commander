@@ -309,6 +309,14 @@ class _FakePamCoordinator:
         self.closed = True
 
 
+class _SlowStoppingPamCoordinator(_FakePamCoordinator):
+    delay_seconds = 0.2
+
+    def receive_next_frame(self, timeout_ms=5000):
+        time.sleep(self.delay_seconds)
+        return None
+
+
 class PamStateBridgeTest(TestCase):
     def setUp(self):
         self.fake_kdbc = types.ModuleType("keeper_desktop_bridge_client")
@@ -370,6 +378,23 @@ class PamStateBridgeTest(TestCase):
         self.assertTrue(self.pam_state_bridge._is_state_sync_session_active())
 
     def test_publish_uses_leaf_socket_env_and_core_fields(self):
+        from keepercommander import utils as keeper_utils
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        params.via_desktop_login = True
+        params.account_uid_bytes = b"\x05" * 16
+        account_uid = keeper_utils.base64_url_encode(params.account_uid_bytes)
+        ok, message = self.pam_state_bridge.set_desktop_account_binding(
+            params,
+            {
+                "vault_account_uid": account_uid,
+                "username": "Vault User",
+                "email": "vault@example.com",
+            },
+        )
+        self.assertTrue(ok, message)
+
         with mock.patch.dict(
             "os.environ",
             {
@@ -403,6 +428,19 @@ class PamStateBridgeTest(TestCase):
         self.assertTrue(request.kwargs["caller"].caller_instance_id.startswith("commander:"))
         self.assertEqual("127.0.0.1", request.kwargs["local_endpoint"].host)
         self.assertEqual(3306, request.kwargs["local_endpoint"].port)
+
+    def test_publish_without_desktop_account_binding_is_skipped(self):
+        published = self.pam_state_bridge.publish_pam_state_event(
+            event_type="pam_session_started",
+            state="active",
+            pam_session_id="conversation-1",
+            tunnel_id="tube-1",
+            resource_handle="record-1",
+        )
+
+        self.assertFalse(published)
+        self.assertEqual([], self.fake_kdbc.calls)
+        self.assertEqual(0, len(self.fake_kdbc.coordinators))
 
     def test_publish_attaches_retained_vault_account_binding_to_event_body(self):
         from keepercommander import utils as keeper_utils
@@ -927,6 +965,22 @@ class PamStateBridgeTest(TestCase):
         self.assertEqual([], self.fake_kdbc.coordinators)
 
     def test_session_helper_maps_existing_tunnel_ids(self):
+        from keepercommander import utils as keeper_utils
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        params.via_desktop_login = True
+        params.account_uid_bytes = b"\x05" * 16
+        account_uid = keeper_utils.base64_url_encode(params.account_uid_bytes)
+        ok, message = self.pam_state_bridge.set_desktop_account_binding(
+            params,
+            {
+                "vault_account_uid": account_uid,
+                "username": "Vault User",
+                "email": "vault@example.com",
+            },
+        )
+        self.assertTrue(ok, message)
         session = types.SimpleNamespace(
             conversation_id="conversation-1",
             tube_id="tube-1",
@@ -1060,7 +1114,7 @@ class PamStateBridgeTest(TestCase):
         self.assertEqual("pam_session_heartbeat", projection["event_type"])
         self.assertEqual("active", projection["state"])
 
-    def test_state_sync_worker_treats_stream_error_as_terminal_logout(self):
+    def test_state_sync_worker_treats_stream_error_as_terminal_disconnect_without_match_all_logout(self):
         from keepercommander import utils as keeper_utils
         from keepercommander.params import KeeperParams
 
@@ -1106,9 +1160,7 @@ class PamStateBridgeTest(TestCase):
 
         self.assertEqual(1, len(self.fake_kdbc.coordinators))
         self.assertEqual(0, self.fake_kdbc.coordinators[0].reauth_count)
-        handler.assert_called_once()
-        notice = handler.call_args.args[1]
-        self.assertEqual("vault_desktop_disconnected", notice.reason)
+        handler.assert_not_called()
         self.assertIsNone(params.session_token)
         self.assertIsNone(params.session_token_bytes)
         self.assertFalse(params.via_desktop_login)
@@ -1156,6 +1208,67 @@ class PamStateBridgeTest(TestCase):
         self.assertFalse(requested)
         self.assertIn("state-sync session is not active", message)
         self.assertTrue(self.pam_state_bridge._OWNER_STOP_QUEUE.empty())
+
+    def test_start_approval_queue_has_deadline_when_worker_stalls(self):
+        self.pam_state_bridge._WORKER_THREAD = _FakeAliveThread()
+        self.pam_state_bridge._STATE_SYNC_SESSION = object()
+        self.pam_state_bridge._STATE_SYNC_SESSION_ACTIVE = True
+        self.pam_state_bridge._STATE_SYNC_RESPONSE_TIMEOUT_SECONDS = 0.01
+
+        approved, message = self.pam_state_bridge.request_start_tunnel_approval(
+            action="pam_tunnel_start",
+            resource_handle="record-1",
+            resource_title="Record 1",
+        )
+
+        self.assertFalse(approved)
+        self.assertIn("Timed out", message)
+
+    def test_owner_stop_queue_has_deadline_when_worker_stalls(self):
+        self.fake_kdbc.AckPamControlRequest = _FakeAckPamControlRequest
+        self.fake_kdbc.FailPamControlRequest = _FakeFailPamControlRequest
+        self.fake_kdbc.PamCoordinator = _FakePamCoordinator
+        self.pam_state_bridge = importlib.reload(self.pam_state_bridge)
+        self.pam_state_bridge._WORKER_THREAD = _FakeAliveThread()
+        self.pam_state_bridge._STATE_SYNC_SESSION = object()
+        self.pam_state_bridge._STATE_SYNC_SESSION_ACTIVE = True
+        self.pam_state_bridge._STATE_SYNC_RESPONSE_TIMEOUT_SECONDS = 0.01
+        projection = {
+            "external_owner": "vault_desktop",
+            "publisher_instance_id": "keeper-vault-desktop:pid:abc",
+            "pam_session_id": "vault-conversation-1",
+            "tunnel_id": "vault-tube-1",
+            "resource_handle": "record-1",
+            "vault_grant_id": "grant-1",
+        }
+
+        requested, message = self.pam_state_bridge.request_owner_stop(projection, reason="user_stop")
+
+        self.assertFalse(requested)
+        self.assertIn("Timed out", message)
+
+    def test_stop_state_sync_worker_detaches_stuck_receive_and_allows_restart(self):
+        self.fake_kdbc.AckPamControlRequest = _FakeAckPamControlRequest
+        self.fake_kdbc.FailPamControlRequest = _FakeFailPamControlRequest
+        self.fake_kdbc.PamCoordinator = _SlowStoppingPamCoordinator
+        _SlowStoppingPamCoordinator.module = self.fake_kdbc
+        self.pam_state_bridge = importlib.reload(self.pam_state_bridge)
+
+        self.assertTrue(self.pam_state_bridge.start_state_sync_worker())
+        self._wait_for_active_state_sync_session()
+        self.pam_state_bridge.stop_state_sync_worker(timeout_seconds=0.01)
+        self.assertFalse(self.pam_state_bridge._is_state_sync_session_active())
+        self.assertIsNone(self.pam_state_bridge._WORKER_THREAD)
+
+        self.fake_kdbc.PamCoordinator = _FakePamCoordinator
+        _FakePamCoordinator.module = self.fake_kdbc
+        self.assertTrue(self.pam_state_bridge.start_state_sync_worker())
+        deadline = time.time() + 1.0
+        while time.time() < deadline and len(self.fake_kdbc.coordinators) < 2:
+            time.sleep(0.01)
+
+        self.assertGreaterEqual(len(self.fake_kdbc.coordinators), 2)
+        self._wait_for_active_state_sync_session()
 
     def test_logout_callback_clears_projection_and_local_state(self):
         projection = {

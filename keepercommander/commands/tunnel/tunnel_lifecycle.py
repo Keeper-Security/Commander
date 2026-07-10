@@ -388,8 +388,9 @@ def handle_desktop_logout_notice(params: Optional[KeeperParams], notice) -> Tupl
         if _unregister_current_process_entry(pid):
             stopped += 1
             continue
-        if is_pid_alive(pid):
-            if stop_tunnel_process(pid):
+        pid_started_at = entry.get('pid_started_at')
+        if is_pid_alive(pid, pid_started_at):
+            if stop_tunnel_process(pid, pid_started_at):
                 stopped += 1
             else:
                 failed += 1
@@ -492,12 +493,13 @@ def stop_scoped_active_pam_tunnels(
         if _unregister_current_process_entry(pid):
             stopped_count += 1
             continue
-        if not is_pid_alive(pid):
+        pid_started_at = entry.get('pid_started_at')
+        if not is_pid_alive(pid, pid_started_at):
             unregister_tunnel(pid)
             if verbose:
                 print(f"  {bcolors.OKGREEN}Stopped: PID {pid} was already gone{bcolors.ENDC}")
             stopped_count += 1
-        elif stop_tunnel_process(pid):
+        elif stop_tunnel_process(pid, pid_started_at):
             if verbose:
                 print(
                     f"  {bcolors.OKGREEN}Sent stop signal to PID {pid} "
@@ -509,7 +511,7 @@ def stop_scoped_active_pam_tunnels(
             if verbose:
                 print(f"  {bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
             failed_count += 1
-            if not is_pid_alive(pid):
+            if not is_pid_alive(pid, pid_started_at):
                 unregister_tunnel(pid)
 
     return stopped_count, failed_count
@@ -581,14 +583,15 @@ def close_pam_tunnels_on_logout(params: Optional[KeeperParams] = None) -> Tuple[
         if pid and _unregister_current_process_entry(pid):
             stopped += 1
             continue
-        if pid and not is_pid_alive(pid):
+        pid_started_at = entry.get('pid_started_at')
+        if pid and not is_pid_alive(pid, pid_started_at):
             unregister_tunnel(pid)
             stopped += 1
-        elif pid and stop_tunnel_process(pid):
+        elif pid and stop_tunnel_process(pid, pid_started_at):
             stopped += 1
         else:
             failed += 1
-            if pid and not is_pid_alive(pid):
+            if pid and not is_pid_alive(pid, pid_started_at):
                 unregister_tunnel(pid)
 
     return stopped, failed

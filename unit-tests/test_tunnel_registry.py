@@ -6,6 +6,7 @@
 import json
 import os
 import shutil
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,7 @@ class TestRegisterUnregister(unittest.TestCase):
         self.assertEqual(data['record_uid'], 'rec1')
         self.assertEqual(data['tube_id'], 'tube1')
         self.assertEqual(data['port'], 5432)
+        self.assertIn('pid_started_at', data)
         unregister_tunnel(12345)
         self.assertFalse((self.tmp / '12345.json').exists())
 
@@ -96,6 +98,28 @@ class TestListRegisteredTunnels(unittest.TestCase):
         self.assertFalse(p.exists())
         self.assertEqual(out, [])
 
+    @mock.patch('keepercommander.commands.tunnel_registry.process_start_time', return_value='actual-start')
+    @mock.patch('keepercommander.commands.tunnel_registry.os.kill', return_value=None)
+    def test_list_removes_pid_start_time_mismatch_when_clean(self, _kill, _start_time):
+        pid = 12345
+        p = self.tmp / f'{pid}.json'
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump(
+                {
+                    'pid': pid,
+                    'pid_started_at': 'old-start',
+                    'record_uid': 'x',
+                    'host': '127.0.0.1',
+                    'port': 1,
+                },
+                f,
+            )
+
+        out = list_registered_tunnels(clean_stale=True)
+
+        self.assertFalse(p.exists())
+        self.assertEqual(out, [])
+
 
 class TestIsPidAlive(unittest.TestCase):
     def test_current_process_alive(self):
@@ -103,6 +127,11 @@ class TestIsPidAlive(unittest.TestCase):
 
     def test_nonexistent_pid(self):
         self.assertFalse(is_pid_alive(999999997))
+
+    @mock.patch('keepercommander.commands.tunnel_registry.process_start_time', return_value='actual-start')
+    @mock.patch('keepercommander.commands.tunnel_registry.os.kill', return_value=None)
+    def test_pid_start_time_mismatch_is_not_alive(self, _kill, _start_time):
+        self.assertFalse(is_pid_alive(12345, 'old-start'))
 
 
 class TestDuplicatePortDetection(unittest.TestCase):
@@ -132,6 +161,13 @@ class TestDuplicatePortDetection(unittest.TestCase):
 class TestStopTunnelProcess(unittest.TestCase):
     def test_dead_pid_returns_false(self):
         self.assertFalse(stop_tunnel_process(999999996))
+
+    @mock.patch('keepercommander.commands.tunnel_registry.process_start_time', return_value='actual-start')
+    @mock.patch('keepercommander.commands.tunnel_registry.os.kill', return_value=None)
+    def test_pid_start_time_mismatch_refuses_to_signal(self, kill_mock, _start_time):
+        self.assertFalse(stop_tunnel_process(12345, 'old-start'))
+        self.assertEqual([mock.call(12345, 0)], kill_mock.call_args_list)
+        self.assertNotIn(mock.call(12345, signal.SIGTERM), kill_mock.call_args_list)
 
 
 class TestPamTunnelStartParser(unittest.TestCase):

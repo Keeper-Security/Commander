@@ -24,6 +24,7 @@ KEEPER_BRIDGE_BIN="${KEEPER_BRIDGE_BIN:-$REPO_PARENT_DIR/keeper-desktop-bridge/d
 KEEPER_BRIDGE_LEAF_SOCKET="${KEEPER_BRIDGE_LEAF_SOCKET:-/tmp/keeper-bridge-leaf.sock}"
 KEEPER_VAULT_PERMISSION_SOCKET="${KEEPER_VAULT_PERMISSION_SOCKET:-/tmp/keeper-vault-permission.sock}"
 KEEPER_BRIDGE_KEYCHAIN_SERVICE="${KEEPER_BRIDGE_KEYCHAIN_SERVICE:-keeper-desktop-bridge-dev}"
+KDBC_VERIFICATION_POLICY="${KDBC_VERIFICATION_POLICY:-log_only}"
 KDBC_WHEELS_DIR="$REPO_PARENT_DIR/keeper-desktop-bridge/dist/wheels"
 
 python_bin() {
@@ -118,7 +119,7 @@ run() {
 
     KEEPER_BIN=$(keeper_bin)
 
-    KDBC_VERIFICATION_POLICY=log_only \
+    KDBC_VERIFICATION_POLICY="$KDBC_VERIFICATION_POLICY" \
     KEEPER_BRIDGE_BIN="$KEEPER_BRIDGE_BIN" \
     KEEPER_BRIDGE_LEAF_SOCKET="$KEEPER_BRIDGE_LEAF_SOCKET" \
     KEEPER_VAULT_PERMISSION_SOCKET="$KEEPER_VAULT_PERMISSION_SOCKET" \
@@ -144,14 +145,3 @@ case "${1:-}" in
         run "$@"
         ;;
 esac
-
-=== smart-io shell log 2026-07-10T15:55:52.364Z ===
-command: git log --oneline --decorate -n 5
-
-883df401 (HEAD -> AI-402-pam-state-sync, origin/KC-1300, KC-1300) fix: auto desktop bridge login for dev shells
-6be65e4a fix: allow --via-desktop with --new-login, remove false conflict guard
-e212477d feat: desktop bridge login via Keeper Desktop (KC-1300)
-14c0df7d (origin/release, origin/nsf-share-command-fix, release) chore: Allow a CLAUDE.md to help guide AI.
-384d12b9 fix: sync keeper-dag and discovery-common golden repo.
-
-=== smart-io shell log complete (2026-07-10T15:55:52.390Z) exitCode=0 ===

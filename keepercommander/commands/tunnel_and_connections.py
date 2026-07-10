@@ -75,6 +75,82 @@ _LEASE_EXPIRY_TIMERS_BY_RECORD: Dict[str, threading.Timer] = {}
 # read by the lease-expiry callback. Default interactive mode does NOT register
 # (it has no blocking wait to interrupt; user SSH session continues naturally).
 _LEASE_SHUTDOWN_EVENTS_BY_RECORD: Dict[str, threading.Event] = {}
+_INTERACTIVE_SIGNAL_LOCK = threading.Lock()
+_INTERACTIVE_SIGNAL_EVENT = threading.Event()
+_INTERACTIVE_SIGNAL_WORKER = None
+_INTERACTIVE_SIGNAL_INSTALLED = False
+_INTERACTIVE_TUNNELS_BY_ID = {}
+
+
+def _interactive_tunnel_signal_handler(_signum, _frame):
+    # SIGTERM carries no tunnel payload. Backup signal handling is therefore
+    # coarse: wake a worker to wind down every interactive tunnel in this PID.
+    _INTERACTIVE_SIGNAL_EVENT.set()
+
+
+def _interactive_tunnel_signal_worker():
+    while True:
+        _INTERACTIVE_SIGNAL_EVENT.wait()
+        _INTERACTIVE_SIGNAL_EVENT.clear()
+        with _INTERACTIVE_SIGNAL_LOCK:
+            tunnels = list(_INTERACTIVE_TUNNELS_BY_ID.items())
+            _INTERACTIVE_TUNNELS_BY_ID.clear()
+        if not tunnels:
+            continue
+        logging.info(
+            "Received SIGTERM backup stop; winding down %d interactive PAM tunnel(s) in PID %s",
+            len(tunnels),
+            os.getpid(),
+        )
+        for tube_id, entry in tunnels:
+            tube_registry = entry.get('tube_registry')
+            session = get_tunnel_session(tube_id)
+            try:
+                if session is not None:
+                    pam_state_bridge.publish_stopping(session)
+                ok, message = close_tube_idempotently(tube_registry, tube_id, session)
+                if ok:
+                    if session is not None and message != 'already_stopped':
+                        pam_state_bridge.publish_stopped(session)
+                    unregister_tunnel_session(tube_id)
+                else:
+                    pam_state_bridge.publish_error(
+                        session,
+                        {
+                            'code': 'interactive_sigterm_stop_failed',
+                            'kind': 'internal_error',
+                            'message': message,
+                        },
+                    )
+                    logging.warning("Failed to stop interactive PAM tunnel after SIGTERM: %s", message)
+            except Exception as err:
+                logging.warning("Error stopping interactive PAM tunnel after SIGTERM: %s", err)
+        try:
+            unregister_tunnel()
+        except Exception as err:
+            logging.debug("Unable to remove current-process PAM tunnel registry after SIGTERM cleanup: %s", err)
+
+
+def _install_interactive_tunnel_signal_handler(record_uid, tube_id, tube_registry):
+    global _INTERACTIVE_SIGNAL_WORKER, _INTERACTIVE_SIGNAL_INSTALLED
+    if platform.system() == 'Windows' or not tube_id or not tube_registry:
+        return None
+    with _INTERACTIVE_SIGNAL_LOCK:
+        _INTERACTIVE_TUNNELS_BY_ID[tube_id] = {
+            'record_uid': record_uid,
+            'tube_registry': tube_registry,
+        }
+        if _INTERACTIVE_SIGNAL_WORKER is None or not _INTERACTIVE_SIGNAL_WORKER.is_alive():
+            _INTERACTIVE_SIGNAL_WORKER = threading.Thread(
+                target=_interactive_tunnel_signal_worker,
+                name='PAMInteractiveSignalStop',
+                daemon=True,
+            )
+            _INTERACTIVE_SIGNAL_WORKER.start()
+        if not _INTERACTIVE_SIGNAL_INSTALLED:
+            signal.signal(signal.SIGTERM, _interactive_tunnel_signal_handler)
+            _INTERACTIVE_SIGNAL_INSTALLED = True
+    return _interactive_tunnel_signal_handler
 
 
 def _coerce_settings_subdicts(entry, *keys):
@@ -220,7 +296,7 @@ class PAMTunnelListCommand(Command):
         # local Rust tube, PID, or listener for them.
         if getattr(params, 'via_desktop_login', False) is True:
             pam_state_bridge.start_state_sync_worker(params)
-        waited_projections = pam_state_bridge.wait_for_external_projections(timeout_seconds=12)
+        waited_projections = pam_state_bridge.wait_for_external_projections(timeout_seconds=0.25)
         active_scope = resolve_active_tunnel_scope(params)
         external_projections = [
             projection for projection in waited_projections
@@ -352,11 +428,12 @@ class PAMTunnelStopCommand(Command):
                 if uid in (entry.get('tube_id', ''), entry.get('record_uid', ''),
                            entry.get('record_title', '')):
                     pid = entry.get('pid')
-                    if pid and not is_pid_alive(pid):
+                    pid_started_at = entry.get('pid_started_at')
+                    if pid and not is_pid_alive(pid, pid_started_at):
                         unregister_tunnel(pid)
                         print(f"{bcolors.OKGREEN}Tunnel was already stopped; removed stale registry entry for PID {pid}{bcolors.ENDC}")
-                    elif pid and is_pid_alive(pid):
-                        if stop_tunnel_process(pid):
+                    elif pid and is_pid_alive(pid, pid_started_at):
+                        if stop_tunnel_process(pid, pid_started_at):
                             print(f"{bcolors.OKGREEN}Sent stop signal to tunnel process "
                                   f"(PID {pid}, {entry.get('mode', '?')} mode){bcolors.ENDC}")
                         else:
@@ -1327,6 +1404,7 @@ class PAMTunnelStartCommand(Command):
                             pam_session_id=result.get("conversation_id"),
                             **build_tunnel_ownership(params),
                         )
+                        _install_interactive_tunnel_signal_handler(record_uid, fg_tube_id, fg_tube_registry)
                     except CommandError as reg_err:
                         print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
                         if fg_tube_registry and fg_tube_id:
@@ -1475,6 +1553,7 @@ class PAMTunnelStartCommand(Command):
                         pam_session_id=result.get("conversation_id"),
                         **build_tunnel_ownership(params),
                     )
+                    _install_interactive_tunnel_signal_handler(record_uid, tube_id, tube_registry)
                 except CommandError as reg_err:
                     print(f"{bcolors.FAIL}{reg_err}{bcolors.ENDC}")
                     if tube_registry and tube_id:

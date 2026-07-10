@@ -44,6 +44,7 @@ _PAM_TUNNEL_START_ACTION = "pam_tunnel_start"
 _PAM_LAUNCH_ACTION = "pam_launch"
 _DUPLICATE_ACTIVE_REASON = "duplicate_active_session"
 _ACTION_APPROVAL_TIMEOUT_MS = None
+_STATE_SYNC_RESPONSE_TIMEOUT_SECONDS = 30
 DESKTOP_ACCOUNT_MISMATCH_MESSAGE = "Desktop account does not match Vault account"
 DESKTOP_ACCOUNT_BINDING_UNAVAILABLE_MESSAGE = "Desktop account binding is unavailable"
 _DESKTOP_BRIDGE_ACCOUNT_ALLOWED = True
@@ -172,6 +173,10 @@ def _action_approval_timeout_ms():
         except ValueError:
             logging.debug("Ignoring invalid KDBC_PAM_ACTION_APPROVAL_TIMEOUT_MS=%r", raw_value)
     return _ACTION_APPROVAL_TIMEOUT_MS
+
+
+def _state_sync_response_deadline():
+    return time.monotonic() + max(0.1, _STATE_SYNC_RESPONSE_TIMEOUT_SECONDS)
 
 
 def _make_action_approval_config(kdbc, params=None):
@@ -794,9 +799,9 @@ def set_desktop_account_binding(params, binding):
 
 def desktop_bridge_account_gate(params=None):
     if params is None:
-        if _DESKTOP_BRIDGE_ACCOUNT_ALLOWED:
+        if _DESKTOP_BRIDGE_ACCOUNT_ALLOWED and _DESKTOP_ACCOUNT_BINDING:
             return True, None
-        return False, DESKTOP_ACCOUNT_MISMATCH_MESSAGE
+        return False, DESKTOP_ACCOUNT_BINDING_UNAVAILABLE_MESSAGE
     if getattr(params, "via_desktop_login", False) is not True:
         return False, "Desktop bridge login is not active"
     desktop_account_uid = _normalize_account_uid(getattr(params, "desktop_account_uid", None))
@@ -1103,9 +1108,13 @@ def request_start_tunnel_approval(
                 "response_queue": response_queue,
             }
         )
+        deadline = _state_sync_response_deadline()
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, "Timed out waiting for Desktop PAM start approval"
             try:
-                return response_queue.get(timeout=1)
+                return response_queue.get(timeout=min(1, remaining))
             except queue.Empty:
                 if not _is_state_sync_session_active():
                     return False, "Desktop state-sync session became unavailable before PAM start approval completed"
@@ -1249,9 +1258,13 @@ def request_owner_stop(projection, reason="user_stop"):
             "response_queue": response_queue,
         }
     )
+    deadline = _state_sync_response_deadline()
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, "Timed out waiting for Desktop state-sync owner stop response"
         try:
-            return response_queue.get(timeout=1)
+            return response_queue.get(timeout=min(1, remaining))
         except queue.Empty:
             if not _is_state_sync_session_active():
                 return False, "Desktop state-sync session became unavailable before Vault-owned stop completed"
@@ -1306,7 +1319,7 @@ def _publish_with_client(kdbc, event_kwargs):
 
 
 def _queue_or_publish(event_kwargs):
-    if not _DESKTOP_BRIDGE_ACCOUNT_ALLOWED:
+    if not _DESKTOP_BRIDGE_ACCOUNT_ALLOWED or not _DESKTOP_ACCOUNT_BINDING:
         return False
     kdbc = _kdbc()
     if not kdbc:
@@ -1331,17 +1344,18 @@ def _queue_or_publish(event_kwargs):
 
 
 def _ensure_worker_started(kdbc=None):
-    global _WORKER_THREAD
+    global _WORKER_THREAD, _WORKER_STOP
     kdbc = kdbc or _kdbc()
     if not kdbc or not _supports_persistent_session(kdbc):
         return False
 
     with _WORKER_LOCK:
-        if _WORKER_THREAD and _WORKER_THREAD.is_alive():
+        if _WORKER_THREAD and _WORKER_THREAD.is_alive() and not _WORKER_STOP.is_set():
             return True
-        _WORKER_STOP.clear()
+        _WORKER_STOP = threading.Event()
         _WORKER_THREAD = threading.Thread(
             target=_state_sync_worker,
+            args=(_WORKER_STOP,),
             name="KDBC-PAM-StateSync",
             daemon=True,
         )
@@ -1479,21 +1493,13 @@ def _clear_terminal_via_desktop_session(reason):
 
 
 def _handle_vault_terminal_disconnect(err):
-    try:
-        from .tunnel_lifecycle import handle_desktop_logout_notice
-        stopped, failed = handle_desktop_logout_notice(_WORKER_PARAMS, _VaultTerminalNotice())
-    except Exception as cleanup_err:
-        stopped, failed = 0, 1
-        logging.debug("Desktop PAM terminal disconnect cleanup failed: %s", cleanup_err)
     _clear_local_state_sync_buffers()
     session_cleared = _clear_terminal_via_desktop_session("vault_desktop_disconnected")
 
     logging.warning(
         "Vault Desktop disconnected; Desktop PAM state-sync is terminal: %s "
-        "(local_stopped=%s local_failed=%s session_cleared=%s)",
+        "(session_cleared=%s)",
         err,
-        stopped,
-        failed,
         session_cleared,
     )
 
@@ -1583,8 +1589,9 @@ def _handle_frame(session, kdbc, frame):
     _handle_control(session, kdbc, frame)
 
 
-def _state_sync_worker():
+def _state_sync_worker(stop_event=None):
     global _STATE_SYNC_SESSION, _STATE_SYNC_SESSION_ACTIVE
+    stop_event = stop_event or _WORKER_STOP
     kdbc = _kdbc()
     if not kdbc:
         return
@@ -1594,7 +1601,7 @@ def _state_sync_worker():
         return
 
     session = None
-    while not _WORKER_STOP.is_set():
+    while not stop_event.is_set():
         try:
             if session is None:
                 session = coordinator_cls(_make_config(kdbc))
@@ -1610,7 +1617,7 @@ def _state_sync_worker():
                     logging.info("Pruned %d stale local PAM tunnel(s) after Desktop state-sync reconnect", pruned)
             except Exception as err:
                 logging.debug("Unable to reconcile local PAM tunnel liveness after reconnect: %s", err)
-            while not _WORKER_STOP.is_set():
+            while not stop_event.is_set():
                 try:
                     _drain_publish_queue(session)
                     _drain_action_approval_queue(session, kdbc)
@@ -1620,7 +1627,7 @@ def _state_sync_worker():
                     _handle_frame(session, kdbc, frame)
                 except Exception as err:
                     _handle_vault_terminal_disconnect(err)
-                    _WORKER_STOP.set()
+                    stop_event.set()
                     break
         except Exception as err:
             state = None
@@ -1633,13 +1640,13 @@ def _state_sync_worker():
                 f" (state={state})" if state else "",
                 err,
             )
-            _WORKER_STOP.set()
+            stop_event.set()
         finally:
             with _WORKER_LOCK:
                 if _STATE_SYNC_SESSION is session:
                     _STATE_SYNC_SESSION = None
                     _STATE_SYNC_SESSION_ACTIVE = False
-            if session is not None and _WORKER_STOP.is_set():
+            if session is not None and stop_event.is_set():
                 try:
                     session.clear_logout_callback()
                 except Exception:
@@ -1686,14 +1693,16 @@ def _is_state_sync_session_active():
             _WORKER_THREAD
             and _WORKER_THREAD.is_alive()
             and _STATE_SYNC_SESSION is not None
+            and _STATE_SYNC_SESSION_ACTIVE
         )
 
 
 def stop_state_sync_worker(timeout_seconds=1):
-    global _WORKER_THREAD, _WORKER_PARAMS
-    _WORKER_STOP.set()
+    global _WORKER_THREAD, _WORKER_PARAMS, _STATE_SYNC_SESSION, _STATE_SYNC_SESSION_ACTIVE
     with _WORKER_LOCK:
         worker_thread = _WORKER_THREAD
+        worker_stop = _WORKER_STOP
+    worker_stop.set()
     if (
         worker_thread
         and worker_thread.is_alive()
@@ -1701,7 +1710,11 @@ def stop_state_sync_worker(timeout_seconds=1):
     ):
         worker_thread.join(timeout_seconds)
     with _WORKER_LOCK:
-        if _WORKER_THREAD is worker_thread and worker_thread and not worker_thread.is_alive():
+        if _WORKER_THREAD is worker_thread:
+            _STATE_SYNC_SESSION = None
+            _STATE_SYNC_SESSION_ACTIVE = False
+            if worker_thread and worker_thread.is_alive():
+                logging.warning("Detached unresponsive Desktop PAM state-sync worker after shutdown timeout")
             _WORKER_THREAD = None
             _WORKER_PARAMS = None
 

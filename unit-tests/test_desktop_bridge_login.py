@@ -1127,7 +1127,7 @@ class TestDesktopBridgeLogin(TestCase):
         params, _ = _make_enrolled_params()
         bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-token'))
 
-        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'log_only'}):
+        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'enforce'}):
             request = desktop_bridge._build_bootstrap_request(
                 bridge_module,
                 params,
@@ -1138,7 +1138,29 @@ class TestDesktopBridgeLogin(TestCase):
                 None,
             )
 
-        self.assertEqual('log_only', request.config.verification_policy)
+        self.assertEqual('enforce', request.config.verification_policy)
+
+    def test_bridge_config_refuses_log_only_environment_on_production(self):
+        params = KeeperParams(server='keepersecurity.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-[REDACTED_SECRET]'))
+
+        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'log_only'}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertIsNone(config.verification_policy)
+
+    def test_bridge_config_ignores_invalid_environment_policy(self):
+        params = KeeperParams(server='keepersecurity.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-[REDACTED_SECRET]'))
+
+        with mock.patch.dict('os.environ', {'KDBC_VERIFICATION_POLICY': 'invalid'}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertIsNone(config.verification_policy)
 
     def test_bridge_config_defaults_dev_hosts_to_log_only(self):
         params = KeeperParams(server='dev.keepersecurity.com')
@@ -1150,6 +1172,17 @@ class TestDesktopBridgeLogin(TestCase):
             )
 
         self.assertEqual('log_only', config.verification_policy)
+
+    def test_bridge_config_does_not_default_spoofed_dev_host_to_log_only(self):
+        params = KeeperParams(server='dev.keepersecurity.evil.com')
+        bridge_module = _make_bridge_module(vault_result=_VaultBootstrapResult(b'vault-session-[REDACTED_SECRET]'))
+
+        with mock.patch.dict('os.environ', {}, clear=True):
+            config = desktop_bridge._build_bridge_config(
+                bridge_module, params, None, 1234, None,
+            )
+
+        self.assertIsNone(config.verification_policy)
 
     def test_bridge_config_leaves_production_policy_to_kdbc_default(self):
         params = KeeperParams(server='keepersecurity.com')

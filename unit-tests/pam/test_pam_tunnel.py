@@ -1,5 +1,6 @@
 import unittest
 import threading
+import time
 import types
 from unittest import mock
 
@@ -23,6 +24,7 @@ from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     register_tunnel_session,
     unregister_tunnel_session,
 )
+import keepercommander.commands.tunnel_and_connections as tunnel_and_connections
 from keepercommander.commands.tunnel_and_connections import PAMTunnelListCommand, PAMTunnelStartCommand, PAMTunnelStopCommand
 
 def generate_self_signed_cert(private_key):
@@ -219,7 +221,7 @@ class TestPamStopControl(unittest.TestCase):
         self.assertTrue(getattr(session.signal_handler, "shutdown_initiated", False))
         self.assertTrue(getattr(session.signal_handler, "tube_close_initiated", False))
         pam_state_bridge.publish_stopping.assert_called_once_with(session)
-        pam_state_bridge.publish_stopped.assert_not_called()
+        pam_state_bridge.publish_stopped.assert_called_once_with(session)
         self.assertTrue(foreground_shutdown.is_set())
         self.assertTrue(external_shutdown.is_set())
 
@@ -290,6 +292,7 @@ class TestPamStopControl(unittest.TestCase):
             "record_uid": "record-file-registry",
             "record_title": "File Registry",
             "mode": "interactive",
+            "pid_started_at": "pid-start-1",
         }
 
         with mock.patch(
@@ -311,8 +314,8 @@ class TestPamStopControl(unittest.TestCase):
         self.assertTrue(stopped)
         self.assertEqual("registry_stop_signal_sent", message)
         list_registered_tunnels.assert_called_once_with(clean_stale=False)
-        self.assertEqual([mock.call(12345), mock.call(12345)], is_pid_alive.call_args_list)
-        stop_tunnel_process.assert_called_once_with(12345)
+        self.assertEqual([mock.call(12345, "pid-start-1"), mock.call(12345, "pid-start-1")], is_pid_alive.call_args_list)
+        stop_tunnel_process.assert_called_once_with(12345, "pid-start-1")
         unregister_tunnel.assert_called_once_with(12345)
         pam_state_bridge.publish_stopping.assert_not_called()
         pam_state_bridge.publish_error.assert_not_called()
@@ -331,6 +334,7 @@ class TestPamStopControl(unittest.TestCase):
             "record_uid": "record-file-registry",
             "record_title": "File Registry",
             "mode": "interactive",
+            "pid_started_at": "pid-start-1",
         }
 
         with mock.patch(
@@ -351,7 +355,7 @@ class TestPamStopControl(unittest.TestCase):
 
         self.assertTrue(stopped)
         self.assertEqual("registry_stop_signal_sent", message)
-        stop_tunnel_process.assert_called_once_with(12345)
+        stop_tunnel_process.assert_called_once_with(12345, "pid-start-1")
         unregister_tunnel.assert_called_once_with(12345)
         pam_state_bridge.publish_stopping.assert_not_called()
         pam_state_bridge.publish_error.assert_not_called()
@@ -368,6 +372,7 @@ class TestPamStopControl(unittest.TestCase):
             "record_uid": "record-file-registry",
             "record_title": "File Registry",
             "mode": "interactive",
+            "pid_started_at": "pid-start-1",
         }
 
         with mock.patch(
@@ -388,8 +393,8 @@ class TestPamStopControl(unittest.TestCase):
 
         self.assertFalse(stopped)
         self.assertIn("failed to signal", message)
-        self.assertEqual([mock.call(12345), mock.call(12345)], is_pid_alive.call_args_list)
-        stop_tunnel_process.assert_called_once_with(12345)
+        self.assertEqual([mock.call(12345, "pid-start-1"), mock.call(12345, "pid-start-1")], is_pid_alive.call_args_list)
+        stop_tunnel_process.assert_called_once_with(12345, "pid-start-1")
         unregister_tunnel.assert_not_called()
         pam_state_bridge.publish_stopping.assert_not_called()
         pam_state_bridge.publish_error.assert_not_called()
@@ -598,7 +603,7 @@ class TestPamTunnelListExternalProjection(unittest.TestCase):
             PAMTunnelListCommand().execute(types.SimpleNamespace(via_desktop_login=True))
 
         start_state_sync_worker.assert_called_once_with(mock.ANY)
-        wait_for_external_projections.assert_called_once_with(timeout_seconds=12)
+        wait_for_external_projections.assert_called_once_with(timeout_seconds=0.25)
         self.assertEqual(1, len(rows))
         self.assertEqual("record-1", rows[0][0])
 
@@ -896,6 +901,84 @@ class TestPamTunnelStartPreActionApproval(unittest.TestCase):
         self.assertEqual("interactive", register_kwargs["mode"])
         self.assertEqual("Demo Machine", register_kwargs["record_title"])
         tube_registry.close_tube.assert_not_called()
+
+    def test_default_interactive_start_sigterm_closes_tunnel_without_exiting_shell(self):
+        tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED = False
+        tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID.clear()
+        tunnel_and_connections._INTERACTIVE_SIGNAL_EVENT.clear()
+        patches = self._patch_start_dependencies()
+        tube_registry = mock.Mock()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patches[10] as start_rust_tunnel, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.pam_state_bridge.request_start_tunnel_approval",
+            return_value=(True, "allow"),
+        ), mock.patch(
+            "keepercommander.commands.tunnel_and_connections.register_tunnel"
+        ), mock.patch(
+            "keepercommander.commands.tunnel_and_connections.unregister_tunnel"
+        ) as unregister_tunnel, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.unregister_tunnel_session"
+        ) as unregister_tunnel_session, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.signal.signal"
+        ) as signal_mock:
+            start_rust_tunnel.return_value = {
+                "success": True,
+                "tube_id": "tube-1",
+                "tube_registry": tube_registry,
+            }
+
+            PAMTunnelStartCommand().execute(
+                types.SimpleNamespace(via_desktop_login=True, batch_mode=False),
+                uid="record-1",
+            )
+
+            handler = signal_mock.call_args_list[0].args[1]
+            handler(15, None)
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not tube_registry.close_tube.called:
+                time.sleep(0.01)
+
+        tube_registry.close_tube.assert_called_once_with("tube-1", reason=CloseConnectionReasons.Normal)
+        unregister_tunnel.assert_called_once_with()
+        unregister_tunnel_session.assert_called_once_with("tube-1")
+
+    def test_interactive_sigterm_handler_drains_multiple_tunnels(self):
+        tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED = False
+        tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID.clear()
+        tunnel_and_connections._INTERACTIVE_SIGNAL_EVENT.clear()
+        registry_one = mock.Mock()
+        registry_two = mock.Mock()
+
+        with mock.patch(
+            "keepercommander.commands.tunnel_and_connections.unregister_tunnel"
+        ) as unregister_tunnel, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.unregister_tunnel_session"
+        ) as unregister_tunnel_session, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.signal.signal"
+        ) as signal_mock:
+            handler_one = tunnel_and_connections._install_interactive_tunnel_signal_handler(
+                "record-1",
+                "tube-1",
+                registry_one,
+            )
+            handler_two = tunnel_and_connections._install_interactive_tunnel_signal_handler(
+                "record-2",
+                "tube-2",
+                registry_two,
+            )
+
+            self.assertIs(handler_one, handler_two)
+            signal_mock.assert_called_once()
+            handler_one(15, None)
+            deadline = time.time() + 1.0
+            while time.time() < deadline and (
+                not registry_one.close_tube.called or not registry_two.close_tube.called
+            ):
+                time.sleep(0.01)
+
+        registry_one.close_tube.assert_called_once_with("tube-1", reason=CloseConnectionReasons.Normal)
+        registry_two.close_tube.assert_called_once_with("tube-2", reason=CloseConnectionReasons.Normal)
+        unregister_tunnel.assert_called_once_with()
+        unregister_tunnel_session.assert_has_calls([mock.call("tube-1"), mock.call("tube-2")], any_order=True)
 
     def test_via_desktop_keyboard_interrupt_during_tunnel_start_cancels_cleanly(self):
         patches = self._patch_start_dependencies()
