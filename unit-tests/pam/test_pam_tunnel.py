@@ -2,6 +2,8 @@ import unittest
 import threading
 import time
 import types
+import os
+import signal
 from unittest import mock
 
 from keepercommander.error import CommandError
@@ -19,6 +21,7 @@ from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     CloseConnectionReasons,
     TunnelSignalHandler,
     _handle_pam_stop_control,
+    _wait_for_registry_pid_stopped,
     find_open_port,
     generate_random_bytes,
     register_tunnel_session,
@@ -408,6 +411,28 @@ class TestPamStopControl(unittest.TestCase):
         unregister_tunnel.assert_not_called()
         pam_state_bridge.publish_stopping.assert_not_called()
         pam_state_bridge.publish_error.assert_not_called()
+
+    def test_wait_for_registry_pid_stopped_detects_pid_death_when_registry_entry_persists(self):
+        is_pid_alive = mock.Mock(side_effect=[True, False])
+        unregister_tunnel = mock.Mock()
+        registry_entry_exists = mock.Mock(return_value=True)
+
+        stopped = _wait_for_registry_pid_stopped(
+            12345,
+            is_pid_alive,
+            unregister_tunnel,
+            timeout_seconds=5.0,
+            pid_started_at="pid-start-1",
+            registry_entry_exists_fn=registry_entry_exists,
+        )
+
+        self.assertTrue(stopped)
+        self.assertEqual(
+            [mock.call(12345, "pid-start-1"), mock.call(12345, "pid-start-1")],
+            is_pid_alive.call_args_list,
+        )
+        unregister_tunnel.assert_called_once_with(12345)
+        self.assertGreaterEqual(registry_entry_exists.call_count, 2)
 
     def test_stop_control_missing_session_returns_failed_when_registry_signal_fails(self):
         control = types.SimpleNamespace(
@@ -1035,6 +1060,70 @@ class TestPamTunnelStartPreActionApproval(unittest.TestCase):
         self.assertFalse(tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED)
         self.assertFalse(tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID)
         self.assertGreaterEqual(signal_mock.call_count, 2)
+
+    def test_unregister_tunnel_session_restores_interactive_sigterm_handler_after_last_normal_stop(self):
+        tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED = False
+        tunnel_and_connections._INTERACTIVE_PREVIOUS_SIGTERM = None
+        tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID.clear()
+        tunnel_and_connections._INTERACTIVE_SIGNAL_EVENT.clear()
+
+        with mock.patch(
+            "keepercommander.commands.tunnel_and_connections.signal.signal"
+        ) as signal_mock:
+            tunnel_and_connections._install_interactive_tunnel_signal_handler(
+                "record-1",
+                "tube-1",
+                mock.Mock(),
+            )
+            tunnel_and_connections._install_interactive_tunnel_signal_handler(
+                "record-2",
+                "tube-2",
+                mock.Mock(),
+            )
+            register_tunnel_session("tube-1", object())
+            register_tunnel_session("tube-2", object())
+
+            unregister_tunnel_session("tube-1")
+            self.assertTrue(tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED)
+            self.assertNotIn("tube-1", tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID)
+            self.assertIn("tube-2", tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID)
+
+            unregister_tunnel_session("tube-2")
+
+        self.assertFalse(tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED)
+        self.assertFalse(tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID)
+        self.assertGreaterEqual(signal_mock.call_count, 2)
+
+    def test_interactive_sigterm_handler_delegates_when_no_tunnels_remain(self):
+        frame = object()
+        for previous in (mock.Mock(), signal.SIG_IGN, None):
+            with self.subTest(previous=previous):
+                tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED = True
+                tunnel_and_connections._INTERACTIVE_PREVIOUS_SIGTERM = previous
+                tunnel_and_connections._INTERACTIVE_TUNNELS_BY_ID.clear()
+                tunnel_and_connections._INTERACTIVE_SIGNAL_EVENT.clear()
+                previous_handler = previous if callable(previous) else None
+
+                with mock.patch(
+                    "keepercommander.commands.tunnel_and_connections.signal.signal"
+                ) as signal_mock, mock.patch(
+                    "keepercommander.commands.tunnel_and_connections.os.kill"
+                ) as kill_mock:
+                    tunnel_and_connections._interactive_tunnel_signal_handler(15, frame)
+
+                signal_mock.assert_called_once_with(
+                    signal.SIGTERM,
+                    previous if previous is not None else signal.SIG_DFL,
+                )
+                if previous_handler is not None:
+                    previous_handler.assert_called_once_with(15, frame)
+                    kill_mock.assert_not_called()
+                elif previous == signal.SIG_IGN:
+                    kill_mock.assert_not_called()
+                else:
+                    kill_mock.assert_called_once_with(os.getpid(), 15)
+                self.assertFalse(tunnel_and_connections._INTERACTIVE_SIGNAL_INSTALLED)
+                self.assertIsNone(tunnel_and_connections._INTERACTIVE_PREVIOUS_SIGTERM)
 
     def test_via_desktop_keyboard_interrupt_during_tunnel_start_cancels_cleanly(self):
         patches = self._patch_start_dependencies()

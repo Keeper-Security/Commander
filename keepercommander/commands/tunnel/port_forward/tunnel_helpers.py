@@ -361,6 +361,11 @@ def unregister_tunnel_session(tube_id):
             del _GLOBAL_TUNNEL_SESSIONS[tube_id]
             logging.debug(f"Unregistered tunnel session for tube: {tube_id}")
             logging.debug(f"Remaining active tunnel sessions: {len(_GLOBAL_TUNNEL_SESSIONS)}")
+            try:
+                from ... import tunnel_and_connections
+                tunnel_and_connections._remove_interactive_tunnel_signal_registration(tube_id)
+            except Exception:
+                pass
             return session
         return None
 
@@ -767,10 +772,11 @@ def _wait_for_registry_pid_stopped(
         if registry_entry_exists_fn and not registry_entry_exists_fn(pid, pid_started_at):
             return True
         now = time.monotonic()
-        if now >= next_pid_check and not is_pid_alive_fn(pid, pid_started_at):
-            unregister_tunnel_fn(pid)
-            return True
-        next_pid_check = now + 1.0
+        if now >= next_pid_check:
+            if not is_pid_alive_fn(pid, pid_started_at):
+                unregister_tunnel_fn(pid)
+                return True
+            next_pid_check = now + 1.0
         time.sleep(0.2)
     return False
 

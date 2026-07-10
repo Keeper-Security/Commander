@@ -103,15 +103,21 @@ def _delegate_unhandled_sigterm(signum, frame, previous):
         os.kill(os.getpid(), signum)
 
 
+def _remove_interactive_tunnel_signal_registration(tube_id):
+    with _INTERACTIVE_SIGNAL_LOCK:
+        if _INTERACTIVE_TUNNELS_BY_ID.pop(tube_id, None) is None:
+            return False
+        _restore_interactive_tunnel_signal_handler_unlocked()
+        return True
+
+
 def _interactive_tunnel_signal_handler(signum, frame):
     # SIGTERM carries no tunnel payload. Backup signal handling is therefore
     # coarse: wake a worker to wind down every interactive tunnel in this PID.
-    with _INTERACTIVE_SIGNAL_LOCK:
-        has_tunnels = bool(_INTERACTIVE_TUNNELS_BY_ID)
-        previous = _INTERACTIVE_PREVIOUS_SIGTERM
+    has_tunnels = bool(_INTERACTIVE_TUNNELS_BY_ID)
+    previous = _INTERACTIVE_PREVIOUS_SIGTERM
     if not has_tunnels:
-        with _INTERACTIVE_SIGNAL_LOCK:
-            previous = _restore_interactive_tunnel_signal_handler_unlocked()
+        previous = _restore_interactive_tunnel_signal_handler_unlocked()
         _delegate_unhandled_sigterm(signum, frame, previous)
         return
     _INTERACTIVE_SIGNAL_EVENT.set()
