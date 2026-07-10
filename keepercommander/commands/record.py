@@ -291,6 +291,21 @@ class RecordGetUidCommand(Command):
         return get_info_parser
 
     @staticmethod
+    def _is_classic_shared_folder_owner(user, owner_username, owner_account_uid):
+        """Return True if *user* matches the classic shared folder owner from sync-down."""
+        if not user:
+            return False
+        if owner_username:
+            username = user.get('username') or ''
+            if username and username.lower() == owner_username.lower():
+                return True
+        if owner_account_uid:
+            account_uid = user.get('account_uid') or ''
+            if account_uid and account_uid == owner_account_uid:
+                return True
+        return False
+
+    @staticmethod
     def _build_folder_json(params, f):
         folder_type = 'nested_share_folder' if f.type == BaseFolderNode.NestedShareFolderType else 'classic_folder'
         parent_uid = f.parent_uid or None
@@ -365,6 +380,9 @@ class RecordGetUidCommand(Command):
         if api.is_shared_folder(params, uid):
             admins = api.get_share_admins_for_shared_folder(params, uid)
             sf = api.get_shared_folder(params, uid)
+            cached_sf = params.shared_folder_cache.get(uid) or {}
+            owner_username = cached_sf.get('owner_username')
+            owner_account_uid = cached_sf.get('owner_account_uid')
             if fmt == 'json':
                 path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep) if sf.shared_folder_uid else ''
                 sf_node = params.folder_cache.get(sf.shared_folder_uid) if sf.shared_folder_uid else None
@@ -405,6 +423,8 @@ class RecordGetUidCommand(Command):
                     sfo['users'] = [{
                         'username': u['username'],
                         'user_id': u.get('account_uid'),
+                        'owner': RecordGetUidCommand._is_classic_shared_folder_owner(
+                            u, owner_username, owner_account_uid),
                         'manage_records': u['manage_records'],
                         'manage_users': u['manage_users'],
                         'expiration': _format_expiration(u.get('expiration'))
