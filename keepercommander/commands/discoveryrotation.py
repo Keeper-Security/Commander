@@ -29,6 +29,7 @@ from .base import (Command, GroupCommand, user_choice, dump_report_data, report_
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
+from .pam.recording_commands import PAMGetRecordingsForUsersCommand, PAMDownloadRecordingsCommand
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
@@ -292,6 +293,7 @@ class PAMControllerCommand(GroupCommand):
                               'Manage Cloud-Native Application Protection Platform integration', 'cn')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Manage Universal Sync Configurations', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
+        self.register_command('recording', PAMRecordingCommand(), 'Manage PAM Session Recordings', 'rec')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -329,6 +331,17 @@ class PAMRotationCommand(GroupCommand):
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
         self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
         self.default_verb = 'list'
+
+
+class PAMRecordingCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMRecordingCommand, self).__init__()
+        self.register_command('list-by-user', PAMGetRecordingsForUsersCommand(),
+                              'List session recordings for one or more users', 'lbu')
+        self.register_command('download', PAMDownloadRecordingsCommand(),
+                              'Download recording files to a local directory', 'dl')
+        self.default_verb = 'list-by-user'
 
 
 class PAMDiscoveryCommand(GroupCommand):
