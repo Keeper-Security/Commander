@@ -182,9 +182,9 @@ class EnterpriseCommand(Command):
                     else:
                         remove_teams.role_team.append(role_team)
                         update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
-        if remove_teams:
+        if remove_teams and remove_teams.role_team:
             api.communicate_rest(params, remove_teams, 'enterprise/role_team_remove')
-        if add_teams:
+        if add_teams and add_teams.role_team:
             api.communicate_rest(params, add_teams, 'enterprise/role_team_add')
         return update_msgs
 
@@ -245,9 +245,9 @@ class EnterpriseCommand(Command):
                             else:
                                 remove_role_teams.role_team.append(role_team)
                                 update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
-        if remove_role_teams:
+        if remove_role_teams and remove_role_teams.role_team:
             api.communicate_rest(params, remove_role_teams, 'enterprise/role_team_remove')
-        if add_role_teams:
+        if add_role_teams and add_role_teams.role_team:
             api.communicate_rest(params, add_role_teams, 'enterprise/role_team_add')
         return update_msgs
 
