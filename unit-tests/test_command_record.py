@@ -326,6 +326,7 @@ class TestRecord(TestCase):
         self.assertTrue(all('owner' in u for u in payload['users']))
 
     def test_get_user_folder_json_consistent_by_name_and_uid(self):
+        """get --format json returns the same folder payload by name or UID."""
         params = get_synced_params()
         cmd = record.RecordGetUidCommand()
         user_folder = next(
