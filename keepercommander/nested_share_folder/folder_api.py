@@ -390,8 +390,6 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
         fk = get_folder_key(params, folder_uid)
         ek = folder_pb2.EncryptedDataKey()
         if as_team:
-            # v3 folder team grants must use the team's *asymmetric* public
-            # key (server rejects AES with "Key type 2 required").
             efk, key_type = encrypt_for_team(
                 fk, team_keys, prefer_aes=False,
                 forbid_rsa=getattr(params, 'forbid_rsa', False))
@@ -464,16 +462,104 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
     return result
 
 
+def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_label):
+    """Return a folder accessor row from ``get_folder_access_v3``, if present."""
+    try:
+        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
+        for fr in info.get('results', []):
+            if not fr.get('success'):
+                continue
+            accessors = fr.get('accessors', [])
+            for accessor in accessors:
+                if (accessor.get('accessor_uid') == accessor_uid_b64
+                        and accessor.get('access_type') == access_type_label):
+                    return accessor
+            for accessor in accessors:
+                if accessor.get('accessor_uid') == accessor_uid_b64:
+                    return accessor
+    except Exception as exc:
+        logger.debug('Folder accessor lookup failed for %s: %s', folder_uid, exc)
+    return None
+
+
+def _folder_inherits_parent_permissions(params, folder_uid):
+    """Return True when *folder_uid* has a parent and still inherits its access list."""
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    folder_obj = nsf_folders.get(folder_uid)
+    if not folder_obj:
+        return False
+    parent_uid = folder_obj.get('parent_uid')
+    if not parent_uid:
+        return False
+    inherit = folder_obj.get('inherit_user_permissions', 0) or 0
+    return inherit != folder_pb2.BOOLEAN_FALSE
+
+
+def _ensure_folder_direct_permissions(params, folder_uid):
+    """Disable parent permission inheritance so folder access changes apply locally.
+    """
+    if not _folder_inherits_parent_permissions(params, folder_uid):
+        return False
+    result = update_folder_v3(params, folder_uid, inherit_permissions=False)
+    if not result.get('success'):
+        raise ValueError(
+            result.get('message')
+            or 'Failed to disable parent permission inheritance on folder')
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    if folder_uid in nsf_folders:
+        nsf_folders[folder_uid]['inherit_user_permissions'] = folder_pb2.BOOLEAN_FALSE
+    params.sync_data = True
+    return True
+
+
+def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
+    """Drop a cached folder-access row after a successful revoke."""
+    accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid)
+    if not accesses:
+        return
+    params.nested_share_folder_accesses[folder_uid] = [
+        fa for fa in accesses
+        if fa.get('access_type_uid') != accessor_uid_b64
+    ]
+
+
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
+    """Revoke user or team access to an NSF folder.
+
+    Looks up the accessor via ``get_folder_access_v3`` so sub-folders use the
+    server-reported UID and access type (including inherited accessors).
+    On success, evicts the local access cache and sets ``params.sync_data``.
+    """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved
 
+    _ensure_folder_direct_permissions(params, folder_uid)
+
     actual_uid_bytes, identifier_label, access_type_enum = _resolve_accessor(
         params, user_uid, as_team)
     if not actual_uid_bytes:
         raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
+
+    accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
+    access_type_label = folder_pb2.AccessType.Name(access_type_enum)
+    accessor = _lookup_folder_accessor(
+        params, folder_uid, accessor_uid_b64, access_type_label)
+    if accessor:
+        server_uid = accessor.get('accessor_uid')
+        if server_uid:
+            actual_uid_bytes = utils.base64_url_decode(server_uid)
+            accessor_uid_b64 = server_uid
+        server_type = accessor.get('access_type')
+        if server_type:
+            access_type_label = server_type
+            try:
+                access_type_enum = folder_pb2.AccessType.Value(server_type)
+            except ValueError:
+                raise ValueError(
+                    f"Unrecognised access type '{server_type}' returned by server "
+                    f"for folder '{folder_uid}'")
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
@@ -483,7 +569,10 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     response = folder_access_update_v3(params, folder_access_removes=[ad])
     result = parse_folder_access_result(response, folder_uid, identifier_label,
                                         'Access revoked successfully')
-    result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    result['access_type'] = access_type_label
+    if result.get('success'):
+        _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64)
+        params.sync_data = True
     return result
 
 
