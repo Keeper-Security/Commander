@@ -482,33 +482,36 @@ def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_la
     return None
 
 
-def _find_direct_access_ancestor(params, folder_uid, accessor_uid_b64, access_type_label):
-    """Walk up the NSF folder tree to find the ancestor where the accessor has direct (non-inherited) access.
-
-    Returns the ancestor folder UID, or ``None`` if no such ancestor is found.
-    Used when a remove is requested on a subfolder but the access is inherited from a parent.
-    """
+def _folder_inherits_parent_permissions(params, folder_uid):
+    """Return True when *folder_uid* has a parent and still inherits its access list."""
     nsf_folders = getattr(params, 'nested_share_folders', {})
-    visited = set()
-    current_uid = folder_uid
+    folder_obj = nsf_folders.get(folder_uid)
+    if not folder_obj:
+        return False
+    parent_uid = folder_obj.get('parent_uid')
+    if not parent_uid:
+        return False
+    inherit = folder_obj.get('inherit_user_permissions', 0) or 0
+    return inherit != folder_pb2.BOOLEAN_FALSE
 
-    while current_uid:
-        if current_uid in visited:
-            break
-        visited.add(current_uid)
 
-        parent_uid = nsf_folders.get(current_uid, {}).get('parent_uid') or ''
-        if not parent_uid or parent_uid not in nsf_folders:
-            break
+def _ensure_folder_direct_permissions(params, folder_uid):
+    """Disable parent permission inheritance so folder access changes apply locally.
 
-        accessor = _lookup_folder_accessor(
-            params, parent_uid, accessor_uid_b64, access_type_label)
-        if accessor and not accessor.get('inherited'):
-            return parent_uid
-
-        current_uid = parent_uid
-
-    return None
+    Mirrors keepersdk ``ensure_folder_direct_permissions`` (``vault/nsf_common``).
+    """
+    if not _folder_inherits_parent_permissions(params, folder_uid):
+        return False
+    result = update_folder_v3(params, folder_uid, inherit_permissions=False)
+    if not result.get('success'):
+        raise ValueError(
+            result.get('message')
+            or 'Failed to disable parent permission inheritance on folder')
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    if folder_uid in nsf_folders:
+        nsf_folders[folder_uid]['inherit_user_permissions'] = folder_pb2.BOOLEAN_FALSE
+    params.sync_data = True
+    return True
 
 
 def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
@@ -534,6 +537,8 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved
 
+    _ensure_folder_direct_permissions(params, folder_uid)
+
     actual_uid_bytes, identifier_label, access_type_enum = _resolve_accessor(
         params, user_uid, as_team)
     if not actual_uid_bytes:
@@ -557,22 +562,6 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
                 raise ValueError(
                     f"Unrecognised access type '{server_type}' returned by server "
                     f"for folder '{folder_uid}'")
-
-        if accessor.get('inherited'):
-            kind = 'Team' if as_team else 'User'
-            ancestor_uid = _find_direct_access_ancestor(
-                params, folder_uid, accessor_uid_b64, access_type_label)
-            nsf_folders = getattr(params, 'nested_share_folders', {})
-            if ancestor_uid:
-                ancestor_name = nsf_folders.get(ancestor_uid, {}).get('name') or ancestor_uid
-                raise ValueError(
-                    f"{kind} '{identifier_label}' has inherited access on this folder. "
-                    f"To remove it, run: nsf-share-folder {ancestor_name!r} "
-                    f"-e {identifier_label} -a remove")
-            else:
-                raise ValueError(
-                    f"{kind} '{identifier_label}' has inherited access on this folder. "
-                    f"Remove it from the parent folder where access was originally granted.")
 
     ad = folder_pb2.FolderAccessData()
     ad.folderUid = utils.base64_url_decode(folder_uid)
