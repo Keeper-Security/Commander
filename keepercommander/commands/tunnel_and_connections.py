@@ -1163,6 +1163,13 @@ class PAMTunnelStartCommand(Command):
                 if pam_state_bridge.is_duplicate_active_approval_message(approval_message):
                     message = pam_state_bridge.approval_message_display_text(approval_message)
                     raise CommandError('', f"{bcolors.WARNING}{message}{bcolors.ENDC}")
+                if pam_state_bridge.is_approval_preempted_message(approval_message):
+                    print(
+                        f"{bcolors.WARNING}"
+                        f"{pam_state_bridge.approval_message_display_text(approval_message)}"
+                        f"{bcolors.ENDC}"
+                    )
+                    return
                 raise CommandError(
                     'tunnel start',
                     pam_state_bridge.approval_message_display_text(approval_message),

@@ -943,6 +943,25 @@ class TestPamTunnelStartPreActionApproval(unittest.TestCase):
             any("Vault approval received. Establishing tunnel" in str(call) for call in print_mock.call_args_list)
         )
 
+    def test_via_desktop_preempted_start_approval_returns_retry_later_without_error(self):
+        patches = self._patch_start_dependencies()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patches[10] as start_rust_tunnel, mock.patch(
+            "keepercommander.commands.tunnel_and_connections.pam_state_bridge.request_start_tunnel_approval",
+            return_value=(
+                False,
+                "approval_preempted: Desktop approval was preempted by a higher-priority PAM action. Retry the tunnel start.",
+            ),
+        ), mock.patch("builtins.print") as print_mock:
+            PAMTunnelStartCommand().execute(
+                types.SimpleNamespace(via_desktop_login=True, batch_mode=False),
+                uid="record-1",
+            )
+
+        start_rust_tunnel.assert_not_called()
+        self.assertTrue(
+            any("Retry the tunnel start" in str(call) for call in print_mock.call_args_list)
+        )
+
     def test_default_interactive_start_registers_tunnel_for_list(self):
         patches = self._patch_start_dependencies()
         tube_registry = mock.Mock()

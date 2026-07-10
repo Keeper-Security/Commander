@@ -43,6 +43,7 @@ _ACTION_APPROVAL_CONTRACT_VERSION = 1
 _PAM_TUNNEL_START_ACTION = "pam_tunnel_start"
 _PAM_LAUNCH_ACTION = "pam_launch"
 _DUPLICATE_ACTIVE_REASON = "duplicate_active_session"
+_APPROVAL_PREEMPTED_REASON = "approval_preempted"
 _ACTION_APPROVAL_TIMEOUT_MS = None
 _STATE_SYNC_RESPONSE_TIMEOUT_SECONDS = 30
 DESKTOP_ACCOUNT_MISMATCH_MESSAGE = "Desktop account does not match Vault account"
@@ -825,6 +826,10 @@ def _duplicate_active_reason(kdbc=None):
     return _kdbc_value(kdbc, "PAM_APPROVAL_REASON_DUPLICATE_ACTIVE_SESSION", _DUPLICATE_ACTIVE_REASON)
 
 
+def _approval_preempted_reason(kdbc=None):
+    return _kdbc_value(kdbc, "PAM_APPROVAL_REASON_APPROVAL_PREEMPTED", _APPROVAL_PREEMPTED_REASON)
+
+
 def _make_start_tunnel_approval_request(
     kdbc,
     *,
@@ -890,6 +895,9 @@ def _decision_reason(decision):
         duplicate_reason = _duplicate_active_reason()
         if duplicate_reason in normalized:
             return duplicate_reason
+        preempted_reason = _approval_preempted_reason()
+        if preempted_reason in normalized:
+            return preempted_reason
         return normalized
     try:
         rendered = str(decision).lower()
@@ -898,6 +906,9 @@ def _decision_reason(decision):
     duplicate_reason = _duplicate_active_reason()
     if duplicate_reason in rendered:
         return duplicate_reason
+    preempted_reason = _approval_preempted_reason()
+    if preempted_reason in rendered:
+        return preempted_reason
     return None
 
 
@@ -905,9 +916,13 @@ def is_duplicate_active_approval_message(message):
     return str(message or "").startswith(f"{_duplicate_active_reason()}:")
 
 
+def is_approval_preempted_message(message):
+    return str(message or "").startswith(f"{_approval_preempted_reason()}:")
+
+
 def approval_message_display_text(message):
     message = str(message or "")
-    if is_duplicate_active_approval_message(message):
+    if is_duplicate_active_approval_message(message) or is_approval_preempted_message(message):
         return message.split(":", 1)[1].strip()
     return message
 
@@ -933,6 +948,13 @@ def _duplicate_active_approval_message(request):
         f"{reason}: A PAM tunnel is already active "
         f"for record {resource_handle}. Stop the active tunnel before "
         "starting another one."
+    )
+
+
+def _approval_preempted_message():
+    return (
+        f"{_approval_preempted_reason()}: Desktop approval was preempted by a higher-priority "
+        "PAM action. Retry the tunnel start."
     )
 
 
@@ -985,6 +1007,8 @@ def _print_action_approval_decision(request, decision):
     if decision_value == "deny":
         if decision_reason == "duplicate_active_session":
             return False, _duplicate_active_approval_message(request)
+        if decision_reason == _approval_preempted_reason():
+            return False, _approval_preempted_message()
         return False, "Desktop approval denied"
     return False, "Desktop approval did not allow the PAM tunnel start"
 

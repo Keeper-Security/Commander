@@ -818,6 +818,21 @@ class PamStateBridgeTest(TestCase):
         self.assertIn("PAM tunnel is already active", self.pam_state_bridge.approval_message_display_text(message))
         self.assertIn("record-1", message)
 
+    def test_start_tunnel_approval_preempted_has_retry_later_message(self):
+        self.fake_kdbc.approval_decision = _FakePAMActionApprovalDecision(
+            "deny",
+            reason="approval_preempted",
+        )
+
+        approved, message = self.pam_state_bridge.request_start_tunnel_approval(
+            resource_handle="record-1"
+        )
+
+        self.assertFalse(approved)
+        self.assertTrue(self.pam_state_bridge.is_approval_preempted_message(message))
+        self.assertIn("higher-priority PAM action", self.pam_state_bridge.approval_message_display_text(message))
+        self.assertNotIn("Desktop approval denied", message)
+
     def test_launch_approval_duplicate_session_has_friendly_message(self):
         self.fake_kdbc.approval_decision = _FakePAMActionApprovalDecision(
             "deny",
@@ -1052,6 +1067,67 @@ class PamStateBridgeTest(TestCase):
         self.assertEqual("stopped", state_sync_session.acks[0].result)
         self.assertEqual("conversation-1", state_sync_session.acks[0].pam_session_id)
         binding = state_sync_session.acks[0].kwargs["vault_account_binding"]
+        self.assertIsInstance(binding, _FakeVaultAccountBinding)
+        self.assertEqual(account_uid, binding.vault_account_uid)
+        self.assertEqual("Vault User", binding.username)
+        self.assertEqual("vault@example.com", binding.email)
+
+    def test_control_failure_attaches_retained_vault_account_binding(self):
+        import importlib
+        from keepercommander import utils as keeper_utils
+        from keepercommander.params import KeeperParams
+
+        bridge_peer = _FakePamBridgePeer("bridge")
+        control = types.SimpleNamespace(
+            control_id="control-1",
+            pam_session_id="conversation-1",
+            tunnel_id="tube-1",
+            resource_handle="record-1",
+            bridge_peer=bridge_peer,
+            vault_grant_id=None,
+            caller=None,
+        )
+        self.fake_kdbc.AckPamControlRequest = _FakeAckPamControlRequest
+        self.fake_kdbc.FailPamControlRequest = _FakeFailPamControlRequest
+        self.fake_kdbc.PamCoordinator = _FakePamCoordinator
+        self.fake_kdbc.coordinator_frames = [[control]]
+        self.pam_state_bridge = importlib.reload(self.pam_state_bridge)
+        params = KeeperParams()
+        params.via_desktop_login = True
+        params.account_uid_bytes = b"\x06" * 16
+        account_uid = keeper_utils.base64_url_encode(params.account_uid_bytes)
+        ok, message = self.pam_state_bridge.set_desktop_account_binding(
+            params,
+            {
+                "vault_account_uid": account_uid,
+                "username": "Vault User",
+                "email": "vault@example.com",
+            },
+        )
+        self.assertTrue(ok, message)
+
+        self.pam_state_bridge.register_control_handler(
+            lambda _received: (False, "Commander could not stop the requested PAM session")
+        )
+        self.pam_state_bridge.publish_pam_state_event(
+            event_type="pam_session_started",
+            state="active",
+            pam_session_id="conversation-1",
+            tunnel_id="tube-1",
+            resource_handle="record-1",
+        )
+
+        deadline = time.time() + 1.0
+        while time.time() < deadline and (
+            not self.fake_kdbc.coordinators or not self.fake_kdbc.coordinators[0].fails
+        ):
+            time.sleep(0.01)
+
+        state_sync_session = self.fake_kdbc.coordinators[0]
+        self.assertEqual(1, len(state_sync_session.fails))
+        self.assertEqual("control-1", state_sync_session.fails[0].control_id)
+        self.assertEqual("conversation-1", state_sync_session.fails[0].pam_session_id)
+        binding = state_sync_session.fails[0].kwargs["vault_account_binding"]
         self.assertIsInstance(binding, _FakeVaultAccountBinding)
         self.assertEqual(account_uid, binding.vault_account_uid)
         self.assertEqual("Vault User", binding.username)
