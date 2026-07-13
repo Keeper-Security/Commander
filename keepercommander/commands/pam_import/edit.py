@@ -16,7 +16,6 @@ import logging
 import os.path
 
 from itertools import chain
-from types import SimpleNamespace
 from typing import Any, Dict, Optional, List, Union
 
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
@@ -67,7 +66,7 @@ from ...keeper_dag.types import RefType
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ...recordv3 import RecordV3
-from ...subfolder import BaseFolderNode
+from ...subfolder import BaseFolderNode, NestedShareFolderNode
 
 
 class PAMProjectImportCommand(Command):
@@ -1356,14 +1355,11 @@ class PAMProjectImportCommand(Command):
         if not is_shared_folder:
             for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
                 if nsf.get('parent_uid') == puid and nsf.get('name') == folder:
-                    result.append(SimpleNamespace(
-                        uid=uid,
-                        name=nsf.get('name'),
-                        parent_uid=nsf.get('parent_uid'),
-                        type=BaseFolderNode.UserFolderType,
-                        UserFolderType=BaseFolderNode.UserFolderType,
-                        SharedFolderType=BaseFolderNode.SharedFolderType,
-                    ))
+                    nsf_folder = NestedShareFolderNode()
+                    nsf_folder.uid = uid
+                    nsf_folder.name = nsf.get('name')
+                    nsf_folder.parent_uid = nsf.get('parent_uid')
+                    result.append(nsf_folder)
         return result
 
     def create_ksm_app(self, params, app_name) -> str:

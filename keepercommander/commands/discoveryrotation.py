@@ -1712,6 +1712,10 @@ class PAMListRecordRotationCommand(Command):
                 row_color = bcolors.WHITE
                 record_title = '[record inaccessible]'
                 record_type = '[record inaccessible]'
+                logging.warning(
+                    'Rotation list: PAM User record %s is not accessible in the local vault cache',
+                    record_uid,
+                )
 
             if record_type != "pamUser":
                 # only pamUser records are supported for rotation
@@ -1780,8 +1784,18 @@ class PAMListRecordRotationCommand(Command):
                         pam_data_decrypted = pam_decrypt_configuration_data(pam_configuration)
                         pam_config_name = pam_data_decrypted.get('title') or pam_config_name
                         pam_config_type = pam_data_decrypted.get('type') or '[unknown]'
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logging.warning(
+                            'Rotation list: PAM configuration %s is not accessible in the vault '
+                            'and could not be decrypted from router data: %s',
+                            configuration_uid_str,
+                            exc,
+                        )
+                    if pam_config_name == '[record inaccessible]':
+                        logging.warning(
+                            'Rotation list: PAM configuration %s title/type remain inaccessible',
+                            configuration_uid_str,
+                        )
                 row.append(f"{pam_config_name or '[untitled]'} ({pam_config_type or '[unknown]'})")
 
             if is_verbose:
@@ -3091,15 +3105,27 @@ class PAMConfigurationRemoveCommand(Command):
         # type: (KeeperParams, str) -> Optional[str]
         if identifier in params.record_cache:
             rec = vault.KeeperRecord.load(params, identifier)
-            if isinstance(rec, vault.TypedRecord) and rec.version == 6 and rec.record_type in cls._PAM_CONFIG_TYPES:
-                return rec.record_uid
+            if isinstance(rec, vault.TypedRecord) and rec.version == 6:
+                if rec.record_type in cls._PAM_CONFIG_TYPES:
+                    return rec.record_uid
+                logging.warning(
+                    'Record "%s" is v6 but is not a PAM configuration type (found %s)',
+                    identifier,
+                    rec.record_type,
+                )
 
         from ..nested_share_folder import removal_api as _nsf
         resolved_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
         if resolved_uid:
             rec = vault.KeeperRecord.load(params, resolved_uid)
-            if isinstance(rec, vault.TypedRecord) and rec.version == 6 and rec.record_type in cls._PAM_CONFIG_TYPES:
-                return resolved_uid
+            if isinstance(rec, vault.TypedRecord) and rec.version == 6:
+                if rec.record_type in cls._PAM_CONFIG_TYPES:
+                    return resolved_uid
+                logging.warning(
+                    'Nested Share Record "%s" is v6 but is not a PAM configuration type (found %s)',
+                    resolved_uid,
+                    rec.record_type,
+                )
 
         l_name = identifier.casefold()
         matches = []
@@ -3391,7 +3417,7 @@ class PAMScriptAddCommand(Command):
             record_refs = kwargs.get('add_credential')
             if isinstance(record_refs, list):
                 for ref in record_refs:
-                    resolved_ref = resolve_pam_record(params, ref)
+                    resolved_ref = resolve_pam_record(params, ref, rec_type='pamUser')
                     if resolved_ref:
                         script_value['recordRef'].append(resolved_ref.record_uid)
                     elif record_exists_in_vault(params, ref):
@@ -3466,7 +3492,7 @@ class PAMScriptEditCommand(Command):
         remove_credential = kwargs.get('remove_credential')
         if isinstance(remove_credential, list) and remove_credential:
             for ref in remove_credential:
-                resolved_ref = resolve_pam_record(params, ref)
+                resolved_ref = resolve_pam_record(params, ref, rec_type='pamUser')
                 if resolved_ref:
                     refs.discard(resolved_ref.record_uid)
                 else:
@@ -3475,7 +3501,7 @@ class PAMScriptEditCommand(Command):
         add_credential = kwargs.get('add_credential')
         if isinstance(add_credential, list) and add_credential:
             for ref in add_credential:
-                resolved_ref = resolve_pam_record(params, ref)
+                resolved_ref = resolve_pam_record(params, ref, rec_type='pamUser')
                 if resolved_ref:
                     refs.add(resolved_ref.record_uid)
                 elif record_exists_in_vault(params, ref):

@@ -1316,7 +1316,11 @@ class CredentialProvisionCommand(Command):
 
         try:
             folder_uid = self._resolve_pam_user_folder_uid(config, params)
-        except Exception:
+        except Exception as e:
+            logging.warning(
+                f'Could not resolve target folder for duplicate username check '
+                f'(username={username}, PAM config={pam_config_uid}): {e}'
+            )
             return False
 
         if not folder_uid:

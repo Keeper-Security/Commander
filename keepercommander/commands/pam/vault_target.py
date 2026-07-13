@@ -145,10 +145,10 @@ def find_nsf_users_subfolder(params, parent_uid):
 
 
 def records_in_folder(params, folder_uid):
-    records = set(getattr(params, 'subfolder_record_cache', {}).get(folder_uid, set()) or set())
-    nsf_records = getattr(params, 'nested_share_folder_records', {})
+    records = set((getattr(params, 'subfolder_record_cache', None) or {}).get(folder_uid, set()) or set())
+    nsf_records = getattr(params, 'nested_share_folder_records', None) or {}
     if folder_uid in nsf_records:
-        records.update(nsf_records[folder_uid])
+        records.update(nsf_records[folder_uid] or set())
     return records
 
 
@@ -470,7 +470,14 @@ def place_record_in_folder(params, record_uid, folder_uid, command='pam'):
     if is_nested_share_folder(params, folder_uid):
         result = move_record_v3(params, record_uid, to_folder_uid=folder_uid)
         if isinstance(result, dict) and result.get('success') is False:
-            raise CommandError(command, result.get('message') or 'Failed to place record in Nested Share Folder')
+            message = result.get('message') or 'Failed to place record in Nested Share Folder'
+            lowered = message.casefold()
+            if any(token in lowered for token in ('denied', 'permission', 'forbidden', 'read-only')):
+                message = (
+                    f'{message}. Verify you have record-management permission '
+                    f'on the Nested Share Folder.'
+                )
+            raise CommandError(command, message)
         api.sync_down(params)
     else:
         FolderMoveCommand().execute(params, src=record_uid, dst=folder_uid, force=True)
@@ -518,6 +525,12 @@ def update_pam_record(params, record, command='pam'):
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
+    """Add a record, placing it in an NSF folder when needed.
+
+    For Nested Share Folders, ``folder`` is removed from *args* before calling
+    RecordAddCommand because the record is created at the vault root first and
+    then moved into the NSF via ``place_record_in_folder``.
+    """
     from ..record_edit import RecordAddCommand
 
     record_args = dict(args or {})
@@ -533,6 +546,12 @@ def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
 
 
 def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam'):
+    """Add a v3 typed record, placing it in an NSF folder when needed.
+
+    For Nested Share Folders, ``folder`` is removed from *args* before calling
+    RecordAddCommand because the record is created without a legacy folder target
+    and then placed into the NSF via ``place_record_in_folder``.
+    """
     from ..recordv3 import RecordAddCommand
 
     record_args = dict(args or {})

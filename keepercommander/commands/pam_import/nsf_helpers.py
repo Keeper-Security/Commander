@@ -193,6 +193,12 @@ def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
         folder_uid = api.generate_record_uid()
 
     parent = parent_uid or None
+    if parent:
+        nsf_folders = getattr(params, 'nested_share_folders', None) or {}
+        folder_cache = getattr(params, 'folder_cache', None) or {}
+        if parent not in nsf_folders and parent not in folder_cache:
+            raise CommandError('pam project extend', f'Parent folder "{parent_uid}" not found')
+
     with command_error_handler('pam project extend'):
         fd, folder_key = _prepare_folder_for_creation(
             params, folder_uid, name, parent, None, True,
