@@ -732,6 +732,40 @@ def _resolve_uid_to_username(params, uid_b64: str) -> Optional[str]:
     return None
 
 
+def _resolve_uid_to_team_name(params, uid_b64: str) -> Optional[str]:
+    """Try to resolve a base64-url team UID to a human-readable team name."""
+    team_cache = getattr(params, 'team_cache', None) or {}
+    team = team_cache.get(uid_b64)
+    if isinstance(team, dict):
+        name = team.get('name')
+        if name:
+            return name
+
+    enterprise = getattr(params, 'enterprise', None)
+    if enterprise:
+        for t in enterprise.get('teams', []):
+            if t.get('team_uid') == uid_b64 and t.get('name'):
+                return t['name']
+
+    try:
+        teams = api.get_share_objects(params).get('teams', {}) or {}
+        team_info = teams.get(uid_b64)
+        if isinstance(team_info, dict):
+            name = team_info.get('name')
+            if name:
+                return name
+    except Exception:
+        pass
+
+    for t in (getattr(params, 'available_team_cache', None) or []):
+        if t.get('team_uid') == uid_b64:
+            name = t.get('team_name')
+            if name:
+                return name
+
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # High-level: get_folder_access_v3
 # ══════════════════════════════════════════════════════════════════════════
@@ -776,19 +810,22 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None,
                 at = folder_pb2.AccessType.Name(a.accessType)
                 rt = folder_pb2.AccessRoleType.Name(a.accessRoleType)
                 username = None
-                if resolve_usernames and at == 'AT_USER':
-                    username = getattr(params, 'user_cache', {}).get(auid)
-                    if not username and hasattr(params, 'enterprise') and params.enterprise:
-                        for u in params.enterprise.get('users', []):
-                            if u.get('user_account_uid') == auid:
-                                username = u.get('username')
-                                break
-                    if not username:
-                        username = _resolve_uid_to_username(params, auid)
-                        if username:
-                            if not hasattr(params, 'user_cache'):
-                                params.user_cache = {}
-                            params.user_cache[auid] = username
+                if resolve_usernames:
+                    if at == 'AT_USER':
+                        username = getattr(params, 'user_cache', {}).get(auid)
+                        if not username and hasattr(params, 'enterprise') and params.enterprise:
+                            for u in params.enterprise.get('users', []):
+                                if u.get('user_account_uid') == auid:
+                                    username = u.get('username')
+                                    break
+                        if not username:
+                            username = _resolve_uid_to_username(params, auid)
+                            if username:
+                                if not hasattr(params, 'user_cache'):
+                                    params.user_cache = {}
+                                params.user_cache[auid] = username
+                    elif at == 'AT_TEAM':
+                        username = _resolve_uid_to_team_name(params, auid)
                 ai = {
                     'accessor_uid': auid, 'access_type': at, 'role': rt,
                     'inherited': bool(a.inherited), 'hidden': bool(a.hidden),
