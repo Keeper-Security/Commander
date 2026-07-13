@@ -176,20 +176,14 @@ class TestPamStopControl(unittest.TestCase):
     def tearDown(self):
         unregister_tunnel_session("tube-foreground")
 
-    def test_stop_control_closes_tunnel_and_wakes_foreground(self):
-        test_case = self
-
+    def test_stop_control_wakes_foreground_owner_without_closing_from_worker(self):
         class FakeRegistry:
             def __init__(self, signal_handler):
                 self.closed = []
                 self.signal_handler = signal_handler
 
             def close_tube(self, tube_id, reason=None):
-                test_case.assertFalse(
-                    getattr(self.signal_handler, "tube_close_initiated", False),
-                    "remote stop must issue close_tube before marking the close as already initiated",
-                )
-                self.closed.append((tube_id, reason))
+                raise AssertionError("the state-sync worker must not close a foreground-owned tube")
 
         signal_handler = types.SimpleNamespace(tube_close_initiated=False)
         registry = FakeRegistry(signal_handler)
@@ -214,17 +208,21 @@ class TestPamStopControl(unittest.TestCase):
         register_tunnel_session("tube-foreground", session)
         with mock.patch(
             "keepercommander.commands.tunnel.port_forward.tunnel_helpers.pam_state_bridge"
-        ) as pam_state_bridge:
+        ) as pam_state_bridge, mock.patch(
+            "keepercommander.commands.tunnel.port_forward.tunnel_helpers._wait_for_tube_closed",
+            return_value=True,
+        ) as wait_for_tube_closed:
             stopped, message = _handle_pam_stop_control(control)
 
         self.assertTrue(stopped)
-        self.assertEqual("fallback_close_executed", message)
-        self.assertEqual([("tube-foreground", CloseConnectionReasons.Normal)], registry.closed)
+        self.assertEqual("owner_close_executed", message)
+        self.assertEqual([], registry.closed)
         self.assertTrue(getattr(session, "shutdown_initiated", False))
         self.assertTrue(getattr(session.signal_handler, "shutdown_initiated", False))
-        self.assertTrue(getattr(session.signal_handler, "tube_close_initiated", False))
+        self.assertFalse(getattr(session.signal_handler, "tube_close_initiated", False))
         pam_state_bridge.publish_stopping.assert_called_once_with(session)
         pam_state_bridge.publish_stopped.assert_called_once_with(session)
+        wait_for_tube_closed.assert_called_once_with(registry, "tube-foreground")
         self.assertTrue(foreground_shutdown.is_set())
         self.assertTrue(external_shutdown.is_set())
 
@@ -547,7 +545,7 @@ class TestPamStopControl(unittest.TestCase):
         pam_state_bridge.publish_stopped.assert_not_called()
         self.assertTrue(getattr(session.signal_handler, "tube_close_initiated", False))
 
-    def test_stop_control_signals_external_shutdown_before_close(self):
+    def test_stop_control_wakes_external_owner_without_direct_close(self):
         external_shutdown = mock.Mock()
 
         class FakeRegistry:
@@ -555,8 +553,7 @@ class TestPamStopControl(unittest.TestCase):
                 self.closed = []
 
             def close_tube(self, tube_id, reason=None):
-                external_shutdown.set.assert_called_once_with()
-                self.closed.append((tube_id, reason))
+                raise AssertionError("the state-sync worker must not close an external-owned tube")
 
         registry = FakeRegistry()
         session = types.SimpleNamespace(
@@ -583,8 +580,8 @@ class TestPamStopControl(unittest.TestCase):
             stopped, message = _handle_pam_stop_control(control)
 
         self.assertTrue(stopped)
-        self.assertEqual("fallback_close_executed", message)
-        self.assertEqual([("tube-foreground", CloseConnectionReasons.Normal)], registry.closed)
+        self.assertEqual("owner_close_executed", message)
+        self.assertEqual([], registry.closed)
         external_shutdown.set.assert_called()
 
     def test_late_ice_restart_offer_is_ignored_after_shutdown(self):

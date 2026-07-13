@@ -901,7 +901,7 @@ def _handle_pam_stop_control(control):
     setattr(session, "shutdown_initiated", True)
     setattr(signal_handler, "shutdown_initiated", True)
     pam_state_bridge.publish_stopping(session)
-    _signal_pam_shutdown_events(session)
+    owner_shutdown_requested = _signal_pam_shutdown_events(session)
     try:
         logging.info(
             "Closing Commander PAM tunnel for Vault-origin shutdown signal: "
@@ -918,9 +918,33 @@ def _handle_pam_stop_control(control):
             unregister_tunnel_session(tube_id)
             logging.info("Commander PAM tunnel was already stopped: matched_tube_id=%s", tube_id)
             return True, "already_stopped"
-        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-        signal_handler.tube_close_initiated = True
-        if not _wait_for_tube_closed(tube_registry, tube_id):
+
+        # Foreground and PAM-launch loops own their Rust registry calls. This
+        # handler runs on the Desktop state-sync worker, so only request their
+        # shutdown and wait for their owner loop to close the tube.
+        if owner_shutdown_requested:
+            if not _wait_for_tube_closed(tube_registry, tube_id):
+                pam_state_bridge.publish_error(
+                    session,
+                    {
+                        "code": "vault_origin_stop_owner_close_timeout",
+                        "kind": "timeout",
+                        "message": "Commander requested the tunnel owner to close but the tube did not report closed",
+                    },
+                )
+                logging.warning(
+                    "Vault-origin PAM shutdown signal did not observe owner tunnel closure: "
+                    "matched_tube_id=%s",
+                    tube_id,
+                )
+                return False, "Commander requested the tunnel owner to close but the tube did not report closed"
+            result_message = "owner_close_executed"
+        else:
+            tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+            signal_handler.tube_close_initiated = True
+            result_message = "fallback_close_executed"
+
+        if not owner_shutdown_requested and not _wait_for_tube_closed(tube_registry, tube_id):
             pam_state_bridge.publish_error(
                 session,
                 {
@@ -962,13 +986,7 @@ def _handle_pam_stop_control(control):
             err,
         )
         return False, f"Commander failed to close matching PAM tunnel: {err}"
-    foreground_shutdown = getattr(session, "foreground_shutdown_event", None)
-    if foreground_shutdown:
-        foreground_shutdown.set()
-    external_shutdown = getattr(session, "external_shutdown_event", None)
-    if external_shutdown:
-        external_shutdown.set()
-    return True, "fallback_close_executed"
+    return True, result_message
 
 
 _PAM_STOP_CONTROL_HANDLER_REGISTERED = False
