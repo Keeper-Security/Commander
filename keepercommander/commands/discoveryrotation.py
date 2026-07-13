@@ -17,8 +17,8 @@ import os.path
 import re
 import time
 from datetime import datetime
-from typing import Dict, Optional, Any, Set, List
 from urllib.parse import urlparse, urlunparse
+from typing import Optional, List
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -77,6 +77,7 @@ from .pam_debug.krouter import PAMDebugKRouterCommand
 from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
+from .pam.cnapp_commands import PAMCnappCommand
 from .pam_import.commands import PAMProjectCommand
 from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
@@ -93,7 +94,6 @@ from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
 from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
-from .pam.cnapp_commands import PAMCnappCommand
 from .universalsecretsync import (
     PAMUniversalSyncConfigCommand,
     PAMUniversalSyncRunCommand
@@ -288,10 +288,9 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('workflow', PAMWorkflowCommand(), 'Manage PAM Workflows', 'w')
         self.register_command('access', PAMPrivilegedAccessCommand(),
                               'Manage privileged cloud access operations', 'ac')
-        self.register_command('cnapp', PAMCnappCommand(),
-                              'Manage Cloud-Native Application Protection Platform integration', 'cn')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Manage Universal Sync Configurations', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
+        self.register_command('cnapp', PAMCnappCommand(), 'Manage CNAPP integrations', 'cn')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -2340,7 +2339,8 @@ class PAMConfigurationListCommand(Command):
 
         for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
-                                 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
+                                 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
+                                 'pamGitHubConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
@@ -2402,7 +2402,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci'], help='PAM Configuration Type')
+                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci', 'github'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -2461,6 +2461,12 @@ gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action
                        help='Google Workspace Administrator Email Address')
 gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
+github_group = common_parser.add_argument_group('github', 'GitHub configuration')
+github_group.add_argument('--github-id', dest='github_id', action='store', help='GitHub Id')
+github_group.add_argument('--personal-access-token', dest='personal_access_token', action='store',
+                       help='Personal Access Token')
+github_group.add_argument('--github-base-url', dest='github_base_url', action='store',
+                       help='GitHub Base URL')
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -2642,6 +2648,16 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if gcp_region:
                 regions = '\n'.join(gcp_region)
                 extra_properties.append(f'multiline.pamGcpRegionName={regions}')
+        elif record.record_type == 'pamGitHubConfiguration':
+            github_id = kwargs.get('github_id')
+            if github_id:
+                extra_properties.append(f'text.pamGitHubId={github_id}')
+            personal_access_token = kwargs.get('personal_access_token')
+            if personal_access_token:
+                extra_properties.append(f'secret.personalAccessToken={personal_access_token}')
+            github_base_url = kwargs.get('github_base_url')
+            if github_base_url:
+                extra_properties.append(f'text.pamGitHubBaseUrl={github_base_url}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:
@@ -2803,13 +2819,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamNetworkConfiguration'
         elif config_type == 'gcp':
             record_type = 'pamGcpConfiguration'
+        elif config_type == 'github':
+            record_type = 'pamGitHubConfiguration'
         elif config_type == 'domain':
             record_type = 'pamDomainConfiguration'
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                                                 ' - supported options: local, aws, azure, gcp, domain, oci')
+                                                 ' - supported options: local, aws, azure, gcp, domain, oci, github')
 
         title = kwargs.get('title')
         if not title:
@@ -2958,6 +2976,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamNetworkConfiguration'
             elif config_type == 'gcp':
                 record_type = 'pamGcpConfiguration'
+            elif config_type == 'github':
+                record_type = 'pamGitHubConfiguration'
             elif config_type == 'domain':
                 record_type = 'pamDomainConfiguration'
             elif config_type == 'oci':
