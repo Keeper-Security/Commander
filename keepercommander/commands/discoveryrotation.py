@@ -33,11 +33,11 @@ from .pam.vault_target import (
     resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
-    update_pam_record, records_in_folder,
+    create_pam_configuration_in_folder, update_pam_record, records_in_folder,
 )
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
-    pam_configuration_create_record_v6, record_rotation_get, \
+    record_rotation_get, \
     pam_decrypt_configuration_data
 
 from .pam.pam_dto import (
@@ -1417,7 +1417,8 @@ class PAMCreateRecordRotationCommand(Command):
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_name:
-            rec = resolve_pam_record(params, record_name)
+            rec = resolve_pam_record(
+                params, record_name, rec_type=PamConfigurationEditMixin.ROTATION_TARGET_RECORD_TYPES)
             if rec:
                 record_uids.add(rec.record_uid)
             elif record_name in params.record_cache:
@@ -1487,16 +1488,24 @@ class PAMCreateRecordRotationCommand(Command):
                               isinstance(x, vault.TypedRecord)}
 
         config_uid = kwargs.get('config')
-        cfg_rec = resolve_pam_record(params, kwargs.get('config', None))
-        if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
+        cfg_rec = resolve_pam_record(
+            params, kwargs.get('config', None), rec_type=PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES)
+        if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_type in PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES:
             config_uid = cfg_rec.record_uid
 
         pam_config = None  # type: Optional[vault.TypedRecord]
         if config_uid:
             if config_uid in pam_configurations:
                 pam_config = pam_configurations[config_uid]
+            elif cfg_rec and cfg_rec.record_uid == config_uid:
+                pam_config = cfg_rec
             else:
-                raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
+                loaded = vault.KeeperRecord.load(params, config_uid)
+                if (isinstance(loaded, vault.TypedRecord) and loaded.version == 6
+                        and loaded.record_type in PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES):
+                    pam_config = loaded
+                else:
+                    raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
 
         schedule_data = parse_schedule_data(kwargs)
 
@@ -1531,7 +1540,8 @@ class PAMCreateRecordRotationCommand(Command):
                 pwd_complexity_rule_list = {}
 
         resource_uid = kwargs.get('resource')
-        res_rec = resolve_pam_record(params, kwargs.get('resource', None))
+        res_rec = resolve_pam_record(
+            params, kwargs.get('resource', None), rec_type=PamConfigurationEditMixin.PAM_RESOURCE_RECORD_TYPES)
         if res_rec and isinstance(res_rec, vault.TypedRecord):
             resource_uid = res_rec.record_uid
 
@@ -2492,6 +2502,14 @@ github_group.add_argument('--github-base-url', dest='github_base_url', action='s
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
+    PAM_CONFIG_RECORD_TYPES = frozenset({
+        'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
+        'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
+    })
+    PAM_RESOURCE_RECORD_TYPES = frozenset({
+        'pamDatabase', 'pamDirectory', 'pamMachine', 'pamRemoteBrowser',
+    })
+    ROTATION_TARGET_RECORD_TYPES = PAM_RESOURCE_RECORD_TYPES | frozenset({'pamUser'})
 
     def __init__(self):
         super().__init__()
@@ -2903,8 +2921,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         self.verify_required(record)
 
-        pam_configuration_create_record_v6(params, record, shared_folder_uid)
-        api.sync_down(params)
+        create_pam_configuration_in_folder(params, record, shared_folder_uid, command='pam-config-new')
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         # Add DAG for configuration
@@ -3092,10 +3109,7 @@ class PAMConfigurationRemoveCommand(Command):
                         help='PAM Configuration UID. To view all rotation settings with their UIDs, use command '
                              '`pam config list`')
 
-    _PAM_CONFIG_TYPES = frozenset({
-        'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
-        'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
-    })
+    _PAM_CONFIG_TYPES = PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES
 
     def get_parser(self):
         return PAMConfigurationRemoveCommand.parser
@@ -4304,7 +4318,7 @@ class PAMCreateGatewayCommand(Command):
                                              help='Name of the Gateway',
                                              action='store')
     dr_create_controller_parser.add_argument('--application', '-a', required=True, dest='ksm_app',
-                                             help='KSM Application name, UID, or NSF path. Use '
+                                             help='KSM Application name or UID. Use '
                                                   '`secrets-manager app list` to view available applications.',
                                              action='store')
     dr_create_controller_parser.add_argument('--token-expires-in-min', '-e', type=int, dest='token_expire_in_min',

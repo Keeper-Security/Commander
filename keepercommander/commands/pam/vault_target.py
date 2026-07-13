@@ -301,22 +301,38 @@ def record_exists_in_vault(params, record_uid):
             or is_nested_share_record(params, record_uid))
 
 
+def _record_matches_type(record, rec_type):
+    # type: (...) -> bool
+    if not rec_type:
+        return True
+    record_type = getattr(record, 'record_type', None)
+    if isinstance(rec_type, str):
+        return record_type == rec_type
+    try:
+        return record_type in rec_type
+    except TypeError:
+        return record_type == rec_type
+
+
 def resolve_pam_record(params, identifier, rec_type=None):
     # type: (...) -> Optional[vault.KeeperRecord]
-    """Resolve a record by UID, folder path, or title including Nested Share Records."""
+    """Resolve a record by UID, folder path, or title including Nested Share Records.
+
+    *rec_type* may be a single record type string or a collection of allowed types.
+    """
     if not identifier:
         return None
 
     if identifier in getattr(params, 'record_cache', {}):
         rec = vault.KeeperRecord.load(params, identifier)
-        if rec and (not rec_type or rec.record_type == rec_type):
+        if rec and _record_matches_type(rec, rec_type):
             return rec
 
     from ...nested_share_folder import removal_api as _nsf
     resolved_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
     if resolved_uid:
         rec = vault.KeeperRecord.load(params, resolved_uid)
-        if rec and (not rec_type or rec.record_type == rec_type):
+        if rec and _record_matches_type(rec, rec_type):
             return rec
 
     rs = try_resolve_path(params, identifier)
@@ -324,11 +340,12 @@ def resolve_pam_record(params, identifier, rec_type=None):
         folder, record_title = rs
         if folder is not None and record_title is not None:
             folder_uid = folder.uid or ''
-            if folder_uid in params.subfolder_record_cache:
-                for uid in params.subfolder_record_cache[folder_uid]:
+            subfolder_cache = getattr(params, 'subfolder_record_cache', None) or {}
+            if folder_uid in subfolder_cache:
+                for uid in subfolder_cache[folder_uid]:
                     record = vault.KeeperRecord.load(params, uid)
                     if record and record.title.casefold() == record_title.casefold():
-                        if not rec_type or record.record_type == rec_type:
+                        if _record_matches_type(record, rec_type):
                             return record
 
     l_name = identifier.casefold()
@@ -336,7 +353,7 @@ def resolve_pam_record(params, identifier, rec_type=None):
     for record_uid in getattr(params, 'record_cache', {}):
         record = vault.KeeperRecord.load(params, record_uid)
         if record and record.title.casefold() == l_name:
-            if not rec_type or record.record_type == rec_type:
+            if _record_matches_type(record, rec_type):
                 matches.append(record)
                 if len(matches) > 1:
                     break
@@ -507,6 +524,19 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
         api.sync_down(params)
     else:
         record_management.add_record_to_folder(params, record, folder_uid)
+
+
+def create_pam_configuration_in_folder(params, record, folder_uid, command='pam-config-new'):
+    """Create a v6 PAM configuration in *folder_uid* using NSF or legacy placement."""
+    from .config_helper import pam_configuration_create_record_v6
+
+    if is_nested_share_folder(params, folder_uid):
+        create_record_in_folder(params, record, folder_uid, command=command)
+        return
+
+    pam_configuration_create_record_v6(params, record, folder_uid)
+    api.sync_down(params)
+    place_record_in_folder(params, record.record_uid, folder_uid, command=command)
 
 
 def update_pam_record(params, record, command='pam'):

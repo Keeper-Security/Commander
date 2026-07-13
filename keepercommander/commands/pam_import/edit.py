@@ -224,6 +224,13 @@ class PAMProjectImportCommand(Command):
 
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
+    @staticmethod
+    def _pam_folder_types(use_nsf=False):
+        types = {BaseFolderNode.UserFolderType}
+        if use_nsf:
+            types.add(BaseFolderNode.NestedShareFolderType)
+        return types
+
     def process_folders(self, params, project: dict) -> dict:
         res = {
             "root_folder_target": self.PAM_ROOT_FOLDER_NAME,
@@ -246,10 +253,11 @@ class PAMProjectImportCommand(Command):
 
         # FolderListCommand().execute(params, folders_only=True, pattern="/")
         use_nsf = project["options"].get("use_nsf", False) is True
+        allowed_types = self._pam_folder_types(use_nsf)
         folders = self.find_folders(params, "", res["root_folder_target"], False)
         if folders:
             # select first non-root non-shared sub/folder
-            folders = [x for x in folders if x.type == x.UserFolderType]
+            folders = [x for x in folders if x.type in allowed_types]
             if use_nsf:
                 folders = [x for x in folders if is_nested_share_folder(params, x.uid)]
             else:
@@ -274,7 +282,7 @@ class PAMProjectImportCommand(Command):
             while True:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
                 folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
-                folders = [x for x in folders if x.type == x.UserFolderType]
+                folders = [x for x in folders if x.type in allowed_types]
                 n += 1
                 if len(folders) > 0:
                     continue
