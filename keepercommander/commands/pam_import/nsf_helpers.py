@@ -12,11 +12,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
-from unittest.mock import patch
+from typing import List, Optional
 
 from .record_loader import iter_accessible_record_uids, load_pam_record
-from .base import add_pam_scripts
 from ... import api, vault
 from ...error import CommandError
 
@@ -235,51 +233,4 @@ def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
 
 def extend_create_record(params, obj, folder_uid: str) -> Optional[str]:
     """Create a PAM import record in a classic or NSF folder."""
-    if not is_nsf_folder_uid(params, folder_uid):
-        return obj.create_record(params, folder_uid)
-
-    captured: Dict = {}
-
-    class _CapturingAdd:
-        def execute(self, _params, **kwargs):
-            captured.clear()
-            captured.update(kwargs)
-            return None
-
-    with patch('keepercommander.commands.pam_import.base.RecordEditAddCommand', return_value=_CapturingAdd()):
-        obj.create_record(params, folder_uid)
-
-    from ..nested_share_folder.record_commands import NestedShareRecordAddCommand
-    from ..nested_share_folder.helpers import command_error_handler, check_result
-    from ...nested_share_folder.record_api import create_record_v3
-
-    cmd = NestedShareRecordAddCommand()
-    record_fields, add_attachments = cmd._parse_fields(captured.get('fields', []))
-    if add_attachments:
-        logging.warning('File attachments are not yet supported for NSF pam project extend.')
-
-    data = cmd._build_record_data(
-        params,
-        captured['record_type'],
-        captured.get('title', ''),
-        captured.get('notes'),
-        record_fields,
-    )
-
-    with command_error_handler('pam project extend'):
-        result = create_record_v3(
-            params,
-            folder_uid=folder_uid,
-            record_data=data,
-            record_uid=captured.get('record_uid'),
-        )
-        check_result(result, 'pam project extend')
-
-    uid = result.get('record_uid') or captured.get('record_uid')
-    if uid:
-        obj.uid = uid
-        scripts = getattr(obj, 'scripts', None)
-        if scripts and getattr(scripts, 'scripts', None):
-            add_pam_scripts(params, uid, scripts.scripts)
-    params.sync_data = True
-    return uid
+    return obj.create_record(params, folder_uid)

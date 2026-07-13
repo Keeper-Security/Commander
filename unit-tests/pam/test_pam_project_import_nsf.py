@@ -29,7 +29,7 @@ def _params():
     )
 
 
-def test_record_add_helper_creates_at_root_then_moves_for_nsf_folder():
+def test_record_add_helper_creates_natively_in_nsf_folder():
     params = _params()
     args = {
         'force': True,
@@ -38,35 +38,37 @@ def test_record_add_helper_creates_at_root_then_moves_for_nsf_folder():
         'title': 'Admin',
     }
 
-    with patch('keepercommander.commands.record_edit.RecordAddCommand') as record_add, \
-            patch('keepercommander.commands.pam.vault_target.place_record_in_folder') as place_record:
-        record_add.return_value.execute.return_value = 'record_uid'
+    with patch('keepercommander.commands.nested_share_folder.record_commands.NestedShareRecordAddCommand') as nsf_add, \
+            patch('keepercommander.commands.pam.vault_target.api.sync_down') as sync_down:
+        nsf_add.return_value.execute.return_value = 'record_uid'
 
         uid = execute_record_add_in_folder(params, args, 'root_nsf', command='pam-project-import')
 
     assert uid == 'record_uid'
-    record_add.return_value.execute.assert_called_once()
-    assert 'folder' not in record_add.return_value.execute.call_args.kwargs
-    place_record.assert_called_once_with(params, 'record_uid', 'root_nsf', command='pam-project-import')
+    nsf_add.return_value.execute.assert_called_once()
+    sync_down.assert_called_once_with(params)
+    call_kwargs = nsf_add.return_value.execute.call_args.kwargs
+    assert call_kwargs['folder_uid'] == 'root_nsf'
+    assert call_kwargs['record_type'] == 'pamUser'
+    assert 'folder' not in call_kwargs
 
 
-def test_record_v3_add_helper_creates_at_root_then_moves_for_nsf_folder():
+def test_record_v3_add_helper_creates_natively_in_nsf_folder():
     params = _params()
     args = {
         'folder': 'root_nsf',
         'data': '{"type":"pamUser","title":"Admin","fields":[]}',
     }
 
-    with patch('keepercommander.commands.recordv3.RecordAddCommand') as record_add, \
-            patch('keepercommander.commands.pam.vault_target.place_record_in_folder') as place_record:
-        record_add.return_value.execute.return_value = 'record_uid'
-
+    with patch('keepercommander.nested_share_folder.record_api.create_record_v3',
+               return_value={'success': True, 'record_uid': 'record_uid'}) as create_record, \
+            patch('keepercommander.commands.pam.vault_target.api.sync_down'):
         uid = execute_record_v3_add_in_folder(params, args, 'root_nsf', command='pam-project-import')
 
     assert uid == 'record_uid'
-    record_add.return_value.execute.assert_called_once()
-    assert 'folder' not in record_add.return_value.execute.call_args.kwargs
-    place_record.assert_called_once_with(params, 'record_uid', 'root_nsf', command='pam-project-import')
+    create_record.assert_called_once()
+    assert create_record.call_args.kwargs['folder_uid'] == 'root_nsf'
+    assert create_record.call_args.kwargs['record_data']['type'] == 'pamUser'
 
 
 def test_is_nested_share_folder_detects_reconstructed_subfolder_cache():

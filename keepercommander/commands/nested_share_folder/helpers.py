@@ -103,6 +103,15 @@ def command_error_handler(cmd_name):
         raise CommandError(cmd_name, str(exc))
 
 
+def normalize_nsf_user_message(message):
+    """Replace legacy server terminology in user-facing error text."""
+    if not message:
+        return message
+    return (message
+            .replace('Keeper Drive', 'Nested Share Folder')
+            .replace('keeper drive', 'nested share folder'))
+
+
 def check_result(result, cmd_name):
     """Raise ``CommandError`` when *result['success']* is falsy.
 
@@ -110,7 +119,8 @@ def check_result(result, cmd_name):
     appears in almost every command.
     """
     if not result.get('success'):
-        raise CommandError(cmd_name, result.get('message', 'Unknown error'))
+        raise CommandError(cmd_name, normalize_nsf_user_message(
+            result.get('message', 'Unknown error')))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

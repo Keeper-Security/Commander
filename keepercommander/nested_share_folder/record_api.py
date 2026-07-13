@@ -148,16 +148,15 @@ def create_record_v3(params, record_type='', title='', fields=None,
 def update_record_v3(params, record_uid, data=None, title=None,
                      record_type=None, fields=None, notes=None,
                      non_shared_data=None, revision=None):
-    if record_uid not in params.record_cache:
+    rec = get_record_from_cache(params, record_uid)
+    if not rec:
         from .. import sync_down
         sync_down.sync_down(params)
-        if record_uid not in params.record_cache:
-            raise ValueError(f"Record {record_uid} not found")
+        rec = get_record_from_cache(params, record_uid)
+    if not rec:
+        raise ValueError(f"Record {record_uid} not found")
 
-    rec = params.record_cache[record_uid]
-    rk = rec.get('record_key_unencrypted')
-    if not rk:
-        raise ValueError(f"Record key not available for {record_uid}")
+    rk = rec.get('record_key_unencrypted') or get_record_key(params, record_uid)
 
     if data is None:
         existing = None

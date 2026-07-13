@@ -459,6 +459,8 @@ def ensure_pam_folder_path(params, base_folder_uid, relative_path, command='pam'
 
 
 def place_record_in_folder(params, record_uid, folder_uid, command='pam'):
+    from ..nested_share_folder.helpers import normalize_nsf_user_message
+
     if not folder_uid:
         raise CommandError(command, 'Target folder UID is required')
 
@@ -470,7 +472,8 @@ def place_record_in_folder(params, record_uid, folder_uid, command='pam'):
     if is_nested_share_folder(params, folder_uid):
         result = move_record_v3(params, record_uid, to_folder_uid=folder_uid)
         if isinstance(result, dict) and result.get('success') is False:
-            message = result.get('message') or 'Failed to place record in Nested Share Folder'
+            message = normalize_nsf_user_message(result.get('message')) or \
+                'Failed to place record in Nested Share Folder'
             lowered = message.casefold()
             if any(token in lowered for token in ('denied', 'permission', 'forbidden', 'read-only')):
                 message = (
@@ -487,6 +490,7 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
     if folder_uid and is_nested_share_folder(params, folder_uid):
         from ... import vault_extensions
         from ...nested_share_folder.record_api import create_record_v3
+        from ..nested_share_folder.helpers import normalize_nsf_user_message
 
         if not isinstance(record, vault.TypedRecord):
             raise CommandError(command, 'Nested Share Folder record creation requires a typed record')
@@ -497,7 +501,8 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
             record_data=vault_extensions.extract_typed_record_data(record),
         )
         if not result.get('success'):
-            raise CommandError(command, result.get('message') or 'Failed to create record in Nested Share Folder')
+            raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
+                               'Failed to create record in Nested Share Folder')
         record.record_uid = result['record_uid']
         api.sync_down(params)
     else:
@@ -505,7 +510,7 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
 
 
 def update_pam_record(params, record, command='pam'):
-    from ..nested_share_folder.helpers import is_nested_share_record
+    from ..nested_share_folder.helpers import is_nested_share_record, normalize_nsf_user_message
     from ...nested_share_folder.record_api import update_record_v3
 
     if is_nested_share_record(params, record.record_uid):
@@ -515,30 +520,29 @@ def update_pam_record(params, record, command='pam'):
         result = update_record_v3(
             params,
             record.record_uid,
-            record_data=vault_extensions.extract_typed_record_data(record),
+            data=vault_extensions.extract_typed_record_data(record),
         )
         if not result.get('success'):
-            raise CommandError(command, result.get('message') or 'Failed to update record in Nested Share Folder')
+            raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
+                               'Failed to update record in Nested Share Folder')
         api.sync_down(params)
     else:
         record_management.update_record(params, record)
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
-    """Add a record, placing it in an NSF folder when needed.
-
-    For Nested Share Folders, ``folder`` is removed from *args* before calling
-    RecordAddCommand because the record is created at the vault root first and
-    then moved into the NSF via ``place_record_in_folder``.
-    """
+    """Add a record in *folder_uid*, using NSF-native creation when needed."""
     from ..record_edit import RecordAddCommand
+    from ..nested_share_folder.record_commands import NestedShareRecordAddCommand
 
     record_args = dict(args or {})
     if folder_uid and is_nested_share_folder(params, folder_uid):
-        record_args.pop('folder', None)
-        uid = RecordAddCommand().execute(params, **record_args)
-        if uid and isinstance(uid, str):
-            place_record_in_folder(params, uid, folder_uid, command=command)
+        nsf_args = dict(record_args)
+        nsf_args.pop('folder', None)
+        nsf_args['folder_uid'] = folder_uid
+        uid = NestedShareRecordAddCommand().execute(params, **nsf_args)
+        if uid:
+            api.sync_down(params)
         return uid
 
     record_args['folder'] = folder_uid
@@ -546,22 +550,31 @@ def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
 
 
 def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam'):
-    """Add a v3 typed record, placing it in an NSF folder when needed.
+    """Add a v3 typed record in *folder_uid*, using NSF-native creation when needed."""
+    import json
 
-    For Nested Share Folders, ``folder`` is removed from *args* before calling
-    RecordAddCommand because the record is created without a legacy folder target
-    and then placed into the NSF via ``place_record_in_folder``.
-    """
     from ..recordv3 import RecordAddCommand
+    from ..nested_share_folder.helpers import normalize_nsf_user_message
+    from ...nested_share_folder.record_api import create_record_v3
 
     record_args = dict(args or {})
     if folder_uid and is_nested_share_folder(params, folder_uid):
-        record_args.pop('folder', None)
-        uid = RecordAddCommand().execute(params, **record_args)
-        if not uid:
-            raise CommandError(command, 'Record creation failed for Nested Share Folder target')
-        place_record_in_folder(params, uid, folder_uid, command=command)
-        return uid
+        data = record_args.get('data')
+        if not data:
+            raise CommandError(command, 'Record data is required for Nested Share Folder creation')
+        if isinstance(data, str):
+            data = json.loads(data)
+        result = create_record_v3(
+            params,
+            folder_uid=folder_uid,
+            record_data=data,
+            record_uid=record_args.get('record_uid') or data.get('uid'),
+        )
+        if not result.get('success'):
+            raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
+                               'Failed to create record in Nested Share Folder')
+        api.sync_down(params)
+        return result['record_uid']
 
     record_args['folder'] = folder_uid
     return RecordAddCommand().execute(params, **record_args)
