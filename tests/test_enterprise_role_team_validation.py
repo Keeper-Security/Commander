@@ -17,10 +17,11 @@ class TestEnterpriseRoleTeamValidation(unittest.TestCase):
         teams = [{'team_uid': '4GjeorSt3FiI2KBhgCKI2Q', 'name': 'Test Team'}]
 
         with mock.patch('keepercommander.api.communicate_rest') as communicate_rest:
-            msgs = EnterpriseCommand.change_team_roles(
+            msgs, blocked_admin = EnterpriseCommand.change_team_roles(
                 params, teams, add_roles=[str(admin_role_id)], remove_roles=None)
 
         self.assertEqual(msgs, [])
+        self.assertTrue(blocked_admin)
         communicate_rest.assert_not_called()
 
     def test_change_role_teams_skips_api_for_admin_role(self):
@@ -33,8 +34,9 @@ class TestEnterpriseRoleTeamValidation(unittest.TestCase):
         roles = [{'role_id': admin_role_id, 'data': {'displayname': 'Admin Role'}}]
 
         with mock.patch('keepercommander.api.communicate_rest') as communicate_rest:
-            msgs = EnterpriseCommand.change_role_teams(
+            msgs, blocked_admin = EnterpriseCommand.change_role_teams(
                 params, roles, add_team=['4GjeorSt3FiI2KBhgCKI2Q'], remove_team=None)
 
         self.assertEqual(msgs, [])
+        self.assertTrue(blocked_admin)
         communicate_rest.assert_not_called()
