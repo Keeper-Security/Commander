@@ -69,6 +69,9 @@ class TestEnterpriseApiKeys(TestCase):
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         self.assertIsNotNone(result)
+        # Compute the expected expiration date for the active token (matches mock: now + 365 days)
+        token4_expiry = datetime.datetime.now() + datetime.timedelta(days=365)
+        token4_expiry_str = token4_expiry.strftime('%Y-%m-%d %H:%M:%S')
         # Assert that the JSON result matches the expected values for all entries
         expected_json = [
             {
@@ -100,7 +103,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "name": "SIEM Tool",
                 "status": "Active",
                 "issued_date": "2025-07-08 14:16:07",
-                "expiration_date": "2030-07-08 14:16:07",
+                "expiration_date": token4_expiry_str,
                 "integration": "SIEM:2"
             },
             {
@@ -661,13 +664,14 @@ class TestEnterpriseApiKeys(TestCase):
             integration5.apiIntegrationTypeName = "SIEM"
             integration5.actionType = 2
             
-            # Token 53 - Active
+            # Token 53 - Active (expiration is always 1 year from now to keep tests passing over time)
             token4 = rs.tokens.add()
             token4.token = "active_token_53"
             token4.name = "SIEM Tool"
             token4.enterprise_id = 8560
             token4.issuedDate = int(datetime.datetime(2025, 7, 8, 14, 16, 7).timestamp() * 1000)
-            token4.expirationDate = int(datetime.datetime(2030, 7, 8, 14, 16, 7).timestamp() * 1000)
+            token4_expiry = datetime.datetime.now() + datetime.timedelta(days=365)
+            token4.expirationDate = int(token4_expiry.timestamp() * 1000)
             integration7 = token4.integrations.add()
             integration7.roleName = "SIEM"
             integration7.apiIntegrationTypeName = "SIEM"
