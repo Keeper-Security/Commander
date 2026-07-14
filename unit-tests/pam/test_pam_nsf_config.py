@@ -139,8 +139,10 @@ class TestPamVaultTarget(unittest.TestCase):
             {'legacy_rec_uid', 'nsf_rec_uid'},
         )
 
-    @mock.patch('keepercommander.commands.pam.vault_target.create_record_in_folder')
-    def test_create_pam_configuration_in_folder_uses_nsf_create(self, mock_create_in_folder):
+    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.commands.pam.config_helper.pam_configuration_create_record_nsf')
+    def test_create_pam_configuration_in_folder_uses_add_pam_configuration_for_nsf(
+            self, mock_create_nsf, mock_sync):
         params = _make_params()
         params.nested_share_folders['nsf_folder'] = {'name': 'Project - Users'}
         folder = NestedShareFolderNode()
@@ -150,13 +152,13 @@ class TestPamVaultTarget(unittest.TestCase):
 
         create_pam_configuration_in_folder(params, record, 'nsf_folder', command='pam-config-new')
 
-        mock_create_in_folder.assert_called_once_with(
-            params, record, 'nsf_folder', command='pam-config-new')
+        mock_create_nsf.assert_called_once_with(params, record, 'nsf_folder')
+        mock_sync.assert_called_once_with(params)
 
     @mock.patch('keepercommander.commands.pam.vault_target.place_record_in_folder')
     @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
     @mock.patch('keepercommander.commands.pam.config_helper.pam_configuration_create_record_v6')
-    def test_create_pam_configuration_in_folder_uses_legacy_create_and_place(
+    def test_create_pam_configuration_in_folder_uses_classic_api_for_legacy(
             self, mock_create_v6, mock_sync, mock_place):
         params = _make_params()
         folder = SharedFolderNode()

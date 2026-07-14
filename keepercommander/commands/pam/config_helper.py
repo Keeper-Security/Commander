@@ -87,6 +87,27 @@ def _resolve_pam_configuration_folder_key(params, folder_uid):
 
 def pam_configuration_create_record_v6(params, record, folder_uid):
     # type: (KeeperParams, vault.TypedRecord, str) -> None
+    """Create a classic PAM configuration via pam/add_configuration_record."""
+    if not record.record_uid:
+        record.record_uid = utils.generate_uid()
+
+    if not record.record_key:
+        record.record_key = utils.generate_aes_key()
+
+    record_data = vault_extensions.extract_typed_record_data(record)
+    json_data = api.get_record_data_json_bytes(record_data)
+
+    car = pam_pb2.ConfigurationAddRequest()
+    car.configurationUid = utils.base64_url_decode(record.record_uid)
+    car.recordKey = crypto.encrypt_aes_v2(record.record_key, params.data_key)
+    car.data = crypto.encrypt_aes_v2(json_data, record.record_key)
+
+    api.communicate_rest(params, car, 'pam/add_configuration_record')
+
+
+def pam_configuration_create_record_nsf(params, record, folder_uid):
+    # type: (KeeperParams, vault.TypedRecord, str) -> None
+    """Create a PAM configuration in an NSF folder via vault/records/v3/add_pam_configuration."""
     if not record.record_uid:
         record.record_uid = utils.generate_uid()
 
@@ -95,6 +116,16 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
 
     record_data = vault_extensions.extract_typed_record_data(record)
     folder_key = _resolve_pam_configuration_folder_key(params, folder_uid) if folder_uid else None
+    client_time = utils.current_milli_time()
+
+    audit = None
+    if params.enterprise_ec_key:
+        audit_data = vault_extensions.extract_audit_data(record)
+        if audit_data:
+            audit = record_pb2.RecordAudit()
+            audit.version = 0
+            audit.data = crypto.encrypt_ec(
+                json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
 
     if folder_uid and folder_key:
         record_add = create_record_data_v3(
@@ -103,7 +134,10 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
             data=record_data,
             folder_uid=folder_uid,
             folder_key=folder_key,
-            client_modified_time=utils.current_milli_time(),
+            data_key=params.data_key,
+            owner_key=params.data_key,
+            client_modified_time=client_time,
+            audit=audit,
         )
     else:
         record_add = create_record_data_v3(
@@ -111,13 +145,15 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
             record_key=record.record_key,
             data=record_data,
             data_key=params.data_key,
-            client_modified_time=utils.current_milli_time(),
+            owner_key=params.data_key,
+            client_modified_time=client_time,
+            audit=audit,
         )
         if folder_uid:
             record_add.folderUid = utils.base64_url_decode(folder_uid)
             record_add.recordKeyEncryptedBy = folder_pb2.ENCRYPTED_BY_USER_KEY
 
-    response = record_add_pam_configuration_v3(params, [record_add])
+    response = record_add_pam_configuration_v3(params, [record_add], client_time=client_time)
     if not response.records:
         raise KeeperApiError('no_results', 'No results from PAM configuration creation')
 

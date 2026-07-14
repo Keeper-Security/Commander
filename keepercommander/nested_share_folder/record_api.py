@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 def create_record_data_v3(record_uid, record_key, data,
                            non_shared_data=None, folder_uid=None,
                            folder_key=None, record_key_type=None,
-                           client_modified_time=None, data_key=None):
+                           client_modified_time=None, data_key=None,
+                           owner_key=None, audit=None):
     ra = record_endpoints_pb2.RecordAdd()
     ra.recordUid = utils.base64_url_decode(record_uid)
 
@@ -44,6 +45,10 @@ def create_record_data_v3(record_uid, record_key, data,
             raise ValueError("data_key required when creating at vault root")
         ra.recordKey = crypto.encrypt_aes_v2(record_key, data_key)
 
+    owner_encryption_key = owner_key or data_key
+    if owner_encryption_key is not None:
+        ra.recordKeyEncryptedByOwnerKey = crypto.encrypt_aes_v2(record_key, owner_encryption_key)
+
     ra.recordKeyType = (record_key_type if record_key_type is not None
                         else folder_pb2.encrypted_by_data_key_gcm)
 
@@ -57,6 +62,8 @@ def create_record_data_v3(record_uid, record_key, data,
         ra.nonSharedData = crypto.encrypt_aes_v2(ns_bytes, record_key)
     if client_modified_time:
         ra.clientModifiedTime = client_modified_time
+    if audit is not None:
+        ra.audit.CopyFrom(audit)
     return ra
 
 
@@ -82,8 +89,7 @@ def record_add_pam_configuration_v3(params, records, client_time=None, security_
         raise ValueError("Provide 1..1000 records")
     rq = record_endpoints_pb2.RecordsAddRequest()
     rq.records.extend(records)
-    if client_time:
-        rq.clientTime = client_time
+    rq.clientTime = client_time if client_time is not None else utils.current_milli_time()
     if security_data_key_type:
         rq.securityDataKeyType = security_data_key_type
     return api.communicate_rest(params, rq, 'vault/records/v3/add_pam_configuration',

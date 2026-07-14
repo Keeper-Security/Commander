@@ -527,11 +527,12 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
 
 
 def create_pam_configuration_in_folder(params, record, folder_uid, command='pam-config-new'):
-    """Create a v6 PAM configuration in *folder_uid* using NSF or legacy placement."""
-    from .config_helper import pam_configuration_create_record_v6
+    """Create a v6 PAM configuration in *folder_uid* using NSF or classic placement."""
+    from .config_helper import pam_configuration_create_record_nsf, pam_configuration_create_record_v6
 
     if is_nested_share_folder(params, folder_uid):
-        create_record_in_folder(params, record, folder_uid, command=command)
+        pam_configuration_create_record_nsf(params, record, folder_uid)
+        api.sync_down(params)
         return
 
     pam_configuration_create_record_v6(params, record, folder_uid)
