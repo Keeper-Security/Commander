@@ -23,6 +23,7 @@ import keepercommander.commands.record  # noqa: F401
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 from keeper_secrets_manager_core.utils import bytes_to_base64  # noqa: E402
 
+from keepercommander import crypto  # noqa: E402
 from keepercommander.commands.pam import cnapp_helper  # noqa: E402
 from keepercommander.commands.pam import cnapp_commands  # noqa: E402
 from keepercommander.error import CommandError  # noqa: E402
@@ -222,23 +223,25 @@ class TestQueueHelpers(unittest.TestCase):
             cnapp_helper.remediate_cnapp_queue_item(
                 self.params,
                 cnapp_queue_id=3,
-                action_type=cnapp_pb2.ROTATE_CREDENTIALS,
-                provider=cnapp_pb2.CNAPP_PROVIDER_WIZ,
-                cnapp_config_record_uid=CONFIG_RECORD_UID,
+                action_type=cnapp_pb2.REMOVE_STANDING_PRIVILEGE,
                 resource_ref=RECORD_UID,
                 pwd_complexity='{"len":24}',
                 controller_uid='gateway-1',
                 message_uid=RECORD_UID,
-                group_name='Admins',
+                encrypted_remediations=b'\x99' * 40,
+                auto_remediate=True,
             )
         rq = post.call_args.kwargs['rq_proto']
         self.assertEqual(post.call_args.args[1], 'cnapp/queue/remediate')
         self.assertEqual(rq.cnappQueueId, 3)
-        self.assertEqual(rq.actionType, cnapp_pb2.ROTATE_CREDENTIALS)
-        self.assertEqual(rq.provider, cnapp_pb2.CNAPP_PROVIDER_WIZ)
+        self.assertEqual(rq.actionType, cnapp_pb2.REMOVE_STANDING_PRIVILEGE)
         self.assertEqual(rq.pwdComplexity, '{"len":24}')
         self.assertEqual(rq.controllerUid, 'gateway-1')
-        self.assertEqual(rq.groupName, 'Admins')
+        self.assertEqual(rq.encryptedRemediations, b'\x99' * 40)
+        self.assertTrue(rq.autoRemediateInFuture)
+        # deprecated fields must never go on the wire — krouter reads them from its DB
+        self.assertEqual(rq.provider, 0)
+        self.assertEqual(rq.cnappConfigurationRecordUid, b'')
 
     def test_remediate_minimal_fields(self):
         """No optional fields — only queueId and actionType must be set on the wire."""
@@ -250,7 +253,8 @@ class TestQueueHelpers(unittest.TestCase):
         self.assertEqual(rq.provider, 0)
         self.assertEqual(rq.pwdComplexity, '')
         self.assertEqual(rq.controllerUid, '')
-        self.assertEqual(rq.groupName, '')
+        self.assertEqual(rq.encryptedRemediations, b'')
+        self.assertFalse(rq.autoRemediateInFuture)
 
     def test_set_status_with_reason(self):
         with self._patch_post(return_value=cnapp_pb2.CnappSetStatusResponse(cnappQueueStatusId=3)) as post:
@@ -265,6 +269,41 @@ class TestQueueHelpers(unittest.TestCase):
             cnapp_helper.delete_cnapp_queue_item(self.params, cnapp_queue_id=11)
         self.assertEqual(post.call_args.args[1], 'cnapp/queue/delete')
         self.assertEqual(post.call_args.kwargs['rq_proto'].cnappQueueId, 11)
+
+
+# ---------------------------------------------------------------------------
+# cnapp_helper: REMOVE_STANDING_PRIVILEGE remediation encryption
+# ---------------------------------------------------------------------------
+
+class TestBuildEncryptedRemediations(unittest.TestCase):
+    """The group/role targets must round-trip through AES-256-GCM under the network
+    record key — the same convention the gateway uses to decrypt them."""
+
+    def setUp(self):
+        self.record_key = os.urandom(32)
+        self.params = MagicMock()
+        self.params.record_cache = {NETWORK_UID: {'record_key_unencrypted': self.record_key}}
+
+    def test_roundtrip(self):
+        ciphertext = cnapp_helper.build_encrypted_remediations(
+            self.params, NETWORK_UID, ['Admins', 'DBAs'], ['db-owner'])
+        decrypted = json.loads(crypto.decrypt_aes_v2(ciphertext, self.record_key))
+        self.assertEqual(decrypted, {'groupNames': ['Admins', 'DBAs'], 'roleNames': ['db-owner']})
+
+    def test_empty_lists_encode_as_empty_arrays(self):
+        ciphertext = cnapp_helper.build_encrypted_remediations(self.params, NETWORK_UID, None, None)
+        decrypted = json.loads(crypto.decrypt_aes_v2(ciphertext, self.record_key))
+        self.assertEqual(decrypted, {'groupNames': [], 'roleNames': []})
+
+    def test_missing_record_raises_with_sync_hint(self):
+        with self.assertRaises(ValueError) as ctx:
+            cnapp_helper.build_encrypted_remediations(self.params, 'unknown-uid', ['Admins'], [])
+        self.assertIn('sync-down', str(ctx.exception))
+
+    def test_empty_record_cache_raises(self):
+        self.params.record_cache = {}
+        with self.assertRaises(ValueError):
+            cnapp_helper.build_encrypted_remediations(self.params, NETWORK_UID, ['Admins'], [])
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +534,7 @@ class TestQueueCommands(unittest.TestCase):
     def _queue_response(self, items=None, has_more=False):
         return cnapp_pb2.CnappQueueListResponse(items=items or [], hasMore=has_more)
 
-    def _queue_item(self, queue_id=1, status_id=1, record_uid=b''):
+    def _queue_item(self, queue_id=1, status_id=1, record_uid=b'', control_hash='ch-abc'):
         return cnapp_pb2.CnappQueueItem(
             cnappQueueId=queue_id,
             cnappProviderId=cnapp_pb2.CNAPP_PROVIDER_WIZ,
@@ -503,6 +542,7 @@ class TestQueueCommands(unittest.TestCase):
             receivedAt=1700000000000,
             networkId=b'\x00' * 16,
             recordUid=record_uid,
+            controlHash=control_hash,
         )
 
     def test_queue_list_empty(self):
@@ -529,6 +569,7 @@ class TestQueueCommands(unittest.TestCase):
             self.assertIn('99', output)
             self.assertIn('IN_PROGRESS', output)
             self.assertIn('CNAPP_PROVIDER_WIZ', output)
+            self.assertIn('ch-abc', output)
             self.assertIsNone(result)
 
     def test_queue_list_filter_resolves_named_status(self):
@@ -552,6 +593,7 @@ class TestQueueCommands(unittest.TestCase):
             payload = json.loads(buf.getvalue())
             self.assertEqual(payload['items'][0]['cnappQueueId'], 5)
             self.assertEqual(payload['items'][0]['cnappQueueStatusName'], 'RESOLVED')
+            self.assertEqual(payload['items'][0]['controlHash'], 'ch-abc')
             self.assertTrue(payload['hasMore'])
             self.assertEqual(payload['items'][0]['recordUid'],
                              bytes_to_base64(b'\x02' * 16))
@@ -593,12 +635,100 @@ class TestQueueCommands(unittest.TestCase):
                     self.params,
                     cnapp_queue_id=4,
                     action_type='rotate_credentials',
-                    provider='wiz',
                 )
             output = buf.getvalue()
             self.assertIn('ROTATE_CREDENTIALS', output)
             self.assertIn('IN_PROGRESS', output)
             self.assertIn('Scheduled', output)
+
+    def test_queue_remediate_auto_remediate_with_rotate(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',
+                          return_value=None) as helper:
+            with redirect_stdout(io.StringIO()):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='rotate_credentials',
+                    auto_remediate=True,
+                )
+            self.assertTrue(helper.call_args.kwargs['auto_remediate'])
+
+    def test_queue_remediate_auto_remediate_rejected_for_other_actions(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item') as helper:
+            with self.assertRaises(CommandError):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='remove_standing_privilege',
+                    auto_remediate=True,
+                )
+            helper.assert_not_called()
+
+    def test_queue_remediate_groups_rejected_for_rotate(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item') as helper:
+            with self.assertRaises(CommandError):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='rotate_credentials',
+                    group_names=['Admins'],
+                )
+            helper.assert_not_called()
+
+    def test_queue_remediate_groups_require_network_uid(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item') as helper:
+            with self.assertRaises(CommandError):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='remove_standing_privilege',
+                    group_names=['Admins'],
+                )
+            helper.assert_not_called()
+
+    def test_queue_remediate_rsp_encrypts_groups_and_roles(self):
+        sentinel = b'\xaa' * 44
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',
+                          return_value=None) as helper, \
+             patch.object(cnapp_commands.cnapp_helper, 'build_encrypted_remediations',
+                          return_value=sentinel) as builder:
+            with redirect_stdout(io.StringIO()):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='remove_standing_privilege',
+                    network_uid=NETWORK_UID,
+                    group_names=['Admins'],
+                    role_names=['db-owner'],
+                )
+            builder.assert_called_once_with(self.params, NETWORK_UID, ['Admins'], ['db-owner'])
+            self.assertEqual(helper.call_args.kwargs['encrypted_remediations'], sentinel)
+
+    def test_queue_remediate_rsp_without_groups_notes_jit_fallback(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',
+                          return_value=None) as helper:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='remove_standing_privilege',
+                )
+            self.assertIn('JIT settings', buf.getvalue())
+            self.assertIsNone(helper.call_args.kwargs['encrypted_remediations'])
+
+    def test_queue_remediate_missing_network_record_surfaces_command_error(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'build_encrypted_remediations',
+                          side_effect=ValueError('PAM configuration record "x" not found')):
+            with self.assertRaises(CommandError) as ctx:
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='remove_standing_privilege',
+                    network_uid=NETWORK_UID,
+                    group_names=['Admins'],
+                )
+            self.assertIn('not found', str(ctx.exception))
 
     def test_queue_remediate_unsupported_action_propagates(self):
         with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',

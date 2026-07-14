@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x63napp.proto\x12\x05\x43NAPP\"A\n\x15\x43nappQueueListRequest\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\x12\x14\n\x0cstatusFilter\x18\x02 \x01(\x05\"O\n\x16\x43nappQueueListResponse\x12$\n\x05items\x18\x01 \x03(\x0b\x32\x15.CNAPP.CnappQueueItem\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\"\xd0\x01\n\x0e\x43nappQueueItem\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12-\n\x0f\x63nappProviderId\x18\x02 \x01(\x0e\x32\x14.CNAPP.CnappProvider\x12\x1a\n\x12\x63nappQueueStatusId\x18\x03 \x01(\x05\x12\x12\n\nreceivedAt\x18\x04 \x01(\x03\x12\x12\n\nresolvedAt\x18\x05 \x01(\x03\x12\x11\n\tnetworkId\x18\x06 \x01(\x0c\x12\x0f\n\x07payload\x18\x07 \x01(\x0c\x12\x11\n\trecordUid\x18\x08 \x01(\x0c\"@\n\x15\x43nappAssociateRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x14\n\x0c\x63nappQueueId\x18\x02 \x01(\x05\"4\n\x16\x43nappAssociateResponse\x12\x1a\n\x12\x63nappQueueStatusId\x18\x01 \x01(\x05\"\x97\x02\n\x15\x43nappRemediateRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12\x31\n\nactionType\x18\x02 \x01(\x0e\x32\x1d.CNAPP.CnappRemediationAction\x12#\n\x1b\x63nappConfigurationRecordUid\x18\x03 \x01(\x0c\x12\x15\n\rpwdComplexity\x18\x04 \x01(\t\x12\x13\n\x0bresourceRef\x18\x05 \x01(\x0c\x12&\n\x08provider\x18\x06 \x01(\x0e\x32\x14.CNAPP.CnappProvider\x12\x15\n\rcontrollerUid\x18\x07 \x01(\t\x12\x12\n\nmessageUid\x18\x08 \x01(\x0c\x12\x11\n\tgroupName\x18\t \x01(\t\"w\n\x16\x43nappRemediateResponse\x12\x31\n\nactionType\x18\x01 \x01(\x0e\x32\x1d.CNAPP.CnappRemediationAction\x12\x0e\n\x06result\x18\x02 \x01(\t\x12\x1a\n\x12\x63nappQueueStatusId\x18\x03 \x01(\x05\"Y\n\x15\x43nappSetStatusRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12\x1a\n\x12\x63nappQueueStatusId\x18\x02 \x01(\x05\x12\x0e\n\x06reason\x18\x03 \x01(\t\"4\n\x16\x43nappSetStatusResponse\x12\x1a\n\x12\x63nappQueueStatusId\x18\x01 \x01(\x05\"3\n\x1b\x43nappDeleteQueueItemRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\"\x1e\n\x1c\x43nappDeleteQueueItemResponse\"\xc7\x01\n\x12\x43nappConfiguration\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\x12&\n\x08provider\x18\x02 \x01(\x0e\x32\x14.CNAPP.CnappProvider\x12\x10\n\x08\x63lientId\x18\x03 \x01(\t\x12\x14\n\x0c\x63lientSecret\x18\x04 \x01(\t\x12\x16\n\x0e\x61piEndpointUrl\x18\x05 \x01(\t\x12\x1c\n\x14\x63nappConfigRecordUid\x18\x06 \x01(\x0c\x12\x17\n\x0f\x61uthEndpointUrl\x18\x07 \x01(\t\"5\n\x1f\x43nappDeleteConfigurationRequest\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\"5\n\x19\x43nappTestEncrypterRequest\x12\x18\n\x10urlBaseEncrypter\x18\x01 \x01(\t*G\n\rCnappProvider\x12\x1e\n\x1a\x43NAPP_PROVIDER_UNSPECIFIED\x10\x00\x12\x16\n\x12\x43NAPP_PROVIDER_WIZ\x10\x01*\x83\x01\n\x16\x43nappRemediationAction\x12\x0f\n\x0bUNSPECIFIED\x10\x00\x12\x16\n\x12ROTATE_CREDENTIALS\x10\x01\x12\x11\n\rMANAGE_ACCESS\x10\x02\x12\x0e\n\nJIT_ACCESS\x10\x03\x12\x1d\n\x19REMOVE_STANDING_PRIVILEGE\x10\x04\x42!\n\x18\x63om.keepersecurity.protoB\x05\x43nappb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x63napp.proto\x12\x05\x43NAPP\"A\n\x15\x43nappQueueListRequest\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\x12\x14\n\x0cstatusFilter\x18\x02 \x01(\x05\"O\n\x16\x43nappQueueListResponse\x12$\n\x05items\x18\x01 \x03(\x0b\x32\x15.CNAPP.CnappQueueItem\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\"\xe5\x01\n\x0e\x43nappQueueItem\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12-\n\x0f\x63nappProviderId\x18\x02 \x01(\x0e\x32\x14.CNAPP.CnappProvider\x12\x1a\n\x12\x63nappQueueStatusId\x18\x03 \x01(\x05\x12\x12\n\nreceivedAt\x18\x04 \x01(\x03\x12\x12\n\nresolvedAt\x18\x05 \x01(\x03\x12\x11\n\tnetworkId\x18\x06 \x01(\x0c\x12\x0f\n\x07payload\x18\x07 \x01(\x0c\x12\x11\n\trecordUid\x18\x08 \x01(\x0c\x12\x13\n\x0b\x63ontrolHash\x18\t \x01(\t\"@\n\x15\x43nappAssociateRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x14\n\x0c\x63nappQueueId\x18\x02 \x01(\x05\"4\n\x16\x43nappAssociateResponse\x12\x1a\n\x12\x63nappQueueStatusId\x18\x01 \x01(\x05\"\xca\x02\n\x15\x43nappRemediateRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12\x31\n\nactionType\x18\x02 \x01(\x0e\x32\x1d.CNAPP.CnappRemediationAction\x12\'\n\x1b\x63nappConfigurationRecordUid\x18\x03 \x01(\x0c\x42\x02\x18\x01\x12\x15\n\rpwdComplexity\x18\x04 \x01(\t\x12\x13\n\x0bresourceRef\x18\x05 \x01(\x0c\x12*\n\x08provider\x18\x06 \x01(\x0e\x32\x14.CNAPP.CnappProviderB\x02\x18\x01\x12\x15\n\rcontrollerUid\x18\x07 \x01(\t\x12\x12\n\nmessageUid\x18\x08 \x01(\x0c\x12\x1d\n\x15\x65ncryptedRemediations\x18\t \x01(\x0c\x12\x1d\n\x15\x61utoRemediateInFuture\x18\n \x01(\x08\"w\n\x16\x43nappRemediateResponse\x12\x31\n\nactionType\x18\x01 \x01(\x0e\x32\x1d.CNAPP.CnappRemediationAction\x12\x0e\n\x06result\x18\x02 \x01(\t\x12\x1a\n\x12\x63nappQueueStatusId\x18\x03 \x01(\x05\"Y\n\x15\x43nappSetStatusRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\x12\x1a\n\x12\x63nappQueueStatusId\x18\x02 \x01(\x05\x12\x0e\n\x06reason\x18\x03 \x01(\t\"4\n\x16\x43nappSetStatusResponse\x12\x1a\n\x12\x63nappQueueStatusId\x18\x01 \x01(\x05\"3\n\x1b\x43nappDeleteQueueItemRequest\x12\x14\n\x0c\x63nappQueueId\x18\x01 \x01(\x05\"\x1e\n\x1c\x43nappDeleteQueueItemResponse\"\xc7\x01\n\x12\x43nappConfiguration\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\x12&\n\x08provider\x18\x02 \x01(\x0e\x32\x14.CNAPP.CnappProvider\x12\x10\n\x08\x63lientId\x18\x03 \x01(\t\x12\x14\n\x0c\x63lientSecret\x18\x04 \x01(\t\x12\x16\n\x0e\x61piEndpointUrl\x18\x05 \x01(\t\x12\x1c\n\x14\x63nappConfigRecordUid\x18\x06 \x01(\x0c\x12\x17\n\x0f\x61uthEndpointUrl\x18\x07 \x01(\t\"5\n\x1f\x43nappDeleteConfigurationRequest\x12\x12\n\nnetworkUid\x18\x01 \x01(\x0c\"5\n\x19\x43nappTestEncrypterRequest\x12\x18\n\x10urlBaseEncrypter\x18\x01 \x01(\t*G\n\rCnappProvider\x12\x1e\n\x1a\x43NAPP_PROVIDER_UNSPECIFIED\x10\x00\x12\x16\n\x12\x43NAPP_PROVIDER_WIZ\x10\x01*\x83\x01\n\x16\x43nappRemediationAction\x12\x0f\n\x0bUNSPECIFIED\x10\x00\x12\x16\n\x12ROTATE_CREDENTIALS\x10\x01\x12\x11\n\rMANAGE_ACCESS\x10\x02\x12\x0e\n\nJIT_ACCESS\x10\x03\x12\x1d\n\x19REMOVE_STANDING_PRIVILEGE\x10\x04\x42!\n\x18\x63om.keepersecurity.protoB\x05\x43nappb\x06proto3')
 
 _CNAPPPROVIDER = DESCRIPTOR.enum_types_by_name['CnappProvider']
 CnappProvider = enum_type_wrapper.EnumTypeWrapper(_CNAPPPROVIDER)
@@ -146,36 +146,40 @@ if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\005Cnapp'
-  _CNAPPPROVIDER._serialized_start=1446
-  _CNAPPPROVIDER._serialized_end=1517
-  _CNAPPREMEDIATIONACTION._serialized_start=1520
-  _CNAPPREMEDIATIONACTION._serialized_end=1651
+  _CNAPPREMEDIATEREQUEST.fields_by_name['cnappConfigurationRecordUid']._options = None
+  _CNAPPREMEDIATEREQUEST.fields_by_name['cnappConfigurationRecordUid']._serialized_options = b'\030\001'
+  _CNAPPREMEDIATEREQUEST.fields_by_name['provider']._options = None
+  _CNAPPREMEDIATEREQUEST.fields_by_name['provider']._serialized_options = b'\030\001'
+  _CNAPPPROVIDER._serialized_start=1518
+  _CNAPPPROVIDER._serialized_end=1589
+  _CNAPPREMEDIATIONACTION._serialized_start=1592
+  _CNAPPREMEDIATIONACTION._serialized_end=1723
   _CNAPPQUEUELISTREQUEST._serialized_start=22
   _CNAPPQUEUELISTREQUEST._serialized_end=87
   _CNAPPQUEUELISTRESPONSE._serialized_start=89
   _CNAPPQUEUELISTRESPONSE._serialized_end=168
   _CNAPPQUEUEITEM._serialized_start=171
-  _CNAPPQUEUEITEM._serialized_end=379
-  _CNAPPASSOCIATEREQUEST._serialized_start=381
-  _CNAPPASSOCIATEREQUEST._serialized_end=445
-  _CNAPPASSOCIATERESPONSE._serialized_start=447
-  _CNAPPASSOCIATERESPONSE._serialized_end=499
-  _CNAPPREMEDIATEREQUEST._serialized_start=502
-  _CNAPPREMEDIATEREQUEST._serialized_end=781
-  _CNAPPREMEDIATERESPONSE._serialized_start=783
-  _CNAPPREMEDIATERESPONSE._serialized_end=902
-  _CNAPPSETSTATUSREQUEST._serialized_start=904
-  _CNAPPSETSTATUSREQUEST._serialized_end=993
-  _CNAPPSETSTATUSRESPONSE._serialized_start=995
-  _CNAPPSETSTATUSRESPONSE._serialized_end=1047
-  _CNAPPDELETEQUEUEITEMREQUEST._serialized_start=1049
-  _CNAPPDELETEQUEUEITEMREQUEST._serialized_end=1100
-  _CNAPPDELETEQUEUEITEMRESPONSE._serialized_start=1102
-  _CNAPPDELETEQUEUEITEMRESPONSE._serialized_end=1132
-  _CNAPPCONFIGURATION._serialized_start=1135
-  _CNAPPCONFIGURATION._serialized_end=1334
-  _CNAPPDELETECONFIGURATIONREQUEST._serialized_start=1336
-  _CNAPPDELETECONFIGURATIONREQUEST._serialized_end=1389
-  _CNAPPTESTENCRYPTERREQUEST._serialized_start=1391
-  _CNAPPTESTENCRYPTERREQUEST._serialized_end=1444
+  _CNAPPQUEUEITEM._serialized_end=400
+  _CNAPPASSOCIATEREQUEST._serialized_start=402
+  _CNAPPASSOCIATEREQUEST._serialized_end=466
+  _CNAPPASSOCIATERESPONSE._serialized_start=468
+  _CNAPPASSOCIATERESPONSE._serialized_end=520
+  _CNAPPREMEDIATEREQUEST._serialized_start=523
+  _CNAPPREMEDIATEREQUEST._serialized_end=853
+  _CNAPPREMEDIATERESPONSE._serialized_start=855
+  _CNAPPREMEDIATERESPONSE._serialized_end=974
+  _CNAPPSETSTATUSREQUEST._serialized_start=976
+  _CNAPPSETSTATUSREQUEST._serialized_end=1065
+  _CNAPPSETSTATUSRESPONSE._serialized_start=1067
+  _CNAPPSETSTATUSRESPONSE._serialized_end=1119
+  _CNAPPDELETEQUEUEITEMREQUEST._serialized_start=1121
+  _CNAPPDELETEQUEUEITEMREQUEST._serialized_end=1172
+  _CNAPPDELETEQUEUEITEMRESPONSE._serialized_start=1174
+  _CNAPPDELETEQUEUEITEMRESPONSE._serialized_end=1204
+  _CNAPPCONFIGURATION._serialized_start=1207
+  _CNAPPCONFIGURATION._serialized_end=1406
+  _CNAPPDELETECONFIGURATIONREQUEST._serialized_start=1408
+  _CNAPPDELETECONFIGURATIONREQUEST._serialized_end=1461
+  _CNAPPTESTENCRYPTERREQUEST._serialized_start=1463
+  _CNAPPTESTENCRYPTERREQUEST._serialized_end=1516
 # @@protoc_insertion_point(module_scope)

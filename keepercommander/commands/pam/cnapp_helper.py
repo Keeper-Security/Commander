@@ -34,10 +34,13 @@ Failures from the helper layer bubble up as Python exceptions raised by the unde
 HTTP/proto plumbing; callers convert them to user-readable output.
 """
 
-from typing import Optional
+import json
+
+from typing import List, Optional
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
+from ... import crypto
 from ...params import KeeperParams
 from ...proto import cnapp_pb2
 
@@ -77,6 +80,24 @@ def _to_uid_bytes(uid):  # type: (Optional[str]) -> bytes
     if isinstance(uid, bytes):
         return uid
     return url_safe_str_to_bytes(uid)
+
+
+def build_encrypted_remediations(params, network_uid, group_names, role_names):
+    # type: (KeeperParams, str, Optional[List[str]], Optional[List[str]]) -> bytes
+    """Encrypt the REMOVE_STANDING_PRIVILEGE remediation params with the network record key.
+
+    The gateway expects a JSON map `{"groupNames": [...], "roleNames": [...]}` encrypted
+    AES-256-GCM with the PAM configuration (network) record key; krouter relays the
+    ciphertext opaquely, so the group/role names never transit in the clear."""
+    record = params.record_cache.get(network_uid) if params.record_cache else None
+    if not record or 'record_key_unencrypted' not in record:
+        raise ValueError(f'PAM configuration record "{network_uid}" not found in the local cache. '
+                         f'Run "sync-down" and verify the network record UID.')
+    plaintext = json.dumps({
+        'groupNames': list(group_names or []),
+        'roleNames': list(role_names or []),
+    }).encode('utf-8')
+    return crypto.encrypt_aes_v2(plaintext, record['record_key_unencrypted'])
 
 
 def provider_from_name(name):  # type: (str) -> int
@@ -214,23 +235,24 @@ def associate_cnapp_record(params, cnapp_queue_id, record_uid):
     return _post_request_to_router(params, 'cnapp/queue/associate', rq_proto=rq)
 
 
-def remediate_cnapp_queue_item(params, cnapp_queue_id, action_type, provider=None,
-                               cnapp_config_record_uid=None, resource_ref=None,
-                               pwd_complexity=None, controller_uid=None,
-                               message_uid=None, group_name=None):
-    # type: (KeeperParams, int, int, Optional[int], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappRemediateResponse
+def remediate_cnapp_queue_item(params, cnapp_queue_id, action_type, resource_ref=None,
+                               pwd_complexity=None, controller_uid=None, message_uid=None,
+                               encrypted_remediations=None, auto_remediate=False):
+    # type: (KeeperParams, int, int, Optional[str], Optional[str], Optional[str], Optional[str], Optional[bytes], bool) -> cnapp_pb2.CnappRemediateResponse
     """Trigger a remediation action against the gateway for a queued issue.
 
-    Currently krouter only dispatches `ROTATE_CREDENTIALS`; other actions return
-    RRC_BAD_REQUEST. The optional fields are forwarded as-is so this helper stays
-    forward-compatible with new action types."""
+    krouter dispatches `ROTATE_CREDENTIALS` and `REMOVE_STANDING_PRIVILEGE`; other
+    actions return RRC_BAD_REQUEST. `encrypted_remediations` carries the
+    REMOVE_STANDING_PRIVILEGE group/role targets (see `build_encrypted_remediations`);
+    empty means the gateway falls back to the record's JIT settings. `auto_remediate`
+    registers an auto-remediation rule for the item's control hash — krouter accepts it
+    only with ROTATE_CREDENTIALS on items that carry a control hash.
+
+    The proto's `provider` and `cnappConfigurationRecordUid` fields are deprecated
+    (krouter reads both from its own DB) and deliberately never sent."""
     rq = cnapp_pb2.CnappRemediateRequest()
     rq.cnappQueueId = int(cnapp_queue_id)
     rq.actionType = int(action_type)
-    if provider is not None:
-        rq.provider = int(provider)
-    if cnapp_config_record_uid:
-        rq.cnappConfigurationRecordUid = _to_uid_bytes(cnapp_config_record_uid)
     if resource_ref:
         rq.resourceRef = _to_uid_bytes(resource_ref)
     if pwd_complexity:
@@ -239,8 +261,9 @@ def remediate_cnapp_queue_item(params, cnapp_queue_id, action_type, provider=Non
         rq.controllerUid = controller_uid
     if message_uid:
         rq.messageUid = _to_uid_bytes(message_uid)
-    if group_name:
-        rq.groupName = group_name
+    if encrypted_remediations:
+        rq.encryptedRemediations = encrypted_remediations
+    rq.autoRemediateInFuture = bool(auto_remediate)
     return _post_request_to_router(params, 'cnapp/queue/remediate', rq_proto=rq,
                                    rs_type=cnapp_pb2.CnappRemediateResponse)
 
