@@ -39,7 +39,9 @@ class AccountMapper:
     def __init__(self, platform_map_override: Optional[dict] = None,
                  platforms: Optional[List[dict]] = None,
                  client: Optional['CyberArkPVWAClient'] = None,
-                 default_rotation_schedule: Optional[dict] = None):
+                 default_rotation_schedule: Optional[dict] = None,
+                 master_rotation_exceptions: Optional[Dict[str, dict]] = None,
+                 master_change_days: int = 0):
         self.platform_map = copy.deepcopy(DEFAULT_PLATFORM_MAP)
         if platform_map_override:
             self.platform_map.update(platform_map_override)
@@ -52,6 +54,29 @@ class AccountMapper:
         self._default_rotation_schedule: dict = {"type": "on-demand"}
         if isinstance(default_rotation_schedule, dict) and default_rotation_schedule:
             self._default_rotation_schedule = default_rotation_schedule
+        # Master-policy rotation exceptions from
+        # ``GET /api/platforms/master-rotation-policy/exceptions/``.
+        # Maps platformId → Keeper schedule dict. Populated once at import
+        # start; consulted when a platform's rotation-policy says it inherits
+        # the master policy (``overridesMasterPolicy=false``).
+        self._master_exception_schedules: Dict[str, dict] = {}
+        if isinstance(master_rotation_exceptions, dict):
+            self._master_exception_schedules = {
+                str(k): copy.deepcopy(v)
+                for k, v in master_rotation_exceptions.items()
+                if k and isinstance(v, dict)
+            }
+        # Master Policy's own "Require password change every X days" value
+        # (``password_change_days`` from MasterPolicyMapper.map_policy).
+        # Used as a fallback signal: when a platform's own rotation-policy
+        # doesn't expose a recognizable override flag but its ``change.
+        # interval`` differs from this master value, CyberArk is applying
+        # a platform exception even though the flag naming on this tenant
+        # doesn't match any alias we know about.
+        try:
+            self._master_change_days = int(master_change_days or 0)
+        except (TypeError, ValueError):
+            self._master_change_days = 0
         # PlatformID → {"base_id": ..., "system_type": ...} from PVWA /Platforms
         self._platform_index: Dict[str, dict] = {}
         if platforms:
@@ -151,6 +176,54 @@ class AccountMapper:
                 flat.setdefault(k, v)
         return flat
 
+    # Boolean flags CyberArk has been observed (or documented via platform
+    # exception audit tooling) to use for "this platform's change-interval
+    # deviates from the Master Policy default": ``overridesMasterPolicy``
+    # (ISPSS rotation-policy), ``isException`` / ``IsAnException`` /
+    # ``IsRequirePasswordEveryXDaysAnException`` (legacy Get-Platforms /
+    # Get-Platform-Details), ``changeFrequencyIsException`` /
+    # ``changeIntervalIsException`` (observed on some tenants' bulk
+    # Get-Platforms responses).
+    _OVERRIDE_FLAG_KEYS = (
+        "overridesMasterPolicy", "OverridesMasterPolicy",
+        "isException", "IsException", "isAnException", "IsAnException",
+        "isRequirePasswordEveryXDaysAnException",
+        "IsRequirePasswordEveryXDaysAnException",
+        "changeFrequencyIsException", "changeIntervalIsException",
+        "ChangeIntervalIsException",
+    )
+
+    @staticmethod
+    def _schedule_from_change_block(change: dict) -> Optional[dict]:
+        """Translate ISPSS ``change`` group → Keeper ``schedule`` dict.
+
+        Mirrors how the Master Policy itself is converted
+        (``MasterPolicyMapper.days_to_cron``) — the interval value alone
+        drives the cadence. CyberArk's ``allowedPeriodic`` /
+        ``performPeriodicChange`` bookkeeping flag is informational (it
+        reflects whether *CyberArk's* CPM auto-triggers the change) and is
+        intentionally NOT used to force ``on-demand`` here: an admin who
+        set an explicit platform exception (e.g. 30 days instead of the
+        master's 90) wants Keeper to rotate on that cadence, the same way
+        the Master Policy default itself is always applied as a CRON
+        schedule regardless of any periodic flag.
+        """
+        if not isinstance(change, dict):
+            return None
+        try:
+            days = int(change.get("interval") or 0)
+        except (TypeError, ValueError):
+            days = 0
+        return MasterPolicyMapper.change_settings_to_schedule(days)
+
+    @classmethod
+    def _override_flag(cls, change: dict) -> Optional[bool]:
+        """Return the first recognized override/exception flag, if any."""
+        for key in cls._OVERRIDE_FLAG_KEYS:
+            if key in change:
+                return bool(change[key])
+        return None
+
     def _resolve_platform_schedule(self, platform_id: str) -> Optional[dict]:
         """Return Keeper ``schedule`` dict for ``platform_id`` (cached).
 
@@ -160,23 +233,27 @@ class AccountMapper:
         platform has no custom policy — callers fall back to the master
         policy default schedule.
 
-        Honors CyberArk's three-state cascade:
+        Honors CyberArk's cascade:
 
-          1. **Per-platform with override** — when the response carries a
-             ``change`` group with ``overridesMasterPolicy=true``, we use
-             ``change.interval`` and ``change.allowedPeriodic`` directly.
-          2. **Per-platform without override** — ``overridesMasterPolicy``
-             is explicitly false (the common Metron case where every
-             platform inherits master) → return ``None`` so the caller
-             falls back to the master policy default.
-          3. **Legacy flat shapes** — older PVWA Self-Hosted responses
-             that flatten the rotation interval at top level
-             (``rotateEveryXDays`` / ``passwordChangeDays``) are still
-             supported via the alias tables.
-
-        ``allowedPeriodic=False`` (or its aliases) forces the schedule to
-        ``on-demand`` regardless of the day count, because the platform
-        explicitly opts out of periodic rotation.
+          1. **Per-platform with override** — a recognized exception flag
+             (``overridesMasterPolicy``, ``isException``, etc.) is true, OR
+             no flag is present but the interval differs from the Master
+             Policy's own interval → use ``change.interval`` verbatim,
+             converted to CRON exactly like the Master Policy default is
+             (``allowedPeriodic`` does NOT force on-demand — see
+             ``_schedule_from_change_block``).
+          2. **Master-policy exception** — platform listed in
+             ``/api/platforms/master-rotation-policy/exceptions/`` with a
+             custom change interval (common for Win Local Admins and other
+             platforms that inherit master but have a Master Policy
+             exception) — used when the per-platform flag says "no
+             override" but this separate bulk endpoint disagrees.
+          3. **Per-platform without override** —
+             no exception detected by (1) or (2): inherit the master
+             policy's own schedule (``None`` → caller applies
+             ``default_rotation_schedule``).
+          4. **Legacy flat shapes** — older PVWA responses with
+             ``rotateEveryXDays`` / ``passwordChangeDays`` at top level.
         """
         if not platform_id or not self._client:
             return None
@@ -185,40 +262,109 @@ class AccountMapper:
 
         raw = self._client.fetch_platform_rotation_policy(platform_id)
         if not raw:
+            logging.info(
+                "Platform '%s' rotation-policy not accessible — inheriting "
+                "master policy default.", platform_id,
+            )
             self._platform_schedule_cache[platform_id] = None
             return None
 
         # ── New ISPSS shape ────────────────────────────────────
         change = raw.get("change") if isinstance(raw.get("change"), dict) else None
         if change is not None:
-            overrides = change.get("overridesMasterPolicy")
+            try:
+                interval_days = int(change.get("interval") or 0)
+            except (TypeError, ValueError):
+                interval_days = 0
+            overrides = self._override_flag(change)
+            # Fallback signal when no recognized flag is present: if the
+            # platform's own interval differs from the Master Policy's
+            # configured interval, CyberArk is evidently applying a
+            # platform-specific value regardless of what this tenant calls
+            # the flag — honor the number it actually returned.
+            interval_mismatch = (
+                overrides is None
+                and self._master_change_days > 0
+                and interval_days > 0
+                and interval_days != self._master_change_days
+            )
+            logging.info(
+                "Platform '%s' rotation-policy: change.interval=%s "
+                "allowedPeriodic=%s override_flag=%s master_days=%s%s",
+                platform_id, interval_days, change.get("allowedPeriodic"),
+                overrides, self._master_change_days or "?",
+                " (interval differs from master -> treating as exception)"
+                if interval_mismatch else "",
+            )
+
+            if overrides is True or interval_mismatch:
+                schedule = self._schedule_from_change_block(change)
+                self._platform_schedule_cache[platform_id] = schedule
+                if schedule:
+                    logging.info(
+                        "Platform '%s' rotation policy override -> %s",
+                        platform_id, schedule,
+                    )
+                return schedule
+
             if overrides is False:
-                # Platform explicitly inherits master policy — let the
-                # master rotation cadence drive the user's schedule.
-                logging.debug(
-                    "Platform '%s' rotation policy: overridesMasterPolicy=false "
+                exc = self._master_exception_schedules.get(platform_id)
+                if exc is not None:
+                    schedule = copy.deepcopy(exc)
+                    self._platform_schedule_cache[platform_id] = schedule
+                    logging.info(
+                        "Platform '%s' rotation: master-policy exception -> %s",
+                        platform_id, schedule,
+                    )
+                    return schedule
+                # No override, no separate master exception on record —
+                # this platform's cadence matches the Master Policy default.
+                # Inherit it (the caller applies ``default_rotation_schedule``,
+                # itself a CRON built from the same master interval), rather
+                # than forcing on-demand based on the informational
+                # ``allowedPeriodic`` flag.
+                logging.info(
+                    "Platform '%s' rotation policy: no override detected "
                     "(inheriting master policy)", platform_id,
                 )
                 self._platform_schedule_cache[platform_id] = None
                 return None
 
-            try:
-                days = int(change.get("interval") or 0)
-            except (TypeError, ValueError):
-                days = 0
-            allowed_periodic = change.get("allowedPeriodic")
-            if allowed_periodic is False:
-                schedule: Optional[dict] = {"type": "on-demand"}
-            else:
-                cron = MasterPolicyMapper.days_to_cron(days)
-                schedule = {"type": "CRON", "cron": cron} if cron else None
+            # overrides is None — this tenant's rotation-policy response
+            # doesn't carry any recognized exception flag at all. When we
+            # know the Master Policy's own interval, use it as the source
+            # of truth: a matching interval means no exception exists (the
+            # platform is simply mirroring master); a differing interval
+            # is already handled above via ``interval_mismatch``.
+            if self._master_change_days > 0:
+                logging.info(
+                    "Platform '%s' rotation policy: interval matches master "
+                    "(%d days) — inheriting master policy", platform_id,
+                    self._master_change_days,
+                )
+                self._platform_schedule_cache[platform_id] = None
+                return None
 
+            # No flag and no master baseline to compare against — fall back
+            # to treating the platform's own ``change`` block as authoritative
+            # (legacy behavior for tenants where this is the only info we get).
+            schedule = self._schedule_from_change_block(change)
             self._platform_schedule_cache[platform_id] = schedule
             if schedule:
-                logging.debug(
-                    "Platform '%s' rotation policy override: every %d day(s) -> %s",
-                    platform_id, days, schedule,
+                logging.info(
+                    "Platform '%s' rotation policy: %s", platform_id, schedule,
                 )
+            return schedule
+
+        # No ``change`` block — check master-policy exceptions before legacy.
+        exc = self._master_exception_schedules.get(platform_id)
+        if exc is not None:
+            schedule = copy.deepcopy(exc)
+            self._platform_schedule_cache[platform_id] = schedule
+            logging.info(
+                "Platform '%s' rotation: master-policy exception -> %s",
+                platform_id, schedule,
+            )
             return schedule
 
         # ── Legacy flat shapes (PVWA Self-Hosted, Get-Platforms) ───
@@ -835,12 +981,13 @@ class AccountMapper:
             if mapping.get("rotation"):
                 # Resolve the per-user schedule with this priority:
                 #   1. Platform-level rotation-policy (CyberArk:
-                #      /api/platforms/{platformId}/rotation-policy/) —
-                #      overrides the master policy for accounts on that
-                #      platform.
-                #   2. Master Policy default
-                #      (passwordChangeDays / PasswordChangeDays).
-                #   3. on-demand fallback when neither is present.
+                #      /api/platforms/{platformId}/rotation-policy/) when
+                #      ``overridesMasterPolicy=true``.
+                #   2. Master-policy exception for the platform (CyberArk:
+                #      /api/platforms/master-rotation-policy/exceptions/).
+                #   3. Master Policy default
+                #      (passwordChangeDays / changeInterval).
+                #   4. on-demand fallback when none apply or CPM is disabled.
                 #
                 # If CyberArk has CPM auto-management disabled on the
                 # account itself we always fall back to on-demand so we

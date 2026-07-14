@@ -299,6 +299,15 @@ class CyberArkImportOrchestrator:
                 'Review PAM config settings manually.%s',
                 bcolors.WARNING, bcolors.ENDC,
             )
+        # Logs the raw exceptions JSON at INFO internally; returns None when
+        # the tenant doesn't expose a real per-platform list (common — see
+        # fetch_master_rotation_policy_exceptions docstring), in which case
+        # AccountMapper falls back to the per-platform rotation-policy check.
+        exceptions_raw = self.client.fetch_master_rotation_policy_exceptions()
+        master_policy_config["rotation_exception_schedules"] = (
+            MasterPolicyMapper.parse_rotation_exceptions(exceptions_raw)
+            if exceptions_raw else {}
+        )
         try:
             master_sm = self.client.fetch_master_session_monitoring()
         except Exception as e:  # noqa: BLE001 — never block import on optional fetch
@@ -337,11 +346,17 @@ class CyberArkImportOrchestrator:
             )
         else:
             rotation_summary = "on-demand"
+        exc_schedules = master_policy_config.get("rotation_exception_schedules") or {}
+        exc_note = ""
+        if exc_schedules:
+            exc_note = (
+                f", rotation_exceptions=<b>{len(exc_schedules)} platform(s)</b>"
+            )
         print_formatted_text(HTML(
             f"Master Policy: session_recording="
             f"<b>{master_policy_config.get('graphical_session_recording', 'off')}</b>, "
             f"connections=<b>{master_policy_config.get('connections', 'on')}</b>, "
-            f"rotation=<b>{_esc(rotation_summary)}</b>"))
+            f"rotation=<b>{_esc(rotation_summary)}</b>{exc_note}"))
 
     def _prepare_safes(self) -> Tuple[List[dict], int]:
         all_safes = self.client.fetch_safes()
@@ -469,6 +484,7 @@ class CyberArkImportOrchestrator:
         print(f"Accounts: {total_accounts}")
         print(f"Estimated import time: ~{format_duration(est_seconds)}")
 
+
     def _map_accounts(self, accounts_by_safe: Dict[str, List[dict]], safe_names: List[str],
                       master_policy_config: dict,
                       unmapped_items: List[dict]) -> MappedImportResult:
@@ -488,6 +504,9 @@ class CyberArkImportOrchestrator:
             platforms=ca_platforms,
             client=self.client,
             default_rotation_schedule=master_policy_config.get("default_rotation_schedule"),
+            master_rotation_exceptions=master_policy_config.get(
+                "rotation_exception_schedules"),
+            master_change_days=master_policy_config.get("password_change_days", 0),
         )
         folder_mapper = SafeFolderMapper(mode=opts.folder_mode)
         pam_resources: List[dict] = []
@@ -857,6 +876,12 @@ class CyberArkImportOrchestrator:
                     f"{bcolors.OKBLUE}{summary.updated} to update{bcolors.ENDC}, "
                     f"{bcolors.WARNING}{summary.unchanged} unchanged{bcolors.ENDC}"
                 )
+                for dec in idempotency_ctx.get("decisions", []):
+                    if dec.decision is not IdempotencyDecision.UPDATE:
+                        continue
+                    title = (dec.incoming.get("title") or dec.account_id or "?")
+                    fields = ", ".join(dec.change_fields) or "(none)"
+                    print(f"    • update {title}: {fields}")
         confirm = input("Proceed? [y/N] ").strip().lower()
         if confirm not in ("y", "yes"):
             print("Import cancelled.")
@@ -1340,20 +1365,25 @@ class CyberArkImportOrchestrator:
                     "record_uid": fresh.record_uid,
                     "title": getattr(fresh, "title", ""),
                     "fields": dec.change_fields,
+                    "status": "ok",
                 })
             except Exception as e:  # noqa: BLE001 — surface, don't crash
                 summary["failed"] += 1
+                err_text = str(e) if str(e) else type(e).__name__
                 logging.warning(
-                    "Idempotency update failed for record %s (%s): %s",
+                    "Idempotency update failed for record %s (%s): %s "
+                    "(fields: %s)",
                     getattr(existing, "record_uid", "?"),
                     getattr(existing, "title", "?"),
-                    type(e).__name__,
+                    err_text,
+                    ", ".join(dec.change_fields) or "(none)",
                 )
                 summary["details"].append({
                     "record_uid": getattr(existing, "record_uid", ""),
                     "title": getattr(existing, "title", ""),
                     "fields": dec.change_fields,
-                    "error": type(e).__name__,
+                    "status": "failed",
+                    "error": err_text,
                 })
         return summary
 
@@ -1410,6 +1440,7 @@ class CyberArkImportOrchestrator:
     def _print_idempotency_summary(self, idempotency_ctx: dict) -> None:
         summary: PartitionSummary = idempotency_ctx.get("partition_summary")
         update_summary = idempotency_ctx.get("update_summary") or {}
+        details = update_summary.get("details") or []
         print()
         print(f"{bcolors.OKBLUE}Sync results (--sync-mode="
               f"{self.options.sync_mode}):{bcolors.ENDC}")
@@ -1420,6 +1451,23 @@ class CyberArkImportOrchestrator:
             failed = update_summary.get("failed", 0)
             if failed:
                 print(f"  {bcolors.WARNING}Update failures:  {failed}{bcolors.ENDC}")
+        if details:
+            print()
+            print(f"{bcolors.OKBLUE}Idempotency field updates:{bcolors.ENDC}")
+            for item in details:
+                title = item.get("title") or item.get("record_uid") or "?"
+                fields = item.get("fields") or []
+                field_text = ", ".join(fields) if fields else "(none)"
+                status = item.get("status", "")
+                if status == "failed":
+                    err = item.get("error", "")
+                    print(f"  {bcolors.WARNING}✗{bcolors.ENDC} {title}")
+                    print(f"      fields: {field_text}")
+                    if err:
+                        print(f"      error:  {err}")
+                else:
+                    print(f"  {bcolors.OKGREEN}✓{bcolors.ENDC} {title}")
+                    print(f"      fields: {field_text}")
         print()
 
     def _apply_service_dependent_mappings(

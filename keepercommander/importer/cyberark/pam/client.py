@@ -1131,6 +1131,81 @@ class CyberArkPVWAClient:
                               url, response.status_code)
         return None
 
+    # Fields that only appear on the *base* master-rotation-policy object
+    # (counts of how many platforms have an exception, not the exceptions
+    # themselves). Some ISPSS tenants don't expose a dedicated bulk
+    # "list exceptions" resource — hitting ``.../exceptions/`` silently
+    # falls back to serving this same base object instead of 404ing. We
+    # detect that here so callers don't mistake it for real exception data.
+    _MASTER_POLICY_ONLY_KEYS = frozenset({
+        "changeIntervalExceptionsCount", "verifyIntervalExceptionsCount",
+    })
+
+    @staticmethod
+    def _looks_like_base_master_policy(data: Any) -> bool:
+        return (isinstance(data, dict)
+                and any(k in data for k in
+                        CyberArkPVWAClient._MASTER_POLICY_ONLY_KEYS)
+                and "exceptions" not in data
+                and "value" not in data)
+
+    def fetch_master_rotation_policy_exceptions(self) -> Optional[Any]:
+        """``GET /api/platforms/master-rotation-policy/exceptions/``.
+
+        Returns platform-specific overrides to the master rotation policy
+        (e.g. Win Local Admins rotated every 30 days while master is 90).
+        The documented ISPSS shape (per
+        docs.cyberark.com/.../privcloud_get_masterpolicy.htm) is::
+
+            {"exceptions": [{"platformId": "...", "verifyInterval": 0,
+                              "changeInterval": 0}], "totalCount": 0}
+
+        Some tenants don't expose this as a distinct resource and instead
+        the gateway re-serves the *base* master-rotation-policy object
+        (identifiable by ``changeIntervalExceptionsCount`` /
+        ``verifyIntervalExceptionsCount`` with no ``exceptions`` list) — in
+        that case we log it and return ``None`` so callers know to rely on
+        the per-platform ``rotation-policy`` check instead
+        (``AccountMapper._resolve_platform_schedule``).
+        """
+        url = (f"https://{self.pvwa_host}"
+               f"/api/platforms/master-rotation-policy/exceptions/")
+        try:
+            response = self._get(url)
+        except _requests_module.RequestException as e:
+            logging.debug('Master rotation policy exceptions fetch error: %s',
+                          type(e).__name__)
+            return None
+        if response.status_code != 200:
+            logging.debug(
+                'Master rotation policy exceptions not accessible: status %d',
+                response.status_code,
+            )
+            return None
+        try:
+            data = response.json()
+        except (ValueError, KeyError):
+            logging.debug(
+                'Master rotation policy exceptions response not valid JSON',
+            )
+            return None
+        if not data:
+            return None
+        try:
+            raw_json = json.dumps(data, indent=2, sort_keys=True)
+        except (TypeError, ValueError):
+            raw_json = repr(data)
+        logging.info('CyberArk master-rotation-policy exceptions:\n%s', raw_json)
+        if self._looks_like_base_master_policy(data):
+            logging.info(
+                "This tenant's /master-rotation-policy/exceptions/ endpoint "
+                "returned the base policy object (not a per-platform "
+                "exceptions list) — falling back to the per-platform "
+                "rotation-policy check for each imported account's platform."
+            )
+            return None
+        return data
+
     def fetch_master_session_monitoring(self) -> Optional[dict]:
         """Fetch the **global** session-monitoring rules (master policy level).
 

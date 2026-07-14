@@ -2092,6 +2092,214 @@ class TestMasterPolicyMapper:
         assert unmapped == []
 
 
+class TestMasterPolicyRotationExceptions:
+    """Tests for master-rotation-policy/exceptions parsing."""
+
+    def test_parse_list_shape(self):
+        from keepercommander.importer.cyberark.cyberark_pam import MasterPolicyMapper
+        data = [
+            {"platformId": "WinDesktopLocal", "changeInterval": 30},
+            {"platformId": "WinDomain", "interval": 60, "allowedPeriodic": True},
+        ]
+        schedules = MasterPolicyMapper.parse_rotation_exceptions(data)
+        assert "WinDesktopLocal" in schedules
+        assert schedules["WinDesktopLocal"]["type"] == "CRON"
+        assert schedules["WinDomain"]["type"] == "CRON"
+
+    def test_parse_cyberark_exceptions_envelope(self):
+        from keepercommander.importer.cyberark.cyberark_pam import MasterPolicyMapper
+        data = {
+            "exceptions": [
+                {"platformId": "WinDesktopLocal", "verifyInterval": 7,
+                 "changeInterval": 30},
+                {"platformId": "WinDomain", "verifyInterval": 7,
+                 "changeInterval": 0},
+            ],
+            "totalCount": 2,
+        }
+        schedules = MasterPolicyMapper.parse_rotation_exceptions(data)
+        assert schedules["WinDesktopLocal"]["type"] == "CRON"
+        assert schedules["WinDesktopLocal"]["cron"] == "0 0 0 1 * ?"
+        assert "WinDomain" not in schedules  # changeInterval=0 → no schedule
+
+    def test_parse_grouped_shape(self):
+        from keepercommander.importer.cyberark.cyberark_pam import MasterPolicyMapper
+        data = {
+            "changeInterval": [
+                {"platformId": "WinLocalAccount", "interval": 30},
+            ],
+        }
+        schedules = MasterPolicyMapper.parse_rotation_exceptions(data)
+        assert schedules["WinLocalAccount"]["cron"] == "0 0 0 1 * ?"
+
+    def test_allowed_periodic_false_still_uses_interval(self):
+        """``allowedPeriodic`` is informational only — an explicit exception
+        interval is always honored as a CRON cadence, same as the Master
+        Policy default itself (which has no such flag to check)."""
+        from keepercommander.importer.cyberark.cyberark_pam import MasterPolicyMapper
+        data = [{"platformId": "WinDesktopLocal", "interval": 90,
+                 "allowedPeriodic": False}]
+        schedules = MasterPolicyMapper.parse_rotation_exceptions(data)
+        assert schedules["WinDesktopLocal"] == {"type": "CRON", "cron": "0 0 0 1 */3 ?"}
+
+    def test_empty_payload(self):
+        from keepercommander.importer.cyberark.cyberark_pam import MasterPolicyMapper
+        assert MasterPolicyMapper.parse_rotation_exceptions(None) == {}
+        assert MasterPolicyMapper.parse_rotation_exceptions([]) == {}
+
+
+class TestPlatformScheduleWithExceptions:
+    """AccountMapper honors master-policy rotation exceptions."""
+
+    def test_master_exception_overrides_inherit_master(self):
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {
+                "interval": 90,
+                "allowedPeriodic": True,
+                "overridesMasterPolicy": False,
+            },
+        }
+        exc = {"WinDesktopLocal": {"type": "CRON", "cron": "0 0 0 */30 * ?"}}
+        mapper = AccountMapper(
+            client=client,
+            master_rotation_exceptions=exc,
+        )
+        sched = mapper._resolve_platform_schedule("WinDesktopLocal")
+        assert sched == exc["WinDesktopLocal"]
+        assert mapper.platform_schedule_overrides.get("WinDesktopLocal", 0) == 0
+
+    def test_platform_override_beats_master_exception(self):
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {
+                "interval": 30,
+                "allowedPeriodic": True,
+                "overridesMasterPolicy": True,
+            },
+        }
+        exc = {"WinDesktopLocal": {"type": "CRON", "cron": "0 0 0 1 */3 ?"}}
+        mapper = AccountMapper(client=client, master_rotation_exceptions=exc)
+        sched = mapper._resolve_platform_schedule("WinDesktopLocal")
+        assert sched == {"type": "CRON", "cron": "0 0 0 1 * ?"}
+
+    def test_allowed_periodic_false_without_exception_inherits_master(self):
+        """``overridesMasterPolicy=False`` means no exception exists — the
+        platform inherits the Master Policy's own CRON schedule. The
+        informational ``allowedPeriodic=False`` flag must NOT force
+        on-demand here (CyberArk's own Master Policy default has no such
+        flag and is always applied as CRON)."""
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {
+                "interval": 90,
+                "allowedPeriodic": False,
+                "overridesMasterPolicy": False,
+            },
+        }
+        mapper = AccountMapper(client=client)
+        sched = mapper._resolve_platform_schedule("WinDesktopLocal")
+        assert sched is None  # caller applies default_rotation_schedule (master CRON)
+
+    def test_interval_mismatch_treated_as_exception_without_flag(self):
+        """No recognized override flag present, but the platform's own
+        interval differs from the Master Policy value — CyberArk is
+        clearly applying a platform-specific cadence, so honor it."""
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {
+                "interval": 30,
+                "allowedPeriodic": True,
+                # No overridesMasterPolicy / isException key at all.
+            },
+        }
+        mapper = AccountMapper(client=client, master_change_days=90)
+        sched = mapper._resolve_platform_schedule("WinDesktopLocal")
+        assert sched == {"type": "CRON", "cron": "0 0 0 1 * ?"}  # 30 days -> monthly
+
+    def test_matching_interval_without_flag_inherits_master(self):
+        """No flag, and the interval matches master — no exception exists."""
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {"interval": 90, "allowedPeriodic": True},
+        }
+        mapper = AccountMapper(client=client, master_change_days=90)
+        sched = mapper._resolve_platform_schedule("WinDesktopLocal")
+        assert sched is None
+
+    def test_legacy_is_exception_flag_name_honored(self):
+        """Alternate flag name (``isException``) observed on some tenants."""
+        client = MagicMock()
+        client.fetch_platform_rotation_policy.return_value = {
+            "change": {
+                "interval": 14,
+                "allowedPeriodic": True,
+                "isException": True,
+            },
+        }
+        mapper = AccountMapper(client=client, master_change_days=90)
+        sched = mapper._resolve_platform_schedule("WinLocalAccount")
+        assert sched == {"type": "CRON", "cron": "0 0 0 1,15 * ?"}  # 14 days -> bi-weekly
+
+
+class TestMasterRotationExceptionsBogusShapeDetection:
+    """CyberArkPVWAClient must not mistake the base master-policy object
+    (re-served by some tenants at .../exceptions/) for real exception data."""
+
+    def test_looks_like_base_master_policy_detected(self):
+        data = {
+            "changeInterval": 90,
+            "changeIntervalExceptionsCount": 1,
+            "verifyInterval": 7,
+            "verifyIntervalExceptionsCount": 0,
+        }
+        assert CyberArkPVWAClient._looks_like_base_master_policy(data) is True
+
+    def test_real_exceptions_envelope_not_flagged(self):
+        data = {
+            "exceptions": [{"platformId": "WinDesktopLocal",
+                             "changeInterval": 30, "verifyInterval": 7}],
+            "totalCount": 1,
+        }
+        assert CyberArkPVWAClient._looks_like_base_master_policy(data) is False
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.requests")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_fetch_returns_none_for_bogus_shape(self, mock_dns, mock_requests):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "changeInterval": 90,
+            "changeIntervalExceptionsCount": 1,
+            "verifyInterval": 7,
+            "verifyIntervalExceptionsCount": 0,
+        }
+        mock_requests.get.return_value = mock_resp
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client.auth_token = "test"
+        result = client.fetch_master_rotation_policy_exceptions()
+        assert result is None
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.requests")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_fetch_returns_data_for_real_envelope(self, mock_dns, mock_requests):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "exceptions": [{"platformId": "WinDesktopLocal",
+                             "changeInterval": 30, "verifyInterval": 7}],
+            "totalCount": 1,
+        }
+        mock_requests.get.return_value = mock_resp
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client.auth_token = "test"
+        result = client.fetch_master_rotation_policy_exceptions()
+        assert result is not None
+        assert result["totalCount"] == 1
+
+
 class TestFetchMasterPolicy:
     """Tests for CyberArkPVWAClient.fetch_master_policy."""
 

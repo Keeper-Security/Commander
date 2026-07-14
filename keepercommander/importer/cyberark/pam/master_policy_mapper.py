@@ -101,6 +101,102 @@ class MasterPolicyMapper:
                           "requirePasswordVerificationEveryXDays",
                           "RequirePasswordVerificationEveryXDays",
                           "verifyInterval", "VerifyInterval")
+    _PLATFORM_ID_KEYS = ("platformId", "platformID", "PlatformID", "PlatformId", "id")
+
+    @staticmethod
+    def change_settings_to_schedule(days: int) -> Optional[dict]:
+        """Translate a CyberArk change-interval (days) → Keeper schedule dict.
+
+        Mirrors the Master Policy's own conversion: any positive interval
+        becomes a CRON schedule via ``days_to_cron``; ``0``/unset means
+        "no periodic change" → ``on-demand``. CyberArk's
+        ``allowedPeriodic``/``performPeriodicChange`` bookkeeping flag is
+        intentionally not consulted here — an explicit change-interval
+        exception (e.g. Win Local Admins every 30 days vs. the master's 90)
+        should be honored as a real CRON cadence in Keeper, the same way
+        the Master Policy default itself always is.
+        """
+        cron = MasterPolicyMapper.days_to_cron(days)
+        return {"type": "CRON", "cron": cron} if cron else {"type": "on-demand"}
+
+    @staticmethod
+    def _exception_platform_id(entry: dict) -> Optional[str]:
+        for key in MasterPolicyMapper._PLATFORM_ID_KEYS:
+            val = entry.get(key)
+            if val not in (None, ""):
+                return str(val).strip()
+        return None
+
+    @staticmethod
+    def _exception_change_block(entry: dict) -> dict:
+        change = entry.get("change")
+        if isinstance(change, dict):
+            return change
+        return entry
+
+    @staticmethod
+    def _exception_days(change: dict) -> int:
+        for key in MasterPolicyMapper._CHANGE_DAYS_RULES + ("interval", "Interval"):
+            if key not in change:
+                continue
+            try:
+                return int(change.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+        return 0
+
+    @staticmethod
+    def parse_rotation_exceptions(data: Any) -> Dict[str, dict]:
+        """Normalize ``GET .../master-rotation-policy/exceptions/`` payloads.
+
+        CyberArk ISPSS returns::
+
+            {
+              "exceptions": [
+                {"platformId": "WinDesktopLocal",
+                 "verifyInterval": 7, "changeInterval": 30}
+              ],
+              "totalCount": 1
+            }
+
+        Older/alternate shapes (bare list, ``{"value": [...]}``, rule-grouped
+        dicts) are also accepted.
+
+        Returns ``{platformId: schedule_dict}`` for every change-interval
+        exception we can translate. Verification-only exceptions are ignored
+        here — Keeper has no separate verification schedule.
+        """
+        if not data:
+            return {}
+
+        items: List[dict] = []
+        if isinstance(data, list):
+            items = [x for x in data if isinstance(x, dict)]
+        elif isinstance(data, dict):
+            value = data.get("value")
+            if isinstance(value, list):
+                items.extend(x for x in value if isinstance(x, dict))
+            for key in ("changeInterval", "ChangeInterval", "change", "Change",
+                        "exceptions", "Exceptions"):
+                grouped = data.get(key)
+                if isinstance(grouped, list):
+                    items.extend(x for x in grouped if isinstance(x, dict))
+            if not items and MasterPolicyMapper._exception_platform_id(data):
+                items = [data]
+
+        schedules: Dict[str, dict] = {}
+        for entry in items:
+            pid = MasterPolicyMapper._exception_platform_id(entry)
+            if not pid:
+                continue
+            change = MasterPolicyMapper._exception_change_block(entry)
+            days = MasterPolicyMapper._exception_days(change)
+            if days <= 0:
+                # No change-interval given for this exception entry (e.g. a
+                # verification-only exception) — nothing to translate.
+                continue
+            schedules[pid] = MasterPolicyMapper.change_settings_to_schedule(days)
+        return schedules
 
     @staticmethod
     def normalize(policy_data: dict) -> Dict[str, Any]:
@@ -215,12 +311,11 @@ class MasterPolicyMapper:
         if d <= 89:
             # Bi-monthly — first day of every other month
             return "0 0 0 1 */2 ?"
-        if d <= 179:
-            # Quarterly — covers CyberArk's 90-day default
-            return "0 0 0 1 */3 ?"
         if d <= 364:
-            # Semi-annual
-            return "0 0 0 1 */6 ?"
+            months = (d + 15) // 30
+            if months >= 12:
+                return "0 0 0 1 1 ?"
+            return f"0 0 0 1 */{months} ?"
         # Annual or longer — Jan 1 at midnight
         return "0 0 0 1 1 ?"
 
