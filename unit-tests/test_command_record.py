@@ -117,6 +117,51 @@ class TestRecord(TestCase):
         {"$ref": "script", "label": "rotationScripts"},     # real RT-definition label
     ]
 
+    def test_format_add_result(self):
+        record_uid = 'riK9X5/XcxGPWRYM2Be1Ow=='
+        share_url = 'https://keepersecurity.com/vault/share#abc123'
+
+        self.assertEqual(
+            record_edit.RecordAddCommand._format_add_result(record_uid),
+            record_uid,
+        )
+        self.assertEqual(
+            record_edit.RecordAddCommand._format_add_result(record_uid, share_url),
+            f'{record_uid}\n{share_url}',
+        )
+        parsed = json.loads(record_edit.RecordAddCommand._format_add_result(record_uid, share_url, 'json'))
+        self.assertEqual(parsed['record_uid'], record_uid)
+        self.assertEqual(parsed['share_url'], share_url)
+        parsed = json.loads(record_edit.RecordAddCommand._format_add_result(record_uid, None, 'json'))
+        self.assertEqual(parsed, {'record_uid': record_uid})
+
+    def test_add_command_self_destruct_output(self):
+        params = get_synced_params()
+        cmd = record_edit.RecordAddCommand()
+        record_uid = utils.generate_uid()
+        share_url = 'https://keepersecurity.com/vault/share#abc123'
+
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar, \
+                mock.patch('keepercommander.api.communicate_rest'), \
+                mock.patch('keepercommander.commands.record_edit.urlunparse', return_value=share_url):
+            def artf(p, r, f):
+                r.record_uid = record_uid
+            ar.side_effect = artf
+
+            text_result = cmd.execute(
+                params, force=True, title='Test', record_type='login',
+                self_destruct='2mi', fields=['login=u', 'password=p'],
+            )
+            self.assertEqual(text_result, f'{record_uid}\n{share_url}')
+
+            json_result = json.loads(cmd.execute(
+                params, force=True, title='Test', record_type='login',
+                self_destruct='2mi', fields=['login=u', 'password=p'], format='json',
+            ))
+            self.assertEqual(json_result['record_uid'], record_uid)
+            self.assertEqual(json_result['share_url'], share_url)
+
     def test_add_command_labels_default_is_legacy(self):
         # No --labels (and explicit --labels=on): fields with no label in the RT definition fall
         # back to the field type as the label; real definition labels are kept.

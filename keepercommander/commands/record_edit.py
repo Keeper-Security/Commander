@@ -60,6 +60,8 @@ record_add_parser.add_argument('--email-config', dest='email_config', action='st
                                help='Email configuration name to use for sending (required with --send-email)')
 record_add_parser.add_argument('--email-message', dest='email_message', action='store',
                                help='Custom message to include in onboarding email')
+record_add_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                               default='text', help='output format')
 record_add_parser.add_argument('fields', nargs='*', type=str,
                                help='load record type data from strings with dot notation')
 
@@ -846,6 +848,18 @@ class RecordAddCommand(Command, RecordEditMixin):
     def __init__(self):
         super(RecordAddCommand, self).__init__()
 
+    @staticmethod
+    def _format_add_result(record_uid: str, share_url: Optional[str] = None,
+                           output_format: str = 'text') -> str:
+        data = {'record_uid': record_uid}
+        if share_url:
+            data['share_url'] = share_url
+        if output_format == 'json':
+            return json.dumps(data)
+        if share_url:
+            return f'{record_uid}\n{share_url}'
+        return record_uid
+
     def get_parser(self):
         return record_add_parser
 
@@ -1035,11 +1049,11 @@ class RecordAddCommand(Command, RecordEditMixin):
                 logging.warning(f'[EMAIL] Failed to send onboarding email: {e}')
                 # Best-effort: continue and return share URL
 
+        output_format = kwargs.get('format') or 'text'
         if share_url:
-            return share_url
-        else:
-            BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
-            return record.record_uid
+            return self._format_add_result(record.record_uid, share_url, output_format)
+        BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
+        return self._format_add_result(record.record_uid, None, output_format)
 
     def _sync_password_to_pam(self, params: KeeperParams, record: vault.TypedRecord, pam_config_name: str):
         """
