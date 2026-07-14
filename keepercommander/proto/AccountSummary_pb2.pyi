@@ -12,7 +12,7 @@ class AccountSummaryRequest(_message.Message):
     INCLUDERECENTACTIVITY_FIELD_NUMBER: _ClassVar[int]
     summaryVersion: int
     includeRecentActivity: bool
-    def __init__(self, summaryVersion: _Optional[int] = ..., includeRecentActivity: bool = ...) -> None: ...
+    def __init__(self, summaryVersion: _Optional[int] = ..., includeRecentActivity: _Optional[bool] = ...) -> None: ...
 
 class AccountSummaryElements(_message.Message):
     __slots__ = ("clientKey", "settings", "keysInfo", "syncLogs", "isEnterpriseAdmin", "license", "group", "Enforcements", "Images", "personalLicense", "fixSharedFolderRecords", "usernames", "devices", "isShareAdmin", "accountRecovery", "accountRecoveryPrompt", "minMasterPasswordLengthNoPrompt", "forbidKeyType2", "forbidKeyType1", "disallowedFeatures")
@@ -56,7 +56,7 @@ class AccountSummaryElements(_message.Message):
     forbidKeyType2: bool
     forbidKeyType1: bool
     disallowedFeatures: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, clientKey: _Optional[bytes] = ..., settings: _Optional[_Union[Settings, _Mapping]] = ..., keysInfo: _Optional[_Union[KeysInfo, _Mapping]] = ..., syncLogs: _Optional[_Iterable[_Union[SyncLog, _Mapping]]] = ..., isEnterpriseAdmin: bool = ..., license: _Optional[_Union[License, _Mapping]] = ..., group: _Optional[_Union[Group, _Mapping]] = ..., Enforcements: _Optional[_Union[Enforcements, _Mapping]] = ..., Images: _Optional[_Iterable[_Union[KeyValue, _Mapping]]] = ..., personalLicense: _Optional[_Union[License, _Mapping]] = ..., fixSharedFolderRecords: bool = ..., usernames: _Optional[_Iterable[str]] = ..., devices: _Optional[_Iterable[_Union[DeviceInfo, _Mapping]]] = ..., isShareAdmin: bool = ..., accountRecovery: bool = ..., accountRecoveryPrompt: bool = ..., minMasterPasswordLengthNoPrompt: _Optional[int] = ..., forbidKeyType2: bool = ..., forbidKeyType1: bool = ..., disallowedFeatures: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, clientKey: _Optional[bytes] = ..., settings: _Optional[_Union[Settings, _Mapping]] = ..., keysInfo: _Optional[_Union[KeysInfo, _Mapping]] = ..., syncLogs: _Optional[_Iterable[_Union[SyncLog, _Mapping]]] = ..., isEnterpriseAdmin: _Optional[bool] = ..., license: _Optional[_Union[License, _Mapping]] = ..., group: _Optional[_Union[Group, _Mapping]] = ..., Enforcements: _Optional[_Union[Enforcements, _Mapping]] = ..., Images: _Optional[_Iterable[_Union[KeyValue, _Mapping]]] = ..., personalLicense: _Optional[_Union[License, _Mapping]] = ..., fixSharedFolderRecords: _Optional[bool] = ..., usernames: _Optional[_Iterable[str]] = ..., devices: _Optional[_Iterable[_Union[DeviceInfo, _Mapping]]] = ..., isShareAdmin: _Optional[bool] = ..., accountRecovery: _Optional[bool] = ..., accountRecoveryPrompt: _Optional[bool] = ..., minMasterPasswordLengthNoPrompt: _Optional[int] = ..., forbidKeyType2: _Optional[bool] = ..., forbidKeyType1: _Optional[bool] = ..., disallowedFeatures: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DeviceInfo(_message.Message):
     __slots__ = ("encryptedDeviceToken", "deviceName", "deviceStatus", "devicePublicKey", "encryptedDataKeyDoNotUse", "clientVersion", "username", "ipAddress", "approveRequestTime", "encryptedDataKeyPresent", "groupId", "devicePlatform", "clientFormFactor")
@@ -86,7 +86,7 @@ class DeviceInfo(_message.Message):
     groupId: int
     devicePlatform: str
     clientFormFactor: _APIRequest_pb2.ClientFormFactor
-    def __init__(self, encryptedDeviceToken: _Optional[bytes] = ..., deviceName: _Optional[str] = ..., deviceStatus: _Optional[_Union[_APIRequest_pb2.DeviceStatus, str]] = ..., devicePublicKey: _Optional[bytes] = ..., encryptedDataKeyDoNotUse: _Optional[bytes] = ..., clientVersion: _Optional[str] = ..., username: _Optional[str] = ..., ipAddress: _Optional[str] = ..., approveRequestTime: _Optional[int] = ..., encryptedDataKeyPresent: bool = ..., groupId: _Optional[int] = ..., devicePlatform: _Optional[str] = ..., clientFormFactor: _Optional[_Union[_APIRequest_pb2.ClientFormFactor, str]] = ...) -> None: ...
+    def __init__(self, encryptedDeviceToken: _Optional[bytes] = ..., deviceName: _Optional[str] = ..., deviceStatus: _Optional[_Union[_APIRequest_pb2.DeviceStatus, str]] = ..., devicePublicKey: _Optional[bytes] = ..., encryptedDataKeyDoNotUse: _Optional[bytes] = ..., clientVersion: _Optional[str] = ..., username: _Optional[str] = ..., ipAddress: _Optional[str] = ..., approveRequestTime: _Optional[int] = ..., encryptedDataKeyPresent: _Optional[bool] = ..., groupId: _Optional[int] = ..., devicePlatform: _Optional[str] = ..., clientFormFactor: _Optional[_Union[_APIRequest_pb2.ClientFormFactor, str]] = ...) -> None: ...
 
 class KeysInfo(_message.Message):
     __slots__ = ("encryptionParams", "encryptedDataKey", "dataKeyBackupDate", "userAuthUid", "encryptedPrivateKey", "encryptedEccPrivateKey", "eccPublicKey")
@@ -192,7 +192,7 @@ class License(_message.Message):
     pendingEnterprise: bool
     isPamEnabled: bool
     isKsmEnabled: bool
-    def __init__(self, subscriptionCode: _Optional[str] = ..., productTypeId: _Optional[int] = ..., productTypeName: _Optional[str] = ..., expirationDate: _Optional[str] = ..., secondsUntilExpiration: _Optional[int] = ..., maxDevices: _Optional[int] = ..., filePlanType: _Optional[int] = ..., bytesUsed: _Optional[int] = ..., bytesTotal: _Optional[int] = ..., secondsUntilStorageExpiration: _Optional[int] = ..., storageExpirationDate: _Optional[str] = ..., hasAutoRenewableAppstoreSubscription: bool = ..., accountType: _Optional[int] = ..., uploadsRemaining: _Optional[int] = ..., enterpriseId: _Optional[int] = ..., chatEnabled: bool = ..., auditAndReportingEnabled: bool = ..., breachWatchFeatureDisable: bool = ..., accountUid: _Optional[bytes] = ..., allowPersonalLicense: bool = ..., licensedBy: _Optional[str] = ..., email: _Optional[str] = ..., breachWatchEnabled: bool = ..., breachWatchScanned: bool = ..., breachWatchExpiration: _Optional[int] = ..., breachWatchDateCreated: _Optional[int] = ..., error: _Optional[_Union[Result, _Mapping]] = ..., expiration: _Optional[int] = ..., storageExpiration: _Optional[int] = ..., uploadsCount: _Optional[int] = ..., units: _Optional[int] = ..., pendingEnterprise: bool = ..., isPamEnabled: bool = ..., isKsmEnabled: bool = ...) -> None: ...
+    def __init__(self, subscriptionCode: _Optional[str] = ..., productTypeId: _Optional[int] = ..., productTypeName: _Optional[str] = ..., expirationDate: _Optional[str] = ..., secondsUntilExpiration: _Optional[int] = ..., maxDevices: _Optional[int] = ..., filePlanType: _Optional[int] = ..., bytesUsed: _Optional[int] = ..., bytesTotal: _Optional[int] = ..., secondsUntilStorageExpiration: _Optional[int] = ..., storageExpirationDate: _Optional[str] = ..., hasAutoRenewableAppstoreSubscription: _Optional[bool] = ..., accountType: _Optional[int] = ..., uploadsRemaining: _Optional[int] = ..., enterpriseId: _Optional[int] = ..., chatEnabled: _Optional[bool] = ..., auditAndReportingEnabled: _Optional[bool] = ..., breachWatchFeatureDisable: _Optional[bool] = ..., accountUid: _Optional[bytes] = ..., allowPersonalLicense: _Optional[bool] = ..., licensedBy: _Optional[str] = ..., email: _Optional[str] = ..., breachWatchEnabled: _Optional[bool] = ..., breachWatchScanned: _Optional[bool] = ..., breachWatchExpiration: _Optional[int] = ..., breachWatchDateCreated: _Optional[int] = ..., error: _Optional[_Union[Result, _Mapping]] = ..., expiration: _Optional[int] = ..., storageExpiration: _Optional[int] = ..., uploadsCount: _Optional[int] = ..., units: _Optional[int] = ..., pendingEnterprise: _Optional[bool] = ..., isPamEnabled: _Optional[bool] = ..., isKsmEnabled: _Optional[bool] = ...) -> None: ...
 
 class AddOn(_message.Message):
     __slots__ = ("licenseKeyId", "name", "expirationDate", "createdDate", "isTrial", "enabled", "scanned", "featureDisable")
@@ -212,7 +212,7 @@ class AddOn(_message.Message):
     enabled: bool
     scanned: bool
     featureDisable: bool
-    def __init__(self, licenseKeyId: _Optional[int] = ..., name: _Optional[str] = ..., expirationDate: _Optional[int] = ..., createdDate: _Optional[int] = ..., isTrial: bool = ..., enabled: bool = ..., scanned: bool = ..., featureDisable: bool = ...) -> None: ...
+    def __init__(self, licenseKeyId: _Optional[int] = ..., name: _Optional[str] = ..., expirationDate: _Optional[int] = ..., createdDate: _Optional[int] = ..., isTrial: _Optional[bool] = ..., enabled: _Optional[bool] = ..., scanned: _Optional[bool] = ..., featureDisable: _Optional[bool] = ...) -> None: ...
 
 class Settings(_message.Message):
     __slots__ = ("audit", "mustPerformAccountShareBy", "shareAccountTo", "rules", "passwordRulesIntro", "autoBackupDays", "theme", "channel", "channelValue", "rsaConfigured", "emailVerified", "masterPasswordLastModified", "accountFolderKey", "securityKeys", "keyValues", "ssoUser", "onlineAccessOnly", "masterPasswordExpiry", "twoFactorRequired", "disallowExport", "restrictFiles", "restrictAllSharing", "restrictSharing", "restrictSharingIncomingAll", "restrictSharingIncomingEnterprise", "logoutTimer", "persistentLogin", "ipDisableAutoApprove", "shareDataKeyWithEccPublicKey", "shareDataKeyWithDevicePublicKey", "RecordTypesCounter", "RecordTypesEnterpriseCounter", "recordTypesEnabled", "canManageRecordTypes", "recordTypesPAMCounter", "logoutTimerMinutes", "securityKeysNoUserVerify", "channels", "personalUsernames", "maxIpDistance", "maxIpDistanceEffective")
@@ -298,7 +298,7 @@ class Settings(_message.Message):
     personalUsernames: _containers.RepeatedScalarFieldContainer[str]
     maxIpDistance: int
     maxIpDistanceEffective: int
-    def __init__(self, audit: bool = ..., mustPerformAccountShareBy: _Optional[int] = ..., shareAccountTo: _Optional[_Iterable[_Union[MissingAccountShareKey, _Mapping]]] = ..., rules: _Optional[_Iterable[_Union[PasswordRule, _Mapping]]] = ..., passwordRulesIntro: _Optional[str] = ..., autoBackupDays: _Optional[int] = ..., theme: _Optional[str] = ..., channel: _Optional[str] = ..., channelValue: _Optional[str] = ..., rsaConfigured: bool = ..., emailVerified: bool = ..., masterPasswordLastModified: _Optional[float] = ..., accountFolderKey: _Optional[bytes] = ..., securityKeys: _Optional[_Iterable[_Union[SecurityKey, _Mapping]]] = ..., keyValues: _Optional[_Iterable[_Union[KeyValue, _Mapping]]] = ..., ssoUser: bool = ..., onlineAccessOnly: bool = ..., masterPasswordExpiry: _Optional[int] = ..., twoFactorRequired: bool = ..., disallowExport: bool = ..., restrictFiles: bool = ..., restrictAllSharing: bool = ..., restrictSharing: bool = ..., restrictSharingIncomingAll: bool = ..., restrictSharingIncomingEnterprise: bool = ..., logoutTimer: _Optional[int] = ..., persistentLogin: bool = ..., ipDisableAutoApprove: bool = ..., shareDataKeyWithEccPublicKey: bool = ..., shareDataKeyWithDevicePublicKey: bool = ..., RecordTypesCounter: _Optional[int] = ..., RecordTypesEnterpriseCounter: _Optional[int] = ..., recordTypesEnabled: bool = ..., canManageRecordTypes: bool = ..., recordTypesPAMCounter: _Optional[int] = ..., logoutTimerMinutes: _Optional[int] = ..., securityKeysNoUserVerify: bool = ..., channels: _Optional[_Iterable[_Union[_APIRequest_pb2.TwoFactorChannelType, str]]] = ..., personalUsernames: _Optional[_Iterable[str]] = ..., maxIpDistance: _Optional[int] = ..., maxIpDistanceEffective: _Optional[int] = ...) -> None: ...
+    def __init__(self, audit: _Optional[bool] = ..., mustPerformAccountShareBy: _Optional[int] = ..., shareAccountTo: _Optional[_Iterable[_Union[MissingAccountShareKey, _Mapping]]] = ..., rules: _Optional[_Iterable[_Union[PasswordRule, _Mapping]]] = ..., passwordRulesIntro: _Optional[str] = ..., autoBackupDays: _Optional[int] = ..., theme: _Optional[str] = ..., channel: _Optional[str] = ..., channelValue: _Optional[str] = ..., rsaConfigured: _Optional[bool] = ..., emailVerified: _Optional[bool] = ..., masterPasswordLastModified: _Optional[float] = ..., accountFolderKey: _Optional[bytes] = ..., securityKeys: _Optional[_Iterable[_Union[SecurityKey, _Mapping]]] = ..., keyValues: _Optional[_Iterable[_Union[KeyValue, _Mapping]]] = ..., ssoUser: _Optional[bool] = ..., onlineAccessOnly: _Optional[bool] = ..., masterPasswordExpiry: _Optional[int] = ..., twoFactorRequired: _Optional[bool] = ..., disallowExport: _Optional[bool] = ..., restrictFiles: _Optional[bool] = ..., restrictAllSharing: _Optional[bool] = ..., restrictSharing: _Optional[bool] = ..., restrictSharingIncomingAll: _Optional[bool] = ..., restrictSharingIncomingEnterprise: _Optional[bool] = ..., logoutTimer: _Optional[int] = ..., persistentLogin: _Optional[bool] = ..., ipDisableAutoApprove: _Optional[bool] = ..., shareDataKeyWithEccPublicKey: _Optional[bool] = ..., shareDataKeyWithDevicePublicKey: _Optional[bool] = ..., RecordTypesCounter: _Optional[int] = ..., RecordTypesEnterpriseCounter: _Optional[int] = ..., recordTypesEnabled: _Optional[bool] = ..., canManageRecordTypes: _Optional[bool] = ..., recordTypesPAMCounter: _Optional[int] = ..., logoutTimerMinutes: _Optional[int] = ..., securityKeysNoUserVerify: _Optional[bool] = ..., channels: _Optional[_Iterable[_Union[_APIRequest_pb2.TwoFactorChannelType, str]]] = ..., personalUsernames: _Optional[_Iterable[str]] = ..., maxIpDistance: _Optional[int] = ..., maxIpDistanceEffective: _Optional[int] = ...) -> None: ...
 
 class KeyValue(_message.Message):
     __slots__ = ("key", "value")
@@ -314,7 +314,7 @@ class KeyValueBoolean(_message.Message):
     VALUE_FIELD_NUMBER: _ClassVar[int]
     key: str
     value: bool
-    def __init__(self, key: _Optional[str] = ..., value: bool = ...) -> None: ...
+    def __init__(self, key: _Optional[str] = ..., value: _Optional[bool] = ...) -> None: ...
 
 class KeyValueLong(_message.Message):
     __slots__ = ("key", "value")
@@ -368,7 +368,7 @@ class PasswordRule(_message.Message):
     minimum: int
     description: str
     value: str
-    def __init__(self, ruleType: _Optional[str] = ..., pattern: _Optional[str] = ..., match: bool = ..., minimum: _Optional[int] = ..., description: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    def __init__(self, ruleType: _Optional[str] = ..., pattern: _Optional[str] = ..., match: _Optional[bool] = ..., minimum: _Optional[int] = ..., description: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
 
 class SecurityKey(_message.Message):
     __slots__ = ("deviceId", "deviceName", "dateAdded", "isValid", "deviceRegistration")
@@ -382,7 +382,7 @@ class SecurityKey(_message.Message):
     dateAdded: int
     isValid: bool
     deviceRegistration: DeviceRegistration
-    def __init__(self, deviceId: _Optional[int] = ..., deviceName: _Optional[str] = ..., dateAdded: _Optional[int] = ..., isValid: bool = ..., deviceRegistration: _Optional[_Union[DeviceRegistration, _Mapping]] = ...) -> None: ...
+    def __init__(self, deviceId: _Optional[int] = ..., deviceName: _Optional[str] = ..., dateAdded: _Optional[int] = ..., isValid: _Optional[bool] = ..., deviceRegistration: _Optional[_Union[DeviceRegistration, _Mapping]] = ...) -> None: ...
 
 class DeviceRegistration(_message.Message):
     __slots__ = ("keyHandle", "publicKey", "attestationCert", "counter", "compromised")
@@ -396,7 +396,7 @@ class DeviceRegistration(_message.Message):
     attestationCert: str
     counter: int
     compromised: bool
-    def __init__(self, keyHandle: _Optional[str] = ..., publicKey: _Optional[bytes] = ..., attestationCert: _Optional[str] = ..., counter: _Optional[int] = ..., compromised: bool = ...) -> None: ...
+    def __init__(self, keyHandle: _Optional[str] = ..., publicKey: _Optional[bytes] = ..., attestationCert: _Optional[str] = ..., counter: _Optional[int] = ..., compromised: _Optional[bool] = ...) -> None: ...
 
 class Group(_message.Message):
     __slots__ = ("admin", "groupVerificationCode", "administrator")
@@ -406,7 +406,7 @@ class Group(_message.Message):
     admin: bool
     groupVerificationCode: str
     administrator: Administrator
-    def __init__(self, admin: bool = ..., groupVerificationCode: _Optional[str] = ..., administrator: _Optional[_Union[Administrator, _Mapping]] = ...) -> None: ...
+    def __init__(self, admin: _Optional[bool] = ..., groupVerificationCode: _Optional[str] = ..., administrator: _Optional[_Union[Administrator, _Mapping]] = ...) -> None: ...
 
 class Administrator(_message.Message):
     __slots__ = ("firstName", "lastName", "email", "currentNumberOfUsers", "numberOfUsers", "subscriptionCode", "expirationDate", "purchaseDate")

@@ -25,7 +25,7 @@ class GetFolderAccessResponse(_message.Message):
     folderAccessResults: _containers.RepeatedCompositeFieldContainer[GetFolderAccessResult]
     continuationToken: ContinuationToken
     hasMore: bool
-    def __init__(self, folderAccessResults: _Optional[_Iterable[_Union[GetFolderAccessResult, _Mapping]]] = ..., continuationToken: _Optional[_Union[ContinuationToken, _Mapping]] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, folderAccessResults: _Optional[_Iterable[_Union[GetFolderAccessResult, _Mapping]]] = ..., continuationToken: _Optional[_Union[ContinuationToken, _Mapping]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class ContinuationToken(_message.Message):
     __slots__ = ("lastModified",)
