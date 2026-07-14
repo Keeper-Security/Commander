@@ -468,7 +468,7 @@ class PAMCnappQueueListCommand(Command):
             print(f"{bcolors.WARNING}No encrypter key resolved — payloads will be shown as 'encrypted'. "
                   f"Pass --config-record <UID> or run after `pam cnapp config read` succeeds.{bcolors.ENDC}")
 
-        headers = ['Queue ID', 'Provider', 'Status', 'Received (UTC)', 'Resolved (UTC)', 'Record UID', 'Issue']
+        headers = ['Queue ID', 'Provider', 'Status', 'Received (UTC)', 'Resolved (UTC)', 'Record UID', 'Control Hash', 'Issue']
         rows = []
         for item in items:
             if item.cnappQueueId in decrypted_by_id:
@@ -486,6 +486,7 @@ class PAMCnappQueueListCommand(Command):
                 _format_timestamp(item.receivedAt),
                 _format_timestamp(item.resolvedAt),
                 bytes_to_base64(item.recordUid) if item.recordUid else '',
+                item.controlHash or '',
                 issue_cell,
             ])
         dump_report_data(rows, headers, fmt='table', filename='', row_number=False)
@@ -521,11 +522,8 @@ class PAMCnappQueueRemediateCommand(Command):
     parser.add_argument('--queue-id', '-q', required=True, type=int, dest='cnapp_queue_id',
                         help='Queue item ID.')
     parser.add_argument('--action', '-a', required=True, dest='action_type',
-                        help='Remediation action: rotate_credentials, manage_access, jit_access, remove_standing_privilege.')
-    parser.add_argument('--provider', '-p', required=False, dest='provider',
-                        help='Provider keyword (wiz). Optional — krouter resolves from queue item if omitted.')
-    parser.add_argument('--config-record', required=False, dest='cnapp_config_record_uid',
-                        help='Configuration record UID (only required for some action types).')
+                        help='Remediation action. rotate_credentials and remove_standing_privilege dispatch '
+                             'to the gateway; manage_access/jit_access are frontend-only and rejected by krouter.')
     parser.add_argument('--resource-ref', required=False, dest='resource_ref',
                         help='Resource reference UID for the action.')
     parser.add_argument('--pwd-complexity', required=False, dest='pwd_complexity',
@@ -534,28 +532,54 @@ class PAMCnappQueueRemediateCommand(Command):
                         help='Override gateway UID.')
     parser.add_argument('--message-uid', required=False, dest='message_uid',
                         help='Client-generated conversation UID for streaming responses.')
-    parser.add_argument('--group-name', required=False, dest='group_name',
-                        help='Group name (remove_standing_privilege only).')
+    parser.add_argument('--group', action='append', dest='group_names',
+                        help='Group to remove the user from (remove_standing_privilege only). Repeatable.')
+    parser.add_argument('--role', action='append', dest='role_names',
+                        help='Role to remove the user from (remove_standing_privilege only). Repeatable.')
+    parser.add_argument('--network-uid', '-n', required=False, dest='network_uid',
+                        help='PAM configuration (network) record UID whose record key encrypts --group/--role '
+                             'values. Required when --group/--role is given.')
+    parser.add_argument('--auto-remediate', action='store_true', dest='auto_remediate',
+                        help='Register an auto-remediation rule for this item\'s control hash before rotating '
+                             '(rotate_credentials only; the queue item must carry a control hash).')
 
     def get_parser(self):
         return PAMCnappQueueRemediateCommand.parser
 
     def execute(self, params, **kwargs):
         action = cnapp_helper.action_from_name(kwargs.get('action_type'))
-        provider = None
-        if kwargs.get('provider'):
-            provider = cnapp_helper.provider_from_name(kwargs.get('provider'))
+        group_names = kwargs.get('group_names') or []
+        role_names = kwargs.get('role_names') or []
+        if kwargs.get('auto_remediate') and action != cnapp_helper.CnappRemediationAction.Value('ROTATE_CREDENTIALS'):
+            raise CommandError('pam cnapp queue remediate',
+                               '--auto-remediate is only supported with rotate_credentials.')
+        is_rsp = action == cnapp_helper.CnappRemediationAction.Value('REMOVE_STANDING_PRIVILEGE')
+        if (group_names or role_names) and not is_rsp:
+            raise CommandError('pam cnapp queue remediate',
+                               '--group/--role are only supported with remove_standing_privilege.')
+        encrypted_remediations = None
+        if group_names or role_names:
+            if not kwargs.get('network_uid'):
+                raise CommandError('pam cnapp queue remediate',
+                                   '--network-uid is required to encrypt --group/--role values.')
+            try:
+                encrypted_remediations = cnapp_helper.build_encrypted_remediations(
+                    params, kwargs.get('network_uid'), group_names, role_names)
+            except ValueError as e:
+                raise CommandError('pam cnapp queue remediate', str(e))
+        elif is_rsp:
+            print('No --group/--role supplied — the gateway will resolve the targets from '
+                  "the resource record's JIT settings.")
         response = cnapp_helper.remediate_cnapp_queue_item(
             params,
             cnapp_queue_id=kwargs.get('cnapp_queue_id'),
             action_type=action,
-            provider=provider,
-            cnapp_config_record_uid=kwargs.get('cnapp_config_record_uid'),
             resource_ref=kwargs.get('resource_ref'),
             pwd_complexity=kwargs.get('pwd_complexity'),
             controller_uid=kwargs.get('controller_uid'),
             message_uid=kwargs.get('message_uid'),
-            group_name=kwargs.get('group_name'),
+            encrypted_remediations=encrypted_remediations,
+            auto_remediate=bool(kwargs.get('auto_remediate')),
         )
         if response is None:
             print(f"{bcolors.OKGREEN}Remediation dispatched.{bcolors.ENDC}")
@@ -633,6 +657,7 @@ def _queue_item_to_dict(item):
         'resolvedAt': item.resolvedAt,
         'networkId': bytes_to_base64(item.networkId) if item.networkId else '',
         'recordUid': bytes_to_base64(item.recordUid) if item.recordUid else '',
+        'controlHash': item.controlHash,
     }
 
 
