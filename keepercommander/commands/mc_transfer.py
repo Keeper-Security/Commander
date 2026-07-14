@@ -27,13 +27,17 @@ mc_transfer_target_parser.add_argument('--target-name', dest='target_name', help
 mc_transfer_target_parser.add_argument('--target-email', dest='target_email', help='Target administrator email')
 
 mc_transfer_join_msp_parser = argparse.ArgumentParser(
-    prog='mc-transfer join-msp', description='Initializes Regular/MC/MSP transfer to MSP', parents=[mc_transfer_target_parser])
+    prog='mc-transfer join-msp', description='Initializes Regular/MC/MSP transfer to MSP')
+mc_transfer_join_msp_parser.add_argument('--target-name', dest='target_name', help='MSP enterprise name')
+mc_transfer_join_msp_parser.add_argument('--target-email', dest='target_email', help='MSP administrator email')
 
 mc_transfer_leave_msp_parser = argparse.ArgumentParser(
-    prog='mc-transfer leave-msp', description='Initializes MC leaving MSP', parents=[mc_transfer_target_parser])
+    prog='mc-transfer leave-msp', description='Initializes MC leaving MSP')
 
 mc_transfer_accept_mc_parser = argparse.ArgumentParser(
-    prog='mc-transfer accept-mc', description='MSP accepts Regular/MC/MSP transfer', parents=[mc_transfer_target_parser])
+    prog='mc-transfer accept-mc', description='MSP accepts Regular/MC/MSP transfer')
+mc_transfer_accept_mc_parser.add_argument('--target-name', dest='target_name', help='MC enterprise name')
+mc_transfer_accept_mc_parser.add_argument('--target-email', dest='target_email', help='MC administrator email')
 
 mc_transfer_status_parser = argparse.ArgumentParser(
     prog='mc-transfer status', description='Checks MC transfer status', parents=[mc_transfer_target_parser])
