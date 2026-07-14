@@ -1,7 +1,22 @@
 from unittest import TestCase
-from keepercommander.service.util.parse_keeper_response import KeeperResponseParser
+import json
+from keepercommander.service.util.parse_keeper_response import KeeperResponseParser, ensure_record_add_json_format
 
 class TestKeeperResponseParser(TestCase):
+    def test_ensure_record_add_json_format(self):
+        self.assertEqual(
+            ensure_record_add_json_format('record-add -t test -rt login'),
+            'record-add -t test -rt login --format=json',
+        )
+        self.assertEqual(
+            ensure_record_add_json_format('record-add -t test --format=json'),
+            'record-add -t test --format=json',
+        )
+        self.assertEqual(
+            ensure_record_add_json_format('ls'),
+            'ls',
+        )
+
     def test_parse_ls_command(self):
         """Test parsing of 'ls' command output"""
         sample_output = """# Folder UID                           Title                                                   Flags
@@ -77,6 +92,36 @@ My Vault
           
         result = KeeperResponseParser._parse_mkdir_command('Created folder with folder_uid=b4pBzT1WowoUXHk_US0SCg')
         self.assertEqual(result['data']['folder_uid'], 'b4pBzT1WowoUXHk_US0SCg')
+
+    def test_parse_record_add_command_two_line_output(self):
+        """record-add --self-destruct returns record_uid on line 1 and share_url on line 2"""
+        record_uid = 'riK9X5/XcxGPWRYM2Be1Ow=='
+        share_url = 'https://keepersecurity.com/vault/share#abc123'
+        response = f'{record_uid}\n{share_url}'
+
+        result = KeeperResponseParser._parse_record_add_command(response)
+        self.assertEqual(result['data']['record_uid'], record_uid)
+        self.assertEqual(result['data']['share_url'], share_url)
+
+    def test_parse_record_add_command_json_format(self):
+        """record-add --format=json is parsed as structured JSON"""
+        record_uid = 'riK9X5/XcxGPWRYM2Be1Ow=='
+        share_url = 'https://keepersecurity.com/vault/share#abc123'
+        response = json.dumps({'record_uid': record_uid, 'share_url': share_url})
+
+        result = KeeperResponseParser.parse_response(
+            'record-add --self-destruct 2mi --format=json',
+            response,
+        )
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['data']['record_uid'], record_uid)
+        self.assertEqual(result['data']['share_url'], share_url)
+
+    def test_parse_record_add_command_uid_only(self):
+        """Normal record-add returns bare record_uid"""
+        record_uid = 'riK9X5/XcxGPWRYM2Be1Ow=='
+        result = KeeperResponseParser._parse_record_add_command(record_uid)
+        self.assertEqual(result['data']['record_uid'], record_uid)
 
     def test_parse_get_command(self):
         """Test parsing of 'get' command output"""

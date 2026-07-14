@@ -17,6 +17,7 @@ Provides REST API for email configuration management and automated employee onbo
 
 from flask import Blueprint, request, jsonify, Response
 from typing import Tuple, Union
+import json
 import logging
 
 from ... import api
@@ -433,16 +434,18 @@ def create_onboarding_blueprint():
                 'send_email': send_email,
                 'email_config': email_config,
                 'email_message': data.get('email_message'),
+                'format': 'json',
                 'force': True
             }
 
             # Execute record-add command
             cmd = RecordAddCommand()
-            share_url = cmd.execute(params, **cmd_kwargs)
+            result = json.loads(cmd.execute(params, **cmd_kwargs))
 
             return jsonify({
                 "success": True,
-                "share_url": share_url,
+                "record_uid": result.get('record_uid'),
+                "share_url": result.get('share_url'),
                 "message": f"Employee onboarded successfully"
             }), 201
 
