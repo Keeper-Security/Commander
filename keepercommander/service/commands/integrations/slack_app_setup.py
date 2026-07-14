@@ -27,6 +27,12 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
     def get_integration_name(self):
         return 'Slack'
 
+    def get_approvals_profile(self):
+        return SLACK_APPROVALS_PROFILE
+
+    def get_integration_config_marker_field(self):
+        return 'slack_app_token'
+
     # ── Slack-specific configuration ──────────────────────────────
 
     def collect_integration_config(self, params):

@@ -12,8 +12,9 @@
 """Shared approval-channel setup for integration app setup commands."""
 
 import json
+import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from .... import api, utils, vault
@@ -23,11 +24,21 @@ from ...docker import ApprovalsConfig, ApproverTeam
 if TYPE_CHECKING:
     from ....params import KeeperParams
 
+logger = logging.getLogger(__name__)
+
+FIELD_MULTI_CHANNEL_ENABLED = 'multi_channel_approvers_enabled'
+FIELD_APPROVALS_CHANNEL_ID = 'approvals_channel_id'
+FIELD_APPROVALS_TEAMS = 'approvals_teams'
+APPROVALS_FIELD_LABELS = frozenset({
+    FIELD_MULTI_CHANNEL_ENABLED,
+    FIELD_APPROVALS_CHANNEL_ID,
+    FIELD_APPROVALS_TEAMS,
+})
+
 
 @dataclass
 class ApprovalsChannelProfile:
     """Platform-specific labels and channel ID validation."""
-    platform_name: str
     channel_header: str
     single_channel_description: str
     channel_description: str
@@ -38,7 +49,6 @@ class ApprovalsChannelProfile:
 
 
 SLACK_APPROVALS_PROFILE = ApprovalsChannelProfile(
-    platform_name='Slack',
     channel_header='APPROVALS_CHANNEL_ID',
     single_channel_description='Slack channel ID for approval notifications',
     channel_description='Slack channel where approval requests for this approver team are sent',
@@ -67,13 +77,15 @@ def parse_comma_separated_uids(raw: str) -> List[str]:
     return [part.strip() for part in raw.split(',') if part.strip()]
 
 
-def _build_team_lookup(params: 'KeeperParams') -> Tuple[Dict[str, Tuple[str, str]], Dict[str, List[Tuple[str, str]]]]:
+def build_team_lookup(
+    params: 'KeeperParams',
+) -> Tuple[Dict[str, Tuple[str, str]], Dict[str, List[Tuple[str, str]]]]:
     """Build team UID and case-insensitive name lookups from cached vault data."""
     if params.available_team_cache is None:
         try:
             api.load_available_teams(params)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug('Could not load available teams: %s', exc)
 
     by_uid: Dict[str, Tuple[str, str]] = {}
     by_name_lower: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
@@ -100,6 +112,20 @@ def _build_team_lookup(params: 'KeeperParams') -> Tuple[Dict[str, Tuple[str, str
     return by_uid, by_name_lower
 
 
+def build_shared_folder_uids(params: 'KeeperParams') -> Set[str]:
+    """Shared folders and nested share folders only (not private user folders)."""
+    uids = set(params.shared_folder_cache.keys())
+    uids.update(getattr(params, 'nested_share_folders', {}).keys())
+    uids.discard('')
+    return uids
+
+
+def build_record_uids(params: 'KeeperParams') -> Set[str]:
+    uids = set(params.record_cache.keys())
+    uids.update(getattr(params, 'nested_share_records', {}).keys())
+    return uids
+
+
 def _resolve_keeper_team(
     team_input: str,
     by_uid: Dict[str, Tuple[str, str]],
@@ -112,14 +138,11 @@ def _resolve_keeper_team(
     if value in by_uid:
         return by_uid[value], None
 
-    matches = by_name_lower.get(value.casefold(), [])
-    unique = {(uid, name) for uid, name in matches}
-    unique_matches = list(unique)
-    if len(unique_matches) == 1:
-        return unique_matches[0], None
-    if len(unique_matches) > 1:
+    matches = list({(uid, name) for uid, name in by_name_lower.get(value.casefold(), [])})
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
         return None, f'Team name "{value}" is not unique. Use the team UID.'
-
     return None, f'Team "{value}" not found. Use a valid team name or team UID.'
 
 
@@ -137,44 +160,21 @@ def _prompt_keeper_team(
         print(f"{bcolors.FAIL}Error: {error}{bcolors.ENDC}")
 
 
-def _build_known_folder_uids(params: 'KeeperParams') -> Set[str]:
-    uids: Set[str] = set()
-    uids.update(params.folder_cache.keys())
-    uids.update(params.shared_folder_cache.keys())
-    uids.update(params.subfolder_cache.keys())
-    uids.update(getattr(params, 'nested_share_folders', {}).keys())
-    uids.discard('')
-    return uids
-
-
-def _build_known_record_uids(params: 'KeeperParams') -> Set[str]:
-    uids: Set[str] = set(params.record_cache.keys())
-    uids.update(getattr(params, 'nested_share_records', {}).keys())
-    return uids
-
-
-def _validate_uid_list_format(value: str) -> bool:
-    if not value or not value.strip():
-        return True
-    uids = parse_comma_separated_uids(value)
-    if not uids:
-        return False
-    return all(is_valid_keeper_uid(uid) for uid in uids)
-
-
-def _validate_uids_in_vault(
+def _validate_uids(
     uids: List[str],
     known_uids: Set[str],
-    known_other_uids: Set[str],
     uid_label: str,
-    other_label: str,
+    mistyped: Optional[Dict[str, Set[str]]] = None,
 ) -> List[str]:
+    """Return validation errors for UIDs. mistyped maps error message -> UID set."""
     errors: List[str] = []
+    mistyped = mistyped or {}
     for uid in uids:
         if uid in known_uids:
             continue
-        if uid in known_other_uids:
-            errors.append(f'"{uid}" is a {other_label} UID, not a {uid_label} UID')
+        typed_error = next((msg for msg, bad_uids in mistyped.items() if uid in bad_uids), None)
+        if typed_error:
+            errors.append(typed_error.format(uid=uid))
         else:
             errors.append(
                 f'{uid_label} UID "{uid}" not found in your vault '
@@ -188,9 +188,8 @@ def _prompt_vault_uid_list(
     description: str,
     prompt_label: str,
     known_uids: Set[str],
-    known_other_uids: Set[str],
     uid_label: str,
-    other_label: str,
+    mistyped: Optional[Dict[str, Set[str]]] = None,
 ) -> List[str]:
     print(f"\n{bcolors.BOLD}{header}:{bcolors.ENDC}")
     print(f"  {description}")
@@ -198,11 +197,11 @@ def _prompt_vault_uid_list(
         value = input(f"{bcolors.OKBLUE}{prompt_label}{bcolors.ENDC} ").strip()
         if not value:
             return []
-        if not _validate_uid_list_format(value):
+        uids = parse_comma_separated_uids(value)
+        if not uids or not all(is_valid_keeper_uid(uid) for uid in uids):
             print(f"{bcolors.FAIL}Error: Each UID must be a valid Keeper {uid_label} UID{bcolors.ENDC}")
             continue
-        uids = parse_comma_separated_uids(value)
-        errors = _validate_uids_in_vault(uids, known_uids, known_other_uids, uid_label, other_label)
+        errors = _validate_uids(uids, known_uids, uid_label, mistyped=mistyped)
         if errors:
             for error in errors:
                 print(f"{bcolors.FAIL}Error: {error}{bcolors.ENDC}")
@@ -237,56 +236,43 @@ def collect_approvals_config(
     multi_channel = prompt_yes_no('Enable multi-channel approvers?', default=False)
 
     if not multi_channel:
-        single_channel_id = _prompt_channel(
-            profile,
-            prompt_with_validation,
-            profile.single_channel_description,
-        )
         return ApprovalsConfig(
             multi_channel_enabled=False,
-            single_channel_id=single_channel_id,
+            single_channel_id=_prompt_channel(
+                profile, prompt_with_validation, profile.single_channel_description,
+            ),
         )
 
     teams: List[ApproverTeam] = []
-    by_uid, by_name_lower = _build_team_lookup(params)
+    by_uid, by_name_lower = build_team_lookup(params)
     while True:
         team_uid, team_name = _prompt_keeper_team(by_uid, by_name_lower)
-
-        print(f"\n{bcolors.BOLD}{profile.channel_header}:{bcolors.ENDC}")
-        print(f"  {profile.channel_description} for {team_name}")
-        channel_id = prompt_with_validation(
-            profile.channel_prompt,
-            profile.validate_channel,
-            profile.channel_error,
+        channel_id = _prompt_channel(
+            profile,
+            prompt_with_validation,
+            f'{profile.channel_description} for {team_name}',
         )
         teams.append(ApproverTeam(
             team_uid=team_uid,
             name=team_name,
             channel_id=channel_id,
         ))
-
         if not prompt_yes_no('Add another approver team?', default=False):
             break
 
     print(f"\n{bcolors.BOLD}FOLDER/RECORD BOUNDARIES (optional):{bcolors.ENDC}")
-    print(f"  Restrict each team to specific folder or record UIDs")
-    specify_boundaries = prompt_yes_no(
-        'Specify folder or record UIDs per team?',
-        default=False,
-    )
-    if specify_boundaries:
+    print(f"  Restrict each team to specific shared folder or record UIDs")
+    if prompt_yes_no('Specify shared folder or record UIDs per team?', default=False):
         teams = _collect_team_boundaries(params, teams)
-
-    default_channel_id = _prompt_channel(
-        profile,
-        prompt_with_validation,
-        profile.default_channel_description,
-        header=f'DEFAULT {profile.channel_header}',
-    )
 
     return ApprovalsConfig(
         multi_channel_enabled=True,
-        single_channel_id=default_channel_id,
+        single_channel_id=_prompt_channel(
+            profile,
+            prompt_with_validation,
+            profile.default_channel_description,
+            header=f'DEFAULT {profile.channel_header}',
+        ),
         teams=teams,
     )
 
@@ -295,41 +281,42 @@ def _collect_team_boundaries(
     params: 'KeeperParams',
     teams: List[ApproverTeam],
 ) -> List[ApproverTeam]:
-    known_folder_uids = _build_known_folder_uids(params)
-    known_record_uids = _build_known_record_uids(params)
+    shared_folder_uids = build_shared_folder_uids(params)
+    record_uids = build_record_uids(params)
+    user_folder_uids = (
+        set(params.folder_cache.keys()) | set(params.subfolder_cache.keys())
+    ) - shared_folder_uids - {''}
+
     updated: List[ApproverTeam] = []
     for team in teams:
-        folder_uids = _prompt_vault_uid_list(
-            f'FOLDER UIDs FOR {team.name}',
-            'Comma-separated folder UIDs (optional, press Enter to skip)',
-            'Folder UIDs:',
-            known_folder_uids,
-            known_record_uids,
-            'folder',
-            'record',
+        folders = _prompt_vault_uid_list(
+            f'SHARED FOLDER UIDs FOR {team.name}',
+            'Comma-separated shared folder UIDs (optional, press Enter to skip)',
+            'Shared Folder UIDs:',
+            shared_folder_uids,
+            'shared folder',
+            mistyped={
+                '"{uid}" is a record UID, not a shared folder UID': record_uids,
+                '"{uid}" is not a shared folder UID (use a shared folder UID from list-sf)': user_folder_uids,
+            },
         )
-        record_uids = _prompt_vault_uid_list(
+        records = _prompt_vault_uid_list(
             f'RECORD UIDs FOR {team.name}',
             'Comma-separated record UIDs (optional, press Enter to skip)',
             'Record UIDs:',
-            known_record_uids,
-            known_folder_uids,
+            record_uids,
             'record',
-            'folder',
+            mistyped={
+                '"{uid}" is a shared folder UID, not a record UID': shared_folder_uids,
+            },
         )
-        updated.append(ApproverTeam(
-            team_uid=team.team_uid,
-            name=team.name,
-            channel_id=team.channel_id,
-            folder_uids=folder_uids,
-            record_uids=record_uids,
-        ))
+        updated.append(replace(team, folder_uids=folders, record_uids=records))
     return updated
 
 
 def approvals_config_to_record_fields(config: ApprovalsConfig) -> List:
     teams_json = ''
-    if config.multi_channel_enabled and config.teams:
+    if config.multi_channel_enabled:
         teams_json = json.dumps([
             {
                 'team_uid': team.team_uid,
@@ -345,14 +332,14 @@ def approvals_config_to_record_fields(config: ApprovalsConfig) -> List:
         vault.TypedField.new_field(
             'text',
             'true' if config.multi_channel_enabled else 'false',
-            'multi_channel_approvers_enabled',
+            FIELD_MULTI_CHANNEL_ENABLED,
         ),
         vault.TypedField.new_field(
             'text',
             config.single_channel_id,
-            'approvals_channel_id',
+            FIELD_APPROVALS_CHANNEL_ID,
         ),
-        vault.TypedField.new_field('multiline', teams_json, 'approvals_teams'),
+        vault.TypedField.new_field('multiline', teams_json, FIELD_APPROVALS_TEAMS),
     ]
 
 
@@ -366,6 +353,6 @@ def print_approvals_config(config: ApprovalsConfig) -> None:
     for team in config.teams:
         print(f"    • {team.name} ({team.team_uid}): channel {bcolors.OKBLUE}{team.channel_id}{bcolors.ENDC}")
         if team.folder_uids:
-            print(f"      Folder UIDs: {', '.join(team.folder_uids)}")
+            print(f"      Shared Folder UIDs: {', '.join(team.folder_uids)}")
         if team.record_uids:
             print(f"      Record UIDs: {', '.join(team.record_uids)}")
