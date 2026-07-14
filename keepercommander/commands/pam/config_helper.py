@@ -262,7 +262,8 @@ def pam_configuration_remove(params, configuration_uid):
             'operation_type': 'owner-trash',
         }], dry_run=False)
         if not result.get('confirmed'):
-            logging.warning('PAM Configuration NSF removal was not confirmed by the server.')
+            raise Exception(
+                'PAM Configuration NSF removal was not confirmed by the server.')
     else:
         RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
 

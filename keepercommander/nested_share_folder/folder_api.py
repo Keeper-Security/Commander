@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any
 
 from .. import utils, crypto, api
 from ..params import KeeperParams
-from ..proto import folder_pb2
+from ..proto import folder_pb2, tla_pb2
 from ..error import KeeperApiError
 from ..subfolder import try_resolve_path
 
@@ -309,9 +309,20 @@ def _resolve_accessor(params, accessor_uid, as_team):
     return uid_bytes, accessor_uid, folder_pb2.AT_USER
 
 
+def _apply_folder_expiration_tla(tla_props, expiration_timestamp,
+                                  rotate_on_expiration=False):
+    """Set expiration / ROE fields on folder-access TLAProperties."""
+    if expiration_timestamp is None:
+        return
+    tla_props.expiration = expiration_timestamp
+    if rotate_on_expiration and expiration_timestamp > 0:
+        tla_props.timerNotificationType = tla_pb2.NOTIFY_OWNER
+        tla_props.rotateOnExpiration = True
+
+
 def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
                            share_folder_key=True, expiration_timestamp=None,
-                           as_team=False):
+                           as_team=False, rotate_on_expiration=False):
     """Grant a user *or team* access to a Nested Share Folder.
     """
     resolved = resolve_folder_identifier(params, folder_uid)
@@ -372,7 +383,8 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
                         'success': True, 'action_taken': 'already_had_access'}
             result = update_folder_access_v3(params, folder_uid, identifier_label,
                                              role=role, as_team=as_team,
-                                             expiration_timestamp=expiration_timestamp)
+                                             expiration_timestamp=expiration_timestamp,
+                                             rotate_on_expiration=rotate_on_expiration)
             result['action_taken'] = 'updated'
             return result
 
@@ -383,8 +395,8 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
     ad.accessRoleType = access_role
     ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
 
-    if expiration_timestamp is not None:
-        ad.tlaProperties.expiration = expiration_timestamp
+    _apply_folder_expiration_tla(
+        ad.tlaProperties, expiration_timestamp, rotate_on_expiration)
 
     if share_folder_key:
         fk = get_folder_key(params, folder_uid)
@@ -429,7 +441,8 @@ def _check_existing_access(params, folder_uid, uid_bytes, target_role_name,
 
 
 def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None,
-                            expiration_timestamp=None, as_team=False):
+                            expiration_timestamp=None, as_team=False,
+                            rotate_on_expiration=False):
     if role is None and hidden is None and expiration_timestamp is None:
         raise ValueError("At least one field (role, hidden, or expiration) required")
     resolved = resolve_folder_identifier(params, folder_uid)
@@ -452,8 +465,8 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
         ad.permissions.CopyFrom(get_folder_permissions_for_role(resolved_role))
     if hidden is not None:
         ad.hidden = hidden
-    if expiration_timestamp is not None:
-        ad.tlaProperties.expiration = expiration_timestamp
+    _apply_folder_expiration_tla(
+        ad.tlaProperties, expiration_timestamp, rotate_on_expiration)
 
     response = folder_access_update_v3(params, folder_access_updates=[ad])
     result = parse_folder_access_result(response, folder_uid, identifier_label,

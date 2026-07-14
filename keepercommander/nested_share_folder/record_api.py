@@ -357,6 +357,8 @@ def get_record_accesses_v3(params, record_uids):
         # Proto3 scalar fields have no presence; only test the submessage.
         if d.HasField('tlaProperties'):
             ao['tla_expiration'] = d.tlaProperties.expiration
+            ao['tla_rotate_on_expiration'] = bool(
+                getattr(d.tlaProperties, 'rotateOnExpiration', False))
         result['record_accesses'].append(ao)
     for fu in rs.forbiddenRecords:
         result['forbidden_records'].append(utils.base64_url_encode(fu))
@@ -381,8 +383,11 @@ def find_direct_user_share_access(access_result, record_uid, email):
 _SHARE_EXPIRATION_NOOP_TOLERANCE_MS = 60_000
 
 
-def is_record_share_update_noop(existing, access_role_type, expiration_timestamp):
-    """True when an update would leave role and expiration unchanged."""
+def is_record_share_update_noop(existing, access_role_type, expiration_timestamp,
+                                 rotate_on_expiration=False):
+    """True when an update would leave role, expiration, and ROE unchanged."""
+    if rotate_on_expiration and not existing.get('tla_rotate_on_expiration'):
+        return False
     if existing.get('access_role_type') != access_role_type:
         return False
     existing_exp = existing.get('tla_expiration')
@@ -401,13 +406,16 @@ def is_record_share_update_noop(existing, access_role_type, expiration_timestamp
 # Record sharing  (Strategy: share / update / revoke)
 # ══════════════════════════════════════════════════════════════════════════
 
-def _apply_share_expiration_tla(tla_props, expiration_timestamp):
-    """Set expiration / notification fields on a TLAProperties proto."""
+def _apply_share_expiration_tla(tla_props, expiration_timestamp,
+                                 rotate_on_expiration=False):
+    """Set expiration / notification / ROE fields on a TLAProperties proto."""
     if expiration_timestamp is None:
         return
     tla_props.expiration = expiration_timestamp
     if expiration_timestamp > 0:
         tla_props.timerNotificationType = tla_pb2.NOTIFY_OWNER
+        if rotate_on_expiration:
+            tla_props.rotateOnExpiration = True
 
 
 def _build_revoke_permission(params, record_uid, recipient_email):
@@ -427,7 +435,8 @@ def _build_revoke_permission(params, record_uid, recipient_email):
 
 
 def _build_share_permissions(params, record_uid, recipient_email, access_role_type,
-                              expiration_timestamp, include_role, skip_sync=False):
+                              expiration_timestamp, include_role, skip_sync=False,
+                              rotate_on_expiration=False):
     """Build a Permissions protobuf for share/update — single source of truth."""
     if not skip_sync:
         from .. import sync_down as sd
@@ -462,7 +471,9 @@ def _build_share_permissions(params, record_uid, recipient_email, access_role_ty
     perm.rules.owner = False
     if include_role and access_role_type is not None:
         perm.rules.accessRoleType = access_role_type
-    _apply_share_expiration_tla(perm.rules.tlaProperties, expiration_timestamp)
+    _apply_share_expiration_tla(
+        perm.rules.tlaProperties, expiration_timestamp,
+        rotate_on_expiration=rotate_on_expiration)
     return perm
 
 
@@ -477,10 +488,12 @@ def _send_revoke_share_request(params, record_uid, recipient_email):
 
 
 def _send_create_share_request(params, record_uid, recipient_email, access_role_type,
-                               expiration_timestamp, skip_sync=False):
+                               expiration_timestamp, skip_sync=False,
+                               rotate_on_expiration=False):
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True, skip_sync=skip_sync)
+                                     include_role=True, skip_sync=skip_sync,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.createSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
@@ -490,10 +503,11 @@ def _send_create_share_request(params, record_uid, recipient_email, access_role_
 
 
 def share_record_v3(params, record_uid, recipient_email, access_role_type,
-                    expiration_timestamp=None):
+                    expiration_timestamp=None, rotate_on_expiration=False):
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True)
+                                     include_role=True,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.createSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
@@ -576,7 +590,8 @@ def unshare_record_from_application_v3(params, record_uid, app_uid):
 
 
 def update_record_share_v3(params, record_uid, recipient_email,
-                            access_role_type=None, expiration_timestamp=None):
+                            access_role_type=None, expiration_timestamp=None,
+                            rotate_on_expiration=False):
     """Update an existing direct share.
 
     Role changes use ``updateSharingPermissions``.  Positive expirations use
@@ -609,18 +624,19 @@ def update_record_share_v3(params, record_uid, recipient_email,
             recipient_email)
         return _send_create_share_request(
             params, record_uid, recipient_email, access_role_type,
-            expiration_timestamp, skip_sync=True)
+            expiration_timestamp, skip_sync=True,
+            rotate_on_expiration=rotate_on_expiration)
 
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True, skip_sync=True)
+                                     include_role=True, skip_sync=True,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.updateSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
                               rs_type=record_sharing_pb2.Response)
     results = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
     return {'results': results, 'success': all(r['success'] for r in results)}
-
 
 def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
     if not skip_sync:

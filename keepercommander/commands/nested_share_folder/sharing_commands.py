@@ -26,8 +26,10 @@ import logging
 from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ... import vault_extensions
 from .helpers import (
     parse_expiration, get_access_role_label,
+    validate_rotate_on_expiration,
     command_error_handler, check_result,
     check_record_share_permission,
     collect_records_in_folder,
@@ -58,6 +60,7 @@ class NestedShareRecordShareCommand(Command):
         dry_run = kwargs.get('dry_run', False)
         recursive = kwargs.get('recursive', False)
         force = kwargs.get('force', False)
+        rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
 
         if not record_arg:
             raise CommandError('nsf-share-record', 'Record path or UID is required')
@@ -76,23 +79,38 @@ class NestedShareRecordShareCommand(Command):
         access_role_type = _nsf.resolve_role_name(role) if role else None
         record_uids = self._resolve_record_uids(params, record_arg, recursive)
 
+        if rotate_on_expiration:
+            validate_rotate_on_expiration('nsf-share-record', action, expiration)
+            ineligible = [
+                uid for uid in record_uids
+                if not vault_extensions.nested_share_record_is_pam_user_with_rotation(params, uid)
+            ]
+            if ineligible:
+                raise CommandError(
+                    'nsf-share-record',
+                    '--rotate-on-expiration requires a pamUser record with rotation configured. '
+                    'Ineligible record(s): ' + ', '.join(sorted(ineligible)))
+
         for uid in record_uids:
             check_record_share_permission(params, uid, 'nsf-share-record')
 
         if dry_run:
-            self._print_dry_run(action, record_uids, emails, role, expiration)
+            self._print_dry_run(action, record_uids, emails, role, expiration,
+                                rotate_on_expiration)
             return
 
         with command_error_handler('nsf-share-record'):
             for email in emails:
                 for record_uid in record_uids:
                     result, effective_action = self._dispatch(
-                        params, action, record_uid, email, access_role_type, expiration)
+                        params, action, record_uid, email, access_role_type, expiration,
+                        rotate_on_expiration)
                     self._log_results(result, effective_action, email)
 
     # Strategy dispatch — returns (result, effective_action)
     @staticmethod
-    def _dispatch(params, action, record_uid, email, access_role_type, expiration):
+    def _dispatch(params, action, record_uid, email, access_role_type, expiration,
+                  rotate_on_expiration=False):
         if action == 'owner':
             return (_nsf.transfer_record_ownership_v3(
                 params=params, record_uid=record_uid, new_owner_email=email), 'owner')
@@ -102,7 +120,8 @@ class NestedShareRecordShareCommand(Command):
                 params, record_uid, email)
             if existing:
                 if _nsf.is_record_share_update_noop(
-                        existing, access_role_type, expiration):
+                        existing, access_role_type, expiration,
+                        rotate_on_expiration=rotate_on_expiration):
                     logging.info(
                         "Record '%s' already shared with '%s' at the requested "
                         "role and expiration; no change needed.",
@@ -121,11 +140,13 @@ class NestedShareRecordShareCommand(Command):
                 return (_nsf.update_record_share_v3(
                     params=params, record_uid=record_uid, recipient_email=email,
                     access_role_type=access_role_type,
-                    expiration_timestamp=expiration), 'update')
+                    expiration_timestamp=expiration,
+                    rotate_on_expiration=rotate_on_expiration), 'update')
             return (_nsf.share_record_v3(
                 params=params, record_uid=record_uid, recipient_email=email,
                 access_role_type=access_role_type,
-                expiration_timestamp=expiration), 'grant')
+                expiration_timestamp=expiration,
+                rotate_on_expiration=rotate_on_expiration), 'grant')
 
         return (_nsf.unshare_record_v3(
             params=params, record_uid=record_uid, recipient_email=email), 'revoke')
@@ -233,7 +254,8 @@ class NestedShareRecordShareCommand(Command):
         return [resolved_uid]
 
     @staticmethod
-    def _print_dry_run(action, record_uids, emails, role, expiration):
+    def _print_dry_run(action, record_uids, emails, role, expiration,
+                       rotate_on_expiration=False):
         print(f"[dry-run] Action    : {action.upper()}")
         print(f"[dry-run] Records   : {', '.join(record_uids)}")
         if action == 'owner':
@@ -245,6 +267,8 @@ class NestedShareRecordShareCommand(Command):
                 print(f"[dry-run] Role      : {role}")
             if expiration:
                 print(f"[dry-run] Expires   : {expiration} ms")
+            if rotate_on_expiration:
+                print("[dry-run] Rotate    : rotate password on share expiration")
 
 
 # ══════════════════════════════════════════════════════════════════════════

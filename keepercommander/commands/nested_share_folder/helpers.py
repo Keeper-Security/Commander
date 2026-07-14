@@ -337,6 +337,19 @@ def validate_share_expiration_timestamp(expiration_ms, cmd_name, *, now_ms=None)
         )
 
 
+def validate_rotate_on_expiration(cmd_name, action, expiration):
+    """Reject ``--rotate-on-expiration`` unless granting with a positive expiry."""
+    if action != 'grant':
+        raise CommandError(
+            cmd_name,
+            '--rotate-on-expiration is only valid when granting access')
+    if not isinstance(expiration, int) or expiration <= 0:
+        raise CommandError(
+            cmd_name,
+            '--rotate-on-expiration requires a positive --expire-at / --expire-in '
+            '(cannot be "never").')
+
+
 def parse_expiration(expire_at, expire_in, cmd_name):
     """Parse ``--expire-at`` / ``--expire-in`` into a millisecond timestamp.
 
@@ -374,7 +387,9 @@ def parse_expiration(expire_at, expire_in, cmd_name):
             cmd_name,
             'Share expiration must be at least 1 minute.',
         )
+    # Freeze now for compute + validate (classic share-record / share-folder pattern).
     now = datetime.datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
     delta_map = {
         'mi': timedelta(minutes=amount),
         'h':  timedelta(hours=amount),
@@ -384,7 +399,7 @@ def parse_expiration(expire_at, expire_in, cmd_name):
     }
     delta = next(v for k, v in delta_map.items() if unit.startswith(k))
     expiration_ms = int((now + delta).timestamp() * 1000)
-    validate_share_expiration_timestamp(expiration_ms, cmd_name)
+    validate_share_expiration_timestamp(expiration_ms, cmd_name, now_ms=now_ms)
     return expiration_ms
 
 
