@@ -1722,10 +1722,6 @@ class PAMListRecordRotationCommand(Command):
                 row_color = bcolors.WHITE
                 record_title = '[record inaccessible]'
                 record_type = '[record inaccessible]'
-                logging.warning(
-                    'Rotation list: PAM User record %s is not accessible in the local vault cache',
-                    record_uid,
-                )
 
             if record_type != "pamUser":
                 # only pamUser records are supported for rotation
