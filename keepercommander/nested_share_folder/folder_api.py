@@ -523,6 +523,112 @@ def _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64):
     ]
 
 
+def _application_folder_role(is_editable):
+    return 'content-manager' if is_editable else 'viewer'
+
+
+def grant_folder_access_to_application_v3(params, folder_uid, app_uid, app_key,
+                                          is_editable=False):
+    """Grant a Secrets Manager application access to an NSF folder.
+
+    Uses ``vault/folders/v3/access_update`` with ``AT_APPLICATION``, matching
+    the vault UI ``folderAccessAdds`` payload.
+    """
+    resolved = resolve_folder_identifier(params, folder_uid)
+    if not resolved:
+        raise ValueError(f"Folder '{folder_uid}' not found")
+    folder_uid = resolved
+    if not app_uid or not app_key:
+        raise ValueError('Application UID and key are required')
+
+    role = _application_folder_role(is_editable)
+    access_role = resolve_role_name(role)
+    target_role_name = folder_pb2.AccessRoleType.Name(access_role)
+    app_uid_bytes = utils.base64_url_decode(app_uid)
+
+    existing = _check_existing_access(
+        params, folder_uid, app_uid_bytes, target_role_name, 'AT_APPLICATION')
+    if existing is not None:
+        if existing == target_role_name:
+            return {
+                'folder_uid': folder_uid,
+                'user_uid': app_uid,
+                'access_type': 'AT_APPLICATION',
+                'status': 'SUCCESS',
+                'message': f'Application already has {role} access',
+                'success': True,
+                'action_taken': 'already_had_access',
+            }
+        return update_folder_access_to_application_v3(
+            params, folder_uid, app_uid, is_editable=is_editable)
+
+    ad = folder_pb2.FolderAccessData()
+    ad.folderUid = utils.base64_url_decode(folder_uid)
+    ad.accessTypeUid = app_uid_bytes
+    ad.accessType = folder_pb2.AT_APPLICATION
+    ad.accessRoleType = access_role
+    ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
+
+    folder_key = get_folder_key(params, folder_uid)
+    ek = folder_pb2.EncryptedDataKey()
+    ek.encryptedKey = crypto.encrypt_aes_v2(folder_key, app_key)
+    ek.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+    ad.folderKey.CopyFrom(ek)
+
+    response = folder_access_update_v3(params, folder_access_adds=[ad])
+    result = parse_folder_access_result(
+        response, folder_uid, app_uid, 'Application access granted successfully')
+    result['access_type'] = 'AT_APPLICATION'
+    result.setdefault('action_taken', 'granted' if result['success'] else 'grant_failed')
+    return result
+
+
+def update_folder_access_to_application_v3(params, folder_uid, app_uid,
+                                            is_editable=False):
+    """Update an application's NSF folder role (viewer / content-manager)."""
+    resolved = resolve_folder_identifier(params, folder_uid)
+    if not resolved:
+        raise ValueError(f"Folder '{folder_uid}' not found")
+    folder_uid = resolved
+
+    role = _application_folder_role(is_editable)
+    access_role = resolve_role_name(role)
+
+    ad = folder_pb2.FolderAccessData()
+    ad.folderUid = utils.base64_url_decode(folder_uid)
+    ad.accessTypeUid = utils.base64_url_decode(app_uid)
+    ad.accessType = folder_pb2.AT_APPLICATION
+    ad.accessRoleType = access_role
+    ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
+
+    response = folder_access_update_v3(params, folder_access_updates=[ad])
+    result = parse_folder_access_result(
+        response, folder_uid, app_uid, 'Application access updated successfully')
+    result['access_type'] = 'AT_APPLICATION'
+    return result
+
+
+def revoke_folder_access_from_application_v3(params, folder_uid, app_uid):
+    """Revoke a Secrets Manager application's access to an NSF folder."""
+    resolved = resolve_folder_identifier(params, folder_uid)
+    if not resolved:
+        raise ValueError(f"Folder '{folder_uid}' not found")
+    folder_uid = resolved
+
+    ad = folder_pb2.FolderAccessData()
+    ad.folderUid = utils.base64_url_decode(folder_uid)
+    ad.accessTypeUid = utils.base64_url_decode(app_uid)
+    ad.accessType = folder_pb2.AT_APPLICATION
+
+    response = folder_access_update_v3(params, folder_access_removes=[ad])
+    result = parse_folder_access_result(
+        response, folder_uid, app_uid, 'Application access revoked successfully')
+    result['access_type'] = 'AT_APPLICATION'
+    if result.get('success'):
+        params.sync_data = True
+    return result
+
+
 def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
     """Revoke user or team access to an NSF folder.
 

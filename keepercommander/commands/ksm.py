@@ -95,16 +95,16 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --force : Do not prompt for confirmation
 
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH]{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH] {bcolors.ENDC}
     Options: 
       --editable : Allow secrets to be editable by the client
 
   {bcolors.BOLD}Update Secret Permissions:{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager share update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID] {bcolors.OKGREEN}--editable{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager share update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID] {bcolors.OKGREEN}--readonly{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH] {bcolors.OKGREEN}--editable{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH] {bcolors.OKGREEN}--readonly{bcolors.ENDC}
 
   {bcolors.BOLD}Remove Secret from Application:{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD, SHARED FOLDER, OR NSF UID/PATH] {bcolors.ENDC}
 
   {bcolors.BOLD}Add Token to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager token add {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
@@ -922,6 +922,9 @@ class KSMCommand(Command):
     def resolve_secret_uid(params, identifier):
         if not identifier:
             return None
+        identifier = str(identifier).strip()
+        if identifier.startswith('[') and identifier.endswith(']') and len(identifier) > 2:
+            identifier = identifier[1:-1].strip()
         if KSMCommand._secret_in_cache(params, identifier):
             return identifier
         record_uid = resolve_nested_share_record_uid(params, identifier)
@@ -997,10 +1000,37 @@ class KSMCommand(Command):
         return uid
 
     @staticmethod
+    def _share_nsf_secret(params, app_uid, master_key, secret, is_editable=False):
+        """Share an NSF folder/record with an application using v3 access APIs."""
+        from ..nested_share_folder.folder_api import grant_folder_access_to_application_v3
+        from ..nested_share_folder.record_api import share_record_to_application_v3
+
+        uid = secret['uid']
+        if secret['share_type'] == 'SHARE_TYPE_FOLDER' and is_nested_share_folder(params, uid):
+            result = grant_folder_access_to_application_v3(
+                params, uid, app_uid, master_key, is_editable=is_editable)
+            if not result.get('success'):
+                raise KeeperApiError(
+                    result.get('status') or 'access_denied',
+                    result.get('message') or 'Failed to share Nested Share Folder with application')
+            return True
+
+        if secret['share_type'] == 'SHARE_TYPE_RECORD' and is_nested_share_record(params, uid):
+            result = share_record_to_application_v3(
+                params, uid, app_uid, master_key, is_editable=is_editable)
+            if not result.get('success'):
+                message = '; '.join(
+                    r.get('message') or r.get('status') or 'share failed'
+                    for r in result.get('results', [])) or 'Failed to share Nested Share Record with application'
+                raise KeeperApiError('share_failed', message)
+            return True
+
+        return False
+
+    @staticmethod
     def share_secret(params, app_uid, master_key, secret_uids, is_editable=False):
 
         app_shares = []
-
         added_secret_uids_type_pairs = []
 
         for uid in secret_uids:
@@ -1012,9 +1042,24 @@ class KSMCommand(Command):
                 continue
 
             share_type = secret['share_type']
-            share_key_decrypted = secret['share_key']
             uid = secret['uid']
 
+            # NSF folders/records must use v3 access_update / records share APIs.
+            if ((share_type == 'SHARE_TYPE_FOLDER' and is_nested_share_folder(params, uid))
+                    or (share_type == 'SHARE_TYPE_RECORD' and is_nested_share_record(params, uid))):
+                try:
+                    KSMCommand._share_nsf_secret(
+                        params, app_uid, master_key, secret, is_editable=is_editable)
+                    added_secret_uids_type_pairs.append((uid, share_type))
+                except KeeperApiError as kae:
+                    if 'already' in (kae.message or '').lower():
+                        logging.error("One of the secret UIDs is already shared to this application. "
+                                      "Please remove already shared UIDs from your command and try again.")
+                    else:
+                        raise kae
+                continue
+
+            share_key_decrypted = secret['share_key']
             added_secret_uids_type_pairs.append((uid, share_type))
 
             encrypted_secret_key = crypto.encrypt_aes_v2(share_key_decrypted, master_key)
@@ -1030,17 +1075,19 @@ class KSMCommand(Command):
         if len(added_secret_uids_type_pairs) == 0:
             return
 
-        app_share_add_rq = APIRequest_pb2.AddAppSharesRequest()
-        app_share_add_rq.appRecordUid = utils.base64_url_decode(app_uid)
-        app_share_add_rq.shares.extend(app_shares)
-
         try:
-            api.communicate_rest(params, app_share_add_rq, 'vault/app_share_add')
+            if app_shares:
+                app_share_add_rq = APIRequest_pb2.AddAppSharesRequest()
+                app_share_add_rq.appRecordUid = utils.base64_url_decode(app_uid)
+                app_share_add_rq.shares.extend(app_shares)
+                api.communicate_rest(params, app_share_add_rq, 'vault/app_share_add')
+
             print(bcolors.OKGREEN + f'\nSuccessfully added secrets to app uid={app_uid}, '
                                     f'editable=' + bcolors.BOLD + f'{is_editable}:' + bcolors.ENDC)
             print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + (
-                'Record' if 'RECORD' in str(x[1]) else
-                'Nested Share Folder' if is_nested_share_folder(params, x[0]) else 'Shared Folder'),
+                'Nested Share Folder' if is_nested_share_folder(params, x[0]) else
+                'Nested Share Record' if is_nested_share_record(params, x[0]) else
+                'Record' if 'RECORD' in str(x[1]) else 'Shared Folder'),
                 added_secret_uids_type_pairs)))
             print('\n')
             return True
@@ -1369,7 +1416,18 @@ class KSMCommand(Command):
         }
 
         uids_to_update = []
+        nsf_uids_to_update = []
         for uid in resolved_secret_uids:
+            secret = KSMCommand.classify_secret(params, uid)
+            is_nsf = bool(
+                secret and (
+                    (secret['share_type'] == 'SHARE_TYPE_FOLDER'
+                     and is_nested_share_folder(params, secret['uid']))
+                    or (secret['share_type'] == 'SHARE_TYPE_RECORD'
+                        and is_nested_share_record(params, secret['uid']))))
+            if is_nsf:
+                nsf_uids_to_update.append(secret['uid'])
+                continue
             if uid not in existing_shares:
                 logging.warning('Secret "%s" is not currently shared with this application. '
                                 'Use "share add" to add it first.' % uid)
@@ -1381,59 +1439,86 @@ class KSMCommand(Command):
                 continue
             uids_to_update.append(uid)
 
-        if not uids_to_update:
+        if not uids_to_update and not nsf_uids_to_update:
             print(bcolors.WARNING + "No share permissions to update." + bcolors.ENDC)
             return
 
-        rq_remove = APIRequest_pb2.RemoveAppSharesRequest()
-        rq_remove.appRecordUid = utils.base64_url_decode(app_record_uid)
-        rq_remove.shares.extend(utils.base64_url_decode(uid) for uid in uids_to_update)
+        from ..nested_share_folder.folder_api import update_folder_access_to_application_v3
+        from ..nested_share_folder.record_api import update_record_share_to_application_v3
 
-        try:
-            api.communicate_rest(params, rq_remove, 'vault/app_share_remove')
-        except KeeperApiError as kae:
-            logging.error('Failed to remove shares for update: %s' % kae.message)
-            return
-
-        app_shares = []
-        for uid in uids_to_update:
+        updated = []
+        for uid in nsf_uids_to_update:
             secret = KSMCommand.classify_secret(params, uid)
             if not secret:
                 logging.warning('UID "%s" not found in local cache. Run sync-down and try again.' % uid)
                 continue
+            if secret['share_type'] == 'SHARE_TYPE_FOLDER':
+                result = update_folder_access_to_application_v3(
+                    params, uid, app_record_uid, is_editable=is_editable)
+            else:
+                result = update_record_share_to_application_v3(
+                    params, uid, app_record_uid, master_key, is_editable=is_editable)
+            if not result.get('success'):
+                logging.error('Failed to update NSF share "%s": %s',
+                              uid, result.get('message') or result)
+                continue
+            updated.append(uid)
 
-            share_key = secret['share_key']
-            share_type = secret['share_type']
-            uid = secret['uid']
+        if uids_to_update:
+            rq_remove = APIRequest_pb2.RemoveAppSharesRequest()
+            rq_remove.appRecordUid = utils.base64_url_decode(app_record_uid)
+            rq_remove.shares.extend(utils.base64_url_decode(uid) for uid in uids_to_update)
 
-            encrypted_secret_key = crypto.encrypt_aes_v2(share_key, master_key)
+            try:
+                api.communicate_rest(params, rq_remove, 'vault/app_share_remove')
+            except KeeperApiError as kae:
+                logging.error('Failed to remove shares for update: %s' % kae.message)
+                return
 
-            app_share = APIRequest_pb2.AppShareAdd()
-            app_share.secretUid = utils.base64_url_decode(uid)
-            app_share.shareType = APIRequest_pb2.ApplicationShareType.Value(share_type)
-            app_share.encryptedSecretKey = encrypted_secret_key
-            app_share.editable = is_editable
+            app_shares = []
+            for uid in uids_to_update:
+                secret = KSMCommand.classify_secret(params, uid)
+                if not secret:
+                    logging.warning('UID "%s" not found in local cache. Run sync-down and try again.' % uid)
+                    continue
 
-            app_shares.append(app_share)
+                share_key = secret['share_key']
+                share_type = secret['share_type']
+                uid = secret['uid']
 
-        if not app_shares:
-            return
+                encrypted_secret_key = crypto.encrypt_aes_v2(share_key, master_key)
 
-        rq_add = APIRequest_pb2.AddAppSharesRequest()
-        rq_add.appRecordUid = utils.base64_url_decode(app_record_uid)
-        rq_add.shares.extend(app_shares)
+                app_share = APIRequest_pb2.AppShareAdd()
+                app_share.secretUid = utils.base64_url_decode(uid)
+                app_share.shareType = APIRequest_pb2.ApplicationShareType.Value(share_type)
+                app_share.encryptedSecretKey = encrypted_secret_key
+                app_share.editable = is_editable
 
-        try:
-            api.communicate_rest(params, rq_add, 'vault/app_share_add')
+                app_shares.append(app_share)
+
+            if not app_shares and not updated:
+                return
+
+            if app_shares:
+                rq_add = APIRequest_pb2.AddAppSharesRequest()
+                rq_add.appRecordUid = utils.base64_url_decode(app_record_uid)
+                rq_add.shares.extend(app_shares)
+
+                try:
+                    api.communicate_rest(params, rq_add, 'vault/app_share_add')
+                    updated.extend(uids_to_update)
+                except KeeperApiError as kae:
+                    logging.error('Failed to re-add shares with updated permissions: %s' % kae.message)
+                    return
+
+        if updated:
             perm = "editable" if is_editable else "read-only"
             print(bcolors.OKGREEN +
                   f'\nSuccessfully updated share permissions to {perm} for app uid={app_record_uid}:' +
                   bcolors.ENDC)
-            for uid in uids_to_update:
+            for uid in updated:
                 print(f'\t{uid}')
             print()
-        except KeeperApiError as kae:
-            logging.error('Failed to re-add shares with updated permissions: %s' % kae.message)
 
     @staticmethod
     def remove_share(params, app_name_or_uid, secret_uids):
@@ -1447,11 +1532,34 @@ class KSMCommand(Command):
         if not resolved_uids:
             raise Exception("No valid record or folder secrets were found for removal")
 
-        rq = APIRequest_pb2.RemoveAppSharesRequest()
+        from ..nested_share_folder.folder_api import revoke_folder_access_from_application_v3
+        from ..nested_share_folder.record_api import unshare_record_from_application_v3
 
-        rq.appRecordUid = utils.base64_url_decode(app_uid)
-        rq.shares.extend((utils.base64_url_decode(x) for x in resolved_uids))
-        api.communicate_rest(params, rq, 'vault/app_share_remove')
+        classic_uids = []
+        for uid in resolved_uids:
+            secret = KSMCommand.classify_secret(params, uid)
+            if secret and secret['share_type'] == 'SHARE_TYPE_FOLDER' and is_nested_share_folder(params, uid):
+                result = revoke_folder_access_from_application_v3(params, uid, app_uid)
+                if not result.get('success'):
+                    raise KeeperApiError(
+                        result.get('status') or 'access_denied',
+                        result.get('message') or f'Failed to remove NSF folder share {uid}')
+                continue
+            if secret and secret['share_type'] == 'SHARE_TYPE_RECORD' and is_nested_share_record(params, uid):
+                result = unshare_record_from_application_v3(params, uid, app_uid)
+                if not result.get('success'):
+                    message = '; '.join(
+                        r.get('message') or r.get('status') or 'revoke failed'
+                        for r in result.get('results', [])) or f'Failed to remove NSF record share {uid}'
+                    raise KeeperApiError('share_failed', message)
+                continue
+            classic_uids.append(uid)
+
+        if classic_uids:
+            rq = APIRequest_pb2.RemoveAppSharesRequest()
+            rq.appRecordUid = utils.base64_url_decode(app_uid)
+            rq.shares.extend((utils.base64_url_decode(x) for x in classic_uids))
+            api.communicate_rest(params, rq, 'vault/app_share_remove')
         print(bcolors.OKGREEN + "Secret share was successfully removed from the application\n" + bcolors.ENDC)
 
     @staticmethod

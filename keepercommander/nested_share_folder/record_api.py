@@ -496,6 +496,79 @@ def share_record_v3(params, record_uid, recipient_email, access_role_type,
     return {'results': results, 'success': all(r['success'] for r in results)}
 
 
+def _application_record_role(is_editable):
+    return folder_pb2.CONTENT_MANAGER if is_editable else folder_pb2.VIEWER
+
+
+def _build_application_share_permission(params, record_uid, app_uid, app_key,
+                                         is_editable=False, include_key=True):
+    rec = get_record_from_cache(params, record_uid)
+    if not rec:
+        raise ValueError(f"Record {record_uid} not found in cache")
+    rk = rec.get('record_key_unencrypted')
+    if not rk and include_key:
+        rk = get_record_key(params, record_uid, raise_on_missing=False)
+    if include_key and not rk:
+        raise ValueError(f"Record {record_uid} has no decrypted key")
+    if not app_uid:
+        raise ValueError('Application UID is required')
+
+    app_uid_bytes = utils.base64_url_decode(app_uid)
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+
+    perm = record_sharing_pb2.Permissions()
+    perm.recipientUid = app_uid_bytes
+    perm.recordUid = record_uid_bytes
+    if include_key:
+        perm.recordKey = crypto.encrypt_aes_v2(rk, app_key)
+        perm.useEccKey = False
+
+    perm.rules.accessTypeUid = app_uid_bytes
+    perm.rules.accessType = folder_pb2.AT_APPLICATION
+    perm.rules.recordUid = record_uid_bytes
+    perm.rules.owner = False
+    perm.rules.accessRoleType = _application_record_role(is_editable)
+    return perm
+
+
+def share_record_to_application_v3(params, record_uid, app_uid, app_key,
+                                    is_editable=False):
+    """Share an NSF record with a Secrets Manager application via records/v3/share."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key, is_editable=is_editable, include_key=True)
+    rq = record_sharing_pb2.Request()
+    rq.createSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.createdSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
+def update_record_share_to_application_v3(params, record_uid, app_uid, app_key,
+                                           is_editable=False):
+    """Update an NSF record's application share role."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key, is_editable=is_editable, include_key=True)
+    rq = record_sharing_pb2.Request()
+    rq.updateSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
+def unshare_record_from_application_v3(params, record_uid, app_uid):
+    """Revoke a Secrets Manager application's access to an NSF record."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key=None, is_editable=False, include_key=False)
+    rq = record_sharing_pb2.Request()
+    rq.revokeSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
 def update_record_share_v3(params, record_uid, recipient_email,
                             access_role_type=None, expiration_timestamp=None):
     """Update an existing direct share.

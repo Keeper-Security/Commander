@@ -69,9 +69,10 @@ class TestKSMSecretResolution(unittest.TestCase):
 
     @patch('keepercommander.commands.ksm.KSMCommand.update_secrets_user_permissions')
     @patch('keepercommander.commands.ksm.api.sync_down')
-    @patch('keepercommander.commands.ksm.api.communicate_rest')
+    @patch('keepercommander.nested_share_folder.record_api.share_record_to_application_v3',
+           return_value={'success': True, 'results': []})
     @patch('keepercommander.commands.ksm.KSMCommand.get_app_record')
-    def test_share_secret_adds_nsf_record(self, mock_get_app_record, mock_communicate_rest,
+    def test_share_secret_adds_nsf_record(self, mock_get_app_record, mock_share_record,
                                           _mock_sync_down, _mock_update_perms):
         params = self._make_params()
         record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
@@ -81,9 +82,42 @@ class TestKSMSecretResolution(unittest.TestCase):
             'record_key_unencrypted': b'a' * 32,
         }
         with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=True):
-            KSMCommand.add_app_share(params, [record_uid], 'MyApp', False)
-        mock_communicate_rest.assert_called_once()
-        self.assertEqual(mock_communicate_rest.call_args[0][2], 'vault/app_share_add')
+            with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=False):
+                KSMCommand.add_app_share(params, [record_uid], 'MyApp', False)
+        mock_share_record.assert_called_once()
+        self.assertEqual(mock_share_record.call_args.args[1], record_uid)
+
+    @patch('keepercommander.commands.ksm.KSMCommand.update_secrets_user_permissions')
+    @patch('keepercommander.commands.ksm.api.sync_down')
+    @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_to_application_v3',
+           return_value={'success': True})
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_record')
+    def test_share_secret_adds_nsf_folder(self, mock_get_app_record, mock_grant_folder,
+                                          _mock_sync_down, _mock_update_perms):
+        params = self._make_params()
+        folder_uid = 'AF3KOMHTcC7ZVwOLrz1ODA'
+        params.nested_share_folders = {folder_uid: {'name': 'Test NSF'}}
+        mock_get_app_record.return_value = {
+            'record_uid': 'il3OLH0CurRQezXUJ6WB9Q',
+            'record_key_unencrypted': b'a' * 32,
+        }
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=False):
+                with patch('keepercommander.commands.ksm.api.is_shared_folder', return_value=False):
+                    with patch('keepercommander.commands.ksm.get_folder_key', return_value=b'folder_key'):
+                        KSMCommand.add_app_share(params, [folder_uid], 'MyApp', True)
+        mock_grant_folder.assert_called_once()
+        self.assertEqual(mock_grant_folder.call_args.args[1], folder_uid)
+        self.assertTrue(mock_grant_folder.call_args.kwargs.get('is_editable'))
+
+    def test_resolve_secret_uid_strips_brackets(self):
+        params = self._make_params()
+        folder_uid = 'AF3KOMHTcC7ZVwOLrz1ODA'
+        params.nested_share_folders = {folder_uid: {'name': 'Test NSF'}}
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            self.assertEqual(
+                KSMCommand.resolve_secret_uid(params, f'[{folder_uid}]'),
+                folder_uid)
 
 
 class TestKSMAppRecordResolution(unittest.TestCase):
