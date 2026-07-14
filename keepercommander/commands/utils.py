@@ -1554,6 +1554,8 @@ class WhoamiCommand(Command):
                                         expires += f' ({Fore.RED}expired{Fore.RESET})'
                                     print(label_value('Expires', expires))
                         seats_plan = x.get("number_of_seats", "")
+                        if isinstance(seats_plan, int) and seats_plan >= 2147483647:
+                            seats_plan = "Unlimited"
                         seats_active = x.get("seats_allocated", "")
                         seats_invited = x.get("seats_pending", "")
                         print(label_value('User Licenses', f'Plan: {seats_plan}  Active: {seats_active}  Invited: {seats_invited}'))
@@ -1562,7 +1564,7 @@ class WhoamiCommand(Command):
                         print(label_value('Secure File Storage', file_plan_lookup.get(file_plan, '')))
                         addons = []
                         addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
-                        for ao in x.get('add_ons'):
+                        for ao in x.get('add_ons') or []:
                             if isinstance(ao, dict):
                                 enabled = ao.get('enabled') is True
                                 if enabled:
