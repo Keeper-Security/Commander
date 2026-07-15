@@ -744,25 +744,12 @@ class CyberArkPVWAClient:
             return safes
 
     def fetch_platforms(self) -> List[dict]:
-        """Fetch every platform definition CyberArk exposes.
+        """Fetch platform definitions from PVWA ``GET /Platforms``.
 
-        The PVWA ``GET /Platforms`` endpoint returns objects of shape::
-
-            {
-              "PlatformID":     "METRON-WindowsDomainAccount",  # the value seen on accounts
-              "PlatformName":   "METRON Windows Domain Account",
-              "PlatformBaseID": "WinDomain",                     # the built-in this was cloned from
-              "SystemType":     "Windows",                        # Windows | UnixDistro | *DB | ...
-              "Active":         true
-            }
-
-        ``PlatformBaseID`` is the gold here: customer-renamed platforms keep
-        the same base ID, so we can map a custom ``platformId`` back to the
-        built-in mapping in ``DEFAULT_PLATFORM_MAP``. Result list is what the
-        PVWA returned, untouched — callers index it themselves.
-
-        Some PVWA versions wrap the array under ``Platforms`` instead of the
-        generic ``value`` key, so we try both.
+        Response objects typically include ``PlatformID``, ``PlatformName``,
+        ``PlatformBaseID`` (built-in clone source), ``SystemType``, and
+        ``Active``. ``PlatformBaseID`` maps customer-renamed platforms back to
+        ``DEFAULT_PLATFORM_MAP``. Tries ``Platforms`` and ``value`` item keys.
         """
         # _paginate already handles "value"; try that first, then fall back to
         # the explicitly-keyed response shape.
@@ -826,29 +813,9 @@ class CyberArkPVWAClient:
     def _encode_safe_path(safe_url_id: str) -> Optional[str]:
         """Normalize and URL-encode a CyberArk safe identifier for path use.
 
-        CyberArk's ``safeUrlId`` field is documented to be the URL-safe form
-        of ``safeName``, but in practice tenants return the value in one of
-        three shapes:
-
-          * already URL-encoded (``"metron%20abc"``),
-          * raw with spaces / unicode (``"metron abc"`` / ``"métron"``),
-          * pre-sanitized with no spaces (``"MetronAbc"``).
-
-        The original ``[a-zA-Z0-9_. -]`` regex rejected case (1) outright
-        (no ``%`` allowed) and case (2) silently produced malformed URLs
-        whose request behavior depended on the requests library — both
-        ended up with empty member lists and the safe being treated as
-        unmapped.
-
-        Strategy:
-          1. Reject only safes that could allow path traversal (``/``,
-             ``..``, ``\\``) or are empty / unreasonably long.
-          2. Decode any percent-escapes so we have a clean Unicode string.
-          3. Re-encode with ``quote(safe='')`` so spaces become ``%20``
-             and CyberArk gets exactly one well-formed path component.
-
-        Returns the encoded path segment or ``None`` when the input is
-        unsafe / unusable.
+        Tenants may return ``safeUrlId`` already encoded, raw (spaces/unicode),
+        or pre-sanitized. Decode then re-encode with ``quote(safe='')`` so the
+        path segment is canonical. Returns ``None`` for empty/unsafe input.
         """
         if not safe_url_id or not isinstance(safe_url_id, str):
             return None
@@ -881,11 +848,8 @@ class CyberArkPVWAClient:
     def fetch_safe_members(self, safe_url_id: str) -> List[dict]:
         """Fetch members of a safe. Returns list of member dicts.
 
-        Excludes predefined system members (Master, Batch, etc.) by default.
-        Handles safe names containing spaces / unicode / pre-encoded
-        characters via :py:meth:`_encode_safe_path` — CyberArk safes named
-        ``"metron abc"`` or returned as ``"metron%20abc"`` are accepted and
-        encoded canonically before being interpolated into the URL.
+        Excludes predefined system members. Safe names with spaces, unicode,
+        or pre-encoded characters are normalized via ``_encode_safe_path``.
         """
         encoded = self._encode_safe_path(safe_url_id)
         if encoded is None:
@@ -1195,7 +1159,7 @@ class CyberArkPVWAClient:
             raw_json = json.dumps(data, indent=2, sort_keys=True)
         except (TypeError, ValueError):
             raw_json = repr(data)
-        logging.info('CyberArk master-rotation-policy exceptions:\n%s', raw_json)
+        logging.debug('CyberArk master-rotation-policy exceptions:\n%s', raw_json)
         if self._looks_like_base_master_policy(data):
             logging.info(
                 "This tenant's /master-rotation-policy/exceptions/ endpoint "
@@ -1207,28 +1171,13 @@ class CyberArkPVWAClient:
         return data
 
     def fetch_master_session_monitoring(self) -> Optional[dict]:
-        """Fetch the **global** session-monitoring rules (master policy level).
+        """Fetch global session-monitoring rules (master policy level).
 
-        Privilege Cloud and PVWA Self-Hosted do **not** carry session-recording
-        flags in either the ``master-rotation-policy`` or ``Policies/1``
-        responses — those endpoints scope strictly to password-rotation
-        cadence. Session monitoring (``RecordSession`` / ``MonitorSession``)
-        is exposed instead through the legacy PVWA admin-UI service::
-
-            GET /PasswordVault/services/PoliciesMgt.asmx/
-                GetPolicyRulesSessionMonitoring?platformId=""&page=1&start=0&limit=100
-
-        When ``platformId`` is empty (URL-encoded as ``%22%22``), the
-        endpoint returns the master-policy / "default" rules used by every
-        platform that doesn't explicitly override them. This is the URL the
-        Metron tenant operator pointed us at (see chat history) and is the
-        canonical path for the PAM Configuration's
-        ``graphical_session_recording`` flag.
-
-        Returns the parsed ``{"data": [{"name": ..., "value": ...}, ...]}``
-        dict (the ExtJS grid response shape) or ``None`` when the endpoint
-        is unavailable / unauthenticated. The caller normalizes it via
-        ``AccountMapper._flatten_asmx_grid``.
+        Session recording flags are not on the rotation-policy endpoints; they
+        come from the PVWA admin service
+        ``PoliciesMgt.asmx/GetPolicyRulesSessionMonitoring`` with an empty
+        ``platformId`` (master/default rules). Returns the ExtJS grid payload
+        or ``None`` if unavailable.
         """
         url = (f"https://{self.pvwa_host}/PasswordVault/services/"
                f"PoliciesMgt.asmx/GetPolicyRulesSessionMonitoring")
@@ -1416,9 +1365,7 @@ class CyberArkPVWAClient:
                     self._get_url("account_password").format(account_id=account_id),
                     headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
                     json={
-                        "reason": "test",
-                        # Include ticketing params if configured — some CyberArk policies
-                        # require a ticket ID for credential retrieval (ark-sdk-python pattern)
+                        "reason": "Keeper Commander Import",
                         **({"TicketingSystemName": environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]}
                            if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ else {}),
                         **({"TicketId": environ["KEEPER_CYBERARK_TICKET_ID"]}

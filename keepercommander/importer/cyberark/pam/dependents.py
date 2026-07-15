@@ -156,11 +156,6 @@ def resolve_account_dependents(client: 'CyberArkPVWAClient',
         })
 
     if dropped:
-        # Surface the raw entries that were filtered out so operators can
-        # see which CyberArk field actually carries the host. Without this
-        # the importer silently swallows mis-shaped responses and the
-        # downstream "There are no service mappings" symptom is hard to
-        # diagnose.
         try:
             pretty = json.dumps(dropped, indent=2, sort_keys=True)
         except (TypeError, ValueError):
@@ -168,12 +163,11 @@ def resolve_account_dependents(client: 'CyberArkPVWAClient',
         print_formatted_text(HTML(
             f"<ansiyellow>⚠ Skipped {len(dropped)} dependent(s) on "
             f"account <b>{_esc(master_account_name or account_id)}</b> "
-            f"— no recognizable address field. Raw entries:</ansiyellow>"))
-        print(pretty)
+            f"— no recognizable address field.</ansiyellow>"))
         logging.warning(
             "Dropped %d dependent(s) on account %s — no address field matched. "
-            "If CyberArk returned a different field name, please report it.",
-            len(dropped), account_id,
+            "Entries: %s",
+            len(dropped), account_id, pretty,
         )
 
     if results:

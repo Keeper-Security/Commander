@@ -4,9 +4,7 @@
 
 Imports privileged accounts from CyberArk (self-hosted PVWA or Privilege Cloud) into KeeperPAM as properly structured PAM records with folder hierarchy, credential rotation, session recording, and access control.
 
-**Branch**: `feature/cyberark-pam-import` on `jlima8900/Commander`
 **Commands**: `pam project cyberark-import` (alias: `ca`) and `pam project cyberark-cleanup` (alias: `CC`)
-**Status**: 287 tests passing, 29 commits, rebased on Release v17.2.13
 
 ---
 

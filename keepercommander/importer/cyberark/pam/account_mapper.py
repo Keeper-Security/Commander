@@ -766,16 +766,11 @@ class AccountMapper:
     @staticmethod
     def _infer_operating_system(platform_id: str,
                                 protocol: Optional[str]) -> Optional[str]:
-        """Derive the ``operating_system`` field for a pamMachine record.
+        """Derive ``operating_system`` for a pamMachine from platformId/protocol.
 
-        CyberArk's PVWA does not expose a clean OS attribute on accounts —
-        the closest signal is ``platformId``. We use a keyword scan on the
-        platform name ("Win"/"Windows" → windows, "Unix"/"Linux"/"AIX"/
-        "Solaris" → linux) and fall back to the protocol mapping (rdp ⇒
-        windows, ssh ⇒ linux) so custom platforms like
-        ``METRON-WindowsDomainAccount`` still resolve correctly. Returns
-        ``None`` for ambiguous platforms (network gear, generic database
-        platforms) — the caller leaves the field unset rather than guessing.
+        Keyword scan on platformId (Win→windows, Unix/Linux→linux), then
+        protocol fallback (rdp→windows, ssh→linux). Returns ``None`` when
+        ambiguous so the field is left unset.
         """
         pid = (platform_id or "").lower()
         if pid:

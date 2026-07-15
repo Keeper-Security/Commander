@@ -1487,16 +1487,7 @@ class PAMProjectExtendCommand(Command):
                         if key:
                             args[key] = True
                         # Schedule type comparison is case-insensitive;
-                        # CyberArk emits "CRON" while older paths emit
-                        # "cron". ``schedule_cron_data`` MUST be a list to
-                        # match ``parse_schedule_data``'s isinstance check
-                        # — passing a bare string causes the cron branch
-                        # to be silently skipped and the caller falls
-                        # through to the PAM Configuration's
-                        # ``defaultRotationSchedule`` typed-field (which
-                        # carries empty ``time``/``month`` keys from the
-                        # schedule field schema and triggers a 500 from
-                        # ``set_record_rotation``).
+                        # Case-insensitive schedule type; cron value must be a list.
                         schedule = getattr(rs, "schedule", None)
                         schedule_type = getattr(schedule, "type", "") if schedule else ""
                         schedule_type_lc = (schedule_type or "").lower()

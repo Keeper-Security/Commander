@@ -1133,7 +1133,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "test"},
+                                json={"reason": "Keeper Commander Import"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,

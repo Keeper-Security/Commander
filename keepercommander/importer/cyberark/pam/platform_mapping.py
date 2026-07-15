@@ -11,18 +11,12 @@ from typing import Dict, Optional, Tuple
 
 from .constants import FALLBACK_PLATFORM_MAP
 
-# Keyword → mapping table used to guess a sensible record type for custom /
-# renamed CyberArk platforms (e.g. "METRON-WindowsDomainAccount" → RDP).
-# Patterns are matched against the platformId AND the account `name` field
-# (CyberArk's auto-generated names embed the platformId, so name carries the
-# same hint when the platformId itself is opaque). First match wins; database
-# patterns are checked before generic Windows/Unix to avoid false positives
-# (e.g. a "WindowsMSSql" custom platform → MSSql, not RDP).
+# Keyword → mapping for custom/renamed CyberArk platforms (e.g. "Custom-WinDomain" → RDP).
+# Matched against platformId and account name; first match wins. Database patterns
+# are checked before generic Windows/Unix to avoid false positives.
 _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
-    # Databases first (most specific keywords). See note in constants.py:
-    # Keeper's pam_settings.connection.protocol only accepts sql-server,
-    # postgresql, mysql. Oracle/MongoDB use protocol=None so account_mapper
-    # skips the connection block (record still gets the right database_type).
+    # Databases first (most specific). pam_settings.connection.protocol accepts
+    # sql-server, postgresql, mysql; Oracle/MongoDB use protocol=None.
     ("oracle",     {"record_type": "pamDatabase", "rotation": "general", "protocol": None,         "port": "1521",  "database_type": "oracle"}),
     ("postgres",   {"record_type": "pamDatabase", "rotation": "general", "protocol": "postgresql", "port": "5432",  "database_type": "postgresql"}),
     ("mysql",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "mysql",      "port": "3306",  "database_type": "mysql"}),
@@ -51,15 +45,9 @@ _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
 
 
 def _guess_platform_mapping(platform_id: str, raw_name: str) -> Optional[dict]:
-    """Pattern-match an unknown / customer-renamed platformId to a mapping.
+    """Map unknown/custom platformIds to a record type via keyword scan.
 
-    CyberArk admins routinely clone built-in platforms with tenant-specific
-    prefixes (e.g. "METRON-WindowsDomainAccount" derived from "WinDomain").
-    The connection mechanism stays the same, so we can usually infer the
-    correct record_type / protocol / port from the platformId substring.
-
-    Returns a fresh mapping dict on match, or None if no keyword hits — in
-    which case the caller should fall back to FALLBACK_PLATFORM_MAP.
+    Returns a mapping dict on match, or None (caller uses FALLBACK_PLATFORM_MAP).
     """
     haystack = f"{platform_id or ''}\n{raw_name or ''}".lower()
     if not haystack.strip():

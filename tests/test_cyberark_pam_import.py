@@ -3312,7 +3312,7 @@ class TestResourceOutputStructure:
         assert r["type"] == "pamDatabase"
         assert r["host"] == "dbserver1.cyberark.local"
         assert r["port"] == "15345"
-        assert r["pam_settings"]["connection"]["protocol"] == "mssql"
+        assert r["pam_settings"]["connection"]["protocol"] == "sql-server"
         # CPM disabled
         assert r["pam_settings"]["options"]["rotation"] == "off"
         u = r["users"][0]
@@ -3581,9 +3581,7 @@ class TestVaultJsonSchema:
         assert len(roundtrip["pam_data"]["resources"]) == len(data["pam_data"]["resources"])
 
 
-# ── Real PVWA sample from Prathamesh's environment (PAM-only subset) ──
-# Files live under .sample-data/ (gitignored). Tests skip when absent so CI
-# and other devs aren't broken by missing sample data.
+# ── Optional local PVWA sample under .sample-data/ (gitignored; skip if absent) ──
 
 _SAMPLE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".sample-data"))
 _SAMPLE_FILES = ("safes.json", "accounts.json", "passwords.json")
@@ -3609,9 +3607,9 @@ def _load_sample():
 
 
 @pytest.mark.skipif(not _sample_available(),
-                    reason="Prathamesh sample (.sample-data/*.json) not present")
-class TestPrathameshSample:
-    """Integration against real PVWA export — regression net for authentic data shapes."""
+                    reason="local .sample-data/*.json not present")
+class TestLocalPvwaSample:
+    """Integration against optional local PVWA export sample data."""
 
     def test_files_parse_and_ids_align(self):
         safes, accounts, passwords = _load_sample()
@@ -3677,9 +3675,9 @@ class TestPrathameshSample:
             if rec is None:
                 continue
             (users if rec["type"] == "login" else resources).append(rec)
-        data = build_import_json("Prathamesh-Sample", "TestGW", resources, users)
-        json.dumps(data)  # must serialize cleanly
-        assert data["project"] == "Prathamesh-Sample"
+        data = build_import_json("Sample-Import", "TestGW", resources, users)
+        json.dumps(data)
+        assert data["project"] == "Sample-Import"
         assert "pam_data" in data
 
 
@@ -3687,55 +3685,40 @@ class TestPrathameshSample:
 
 
 class TestRecordKindDiscriminator:
-    """Coverage for `discriminate_record_kind`. Stub-level — the
-    real Application/API-token shapes will be confirmed when
-    Prathamesh's samples land (deliverable #2)."""
+    """Coverage for discriminate_record_kind."""
 
     def test_account_payload_returns_account(self):
-        # Standard /Accounts shape — minimum fields the AccountMapper consumes.
         payload = {"id": "1_2", "platformId": "UnixSSH", "userName": "root",
                    "safeName": "S", "address": "10.0.0.1"}
         assert discriminate_record_kind(payload) == RecordKind.ACCOUNT
 
     def test_application_payload_returns_application(self):
-        # /Applications response items have AppID; absent on /Accounts.
         assert discriminate_record_kind({"AppID": "MyApp"}) == RecordKind.APPLICATION
 
     def test_api_token_payload_returns_api_token(self):
-        # Placeholder shape — real discriminator field TBD post-sample.
         assert discriminate_record_kind({"platformType": "Application"}) == RecordKind.API_TOKEN
 
     def test_application_wins_over_api_token_when_both_present(self):
-        # AppID is more specific than platformType=Application.
         payload = {"AppID": "X", "platformType": "Application"}
         assert discriminate_record_kind(payload) == RecordKind.APPLICATION
 
     def test_non_dict_falls_back_to_account(self):
-        # Defensive: bad input doesn't crash; falls back to safest kind.
         assert discriminate_record_kind(None) == RecordKind.ACCOUNT
         assert discriminate_record_kind("not a dict") == RecordKind.ACCOUNT
         assert discriminate_record_kind([]) == RecordKind.ACCOUNT
 
 
 class TestApplicationMapperStub:
-    """ApplicationMapper is intentionally a NotImplementedError stub
-    until Prathamesh's /Applications sample arrives. These tests pin
-    the contract so a future implementer can't accidentally swallow
-    real applications by silently returning None."""
+    """ApplicationMapper remains a NotImplementedError stub until Applications API support ships."""
 
     def test_map_application_raises_not_implemented(self):
         mapper = ApplicationMapper(client=MagicMock())
         with pytest.raises(NotImplementedError) as exc:
             mapper.map_application({"AppID": "X"})
-        assert "awaiting" in str(exc.value).lower()
+        assert "not implemented" in str(exc.value).lower()
 
     def test_target_record_type_is_documented_placeholder(self):
-        # Forces the implementer to revisit the placeholder rather
-        # than ship 'login' as the default forever.
         assert ApplicationMapper.TARGET_RECORD_TYPE == "login"
-        # If/when this changes, update this test alongside the platform-team confirmation.
 
     def test_field_map_starts_empty(self):
-        # Guard against regressions where someone adds a partial map
-        # without the corresponding NotImplementedError lift.
         assert ApplicationMapper._field_map == {}

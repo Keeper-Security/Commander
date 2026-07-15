@@ -273,13 +273,7 @@ class PAMProjectImportCommand(Command):
             "resources_folder_uid": "",
             "users_folder": f"""{project["options"]["project_name"]} - Users""",
             "users_folder_uid": "",
-            # ``safe_folder_map`` is populated only when project["data"]
-            # includes a non-empty ``safe_folders`` block (CyberArk import
-            # with --folder-mode safe). Maps the folder name emitted on
-            # records as ``folder_path`` -> the freshly created Keeper
-            # shared-folder UID, so process_data can route each record to
-            # the correct per-safe folder. Empty in the legacy two-folder
-            # layout so all existing importers keep their behavior.
+            # CyberArk --folder-mode safe: per-safe folder UID lookup by folder_path.
             "safe_folder_map": {},
             "safe_folders": [],
         }
@@ -387,15 +381,10 @@ class PAMProjectImportCommand(Command):
 
     def _create_safe_folders(self, params, project: dict, project_folder_uid: str,
                              res: dict, safe_folders_def: list) -> None:
-        """Create the per-safe shared folders + the admin-only Config folder.
+        """Create per-safe shared folders and the admin-only Config folder.
 
-        Populates ``res["safe_folder_map"]`` with ``{folder_name: folder_uid}``
-        so process_data can route records by ``folder_path`` to the
-        correct safe folder. The Config folder UID is mirrored into the
-        legacy ``resources_folder_uid`` / ``users_folder_uid`` slots so
-        downstream legacy code (PAM Config record placement, default
-        record routing for records without ``folder_path``, autodetect)
-        keeps working without changes.
+        Fills ``res["safe_folder_map"]`` so process_data can route by ``folder_path``.
+        Config folder UID is also stored in the legacy resources/users slots.
         """
         safe_folder_map: dict = {}
         safe_folder_records: list = []
@@ -1231,13 +1220,7 @@ class PAMProjectImportCommand(Command):
 
         shfres = project["folders"].get("resources_folder_uid", "")
         shfusr = project["folders"].get("users_folder_uid", "")
-        # ``safe_folder_map`` is non-empty only when the import JSON
-        # included a ``safe_folders`` block (CyberArk import w/
-        # --folder-mode safe). Records carrying a ``folder_path`` whose
-        # value matches a key in this map are routed into that per-safe
-        # shared folder instead of the legacy default. Anything without a
-        # match falls through to ``shfres`` / ``shfusr`` exactly as
-        # before, so non-CyberArk imports are unaffected.
+        # Per-safe folder routing (CyberArk --folder-mode safe); empty for legacy layout.
         safe_folder_map = project["folders"].get("safe_folder_map") or {}
 
         def _resolve_folder_uid(obj, default_uid: str) -> str:
@@ -1609,20 +1592,7 @@ class PAMProjectImportCommand(Command):
                             args["on_demand"] = True
                         elif schedule_type_lc == "cron":
                             if user.rotation_settings.schedule.cron:
-                                # ``parse_schedule_data`` (in
-                                # discoveryrotation.py) checks
-                                # ``isinstance(schedule_cron_data, list)``;
-                                # argparse wraps ``-sc`` with
-                                # ``action='append'`` so CLI usage already
-                                # produces a list. Programmatic invocation
-                                # here MUST do the same or the cron
-                                # branch is silently dropped and the
-                                # caller falls back to the PAM Config's
-                                # polluted ``defaultRotationSchedule``
-                                # typed-field (which carries empty
-                                # ``time``/``month`` keys from the
-                                # ``schedule`` field schema and triggers
-                                # a 500 from ``set_record_rotation``).
+                                # Must be a list for parse_schedule_data (CLI uses action=append).
                                 args["schedule_cron_data"] = [user.rotation_settings.schedule.cron]
                             else:
                                 logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")

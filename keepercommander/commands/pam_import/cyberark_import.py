@@ -150,9 +150,6 @@ class ImportRunOptions:
     state_filter: Optional[List[str]]
     include_system_safes: bool
     user_map_file: str
-    # Idempotency: "upsert" (default) creates missing records, updates
-    # changed ones and skips unchanged ones. "create" forces the legacy
-    # always-create behavior — useful only for regression testing.
     sync_mode: str = "upsert"
     raw_kwargs: dict = field(default_factory=dict)
 
@@ -210,13 +207,6 @@ class CyberArkImportOrchestrator:
         if self.options.estimate_only:
             self._print_estimate(len(accounts_by_safe), total_accounts)
             return
-        # Auto-switch to extend mode when the operator asked for a
-        # project that already exists and didn't explicitly pass
-        # --config.  Without this a re-run creates "MyProject #2"
-        # instead of updating "MyProject", which defeats the whole
-        # point of --sync-mode=upsert.  Legacy --sync-mode=create
-        # keeps the old always-create behavior for callers that
-        # actually want a duplicate project.
         self._maybe_auto_extend()
         mapped = self._map_accounts(
             accounts_by_safe, safe_names, master_policy_config, unmapped_items,
@@ -226,12 +216,6 @@ class CyberArkImportOrchestrator:
         validation_warnings = validate_import_data(mapped.pam_resources, mapped.pam_users)
         if validation_warnings:
             self._print_validation_warnings(validation_warnings)
-        # Idempotency scan: if a project with the same name (or the
-        # user-provided --config UID) already exists in the vault,
-        # partition the mapped records into create/update/unchanged
-        # buckets so the second run doesn't duplicate anything. The
-        # scan is skipped for --sync-mode=create (legacy behavior)
-        # and for --dry-run / --output (which never touch the vault).
         idempotency_ctx = self._prepare_idempotency(mapped)
         import_data = self._build_import_payload(
             mapped, safe_member_map, user_team_matcher, master_policy_config,
@@ -1922,8 +1906,6 @@ Examples:
         skip_users = kwargs.get("skip_users", False)
         skip_linked = kwargs.get("skip_linked_accounts", False)
 
-        # All placeholder flags now implemented (Phases 3-5 complete)
-
         batch_size = int(kwargs.get("batch_size") or 100)
         batch_delay = float(kwargs.get("batch_delay") or 0.5)
         platform_map_file = kwargs.get("platform_map", "")
@@ -2224,7 +2206,7 @@ Examples:
   pam project cyberark-cleanup --name "CyberArk Migration" --yes
 
   # Delete by PAM config UID
-  pam project cyberark-cleanup --config VxANFEPLi8E9gdtlDmfBvw --yes
+  pam project cyberark-cleanup --config <PAM_CONFIG_UID> --yes
         ''')
     parser.add_argument("--name", "-n", dest="project_name", action="store",
                         default="", help="Project name (matches PAM config title prefix)")

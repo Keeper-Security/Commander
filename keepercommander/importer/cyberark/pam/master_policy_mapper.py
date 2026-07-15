@@ -87,12 +87,7 @@ class MasterPolicyMapper:
                        "EnforceOnetimePasswordAccess", "enforceOnetimePasswordAccess")
     _AUDIT_RETENTION_RULES = ("RetentionPeriod", "retentionPeriod",
                               "SafeAuditRetention", "safeAuditRetention")
-    # Rotation cadence: PascalCase (PVWA self-hosted), camelCase (ISPSS
-    # /Policies/1), platform-style (Get-Platforms credentialsManagement),
-    # and the *new* short names used by the Privilege Cloud
-    # ``/api/platforms/master-rotation-policy/`` endpoint
-    # (``changeInterval`` / ``verifyInterval`` — confirmed live response,
-    # this is what the Metron tenant returned).
+    # Rotation cadence key aliases across PVWA / Privilege Cloud responses.
     _CHANGE_DAYS_RULES = ("PasswordChangeDays", "passwordChangeDays",
                           "requirePasswordChangeEveryXDays",
                           "RequirePasswordChangeEveryXDays",
