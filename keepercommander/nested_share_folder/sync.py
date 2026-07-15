@@ -189,6 +189,7 @@ def _process_nested_share_folder_sync(params, acc):
     record_links = acc.get('record_links') or []
     removed_record_links = acc.get('removed_record_links') or []
     raw_dag_data = acc.get('raw_dag_data') or []
+    record_rotations = acc.get('record_rotations') or []
 
     _process_users(params, users)
     _process_folders(params, folders)
@@ -204,6 +205,7 @@ def _process_nested_share_folder_sync(params, acc):
     _process_record_accesses(params, record_accesses)
     _process_revoked_record_accesses(params, revoked_record_accesses)
     _process_record_sharing_states(params, record_sharing_states)
+    _process_record_rotations(params, record_rotations)
 
     _process_record_links(params, record_links)
     _process_removed_record_links(params, removed_record_links)
@@ -225,6 +227,13 @@ def _process_users(params, users):
     for user in users:
         account_uid = utils.base64_url_encode(user.accountUid)
         params.user_cache[account_uid] = user.username
+
+
+def _process_record_rotations(params, record_rotations):
+    """Fold NSF ``recordRotationData`` into ``params.record_rotation_cache``."""
+    from .. import vault_extensions
+    for rr in record_rotations:
+        vault_extensions.cache_record_rotation(params, rr)
 
 
 def _process_folders(params, folders):

@@ -137,7 +137,7 @@ class GraphSyncResult(_message.Message):
     syncPoint: int
     data: _containers.RepeatedCompositeFieldContainer[GraphSyncDataPlus]
     hasMore: bool
-    def __init__(self, streamId: _Optional[bytes] = ..., syncPoint: _Optional[int] = ..., data: _Optional[_Iterable[_Union[GraphSyncDataPlus, _Mapping]]] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, streamId: _Optional[bytes] = ..., syncPoint: _Optional[int] = ..., data: _Optional[_Iterable[_Union[GraphSyncDataPlus, _Mapping]]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class GraphSyncMultiQuery(_message.Message):
     __slots__ = ("queries",)

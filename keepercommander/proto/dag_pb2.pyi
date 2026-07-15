@@ -78,7 +78,7 @@ class SyncData(_message.Message):
     data: _containers.RepeatedCompositeFieldContainer[Data]
     syncPoint: int
     hasMore: bool
-    def __init__(self, data: _Optional[_Iterable[_Union[Data, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, data: _Optional[_Iterable[_Union[Data, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class DebugData(_message.Message):
     __slots__ = ("dataType", "path", "ref", "parentRef")

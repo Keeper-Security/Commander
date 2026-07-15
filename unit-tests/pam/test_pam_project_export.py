@@ -22,6 +22,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import keepercommander.commands.record  # noqa: F401
+
 from keepercommander import vault
 
 # ── record builders ────────────────────────────────────────────────────────
@@ -122,8 +124,9 @@ class TestPAMProjectExportCommand(unittest.TestCase):
         self.params.record_cache = {uid: {} for uid in _RECORDS}
 
     def _execute(self, project_uid=CONFIG_UID, output=None):
-        """Run execute() with vault.KeeperRecord.load mocked."""
-        with patch("keepercommander.vault.KeeperRecord.load", side_effect=_fake_load):
+        """Run execute() with load_pam_record mocked."""
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=_fake_load):
             with patch.object(self.cmd, "_get_allowed_settings",
                               return_value=dict(_DEFAULT_ALLOWED)):
                 kwargs = {"project_uid": project_uid}
@@ -242,12 +245,14 @@ class TestPAMProjectExportCommand(unittest.TestCase):
     # ── error handling ───────────────────────────────────────────
 
     def test_missing_project_uid_returns_none(self):
-        with patch("keepercommander.vault.KeeperRecord.load", side_effect=_fake_load):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=_fake_load):
             result = self.cmd.execute(self.params, project_uid="", output=None)
         self.assertIsNone(result)
 
     def test_unknown_uid_returns_none(self):
-        with patch("keepercommander.vault.KeeperRecord.load", return_value=None):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   return_value=None):
             result = self.cmd.execute(self.params, project_uid="unknown-uid", output=None)
         self.assertIsNone(result)
 
@@ -256,7 +261,8 @@ class TestPAMProjectExportCommand(unittest.TestCase):
         v3_rec.type_name = "pamMachine"
         v3_rec.title = "some"
         v3_rec.record_uid = "some-uid"
-        with patch("keepercommander.vault.KeeperRecord.load", return_value=v3_rec):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   return_value=v3_rec):
             result = self.cmd.execute(self.params, project_uid="some-uid", output=None)
         self.assertIsNone(result)
 
@@ -334,7 +340,8 @@ class TestKCMImportRoundTrip(unittest.TestCase):
     def _execute(self):
         def _load(_p, uid):
             return self.records.get(uid)
-        with patch("keepercommander.vault.KeeperRecord.load", side_effect=_load):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=_load):
             with patch.object(self.cmd, "_get_allowed_settings",
                               return_value=dict(_DEFAULT_ALLOWED)):
                 return self.cmd.execute(self.params, project_uid=self.KCM_CFG)
@@ -383,6 +390,87 @@ class TestKCMImportRoundTrip(unittest.TestCase):
         users = parsed["pam_data"]["resources"][0]["users"]
         self.assertEqual(len(users), 1)
         self.assertEqual(users[0]["uid"], uid_22)
+
+
+class TestPAMProjectExportNSF(unittest.TestCase):
+    """Export must resolve records stored only in NSF caches (not record_cache)."""
+
+    NSF_CFG = "nsf-cfg-001"
+    NSF_MACHINE = "nsf-res-machine"
+    NSF_USER = "nsf-usr-admin"
+
+    def setUp(self):
+        from keepercommander.commands.pam_import.export import PAMProjectExportCommand
+        self.cmd = PAMProjectExportCommand()
+        self.params = MagicMock()
+        self.params.record_cache = {}
+        self.params.nested_share_records = {
+            self.NSF_CFG: {"record_uid": self.NSF_CFG, "version": 6, "revision": 1},
+            self.NSF_MACHINE: {"record_uid": self.NSF_MACHINE, "version": 3, "revision": 1},
+            self.NSF_USER: {"record_uid": self.NSF_USER, "version": 3, "revision": 1},
+        }
+        self.params.nested_share_record_data = {
+            self.NSF_CFG: {
+                "record_uid": self.NSF_CFG,
+                "data_json": {
+                    "title": "NSF PAM Project",
+                    "type": "pamNetworkConfiguration",
+                    "fields": [{
+                        "type": "pamResources",
+                        "value": [{
+                            "controllerUid": "gw-nsf",
+                            "folderUid": "sf-nsf",
+                            "resourceRef": [self.NSF_MACHINE],
+                        }],
+                    }],
+                },
+            },
+            self.NSF_MACHINE: {
+                "record_uid": self.NSF_MACHINE,
+                "data_json": {
+                    "title": "NSF Linux Server",
+                    "type": "pamMachine",
+                    "fields": [{
+                        "type": "pamSettings",
+                        "value": [{
+                            "connection": {
+                                "userRecords": [self.NSF_USER],
+                                "protocol": "ssh",
+                            },
+                        }],
+                    }],
+                },
+            },
+            self.NSF_USER: {
+                "record_uid": self.NSF_USER,
+                "data_json": {
+                    "title": "NSF Admin",
+                    "type": "pamUser",
+                    "fields": [{"type": "login", "value": ["root"]}],
+                },
+            },
+        }
+
+    def _execute(self):
+        with patch.object(self.cmd, "_get_allowed_settings",
+                          return_value=dict(_DEFAULT_ALLOWED)):
+            return self.cmd.execute(self.params, project_uid=self.NSF_CFG)
+
+    def test_nsf_config_export_succeeds(self):
+        parsed = json.loads(self._execute())
+        self.assertEqual(parsed["project"], "NSF PAM Project")
+        self.assertEqual(parsed["pam_configuration"]["environment"], "local")
+
+    def test_nsf_resources_and_users_exported(self):
+        parsed = json.loads(self._execute())
+        self.assertEqual(len(parsed["pam_data"]["resources"]), 1)
+        res = parsed["pam_data"]["resources"][0]
+        self.assertEqual(res["uid"], self.NSF_MACHINE)
+        self.assertEqual(res["type"], "pamMachine")
+        self.assertEqual(len(res["users"]), 1)
+        self.assertEqual(res["users"][0]["uid"], self.NSF_USER)
+        self.assertEqual(len(parsed["pam_data"]["users"]), 1)
+        self.assertEqual(parsed["pam_data"]["users"][0]["login"], "root")
 
 
 if __name__ == "__main__":

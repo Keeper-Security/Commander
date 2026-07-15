@@ -97,7 +97,12 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
                 return
 
         with command_error_handler('nsf-record-add'):
-            result = _nsf.create_record_v3(params=params, folder_uid=folder_uid, record_data=data)
+            result = _nsf.create_record_v3(
+                params=params,
+                folder_uid=folder_uid,
+                record_data=data,
+                record_uid=kwargs.get('record_uid'),
+            )
             check_result(result, 'nsf-record-add')
             params.sync_data = True
             return result['record_uid']

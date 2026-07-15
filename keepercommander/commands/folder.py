@@ -899,13 +899,13 @@ class FolderMoveCommand(Command):
 
                 if src_folder.type == BaseFolderNode.NestedShareFolderType:
                     if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                        raise CommandError('mv', 'Drive folders cannot be moved inside a Shared folder.')
-                    raise CommandError('mv', 'Moving drive folders is currently not supported.')
+                        raise CommandError('mv', 'Nested Share Folders cannot be moved inside a Shared folder.')
+                    raise CommandError('mv', 'Moving Nested Share Folders is currently not supported.')
 
                 if dst_folder.type == BaseFolderNode.NestedShareFolderType:
                     if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                        raise CommandError('mv', 'Shared folders cannot be moved inside a drive folder.')
-                    raise CommandError('mv', 'Folders cannot be moved inside a drive folder.')
+                        raise CommandError('mv', 'Shared folders cannot be moved inside a Nested Share Folder.')
+                    raise CommandError('mv', 'Folders cannot be moved inside a Nested Share Folder.')
 
                 dp = set()
                 f = dst_folder
@@ -949,7 +949,7 @@ class FolderMoveCommand(Command):
 
             else:
                 if src_folder.type == BaseFolderNode.NestedShareFolderType:
-                    raise CommandError('mv', 'Moving drive records is currently not supported.')
+                    raise CommandError('mv', 'Moving Nested Share Folder records is currently not supported.')
 
                 if record_uid in getattr(params, 'nested_share_records', {}) \
                         and dst_folder.type != BaseFolderNode.NestedShareFolderType:
