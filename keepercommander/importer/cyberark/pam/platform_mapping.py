@@ -17,13 +17,13 @@ from .constants import FALLBACK_PLATFORM_MAP
 _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
     # Databases first (most specific). pam_settings.connection.protocol accepts
     # sql-server, postgresql, mysql; Oracle/MongoDB use protocol=None.
-    ("oracle",     {"record_type": "pamDatabase", "rotation": "general", "protocol": None,         "port": "1521",  "database_type": "oracle"}),
+    ("oracle",     {"record_type": "pamDatabase", "rotation": "general", "protocol": "oracle",         "port": "1521",  "database_type": "oracle"}),
     ("postgres",   {"record_type": "pamDatabase", "rotation": "general", "protocol": "postgresql", "port": "5432",  "database_type": "postgresql"}),
     ("mysql",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "mysql",      "port": "3306",  "database_type": "mysql"}),
     ("mariadb",    {"record_type": "pamDatabase", "rotation": "general", "protocol": "mysql",      "port": "3306",  "database_type": "mariadb"}),
     ("mssql",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
     ("sqlserver",  {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
-    ("mongo",      {"record_type": "pamDatabase", "rotation": "general", "protocol": None,         "port": "27017", "database_type": "mongodb"}),
+    ("mongo",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "mongodb",         "port": "27017", "database_type": "mongodb"}),
     # Windows (RDP)
     ("windomain",  {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),
     ("windows",    {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),
