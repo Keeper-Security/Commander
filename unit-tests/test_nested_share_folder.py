@@ -1363,7 +1363,7 @@ class TestNestedShareFolderDisplayCommands(TestCase):
     def test_get_record_access(self, mock_accesses):
         pass
 
-    @patch('keepercommander.nested_share_folder.folder_api.get_folder_access_v3')
+    @patch('keepercommander.nested_share_folder.get_folder_access_v3')
     def test_folder_json_uses_team_name_in_team_permissions(self, mock_access):
         """nsf-get JSON should show team names, not team UIDs, in team_permissions."""
         from keepercommander.commands.nested_share_folder.display_commands import NestedShareGetCommand
