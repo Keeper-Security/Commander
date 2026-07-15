@@ -70,7 +70,7 @@ from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
 from ..pam.config_helper import configuration_controller_get
-from ..pam.vault_target import is_nested_share_folder
+from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record, update_pam_record
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
@@ -1258,11 +1258,12 @@ class PAMProjectExtendCommand(Command):
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
         if not is_shared_folder:
             for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
-                if nsf.get('parent_uid') == puid and nsf.get('name') == folder:
+                nsf_parent = nsf.get('parent_uid') or None
+                if nsf_parent == puid and nsf.get('name') == folder:
                     result.append(SimpleNamespace(
                         uid=uid,
                         name=nsf.get('name'),
-                        parent_uid=nsf.get('parent_uid'),
+                        parent_uid=nsf_parent,
                         type=BaseFolderNode.UserFolderType,
                         UserFolderType=BaseFolderNode.UserFolderType,
                         SharedFolderType=BaseFolderNode.SharedFolderType,
@@ -1567,7 +1568,18 @@ class PAMProjectExtendCommand(Command):
                         prf.value = prf.value or [{}]
                         if isinstance(prf.value[0], dict):
                             prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
-                            record_management.update_record(params, pcrec)
+                            # NSF PAM configs live under NSF folders; classic still use record_management.
+                            force_nsf = is_pam_nsf_record(params, pcuid)
+                            if not force_nsf:
+                                for folder_uid in find_record_folders(params, pcuid):
+                                    if is_nested_share_folder(params, folder_uid):
+                                        force_nsf = True
+                                        break
+                            if force_nsf:
+                                update_pam_record(
+                                    params, pcrec, command='pam-project-extend', force_nsf=True)
+                            else:
+                                record_management.update_record(params, pcrec)
                             tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin="on")
                         else:
                             logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")

@@ -50,7 +50,13 @@ from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
 from ..pam.config_helper import pam_configurations_get_all
-from ..pam.vault_target import execute_record_v3_add_in_folder, grant_pam_folder_permissions, is_nested_share_folder
+from ..pam.vault_target import (
+    execute_record_v3_add_in_folder,
+    grant_pam_folder_permissions,
+    is_nested_share_folder,
+    is_pam_nsf_record,
+    update_pam_record,
+)
 from ..record_edit import RecordUploadAttachmentCommand
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
@@ -320,7 +326,11 @@ class PAMProjectImportCommand(Command):
                 print(f"""Will create new {"NSF " if use_nsf else ""}PAM root folder: {res["root_folder_target"]}""")
             print(f"""Will create new {"NSF " if use_nsf else ""}Project folder: {res["project_folder"]}""")
         else:
-            api.sync_down(params)
+            if use_nsf:
+                from .nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
+            else:
+                api.sync_down(params)
 
         return res
 
@@ -357,20 +367,30 @@ class PAMProjectImportCommand(Command):
             print(f"""Will create new KSM application: {res["app_name"]}""")
             return res
 
-        # Create KSM App
+        # Create KSM App and share Resources/Users folders (classic SF or NSF).
+        # KSMCommand routes NSF folder UIDs through grant_folder_access_to_application_v3.
+        use_nsf = project["options"].get("use_nsf", False) is True
+        from .nsf_helpers import restore_nsf_folder_keys, snapshot_nsf_folder_keys, sync_down_preserving_nsf_keys
+        preserved = snapshot_nsf_folder_keys(params) if use_nsf else None
         res["app_uid"] = self.create_ksm_app(params, res["app_name"])
+        if preserved is not None:
+            # create_ksm_app sync_down clears NSF caches; restore before NSF secret share.
+            restore_nsf_folder_keys(params, preserved)
         for sf_uid in [project["folders"].get("resources_folder_uid", ""),
                        project["folders"].get("users_folder_uid", "")]:
             if sf_uid.strip():
-                if is_nested_share_folder(params, sf_uid):
-                    logging.info("Skipping KSM application share for Nested Share Folder %s", sf_uid)
-                    continue
                 KSMCommand().execute(params,
                                      command=("secret", "add"),
                                      app=res["app_uid"],
                                      secret=[sf_uid], editable=True)
 
-        api.sync_down(params)
+        if use_nsf or any(is_nested_share_folder(params, uid)
+                          for uid in (project["folders"].get("resources_folder_uid", ""),
+                                      project["folders"].get("users_folder_uid", ""))
+                          if uid):
+            sync_down_preserving_nsf_keys(params)
+        else:
+            api.sync_down(params)
         return res
 
     def process_gateway(self, params, project: dict) -> dict:
@@ -401,6 +421,9 @@ class PAMProjectImportCommand(Command):
             return res
 
         # Create new Gateway - PAMCreateGatewayCommand()
+        use_nsf = project["options"].get("use_nsf", False) is True
+        from .nsf_helpers import restore_nsf_folder_keys, snapshot_nsf_folder_keys, sync_down_preserving_nsf_keys
+        preserved = snapshot_nsf_folder_keys(params) if use_nsf else None
         output_fmt = project["options"]["output"]
         token_format = None if output_fmt == "token" else ("k8s" if output_fmt == "k8s" else "b64")
         ksm_app_uid = project["ksm_app"]["app_uid"]
@@ -409,6 +432,8 @@ class PAMProjectImportCommand(Command):
             gateway_name=res["gateway_name"],
             ksm_app=ksm_app_uid,
             config_init=token_format)
+        if preserved is not None:
+            restore_nsf_folder_keys(params, preserved)
 
         if token_format is None:
             res["gateway_token"] = gw[0].get("oneTimeToken", "") if gw else ""  # OTT
@@ -427,7 +452,10 @@ class PAMProjectImportCommand(Command):
         res["gateway_uid"] = utils.base64_url_encode(gw_names[0]) if gw_names else ""
         # gateway_helper.remove_gateway(params, utils.base64_url_decode(res["gateway_uid"]))
 
-        api.sync_down(params)
+        if use_nsf:
+            sync_down_preserving_nsf_keys(params)
+        else:
+            api.sync_down(params)
         return res
 
     def process_pam_config(self, params, project: dict) -> dict:
@@ -443,10 +471,18 @@ class PAMProjectImportCommand(Command):
         if not res["pam_config_name_target"]:
             res["pam_config_name_target"] = project["options"]["project_name"] + " Configuration"
 
-        # Find unique PAM Configuration name
+        # Find unique PAM Configuration name (classic record_cache + NSF caches)
         n = 1
         pams = pam_configurations_get_all(params)
-        pam_names = [json.loads(x.get("data_unencrypted", "{}")).get("title", "") for x in pams]
+        pam_names = {json.loads(x.get("data_unencrypted", "{}")).get("title", "") for x in pams}
+        for uid, nsf_rec in (getattr(params, 'nested_share_records', None) or {}).items():
+            if nsf_rec.get('version') != 6:
+                continue
+            dj = ((getattr(params, 'nested_share_record_data', None) or {})
+                  .get(uid, {}).get('data_json') or {})
+            title = dj.get('title') or ''
+            if title:
+                pam_names.add(title)
         pam_name = res["pam_config_name_target"]
         while pam_name in pam_names:
             n += 1
@@ -548,7 +584,12 @@ class PAMProjectImportCommand(Command):
             if pce.default_rotation_schedule: args["default_schedule"] = pce.default_rotation_schedule
 
         res["pam_config_uid"] = PAMConfigurationNewCommand().execute(params, **args)
-        api.sync_down(params)
+        users_folder_uid = project["folders"].get("users_folder_uid", "")
+        if project["options"].get("use_nsf", False) is True or is_nested_share_folder(params, users_folder_uid):
+            from .nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
+        else:
+            api.sync_down(params)
 
         # add scripts and attachments after record create
         if pce.attachments:
@@ -1278,6 +1319,7 @@ class PAMProjectImportCommand(Command):
 
         name = str(folder_name or "").strip()
         if use_nsf or is_nested_share_folder(params, parent_uid):
+            from .nsf_helpers import seed_nsf_folder_cache, sync_down_preserving_nsf_keys
             from ...nested_share_folder.folder_api import create_folder_v3
             result = create_folder_v3(params, name, parent_uid=parent_uid or None)
             if isinstance(result, dict) and result.get('success') is False:
@@ -1285,7 +1327,9 @@ class PAMProjectImportCommand(Command):
             folder_uid = result.get('folder_uid') if isinstance(result, dict) else None
             if not folder_uid:
                 raise CommandError("pam", f'Nested Share Folder creation did not return UID: {name}')
-            api.sync_down(params)
+            folder_key = result.get('folder_key_unencrypted') if isinstance(result, dict) else None
+            seed_nsf_folder_cache(params, folder_uid, name, parent_uid or None, folder_key)
+            sync_down_preserving_nsf_keys(params)
             params.environment_variables[LAST_FOLDER_UID] = folder_uid
             return folder_uid
 
@@ -1362,11 +1406,12 @@ class PAMProjectImportCommand(Command):
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
         if not is_shared_folder:
             for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
-                if nsf.get('parent_uid') == puid and nsf.get('name') == folder:
+                nsf_parent = nsf.get('parent_uid') or None
+                if nsf_parent == puid and nsf.get('name') == folder:
                     nsf_folder = NestedShareFolderNode()
                     nsf_folder.uid = uid
                     nsf_folder.name = nsf.get('name')
-                    nsf_folder.parent_uid = nsf.get('parent_uid')
+                    nsf_folder.parent_uid = nsf_parent
                     result.append(nsf_folder)
         return result
 
@@ -1868,8 +1913,9 @@ class PAMProjectImportCommand(Command):
         # PAM Domain Config - update domain admin creds
         if pce and pce.environment == "domain":
             if pce.admin_credential_ref:
+                from .record_loader import load_pam_record
                 pcuid = project["pam_config"].get("pam_config_uid")
-                pcrec = vault.KeeperRecord.load(params, pcuid) if pcuid else None
+                pcrec = load_pam_record(params, pcuid) if pcuid else None
                 if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
                     if pcrec.record_type == "pamDomainConfiguration":
                         prf = pcrec.get_typed_field('pamResources')
@@ -1879,7 +1925,17 @@ class PAMProjectImportCommand(Command):
                         prf.value = prf.value or [{}]
                         if isinstance(prf.value[0], dict):
                             prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
-                            record_management.update_record(params, pcrec)
+                            users_folder_uid = (project.get("folders") or {}).get("users_folder_uid", "")
+                            force_nsf = (
+                                project["options"].get("use_nsf", False) is True
+                                or is_nested_share_folder(params, users_folder_uid)
+                                or is_pam_nsf_record(params, pcuid)
+                            )
+                            if force_nsf:
+                                update_pam_record(
+                                    params, pcrec, command='pam-project-import', force_nsf=True)
+                            else:
+                                record_management.update_record(params, pcrec)
                             tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin='on')
                         else:
                             logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")

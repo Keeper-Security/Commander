@@ -177,6 +177,98 @@ def get_records_in_folder(params, folder_uid: str) -> list:
     return result
 
 
+def snapshot_nsf_folder_keys(params) -> dict:
+    out = {}
+    for uid, info in (getattr(params, 'nested_share_folders', None) or {}).items():
+        key = info.get('folder_key_unencrypted') if isinstance(info, dict) else None
+        if not key:
+            continue
+        out[uid] = {
+            'name': info.get('name') or uid,
+            'parent_uid': info.get('parent_uid'),
+            'folder_key_unencrypted': key,
+        }
+    return out
+
+
+def restore_nsf_folder_keys(params, snapshot: Optional[dict]) -> None:
+    for uid, info in (snapshot or {}).items():
+        seed_nsf_folder_cache(
+            params,
+            uid,
+            info.get('name') or uid,
+            info.get('parent_uid'),
+            info.get('folder_key_unencrypted'),
+        )
+
+
+def sync_down_preserving_nsf_keys(params) -> None:
+    preserved = snapshot_nsf_folder_keys(params)
+    api.sync_down(params)
+    restore_nsf_folder_keys(params, preserved)
+
+
+def seed_nsf_folder_cache(params, folder_uid: str, name: str,
+                          parent_uid: Optional[str] = None,
+                          folder_key: Optional[bytes] = None) -> None:
+    """Keep local NSF caches consistent right after folder creation.
+    """
+    if not folder_uid:
+        return
+
+    normalized_parent = parent_uid or None
+    nsf = getattr(params, 'nested_share_folders', None)
+    if nsf is None:
+        params.nested_share_folders = {}
+        nsf = params.nested_share_folders
+    entry = dict(nsf.get(folder_uid) or {})
+    entry['name'] = name
+    entry['parent_uid'] = normalized_parent
+    if folder_key:
+        entry['folder_key_unencrypted'] = folder_key
+    nsf[folder_uid] = entry
+
+    subfolder_cache = getattr(params, 'subfolder_cache', None)
+    if subfolder_cache is None:
+        params.subfolder_cache = {}
+        subfolder_cache = params.subfolder_cache
+    sf_entry = dict(subfolder_cache.get(folder_uid) or {})
+    sf_entry.update({
+        'folder_uid': folder_uid,
+        'type': 'user_folder',
+        'name': name,
+        'parent_uid': normalized_parent,
+        'source': 'nested_share_folder',
+    })
+    if folder_key:
+        sf_entry['folder_key_unencrypted'] = folder_key
+    subfolder_cache[folder_uid] = sf_entry
+
+    # Folder nodes used by find_folders / NSF project discovery.
+    from ...subfolder import NestedShareFolderNode
+    folder_cache = getattr(params, 'folder_cache', None)
+    if isinstance(folder_cache, dict):
+        node = folder_cache.get(folder_uid)
+        if not isinstance(node, NestedShareFolderNode):
+            node = NestedShareFolderNode()
+            node.uid = folder_uid
+            node.subfolders = []
+            folder_cache[folder_uid] = node
+        node.name = name
+        node.parent_uid = normalized_parent
+        if normalized_parent and normalized_parent in folder_cache:
+            parent = folder_cache[normalized_parent]
+            kids = getattr(parent, 'subfolders', None)
+            if kids is None:
+                parent.subfolders = [folder_uid]
+            elif folder_uid not in kids:
+                kids.append(folder_uid)
+
+    env = getattr(params, 'environment_variables', None)
+    if isinstance(env, dict):
+        env['last_folder_uid'] = folder_uid
+
+
 def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
                          folder_uid: Optional[str] = None) -> str:
     """Create an NSF subfolder; returns folder UID."""
@@ -210,24 +302,7 @@ def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
             'message': r.message,
         }, 'pam project extend')
 
-    nsf = getattr(params, 'nested_share_folders', None)
-    if nsf is not None:
-        entry = {'name': name, 'parent_uid': parent_uid or ''}
-        if folder_key:
-            entry['folder_key_unencrypted'] = folder_key
-        nsf[folder_uid] = entry
-    subfolder_cache = getattr(params, 'subfolder_cache', None)
-    if subfolder_cache is not None:
-        subfolder_cache[folder_uid] = {
-            'folder_uid': folder_uid,
-            'type': 'user_folder',
-            'name': name,
-            'parent_uid': parent_uid or '',
-            'source': 'nested_share_folder',
-        }
-        if folder_key:
-            subfolder_cache[folder_uid]['folder_key_unencrypted'] = folder_key
-    params.environment_variables['last_folder_uid'] = folder_uid
+    seed_nsf_folder_cache(params, folder_uid, name, parent_uid, folder_key)
     return folder_uid
 
 

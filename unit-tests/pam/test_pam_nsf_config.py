@@ -89,7 +89,7 @@ class TestPamVaultTarget(unittest.TestCase):
 
         mock_add_record.assert_called_once_with(params, record, 'legacy_folder')
 
-    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down')
     @mock.patch('keepercommander.nested_share_folder.record_api.create_record_v3',
                 return_value={'success': True, 'record_uid': 'nsf_record_uid'})
     @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
@@ -139,7 +139,7 @@ class TestPamVaultTarget(unittest.TestCase):
             {'legacy_rec_uid', 'nsf_rec_uid'},
         )
 
-    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down')
     @mock.patch('keepercommander.commands.pam.config_helper.pam_configuration_create_record_nsf')
     def test_create_pam_configuration_in_folder_uses_add_pam_configuration_for_nsf(
             self, mock_create_nsf, mock_sync):

@@ -521,7 +521,8 @@ def create_record_in_folder(params, record, folder_uid=None, command='pam'):
             raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
                                'Failed to create record in Nested Share Folder')
         record.record_uid = result['record_uid']
-        api.sync_down(params)
+        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+        sync_down_preserving_nsf_keys(params)
     else:
         record_management.add_record_to_folder(params, record, folder_uid)
 
@@ -532,7 +533,8 @@ def create_pam_configuration_in_folder(params, record, folder_uid, command='pam-
 
     if is_nested_share_folder(params, folder_uid):
         pam_configuration_create_record_nsf(params, record, folder_uid)
-        api.sync_down(params)
+        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+        sync_down_preserving_nsf_keys(params)
         return
 
     pam_configuration_create_record_v6(params, record, folder_uid)
@@ -540,11 +542,32 @@ def create_pam_configuration_in_folder(params, record, folder_uid, command='pam-
     place_record_in_folder(params, record.record_uid, folder_uid, command=command)
 
 
-def update_pam_record(params, record, command='pam'):
-    from ..nested_share_folder.helpers import is_nested_share_record, normalize_nsf_user_message
+def is_pam_nsf_record(params, record_uid):
+    """Return True when a PAM record lives in NSF caches or an NSF folder."""
+    if not record_uid:
+        return False
+    if record_uid in (getattr(params, 'nested_share_records', None) or {}):
+        return True
+    if record_uid in (getattr(params, 'nested_share_record_data', None) or {}):
+        return True
+    try:
+        from ...subfolder import find_folders
+        for folder_uid in find_folders(params, record_uid):
+            if is_nested_share_folder(params, folder_uid):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def update_pam_record(params, record, command='pam', force_nsf=False):
+    """Update a PAM record via NSF v3 API or classic record_management.
+    """
+    from ..nested_share_folder.helpers import normalize_nsf_user_message
     from ...nested_share_folder.record_api import update_record_v3
 
-    if is_nested_share_record(params, record.record_uid):
+    use_nsf = force_nsf or is_pam_nsf_record(params, getattr(record, 'record_uid', None))
+    if use_nsf:
         if not isinstance(record, vault.TypedRecord):
             raise CommandError(command, 'Nested Share Folder record update requires a typed record')
 
@@ -556,7 +579,8 @@ def update_pam_record(params, record, command='pam'):
         if not result.get('success'):
             raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
                                'Failed to update record in Nested Share Folder')
-        api.sync_down(params)
+        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+        sync_down_preserving_nsf_keys(params)
     else:
         record_management.update_record(params, record)
 
@@ -573,7 +597,8 @@ def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
         nsf_args['folder_uid'] = folder_uid
         uid = NestedShareRecordAddCommand().execute(params, **nsf_args)
         if uid:
-            api.sync_down(params)
+            from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
         return uid
 
     record_args['folder'] = folder_uid
@@ -604,7 +629,8 @@ def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam'):
         if not result.get('success'):
             raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
                                'Failed to create record in Nested Share Folder')
-        api.sync_down(params)
+        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+        sync_down_preserving_nsf_keys(params)
         return result['record_uid']
 
     record_args['folder'] = folder_uid

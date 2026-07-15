@@ -39,7 +39,7 @@ def test_record_add_helper_creates_natively_in_nsf_folder():
     }
 
     with patch('keepercommander.commands.nested_share_folder.record_commands.NestedShareRecordAddCommand') as nsf_add, \
-            patch('keepercommander.commands.pam.vault_target.api.sync_down') as sync_down:
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down') as sync_down:
         nsf_add.return_value.execute.return_value = 'record_uid'
 
         uid = execute_record_add_in_folder(params, args, 'root_nsf', command='pam-project-import')
@@ -62,7 +62,7 @@ def test_record_v3_add_helper_creates_natively_in_nsf_folder():
 
     with patch('keepercommander.nested_share_folder.record_api.create_record_v3',
                return_value={'success': True, 'record_uid': 'record_uid'}) as create_record, \
-            patch('keepercommander.commands.pam.vault_target.api.sync_down'):
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'):
         uid = execute_record_v3_add_in_folder(params, args, 'root_nsf', command='pam-project-import')
 
     assert uid == 'record_uid'
@@ -115,11 +115,17 @@ def test_process_folders_uses_existing_nsf_root_and_creates_nsf_children():
         params_arg.nested_share_folders[uid] = {
             'name': folder_name,
             'parent_uid': parent_uid,
+            'folder_key_unencrypted': b'k' * 32,
         }
-        return {'success': True, 'folder_uid': uid}
+        return {
+            'success': True,
+            'folder_uid': uid,
+            'folder_key_unencrypted': b'k' * 32,
+        }
 
     with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
                side_effect=create_folder) as create_folder_v3, \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
             patch('keepercommander.commands.pam_import.edit.api.sync_down'):
         result = PAMProjectImportCommand().process_folders(params, project)
 
@@ -133,6 +139,7 @@ def test_process_folders_uses_existing_nsf_root_and_creates_nsf_children():
         ('Project 1 - Resources', 'nsf_1', 'nsf_2'),
         ('Project 1 - Users', 'nsf_1', 'nsf_3'),
     ]
+    assert params.nested_share_folders['nsf_3']['folder_key_unencrypted'] == b'k' * 32
 
 
 def test_process_folders_with_nsf_flag_ignores_legacy_root_folder():
@@ -162,11 +169,17 @@ def test_process_folders_with_nsf_flag_ignores_legacy_root_folder():
         params_arg.nested_share_folders[uid] = {
             'name': folder_name,
             'parent_uid': parent_uid,
+            'folder_key_unencrypted': b'k' * 32,
         }
-        return {'success': True, 'folder_uid': uid}
+        return {
+            'success': True,
+            'folder_uid': uid,
+            'folder_key_unencrypted': b'k' * 32,
+        }
 
     with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
                side_effect=create_folder), \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
             patch('keepercommander.commands.pam_import.edit.api.sync_down'):
         result = PAMProjectImportCommand().process_folders(params, project)
 
@@ -200,3 +213,118 @@ def test_nsf_folder_permissions_route_to_grant_folder_access():
         role='full-manager',
         as_team=False,
     )
+
+
+def test_create_subfolder_seeds_folder_key_and_survives_sync_wipe():
+    params = _params()
+    folder_key = b'f' * 32
+
+    def create_folder(_params, folder_name, parent_uid=None):
+        return {
+            'success': True,
+            'folder_uid': 'new_nsf',
+            'folder_key_unencrypted': folder_key,
+        }
+
+    def wipe_nsf(_params):
+        _params.nested_share_folders.clear()
+
+    with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
+               side_effect=create_folder), \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down',
+                  side_effect=wipe_nsf):
+        uid = PAMProjectImportCommand().create_subfolder(
+            params, 'Child', parent_uid='root_nsf', use_nsf=True)
+
+    assert uid == 'new_nsf'
+    assert params.nested_share_folders['new_nsf']['folder_key_unencrypted'] == folder_key
+    assert params.nested_share_folders['new_nsf']['parent_uid'] == 'root_nsf'
+    assert params.subfolder_cache['new_nsf']['source'] == 'nested_share_folder'
+
+
+def test_process_pam_config_uses_nsf_create_endpoint_for_nsf_users_folder():
+    params = _params()
+    params.nested_share_folders['users_nsf'] = {
+        'name': 'Project - Users',
+        'parent_uid': 'root_nsf',
+        'folder_key_unencrypted': b'k' * 32,
+    }
+    params.nested_share_records = {}
+    params.nested_share_record_data = {}
+    project = {
+        'options': {
+            'project_name': 'NSF Config Project',
+            'dry_run': False,
+            'use_nsf': True,
+            'sample_data': False,
+            'output': 'base64',
+        },
+        'data': {
+            'pam_configuration': {
+                'environment': 'local',
+                'title': 'NSF Config Project Configuration',
+                'connections': 'on',
+                'rotation': 'on',
+                'tunneling': 'on',
+                'remote_browser_isolation': 'on',
+                'graphical_session_recording': 'off',
+                'text_session_recording': 'off',
+                'ai_threat_detection': 'off',
+                'ai_terminate_session_on_detection': 'off',
+            }
+        },
+        'folders': {'users_folder_uid': 'users_nsf'},
+        'gateway': {'gateway_uid': 'gw-uid'},
+        'ksm_app': {'app_uid': 'app-uid'},
+    }
+
+    with patch('keepercommander.commands.pam_import.edit.pam_configurations_get_all',
+               return_value=[]), \
+            patch('keepercommander.commands.discoveryrotation.PAMConfigurationNewCommand') as new_cmd, \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
+            patch('keepercommander.commands.pam_import.edit.api.sync_down'):
+        new_cmd.return_value.execute.return_value = 'cfg-uid'
+        result = PAMProjectImportCommand().process_pam_config(params, project)
+
+    assert result['pam_config_uid'] == 'cfg-uid'
+    kwargs = new_cmd.return_value.execute.call_args.kwargs
+    assert kwargs['shared_folder_uid'] == 'users_nsf'
+
+
+def test_process_ksm_app_shares_nsf_folders_and_restores_keys():
+    from unittest.mock import MagicMock
+
+    params = _params()
+    params.nested_share_folders['res_nsf'] = {
+        'name': 'Res', 'parent_uid': 'root_nsf', 'folder_key_unencrypted': b'k' * 32,
+    }
+    params.nested_share_folders['usr_nsf'] = {
+        'name': 'Users', 'parent_uid': 'root_nsf', 'folder_key_unencrypted': b'k' * 32,
+    }
+    project = {
+        'options': {'project_name': 'NSF App', 'dry_run': False, 'use_nsf': True},
+        'data': {},
+        'folders': {
+            'resources_folder_uid': 'res_nsf',
+            'users_folder_uid': 'usr_nsf',
+        },
+    }
+
+    def wipe_then_return(_params, _name):
+        _params.nested_share_folders.clear()
+        return 'app_uid'
+
+    with patch('keepercommander.commands.pam_import.edit.api.communicate_rest') as communicate, \
+            patch.object(PAMProjectImportCommand, 'create_ksm_app', side_effect=wipe_then_return), \
+            patch('keepercommander.commands.pam_import.edit.KSMCommand') as ksm_cmd, \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
+            patch('keepercommander.commands.pam_import.edit.api.sync_down'):
+        communicate.return_value = MagicMock(applicationSummary=[])
+        result = PAMProjectImportCommand().process_ksm_app(params, project)
+
+    assert result['app_uid'] == 'app_uid'
+    assert ksm_cmd.return_value.execute.call_count == 2
+    shared = [c.kwargs.get('secret') for c in ksm_cmd.return_value.execute.call_args_list]
+    assert ['res_nsf'] in shared
+    assert ['usr_nsf'] in shared
+    assert params.nested_share_folders['res_nsf']['folder_key_unencrypted'] == b'k' * 32

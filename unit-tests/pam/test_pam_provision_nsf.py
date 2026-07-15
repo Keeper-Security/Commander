@@ -104,7 +104,7 @@ class TestPamProvisionNsf(unittest.TestCase):
         self.assertEqual(mock_create.call_args.args[2], 'nsf_users_uid')
         self.assertEqual(mock_create.call_args.kwargs['command'], 'credential-provision')
 
-    @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
+    @mock.patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down')
     @mock.patch('keepercommander.nested_share_folder.record_api.create_record_v3',
                 return_value={'success': True, 'record_uid': 'nsf_record_uid'})
     @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
