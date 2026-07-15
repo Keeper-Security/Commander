@@ -139,6 +139,7 @@ class EnterpriseCommand(Command):
     def change_role_teams(params, roles, add_team, remove_team):
         """Change enterprise role teams"""
         update_msgs = []
+        blocked_admin_assignment = False
         add_teams = None
         remove_teams = None
         team_changes = {}
@@ -171,6 +172,7 @@ class EnterpriseCommand(Command):
 
                 if is_managed_role:
                     logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                    blocked_admin_assignment = True
                 else:
                     role_team = enterprise_pb2.RoleTeam()
                     role_team.role_id = role_id
@@ -182,15 +184,16 @@ class EnterpriseCommand(Command):
                     else:
                         remove_teams.role_team.append(role_team)
                         update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
-        if remove_teams:
+        if remove_teams and remove_teams.role_team:
             api.communicate_rest(params, remove_teams, 'enterprise/role_team_remove')
-        if add_teams:
+        if add_teams and add_teams.role_team:
             api.communicate_rest(params, add_teams, 'enterprise/role_team_add')
-        return update_msgs
+        return update_msgs, blocked_admin_assignment
 
     @staticmethod
     def change_team_roles(params, teams, add_roles, remove_roles):
         update_msgs = []
+        blocked_admin_assignment = False
         add_role_teams = None
         remove_role_teams = None
         role_changes = {}
@@ -224,6 +227,7 @@ class EnterpriseCommand(Command):
 
                 if is_managed_role:
                     logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                    blocked_admin_assignment = True
                 else:
                     for team in teams:
                         if is_add and team['team_uid'] in role_teams:
@@ -245,11 +249,11 @@ class EnterpriseCommand(Command):
                             else:
                                 remove_role_teams.role_team.append(role_team)
                                 update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
-        if remove_role_teams:
+        if remove_role_teams and remove_role_teams.role_team:
             api.communicate_rest(params, remove_role_teams, 'enterprise/role_team_remove')
-        if add_role_teams:
+        if add_role_teams and add_role_teams.role_team:
             api.communicate_rest(params, add_role_teams, 'enterprise/role_team_add')
-        return update_msgs
+        return update_msgs, blocked_admin_assignment
 
     @staticmethod
     def get_enterprise_id(params):
