@@ -21,7 +21,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Union
 
-from ..record_edit import RecordAddCommand as RecordEditAddCommand
+from ..pam.vault_target import execute_record_add_in_folder
 from ..workflow.helpers import RecordResolver, WorkflowFormatter
 from ... import api, attachment, utils, vault, vault_extensions, \
     record_facades, record_management
@@ -1068,7 +1068,7 @@ class PamUserObject():
                     fields.append(f"file=@{x.file}")
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1163,7 +1163,7 @@ class LoginUserObject():
                     fields.append(f"file=@{x.file}")
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
         return uid
@@ -1433,7 +1433,7 @@ class PamMachineObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1626,7 +1626,7 @@ class PamDatabaseObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1774,7 +1774,7 @@ class PamDirectoryObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1879,7 +1879,7 @@ class PamRemoteBrowserObject():
             # switch to f.* once RT definition(s) update w/ pamRemoteBrowserSettings field
 
         if fields: args["fields"] = fields
-        uid = RecordEditAddCommand().execute(params, **args)
+        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
         if uid and isinstance(uid, str):
             self.uid = uid
 

@@ -125,12 +125,31 @@ def record_has_rotation_configured(params, record_uid):
     return record_uid in (params.record_rotation_cache or {})
 
 
+def cache_record_rotation(params, rr):
+    # type: (KeeperParams, Any) -> str
+    """Mirror a RecordRotation proto into ``params.record_rotation_cache``.
+
+    Used by classic sync_down and Nested Share Folder sync (NSF rotations arrive
+    on ``keeperDriveData.recordRotationData``).
+    """
+    record_uid = utils.base64_url_encode(rr.recordUid)
+    params.record_rotation_cache[record_uid] = {
+        'record_uid': record_uid,
+        'revision': rr.revision,
+        'configuration_uid': utils.base64_url_encode(rr.configurationUid),
+        'schedule': rr.schedule,
+        'pwd_complexity': utils.base64_url_encode(rr.pwdComplexity),
+        'disabled': rr.disabled,
+        'resource_uid': utils.base64_url_encode(rr.resourceUid),
+        'last_rotation': rr.lastRotation,
+        'last_rotation_status': rr.lastRotationStatus,
+    }
+    return record_uid
+
+
 def shared_folder_has_pam_user_with_rotation(params, shared_folder_uid):
     # type: (KeeperParams, str) -> bool
-    """Return True if the shared folder contains at least one pamUser record with rotation configured.
-
-    Required precondition for the server to accept --rotate-on-expiration on a folder share.
-    """
+    """True if the shared folder has a pamUser with rotation configured."""
     sf = params.shared_folder_cache.get(shared_folder_uid)
     if not sf:
         return False
@@ -141,6 +160,42 @@ def shared_folder_has_pam_user_with_rotation(params, shared_folder_uid):
                 and record.record_type == 'pamUser'
                 and record_has_rotation_configured(params, record_uid)):
             return True
+    return False
+
+
+def nested_share_record_is_pam_user_with_rotation(params, record_uid):
+    # type: (KeeperParams, str) -> bool
+    """True if an NSF record is pamUser with rotation configured."""
+    rec_type = None
+    nsf_record_data = getattr(params, 'nested_share_record_data', {}) or {}
+    obj = nsf_record_data.get(record_uid)
+    if obj and isinstance(obj.get('data_json'), dict):
+        rec_type = obj['data_json'].get('type')
+    if rec_type is None:
+        record = vault.KeeperRecord.load(params, record_uid)
+        rec_type = getattr(record, 'record_type', None) if record is not None else None
+    return rec_type == 'pamUser' and record_has_rotation_configured(params, record_uid)
+
+
+def nested_share_folder_has_pam_user_with_rotation(params, folder_uid):
+    # type: (KeeperParams, str) -> bool
+    """True if an NSF folder (or sub-folder) has a pamUser with rotation configured."""
+    nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', {}) or {}
+
+    visited = set()
+    stack = [folder_uid]
+    while stack:
+        fuid = stack.pop()
+        if fuid in visited:
+            continue
+        visited.add(fuid)
+        for record_uid in (nsf_folder_records.get(fuid) or set()):
+            if nested_share_record_is_pam_user_with_rotation(params, record_uid):
+                return True
+        for child_uid, child_obj in nsf_folders.items():
+            if child_obj.get('parent_uid') == fuid and child_uid not in visited:
+                stack.append(child_uid)
     return False
 
 

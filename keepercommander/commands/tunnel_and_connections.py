@@ -36,6 +36,7 @@ from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, 
     wait_for_tunnel_connection, create_rust_webrtc_settings, \
     print_above_keeper_prompt
 from .pam.router_helper import get_dag_leafs
+from .pam.vault_target import update_pam_record
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -431,8 +432,7 @@ class PAMTunnelEditCommand(Command):
                     record.custom.append(record_seed)
                 dirty = True
             if dirty:
-                record_management.update_record(params, record)
-                api.sync_down(params)
+                update_pam_record(params, record, command='pam tunnel edit')
 
                 traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
                 if not traffic_encryption_key:
@@ -504,8 +504,7 @@ class PAMTunnelEditCommand(Command):
                     dirty = True
             # Persist the record changes (new pamSettings field or port modifications)
             if dirty:
-                record_management.update_record(params, record)
-                api.sync_down(params)
+                update_pam_record(params, record, command='pam tunnel edit')
                 dirty = False
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
@@ -555,8 +554,7 @@ class PAMTunnelEditCommand(Command):
 
             if dirty:
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
-                record_management.update_record(params, record)
-                api.sync_down(params)
+                update_pam_record(params, record, command='pam tunnel edit')
 
             # Print out the tunnel settings
             if not kwargs.get('silent'):
@@ -4172,7 +4170,10 @@ class PAMSplitCommand(Command):
             print(f"{bcolors.FAIL}Please provide a valid PAM Configuration.{bcolors.ENDC}")
             return
 
-        folder_uid = resolve_folder(params, folder)
+        folder_uid = ''
+        if folder:
+            from .pam.vault_target import resolve_pam_folder_uid
+            folder_uid = resolve_pam_folder_uid(params, folder, allow_legacy_user=True) or resolve_folder(params, folder)
         if folder and not folder_uid:
             print(f"{bcolors.WARNING}Unable to find destination folder '{folder}' "
                   "(Note: folder names/paths are case sensitive) "
@@ -4243,7 +4244,8 @@ class PAMSplitCommand(Command):
                       f"and PAM User record will be created in folder '{folders[0]}'.{bcolors.ENDC}")
             folder_uid = folders[0] if folders else ''  # '' means root folder
 
-        record_management.add_record_to_folder(params, user_rec, folder_uid)
+        from .pam.vault_target import create_record_in_folder
+        create_record_in_folder(params, user_rec, folder_uid, command='pam-split')
         pam_user_uid = params.environment_variables.get(LAST_RECORD_UID, '')
         api.sync_down(params)
 

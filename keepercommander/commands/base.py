@@ -915,6 +915,11 @@ class RecordMixin:
         if record_name in params.record_cache:
             return vault.KeeperRecord.load(params, record_name)
 
+        from .pam_import.record_loader import load_pam_record
+        rec = load_pam_record(params, record_name)
+        if rec:
+            return rec
+
         rs = try_resolve_path(params, record_name)
         if rs is None:
             return None

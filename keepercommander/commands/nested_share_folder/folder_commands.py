@@ -21,9 +21,11 @@ import logging
 from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ... import vault_extensions
 from .helpers import (
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
+    validate_rotate_on_expiration,
     command_error_handler, check_result,
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
@@ -238,18 +240,32 @@ class NestedShareFolderListCommand(Command):
 
         show_folders = kwargs.get('folders', False)
         show_records = kwargs.get('records', False)
+        roe_eligible = bool(kwargs.get('roe_eligible'))
         fmt = kwargs.get('format', 'table')
 
-        if not show_folders and not show_records:
+        if roe_eligible:
+            show_folders, show_records = True, False
+        elif not show_folders and not show_records:
             show_folders = show_records = True
 
         combined = []
         if show_folders:
-            combined.extend(self._collect_folders(params))
+            folders = self._collect_folders(params)
+            if roe_eligible:
+                folders = [
+                    row for row in folders
+                    if vault_extensions.nested_share_folder_has_pam_user_with_rotation(
+                        params, row[1])
+                ]
+            combined.extend(folders)
         if show_records:
             combined.extend(self._collect_records(params))
 
         if not combined:
+            if roe_eligible:
+                logging.info(
+                    "No Nested Share Folders eligible for --rotate-on-expiration.")
+                return
             self._print_empty_summary(params, show_folders, show_records)
             return
 
@@ -341,6 +357,7 @@ class NestedShareFolderShareCommand(Command):
         recipients = kwargs.get('user') or []
         folder_args = kwargs.get('folder') or []
         role = kwargs.get('role') or 'viewer'
+        rotate_on_expiration = bool(kwargs.get('rotate_on_expiration'))
 
         if not folder_args:
             raise CommandError('nsf-share-folder', 'Folder path or UID is required')
@@ -353,6 +370,9 @@ class NestedShareFolderShareCommand(Command):
         expiration = parse_expiration(
             kwargs.get('expire_at'), kwargs.get('expire_in'), 'nsf-share-folder')
 
+        if rotate_on_expiration:
+            validate_rotate_on_expiration('nsf-share-folder', action, expiration)
+
         for folder_arg in folder_args:
             folder_uid = resolve_folder_uid(params, folder_arg)
             if not folder_uid:
@@ -361,6 +381,13 @@ class NestedShareFolderShareCommand(Command):
                                        identifier=folder_arg)
             check_folder_share_permission(params, folder_uid, 'nsf-share-folder')
 
+            if rotate_on_expiration and \
+                    not vault_extensions.nested_share_folder_has_pam_user_with_rotation(params, folder_uid):
+                raise CommandError(
+                    'nsf-share-folder',
+                    '--rotate-on-expiration requires the folder to contain at least one pamUser '
+                    f'record with rotation configured. Ineligible folder: {folder_arg!r}')
+
             targets = self._collect_targets(params, recipients, folder_uid, folder_arg)
             if not targets:
                 raise CommandError(
@@ -368,7 +395,8 @@ class NestedShareFolderShareCommand(Command):
                     f'No valid recipients resolved for folder {folder_arg!r}')
             for recipient, is_team in targets:
                 self._apply(params, action, folder_uid, recipient, role,
-                            expiration, as_team=is_team)
+                            expiration, as_team=is_team,
+                            rotate_on_expiration=rotate_on_expiration)
 
     @classmethod
     def _collect_targets(cls, params, recipients, folder_uid, folder_arg):
@@ -464,7 +492,7 @@ class NestedShareFolderShareCommand(Command):
 
     @classmethod
     def _apply(cls, params, action, folder_uid, recipient, role, expiration,
-                as_team=False):
+                as_team=False, rotate_on_expiration=False):
         api_name, verb = cls._ACTIONS[action]
         api_func = getattr(_nsf, api_name)
         kw = dict(params=params, folder_uid=folder_uid, user_uid=recipient,
@@ -473,6 +501,8 @@ class NestedShareFolderShareCommand(Command):
             kw['role'] = role
         if action == 'grant' and expiration is not None:
             kw['expiration_timestamp'] = expiration
+        if action == 'grant' and rotate_on_expiration:
+            kw['rotate_on_expiration'] = True
         kind = 'Team' if as_team else 'User'
         try:
             result = api_func(**kw)

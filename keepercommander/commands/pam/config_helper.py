@@ -1,15 +1,16 @@
-import base64
 import json
 import logging
 import os
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 
-from ..folder import FolderMoveCommand
 from ..record import RecordRemoveCommand
-from ... import api, crypto, utils, vault, vault_extensions
+from ... import api, crypto, utils, vault, vault_extensions, subfolder
+from ...error import KeeperApiError
+from ...nested_share_folder.common import get_folder_key
+from ...nested_share_folder.record_api import create_record_data_v3, record_add_pam_configuration_v3
 from ...params import KeeperParams
-from ...proto import pam_pb2, router_pb2
+from ...proto import folder_pb2, pam_pb2, record_pb2, router_pb2
 
 
 def pam_decrypt_configuration_data(pam_config_v6_record):
@@ -66,8 +67,27 @@ def pam_configuration_get_field(unencrypted_record, field_identifier):
             return field
 
 
+def _resolve_pam_configuration_folder_key(params, folder_uid):
+    # type: (KeeperParams, str) -> bytes | None
+    folder_key = get_folder_key(params, folder_uid, raise_on_missing=False)
+    if folder_key:
+        return folder_key
+
+    folder = params.folder_cache.get(folder_uid)
+    shared_folder_uid = None
+    if isinstance(folder, subfolder.SharedFolderFolderNode):
+        shared_folder_uid = folder.shared_folder_uid
+    elif isinstance(folder, subfolder.SharedFolderNode):
+        shared_folder_uid = folder.uid
+    if shared_folder_uid and shared_folder_uid in params.shared_folder_cache:
+        shared_folder = params.shared_folder_cache.get(shared_folder_uid)
+        return shared_folder.get('shared_folder_key_unencrypted')
+    return None
+
+
 def pam_configuration_create_record_v6(params, record, folder_uid):
-    # type: (KeeperParams, vault.TypedRecord, str, str) -> None
+    # type: (KeeperParams, vault.TypedRecord, str) -> None
+    """Create a classic PAM configuration via pam/add_configuration_record."""
     if not record.record_uid:
         record.record_uid = utils.generate_uid()
 
@@ -83,6 +103,66 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
     car.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
     api.communicate_rest(params, car, 'pam/add_configuration_record')
+
+
+def pam_configuration_create_record_nsf(params, record, folder_uid):
+    # type: (KeeperParams, vault.TypedRecord, str) -> None
+    """Create a PAM configuration in an NSF folder via vault/records/v3/add_pam_configuration."""
+    if not record.record_uid:
+        record.record_uid = utils.generate_uid()
+
+    if not record.record_key:
+        record.record_key = utils.generate_aes_key()
+
+    record_data = vault_extensions.extract_typed_record_data(record)
+    folder_key = _resolve_pam_configuration_folder_key(params, folder_uid) if folder_uid else None
+    client_time = utils.current_milli_time()
+
+    audit = None
+    if params.enterprise_ec_key:
+        audit_data = vault_extensions.extract_audit_data(record)
+        if audit_data:
+            audit = record_pb2.RecordAudit()
+            audit.version = 0
+            audit.data = crypto.encrypt_ec(
+                json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
+
+    if folder_uid and folder_key:
+        record_add = create_record_data_v3(
+            record_uid=record.record_uid,
+            record_key=record.record_key,
+            data=record_data,
+            folder_uid=folder_uid,
+            folder_key=folder_key,
+            data_key=params.data_key,
+            owner_key=params.data_key,
+            client_modified_time=client_time,
+            audit=audit,
+        )
+    else:
+        record_add = create_record_data_v3(
+            record_uid=record.record_uid,
+            record_key=record.record_key,
+            data=record_data,
+            data_key=params.data_key,
+            owner_key=params.data_key,
+            client_modified_time=client_time,
+            audit=audit,
+        )
+        if folder_uid:
+            record_add.folderUid = utils.base64_url_decode(folder_uid)
+            record_add.recordKeyEncryptedBy = folder_pb2.ENCRYPTED_BY_USER_KEY
+
+    response = record_add_pam_configuration_v3(params, [record_add], client_time=client_time)
+    if not response.records:
+        raise KeeperApiError('no_results', 'No results from PAM configuration creation')
+
+    record_rs = response.records[0]
+    if record_rs.status != record_pb2.RS_SUCCESS:
+        raise KeeperApiError(
+            record_pb2.RecordModifyResult.Name(record_rs.status),
+            record_rs.message or 'Failed to create PAM configuration record')
+    record.revision = response.revision
 
 
 def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):
@@ -162,10 +242,36 @@ def pam_configurations_get_all(params):
 
 def pam_configuration_remove(params, configuration_uid):
     # TODO: Check if there are record rotations associated with this config and warn user about that before removing.
-    RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
+    from ..nested_share_folder.helpers import is_nested_share_record
+    from ... import nested_share_folder as _nsf
+    from ...subfolder import find_folders
+    from .config_facades import PamConfigurationRecordFacade
+
+    if is_nested_share_record(params, configuration_uid):
+        folder_uids = list(find_folders(params, configuration_uid))
+        folder_uid = folder_uids[0] if folder_uids else None
+        if not folder_uid:
+            config = vault.KeeperRecord.load(params, configuration_uid)
+            if config and isinstance(config, vault.TypedRecord):
+                facade = PamConfigurationRecordFacade()
+                facade.record = config
+                folder_uid = facade.folder_uid
+        result = _nsf.remove_record_v3(params, [{
+            'record_uid': configuration_uid,
+            'folder_uid': folder_uid,
+            'operation_type': 'owner-trash',
+        }], dry_run=False)
+        if not result.get('confirmed'):
+            raise Exception(
+                'PAM Configuration NSF removal was not confirmed by the server.')
+    else:
+        RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
 
     if configuration_uid in params.record_cache:
         del params.record_cache[configuration_uid]
+    nested_recs = getattr(params, 'nested_share_records', {})
+    if configuration_uid in nested_recs:
+        del nested_recs[configuration_uid]
 
     logging.info('PAM Configuration was removed successfully.')
 

@@ -50,7 +50,7 @@ class Permissions(_message.Message):
     recordKey: bytes
     useEccKey: bool
     rules: _folder_pb2.RecordAccessData
-    def __init__(self, recipientUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., useEccKey: bool = ..., rules: _Optional[_Union[_folder_pb2.RecordAccessData, _Mapping]] = ...) -> None: ...
+    def __init__(self, recipientUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., useEccKey: _Optional[bool] = ..., rules: _Optional[_Union[_folder_pb2.RecordAccessData, _Mapping]] = ...) -> None: ...
 
 class Response(_message.Message):
     __slots__ = ("createdSharingStatus", "updatedSharingStatus", "revokedSharingStatus")
@@ -92,4 +92,4 @@ class RecordSharingState(_message.Message):
     isDirectlyShared: bool
     isIndirectlyShared: bool
     isShared: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., isDirectlyShared: bool = ..., isIndirectlyShared: bool = ..., isShared: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., isDirectlyShared: _Optional[bool] = ..., isIndirectlyShared: _Optional[bool] = ..., isShared: _Optional[bool] = ...) -> None: ...

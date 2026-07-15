@@ -13,6 +13,7 @@ from .common import (
     encrypt_record_key_for_folder,
 )
 from .folder_api import resolve_folder_identifier
+from ..commands.nested_share_folder.helpers import normalize_nsf_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ def move_record_v3(params, record_uid, from_folder_uid=None, to_folder_uid=None)
             r = rs.folderRecordUpdateResult[0]
             if r.status != folder_pb2.SUCCESS:
                 return _move_failure(record_uid, from_folder_uid, to_folder_uid,
-                                     f"Add failed: {r.message}")
+                                     f"Add failed: {normalize_nsf_user_message(r.message)}")
     except Exception as e:
         return _move_failure(record_uid, from_folder_uid, to_folder_uid,
                              f"Add error: {e}")
