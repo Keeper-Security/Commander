@@ -2384,7 +2384,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
             elif add_team or remove_team or add_user or remove_user:
                 if add_team or remove_team:
-                    non_batch_update_msgs += self.change_role_teams(params, matched_roles, add_team, remove_team)
+                    team_msgs, blocked_admin = self.change_role_teams(params, matched_roles, add_team, remove_team)
+                    non_batch_update_msgs += team_msgs
+                    if blocked_admin:
+                        skip_display = True
 
                 if add_user or remove_user:
                     request_batch += self.get_role_users_change_batch(
@@ -3499,9 +3502,11 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                         request_batch.append(rq)
 
             if kwargs.get('add_role') or kwargs.get('remove_role'):
-                non_batch_update_msgs = self.change_team_roles(
+                non_batch_update_msgs, blocked_admin = self.change_team_roles(
                     params, matched_teams, kwargs.get('add_role'), kwargs.get('remove_role')
                 )
+                if blocked_admin:
+                    has_warnings = True
 
             if kwargs.get('add_user') or kwargs.get('remove_user'):
                 users = {}
@@ -3705,7 +3710,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                         created_teams.append(team_data)
                 
                 if created_teams:
-                    role_msgs = self.change_team_roles(params, created_teams, role_list, None)
+                    role_msgs, _ = self.change_team_roles(params, created_teams, role_list, None)
                     for msg in role_msgs:
                         logging.info(msg)
         elif not has_warnings:
