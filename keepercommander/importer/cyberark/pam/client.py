@@ -1161,7 +1161,7 @@ class CyberArkPVWAClient:
             raw_json = repr(data)
         logging.debug('CyberArk master-rotation-policy exceptions:\n%s', raw_json)
         if self._looks_like_base_master_policy(data):
-            logging.info(
+            logging.debug(
                 "This tenant's /master-rotation-policy/exceptions/ endpoint "
                 "returned the base policy object (not a per-platform "
                 "exceptions list) — falling back to the per-platform "
