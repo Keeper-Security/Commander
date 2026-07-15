@@ -122,15 +122,12 @@ class CyberArkPVWAClient:
     @staticmethod
     def _validate_host(host):
         """Validate that the PVWA host is not targeting internal/private addresses (SSRF protection)."""
-        # Strip port if present
         hostname = host.split(":")[0] if ":" in host else host
-        # Reject obviously dangerous hostnames
         if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1", ""):
             raise ValueError(f"PVWA host '{host}' targets a local address and is not allowed")
         # Validate hostname format (alphanumeric, dots, hyphens only)
         if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$', hostname):
             raise ValueError(f"PVWA host '{hostname}' contains invalid characters")
-        # Check IP literals against private ranges
         try:
             addr = ipaddress.ip_address(hostname)
             if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
@@ -139,9 +136,7 @@ class CyberArkPVWAClient:
         except ValueError as e:
             if "is not allowed" in str(e):
                 raise
-            # Not an IP literal — resolve hostname and check all IPs
             pass
-        # DNS resolution check — reject if hostname resolves to private IP
         try:
             resolved_ips = socket.getaddrinfo(hostname, None)
             for family, _, _, _, sockaddr in resolved_ips:
@@ -152,7 +147,6 @@ class CyberArkPVWAClient:
                         f"PVWA host '{hostname}' resolves to private/reserved IP "
                         f"{ip_str} and is not allowed (SSRF protection)")
         except socket.gaierror:
-            # Cannot resolve — will fail at connection time, not a security issue
             pass
 
     def _get_url(self, endpoint):
@@ -269,17 +263,14 @@ class CyberArkPVWAClient:
         """
         id_tenant_raw = environ.get("KEEPER_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
         id_tenant_raw = id_tenant_raw.strip()
-        # Strip https:// prefix if present
         if id_tenant_raw.startswith("https://"):
             id_tenant_raw = id_tenant_raw[len("https://"):]
         if id_tenant_raw.startswith("http://"):
             id_tenant_raw = id_tenant_raw[len("http://"):]
         id_tenant_raw = id_tenant_raw.rstrip("/")
 
-        # Determine the identity host
         if "." in id_tenant_raw:
-            # Already has dots — could be 'abc1234.id', 'tenant.my.idaptive.app',
-            # or 'tenant.cyberark.cloud'. Use as-is for the identity host.
+           
             id_host = id_tenant_raw
             # But for the OAuth2 URL we need *.cyberark.cloud domain
             if id_tenant_raw.endswith(".my.idaptive.app"):
@@ -287,10 +278,8 @@ class CyberArkPVWAClient:
                 id_host = id_tenant_raw.split(".")[0] + ".id.cyberark.cloud"
                 logging.info("Legacy Idaptive tenant detected, using %s for OAuth2", id_host)
             elif not id_tenant_raw.endswith(".cyberark.cloud"):
-                # Has dots but not a known domain — treat first part as tenant
                 id_host = id_tenant_raw.split(".")[0] + ".cyberark.cloud"
         else:
-            # Simple name — apply subdomain ID detection
             id_tenant = id_tenant_raw
             if re.match(r"^[A-Za-z]{3}\d{4}$", id_tenant):
                 id_tenant += ".id"
@@ -303,7 +292,6 @@ class CyberArkPVWAClient:
             return None
 
         # Platform discovery — resolve tenant to correct identity endpoint
-        # (ark-sdk-python pattern: platform-discovery.cyberark.cloud)
         discovered_host = self._discover_identity_endpoint(base_part)
         if discovered_host:
             id_host = discovered_host
@@ -313,10 +301,6 @@ class CyberArkPVWAClient:
     @staticmethod
     def _choose_cloud_auth_method() -> str:
         """Return 'service' or 'interactive' for Privilege Cloud authentication.
-
-        Honors the ``KEEPER_CYBERARK_AUTH_METHOD`` env var; otherwise prompts
-        the user (defaulting to the service-account flow for backwards
-        compatibility with existing automation).
         """
         method = (environ.get("KEEPER_CYBERARK_AUTH_METHOD") or "").strip().lower()
         if method in ("interactive", "identity", "user", "mfa", "2fa", "up"):
@@ -379,15 +363,6 @@ class CyberArkPVWAClient:
 
     def _auth_privilege_cloud_interactive(self, id_host: str) -> bool:
         """Authenticate to Privilege Cloud as an interactive user with MFA / 2FA.
-
-        Mirrors CyberArk's own Identity authentication flow (used by
-        ark-sdk-python and the epv-api-scripts ``IdentityAuth`` module):
-        ``/Security/StartAuthentication`` returns one or more challenges, and
-        ``/Security/AdvanceAuthentication`` is driven through each mechanism
-        (password first, then any OTP / push / SMS / email MFA mechanism). The
-        resulting Identity session ``Token`` is a Bearer token that the
-        Privilege Cloud REST API accepts, exactly like the service-account
-        OAuth2 token.
         """
         identity_base_url = f"https://{id_host}"
         tenant_name = id_host.split(".")[0]
@@ -451,11 +426,6 @@ class CyberArkPVWAClient:
     def _start_identity_authentication(self, identity_base_url: str, start_payload: dict,
                                          headers: dict) -> Tuple[Optional[str], Optional[dict]]:
         """POST ``/Security/StartAuthentication``, following HTTP and pod redirects.
-
-        CyberArk Identity may respond with an HTTP redirect (302) to the tenant's
-        preferred identity host, or with a JSON ``PodFqdn`` in the result. Both
-        are retried until a final 200 response is received (same pattern as the
-        cyberark_portal importer).
         """
         url = f"{identity_base_url}/Security/StartAuthentication"
         for _ in range(4):
@@ -507,9 +477,6 @@ class CyberArkPVWAClient:
     @staticmethod
     def _identity_result(response) -> Optional[dict]:
         """Parse a CyberArk Identity API response, returning its ``Result`` dict.
-
-        Returns ``None`` (after printing a message) on HTTP error, non-JSON
-        body, or an explicit ``success: false`` payload.
         """
         if response.status_code != 200:
             print_formatted_text(HTML(
@@ -552,12 +519,6 @@ class CyberArkPVWAClient:
                                    session_id: str, mechanism: dict,
                                    password: Optional[str] = None) -> Optional[dict]:
         """Drive one CyberArk Identity challenge mechanism to completion.
-
-        Handles text answers (password / OTP / authenticator code) and
-        out-of-band mechanisms (push notification, SMS, email) — for OOB the
-        user may approve on their device (we poll) or type the delivered code.
-        Returns the ``AdvanceAuthentication`` ``Result`` dict, or ``None`` on
-        error.
         """
         url = f"{identity_base_url}/Security/AdvanceAuthentication"
         headers = {"X-IDAP-NATIVE-CLIENT": "true"}
@@ -585,7 +546,6 @@ class CyberArkPVWAClient:
                 answer = prompt(f"{prompt_label}: ")
             return _post(dict(base, Action="Answer", Answer=answer))
 
-        # Out-of-band — push notification, SMS, or email.
         result = _post(dict(base, Action="StartOOB"))
         if result is None:
             return None
@@ -685,9 +645,7 @@ class CyberArkPVWAClient:
             # Follow nextLink if present, otherwise check batch size
             next_link = data.get("nextLink")
             if next_link:
-                # Validate nextLink origin before following. A compromised or
-                # malicious PVWA could point pagination at an attacker host
-                # to exfiltrate the auth_token via the Authorization header.
+               
                 try:
                     base_host = urlparse(url).netloc
                     next_host = urlparse(next_link).netloc
@@ -745,11 +703,6 @@ class CyberArkPVWAClient:
 
     def fetch_platforms(self) -> List[dict]:
         """Fetch platform definitions from PVWA ``GET /Platforms``.
-
-        Response objects typically include ``PlatformID``, ``PlatformName``,
-        ``PlatformBaseID`` (built-in clone source), ``SystemType``, and
-        ``Active``. ``PlatformBaseID`` maps customer-renamed platforms back to
-        ``DEFAULT_PLATFORM_MAP``. Tries ``Platforms`` and ``value`` item keys.
         """
         # _paginate already handles "value"; try that first, then fall back to
         # the explicitly-keyed response shape.
@@ -762,23 +715,6 @@ class CyberArkPVWAClient:
 
     def fetch_platform_details(self, platform_id: str) -> Optional[dict]:
         """Fetch the full platform definition (ConnectionComponents, Properties).
-
-        Used when the list-platforms response doesn't carry enough info to pin
-        down the port or protocol — the per-platform endpoint includes the
-        ``Details`` block with ConnectionComponents (e.g. PSM-RDP, PSM-SSH)
-        and the platform's default ``Port`` property.
-
-        Also the canonical source for ``sessionManagement`` (session-recording
-        flags) and ``privilegedAccessWorkflows`` (dual control / exclusive
-        checkout / OTP) — used by ``AccountMapper._resolve_platform_*``.
-
-        Logs the raw response body at DEBUG level the first time each
-        platform is fetched so operators diagnosing missing session-recording
-        flags can confirm exactly which field names this tenant returns
-        (Privilege Cloud / ISPSS uses camelCase under nested groups; older
-        PVWA Self-Hosted may use PascalCase under ``Details``).
-
-        Returns the parsed JSON dict or None on failure.
         """
         if not platform_id or not re.match(r'^[A-Za-z0-9_\-]+$', str(platform_id)):
             return None
@@ -812,10 +748,6 @@ class CyberArkPVWAClient:
     @staticmethod
     def _encode_safe_path(safe_url_id: str) -> Optional[str]:
         """Normalize and URL-encode a CyberArk safe identifier for path use.
-
-        Tenants may return ``safeUrlId`` already encoded, raw (spaces/unicode),
-        or pre-sanitized. Decode then re-encode with ``quote(safe='')`` so the
-        path segment is canonical. Returns ``None`` for empty/unsafe input.
         """
         if not safe_url_id or not isinstance(safe_url_id, str):
             return None
@@ -829,10 +761,6 @@ class CyberArkPVWAClient:
                 re.sub(r'[^A-Za-z0-9_. \-%]', '?', s),
             )
             return None
-        # Decode any pre-encoded form so we have a normalized human name,
-        # then re-encode so spaces / unicode / reserved chars all become
-        # percent-escapes. ``safe=''`` ensures no character (including
-        # ``/``) is left literal.
         try:
             decoded = unquote(s)
         except (TypeError, ValueError):
@@ -875,23 +803,12 @@ class CyberArkPVWAClient:
         base = self._get_url('safes').rsplit('/Safes', 1)[0]
         return self._paginate(f"{base}/UserGroups", limit=100)
 
-    # ── Per-platform policy endpoints ────────────────────────────
-    # Validation regex shared by every per-platform policy fetch — only
-    # CyberArk's documented PlatformID character set, which prevents URL
-    # path injection when interpolating ``platform_id`` into the request URL.
     _PLATFORM_ID_RE = re.compile(r'^[A-Za-z0-9_\-]{1,80}$')
 
     def _fetch_platform_policy(self, platform_id: str, suffix: str,
                                label: str) -> Optional[dict]:
         """Shared GET helper for the ``/api/platforms/{id}/<suffix>/`` family.
 
-        Used by ``fetch_platform_rotation_policy``,
-        ``fetch_platform_secrets_policy``, and
-        ``fetch_platform_workflows_policy``. Logs the URL that succeeded at
-        DEBUG level and dumps the raw response at DEBUG so operators can
-        confirm the import is honoring per-platform policies when verbose
-        logging is enabled.
-        Returns ``None`` for any non-200 response or invalid JSON.
         """
         if not platform_id or not self._PLATFORM_ID_RE.match(str(platform_id)):
             logging.debug('Skipping %s fetch for invalid platformId: %s',
@@ -929,11 +846,6 @@ class CyberArkPVWAClient:
 
     def fetch_platform_rotation_policy(self, platform_id: str) -> Optional[dict]:
         """``GET /api/platforms/{platformId}/rotation-policy/``.
-
-        Returns the platform's secrets-rotation policy (rotation interval,
-        verification interval, retry count, headstart window, ...). Used by
-        ``AccountMapper._resolve_platform_schedule`` to override the master
-        policy default for accounts on that platform.
         """
         return self._fetch_platform_policy(
             platform_id, "rotation-policy", "rotation-policy")
@@ -941,12 +853,6 @@ class CyberArkPVWAClient:
     def fetch_platform_secrets_policy(self, platform_id: str) -> Optional[dict]:
         """``GET /api/platforms/{platformId}/secrets-policy/``.
 
-        Privilege Cloud Secrets Rotation Service exposes the platform's
-        broader secrets policy here — a superset of the rotation policy
-        that also includes credential-management knobs such as manual
-        change/verify/reconcile flags. We use this as a fallback when the
-        narrower rotation-policy endpoint isn't available, and as a
-        secondary source of truth when callers need the full policy.
         """
         return self._fetch_platform_policy(
             platform_id, "secrets-policy", "secrets-policy")
@@ -954,11 +860,6 @@ class CyberArkPVWAClient:
     def fetch_platform_workflows_policy(self, platform_id: str) -> Optional[dict]:
         """``GET /api/platforms/{platformId}/workflows-policy/``.
 
-        Returns the platform's privileged-access workflow rules: dual
-        control, exclusive checkout, one-time-password access. These
-        concepts have no direct on/off equivalent in Keeper PAM — they're
-        reported under "UNMAPPED — REQUIRES MANUAL ACTION" so the admin
-        can recreate the workflow with Keeper sharing/approval policies.
         """
         return self._fetch_platform_policy(
             platform_id, "workflows-policy", "workflows-policy")
@@ -969,36 +870,11 @@ class CyberArkPVWAClient:
         """Resolve the platform's session-monitoring rules from the legacy
         PVWA admin-UI ``.asmx`` web-service.
 
-        Privilege Cloud and Self-Hosted PVWA both expose
-        ``/PasswordVault/services/PoliciesMgt.asmx/
-        GetPolicyRulesSessionMonitoring`` for the admin UI grid. The
-        response is the ExtJS grid shape::
-
-            {"data": [{"name": "RecordSession", "value": "Yes"}, ...]}
-
-        which the caller normalizes via ``_flatten_asmx_grid``.
-
-        ``AccountMapper._resolve_platform_session_recording`` already
-        queries ``GET /PasswordVault/API/Platforms/{platformId}`` for the
-        ``sessionManagement`` group separately, so this method is now
-        scoped strictly to the ``.asmx`` endpoint and is used as a
-        complement (not a replacement) — useful on tenants where the
-        platform's Policy INI exposes ``RecordSession`` /
-        ``MonitorSession`` here even though the JSON Get-Platform endpoint
-        does not surface them.
-
-        Returns the parsed JSON dict (in the ExtJS grid shape) or ``None``.
         """
         if not platform_id or not self._PLATFORM_ID_RE.match(str(platform_id)):
             return None
 
 
-        # 3) Legacy PVWA UI .asmx service. Some on-prem PVWAs only expose
-        # session-monitoring rules through this endpoint. The expected
-        # response shape (same one the PVWA admin grid consumes) is::
-        #     {"data": [{"name": "RecordSession", "value": "Yes"}, ...]}
-        # We pass platformId quoted because the UI URL the user observed
-        # was ``...?platformId=%22%22`` (URL-encoded "" wrapping).
         url = (f"https://{self.pvwa_host}/PasswordVault/services/"
                f"PoliciesMgt.asmx/GetPolicyRulesSessionMonitoring")
         params = {
@@ -1034,27 +910,7 @@ class CyberArkPVWAClient:
 
     def fetch_master_policy(self) -> Optional[dict]:
         """Fetch the CyberArk Master Policy settings.
-
-        Tries three endpoints in order to cover every supported deployment:
-
-          1. ``/api/platforms/master-rotation-policy/`` — current Privilege
-             Cloud Secrets Rotation Service (ISPSS) endpoint. Documented at
-             docs.cyberark.com/.../privcloud_get_masterpolicy.htm. Returns a
-             camelCase JSON object with fields such as
-             ``requirePasswordChangeEveryXDays`` / ``passwordChangeDays``.
-             This is the only endpoint that responds 200 on most modern
-             Privilege Cloud tenants — the legacy PVWA paths return 404/405
-             on Privilege Cloud Shared Services.
-          2. ``/PasswordVault/API/Policies/1`` — PVWA Self-Hosted ("Get
-             Policy by ID"). Returns a flat dict like
-             ``{"PasswordChangeDays": {"Value": 90}, ...}``.
-          3. ``/PasswordVault/API/Policy/MasterPolicy`` — older Privilege
-             Cloud Rules-array variant.
-
-        Returns the raw policy dict in whichever shape the server returned;
-        ``MasterPolicyMapper.map_policy`` normalizes all three formats. Logs
-        each attempted URL and its status so an operator can tell from the
-        terminal which endpoint succeeded (or why none did).
+    
         """
         # ISPSS APIs sit at the root of the privilegecloud host (not under
         # /PasswordVault/API/), so build a separate base for them.
@@ -1095,12 +951,7 @@ class CyberArkPVWAClient:
                               url, response.status_code)
         return None
 
-    # Fields that only appear on the *base* master-rotation-policy object
-    # (counts of how many platforms have an exception, not the exceptions
-    # themselves). Some ISPSS tenants don't expose a dedicated bulk
-    # "list exceptions" resource — hitting ``.../exceptions/`` silently
-    # falls back to serving this same base object instead of 404ing. We
-    # detect that here so callers don't mistake it for real exception data.
+   
     _MASTER_POLICY_ONLY_KEYS = frozenset({
         "changeIntervalExceptionsCount", "verifyIntervalExceptionsCount",
     })
@@ -1116,21 +967,6 @@ class CyberArkPVWAClient:
     def fetch_master_rotation_policy_exceptions(self) -> Optional[Any]:
         """``GET /api/platforms/master-rotation-policy/exceptions/``.
 
-        Returns platform-specific overrides to the master rotation policy
-        (e.g. Win Local Admins rotated every 30 days while master is 90).
-        The documented ISPSS shape (per
-        docs.cyberark.com/.../privcloud_get_masterpolicy.htm) is::
-
-            {"exceptions": [{"platformId": "...", "verifyInterval": 0,
-                              "changeInterval": 0}], "totalCount": 0}
-
-        Some tenants don't expose this as a distinct resource and instead
-        the gateway re-serves the *base* master-rotation-policy object
-        (identifiable by ``changeIntervalExceptionsCount`` /
-        ``verifyIntervalExceptionsCount`` with no ``exceptions`` list) — in
-        that case we log it and return ``None`` so callers know to rely on
-        the per-platform ``rotation-policy`` check instead
-        (``AccountMapper._resolve_platform_schedule``).
         """
         url = (f"https://{self.pvwa_host}"
                f"/api/platforms/master-rotation-policy/exceptions/")
@@ -1173,11 +1009,6 @@ class CyberArkPVWAClient:
     def fetch_master_session_monitoring(self) -> Optional[dict]:
         """Fetch global session-monitoring rules (master policy level).
 
-        Session recording flags are not on the rotation-policy endpoints; they
-        come from the PVWA admin service
-        ``PoliciesMgt.asmx/GetPolicyRulesSessionMonitoring`` with an empty
-        ``platformId`` (master/default rules). Returns the ExtJS grid payload
-        or ``None`` if unavailable.
         """
         url = (f"https://{self.pvwa_host}/PasswordVault/services/"
                f"PoliciesMgt.asmx/GetPolicyRulesSessionMonitoring")
@@ -1250,13 +1081,6 @@ class CyberArkPVWAClient:
         ``/PasswordVault/API/Accounts/{id}/Dependents`` path, so we try the
         Privilege Cloud URL first and fall back to PVWA on 404 / 405.
 
-        Each dependent describes a (host, service_name, type) tuple where the
-        master account's password is consumed. CyberArk returns either a bare
-        list or a ``{value: [...]}``-style envelope; both shapes are
-        normalized to a plain list.
-
-        Returns an empty list on missing / unauthorized / malformed responses
-        — dependent metadata is best-effort and never aborts an import.
         """
         if not re.match(r'^[a-zA-Z0-9_]+$', str(account_id)):
             logging.warning('Invalid account ID for dependents fetch: %s',
