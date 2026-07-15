@@ -5,6 +5,171 @@ from unittest.mock import MagicMock, patch
 from keepercommander.commands.ksm import KSMCommand
 
 
+class TestKSMSecretResolution(unittest.TestCase):
+
+    def _make_params(self):
+        params = MagicMock()
+        params.record_cache = {}
+        params.shared_folder_cache = {}
+        params.nested_share_records = {}
+        params.nested_share_folders = {}
+        params.nested_share_record_data = {}
+        params.folder_cache = {}
+        return params
+
+    def test_resolve_secret_uid_from_nsf_record_cache(self):
+        params = self._make_params()
+        record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
+        params.nested_share_records = {record_uid: {'record_key_unencrypted': b'key'}}
+        self.assertEqual(KSMCommand.resolve_secret_uid(params, record_uid), record_uid)
+
+    def test_resolve_secret_uid_from_nsf_folder_cache(self):
+        params = self._make_params()
+        folder_uid = 'bU2LVM6LjX_hmCoSMDA7vg'
+        params.nested_share_folders = {folder_uid: {'name': 'Project Folder'}}
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            self.assertEqual(KSMCommand.resolve_secret_uid(params, folder_uid), folder_uid)
+
+    @patch('keepercommander.commands.ksm.resolve_nested_share_record_uid')
+    def test_resolve_secret_uid_by_record_title(self, mock_resolve_record):
+        params = self._make_params()
+        mock_resolve_record.return_value = 'resolved_record_uid'
+        self.assertEqual(KSMCommand.resolve_secret_uid(params, 'My Record'), 'resolved_record_uid')
+
+    @patch('keepercommander.commands.ksm.resolve_folder_uid')
+    @patch('keepercommander.commands.ksm.resolve_nested_share_record_uid', return_value=None)
+    def test_resolve_secret_uid_by_folder_path(self, _mock_resolve_record, mock_resolve_folder):
+        params = self._make_params()
+        mock_resolve_folder.return_value = 'resolved_folder_uid'
+        with patch('keepercommander.commands.ksm.is_nested_share_folder',
+                   side_effect=lambda _params, uid: uid == 'resolved_folder_uid'):
+            with patch('keepercommander.commands.ksm.api.is_shared_folder', return_value=False):
+                self.assertEqual(KSMCommand.resolve_secret_uid(params, 'NSF/Folder'), 'resolved_folder_uid')
+
+    def test_classify_secret_nsf_record(self):
+        params = self._make_params()
+        record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
+        params.nested_share_records = {record_uid: {'record_key_unencrypted': b'record_key'}}
+        with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=True):
+            secret = KSMCommand.classify_secret(params, record_uid)
+        self.assertIsNotNone(secret)
+        self.assertEqual(secret['share_type'], 'SHARE_TYPE_RECORD')
+        self.assertEqual(secret['share_key'], b'record_key')
+
+    def test_classify_secret_nsf_folder(self):
+        params = self._make_params()
+        folder_uid = 'bU2LVM6LjX_hmCoSMDA7vg'
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            with patch('keepercommander.commands.ksm.api.is_shared_folder', return_value=False):
+                with patch('keepercommander.commands.ksm.get_folder_key', return_value=b'folder_key'):
+                    secret = KSMCommand.classify_secret(params, folder_uid)
+        self.assertIsNotNone(secret)
+        self.assertEqual(secret['share_type'], 'SHARE_TYPE_FOLDER')
+        self.assertEqual(secret['share_key'], b'folder_key')
+
+    @patch('keepercommander.commands.ksm.KSMCommand.update_secrets_user_permissions')
+    @patch('keepercommander.commands.ksm.api.sync_down')
+    @patch('keepercommander.nested_share_folder.record_api.share_record_to_application_v3',
+           return_value={'success': True, 'results': []})
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_record')
+    def test_share_secret_adds_nsf_record(self, mock_get_app_record, mock_share_record,
+                                          _mock_sync_down, _mock_update_perms):
+        params = self._make_params()
+        record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
+        params.nested_share_records = {record_uid: {'record_key_unencrypted': b'record_key'}}
+        mock_get_app_record.return_value = {
+            'record_uid': 'app_uid___________',
+            'record_key_unencrypted': b'a' * 32,
+        }
+        with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=True):
+            with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=False):
+                KSMCommand.add_app_share(params, [record_uid], 'MyApp', False)
+        mock_share_record.assert_called_once()
+        self.assertEqual(mock_share_record.call_args.args[1], record_uid)
+
+    @patch('keepercommander.commands.ksm.KSMCommand.update_secrets_user_permissions')
+    @patch('keepercommander.commands.ksm.api.sync_down')
+    @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_to_application_v3',
+           return_value={'success': True})
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_record')
+    def test_share_secret_adds_nsf_folder(self, mock_get_app_record, mock_grant_folder,
+                                          _mock_sync_down, _mock_update_perms):
+        params = self._make_params()
+        folder_uid = 'AF3KOMHTcC7ZVwOLrz1ODA'
+        params.nested_share_folders = {folder_uid: {'name': 'Test NSF'}}
+        mock_get_app_record.return_value = {
+            'record_uid': 'il3OLH0CurRQezXUJ6WB9Q',
+            'record_key_unencrypted': b'a' * 32,
+        }
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=False):
+                with patch('keepercommander.commands.ksm.api.is_shared_folder', return_value=False):
+                    with patch('keepercommander.commands.ksm.get_folder_key', return_value=b'folder_key'):
+                        KSMCommand.add_app_share(params, [folder_uid], 'MyApp', True)
+        mock_grant_folder.assert_called_once()
+        self.assertEqual(mock_grant_folder.call_args.args[1], folder_uid)
+        self.assertTrue(mock_grant_folder.call_args.kwargs.get('is_editable'))
+
+    def test_resolve_secret_uid_strips_brackets(self):
+        params = self._make_params()
+        folder_uid = 'AF3KOMHTcC7ZVwOLrz1ODA'
+        params.nested_share_folders = {folder_uid: {'name': 'Test NSF'}}
+        with patch('keepercommander.commands.ksm.is_nested_share_folder', return_value=True):
+            self.assertEqual(
+                KSMCommand.resolve_secret_uid(params, f'[{folder_uid}]'),
+                folder_uid)
+
+
+class TestKSMAppRecordResolution(unittest.TestCase):
+
+    def _make_params(self):
+        params = MagicMock()
+        params.record_cache = {}
+        params.nested_share_records = {}
+        params.nested_share_record_data = {}
+        return params
+
+    def test_get_app_record_from_nsf_cache(self):
+        params = self._make_params()
+        app_uid = 'appUid00000000000001'
+        params.nested_share_records = {
+            app_uid: {'version': 5, 'record_key_unencrypted': b'app_key', 'revision': 1}
+        }
+        params.nested_share_record_data = {
+            app_uid: {'data_json': {'title': 'NSF App', 'type': 'app'}}
+        }
+        with patch('keepercommander.commands.ksm.is_nested_share_record', return_value=True):
+            rec = KSMCommand.get_app_record(params, app_uid)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec['record_uid'], app_uid)
+        self.assertEqual(rec['record_key_unencrypted'], b'app_key')
+
+    @patch('keepercommander.commands.ksm.resolve_nested_share_record_uid')
+    def test_get_app_record_by_nsf_path(self, mock_resolve):
+        params = self._make_params()
+        app_uid = 'appUid00000000000001'
+        mock_resolve.return_value = app_uid
+        params.nested_share_records = {
+            app_uid: {'version': 5, 'record_key_unencrypted': b'app_key', 'revision': 1}
+        }
+        params.nested_share_record_data = {
+            app_uid: {'data_json': {'title': 'NSF App', 'type': 'app'}}
+        }
+        rec = KSMCommand.get_app_record(params, 'NSF/NSF App')
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec['record_uid'], app_uid)
+
+    def test_get_ksm_app_display_info_from_nsf_metadata(self):
+        params = self._make_params()
+        app_uid = 'appUid00000000000001'
+        with patch('keepercommander.commands.ksm.KSMCommand.get_app_record', return_value=None):
+            with patch('keepercommander.commands.ksm.KSMCommand.get_app_title', return_value='NSF App'):
+                title, accessible, info = KSMCommand.get_ksm_app_display_info(params, app_uid)
+        self.assertEqual(title, 'NSF App')
+        self.assertFalse(accessible)
+        self.assertIn('NSF App', info)
+
+
 class TestKSMTokenAdd(unittest.TestCase):
     """secrets-manager token add <app-uid> → calls add_client."""
 

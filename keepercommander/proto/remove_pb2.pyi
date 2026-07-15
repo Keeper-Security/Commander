@@ -44,6 +44,22 @@ class RemoveStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     REMOVE_STATUS_TOKEN_INVALID: _ClassVar[RemoveStatus]
     REMOVE_STATUS_ACCESS_DENIED: _ClassVar[RemoveStatus]
     REMOVE_STATUS_VALIDATION_ERROR: _ClassVar[RemoveStatus]
+
+class RestoreStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RESTORE_STATUS_UNKNOWN: _ClassVar[RestoreStatus]
+    RS_SUCCESS: _ClassVar[RestoreStatus]
+    RS_NOT_IN_TRASHCAN: _ClassVar[RestoreStatus]
+    RS_ACCESS_DENIED: _ClassVar[RestoreStatus]
+    RS_TARGET_FOLDER_NOT_FOUND: _ClassVar[RestoreStatus]
+    RS_ALREADY_EXISTS_IN_TARGET: _ClassVar[RestoreStatus]
+    RS_FAIL: _ClassVar[RestoreStatus]
+
+class RestoreItemType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RESTORE_ITEM_UNKNOWN: _ClassVar[RestoreItemType]
+    RESTORE_ITEM_RECORD: _ClassVar[RestoreItemType]
+    RESTORE_ITEM_FOLDER: _ClassVar[RestoreItemType]
 REMOVE_ACTION_PREVIEW: RemoveAction
 REMOVE_ACTION_CONFIRM: RemoveAction
 RECORD_OPERATION_UNKNOWN: RecordOperationType
@@ -67,6 +83,16 @@ REMOVE_STATUS_TOKEN_EXPIRED: RemoveStatus
 REMOVE_STATUS_TOKEN_INVALID: RemoveStatus
 REMOVE_STATUS_ACCESS_DENIED: RemoveStatus
 REMOVE_STATUS_VALIDATION_ERROR: RemoveStatus
+RESTORE_STATUS_UNKNOWN: RestoreStatus
+RS_SUCCESS: RestoreStatus
+RS_NOT_IN_TRASHCAN: RestoreStatus
+RS_ACCESS_DENIED: RestoreStatus
+RS_TARGET_FOLDER_NOT_FOUND: RestoreStatus
+RS_ALREADY_EXISTS_IN_TARGET: RestoreStatus
+RS_FAIL: RestoreStatus
+RESTORE_ITEM_UNKNOWN: RestoreItemType
+RESTORE_ITEM_RECORD: RestoreItemType
+RESTORE_ITEM_FOLDER: RestoreItemType
 
 class RecordRemoval(_message.Message):
     __slots__ = ("folder_uid", "record_uid", "operation_type")
@@ -205,3 +231,51 @@ class FolderTarget(_message.Message):
     folder_uid: bytes
     operation_type: FolderOperationType
     def __init__(self, folder_uid: _Optional[bytes] = ..., operation_type: _Optional[_Union[FolderOperationType, str]] = ...) -> None: ...
+
+class RestoreResult(_message.Message):
+    __slots__ = ("item_uid", "item_type", "status", "error_message")
+    ITEM_UID_FIELD_NUMBER: _ClassVar[int]
+    ITEM_TYPE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    item_uid: bytes
+    item_type: RestoreItemType
+    status: RestoreStatus
+    error_message: str
+    def __init__(self, item_uid: _Optional[bytes] = ..., item_type: _Optional[_Union[RestoreItemType, str]] = ..., status: _Optional[_Union[RestoreStatus, str]] = ..., error_message: _Optional[str] = ...) -> None: ...
+
+class TrashcanRestoreResponse(_message.Message):
+    __slots__ = ("results", "error_message")
+    RESULTS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    results: _containers.RepeatedCompositeFieldContainer[RestoreResult]
+    error_message: str
+    def __init__(self, results: _Optional[_Iterable[_Union[RestoreResult, _Mapping]]] = ..., error_message: _Optional[str] = ...) -> None: ...
+
+class RestoreRecord(_message.Message):
+    __slots__ = ("record_uid", "encrypted_record_key", "source_folder_uid")
+    RECORD_UID_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTED_RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
+    record_uid: bytes
+    encrypted_record_key: bytes
+    source_folder_uid: bytes
+    def __init__(self, record_uid: _Optional[bytes] = ..., encrypted_record_key: _Optional[bytes] = ..., source_folder_uid: _Optional[bytes] = ...) -> None: ...
+
+class RestoreFolder(_message.Message):
+    __slots__ = ("folder_uid", "encrypted_folder_key")
+    FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTED_FOLDER_KEY_FIELD_NUMBER: _ClassVar[int]
+    folder_uid: bytes
+    encrypted_folder_key: bytes
+    def __init__(self, folder_uid: _Optional[bytes] = ..., encrypted_folder_key: _Optional[bytes] = ...) -> None: ...
+
+class TrashcanRestoreRequest(_message.Message):
+    __slots__ = ("records", "folders", "target_folder_uid")
+    RECORDS_FIELD_NUMBER: _ClassVar[int]
+    FOLDERS_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
+    records: _containers.RepeatedCompositeFieldContainer[RestoreRecord]
+    folders: _containers.RepeatedCompositeFieldContainer[RestoreFolder]
+    target_folder_uid: bytes
+    def __init__(self, records: _Optional[_Iterable[_Union[RestoreRecord, _Mapping]]] = ..., folders: _Optional[_Iterable[_Union[RestoreFolder, _Mapping]]] = ..., target_folder_uid: _Optional[bytes] = ...) -> None: ...

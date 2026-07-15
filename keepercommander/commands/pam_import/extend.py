@@ -54,23 +54,34 @@ from .keeper_ai_settings import (
     refresh_link_to_config_to_latest,
 )
 from .workflow_apply import apply_workflow, validate_workflow_principals
+from .nsf_helpers import (
+    build_folder_tree,
+    create_nsf_subfolder,
+    extend_create_record,
+    find_pam_configuration,
+    get_folder_record_uids,
+    get_ksm_app_folders,
+    get_records_in_folder,
+)
+from .record_loader import load_pam_record
 from ...keeper_dag import EdgeType
 from ...keeper_dag.types import RefType
 from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
 from ..pam.config_helper import configuration_controller_get
+from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record, update_pam_record
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
-from ... import api, crypto, utils, vault, vault_extensions, record_management
+from ... import api, crypto, utils, vault, record_management
 from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ...proto import APIRequest_pb2, enterprise_pb2, pam_pb2, record_pb2
+from ...proto import enterprise_pb2, pam_pb2, record_pb2
 from ...recordv3 import RecordV3
-from ...subfolder import BaseFolderNode
+from ...subfolder import BaseFolderNode, find_folders as find_record_folders
 
 def split_folder_path(path: str) -> list[str]:
     """Split folder path using path deilmiter / (escape: / -> //)"""
@@ -191,23 +202,8 @@ def process_folder_paths(folder_paths, ksm_shared_folders):
     return good_paths, bad_paths
 
 def build_tree_recursive(params, folder_uid: str):
-    """Recursively build tree for a folder and its subfolders"""
-    tree = {}
-    folder = params.folder_cache.get(folder_uid)
-    if not folder:
-        return tree
-
-    for subfolder_uid in folder.subfolders:
-        subfolder = params.folder_cache.get(subfolder_uid)
-        if subfolder:
-            folder_name = subfolder.name or ''
-            tree[folder_name] = {
-                'uid': subfolder.uid,
-                'name': folder_name,
-                'subfolders': build_tree_recursive(params, subfolder.uid)
-            }
-
-    return tree
+    """Recursively build tree for a folder and its subfolders (classic or NSF)."""
+    return build_folder_tree(params, folder_uid)
 
 
 def _collect_path_to_uid_from_tree(path_prefix: str, tree: dict, path_to_uid: dict, only_existing: bool) -> None:
@@ -295,35 +291,14 @@ def _get_ksm_app_record_uids(params, ksm_shared_folders: list) -> set:
     """Return set of all record UIDs in any folder shared to the KSM app."""
     folder_uids = _collect_all_folder_uids_under_ksm(ksm_shared_folders)
     record_uids = set()
-    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
     for fuid in folder_uids:
-        if fuid in subfolder_record_cache:
-            record_uids.update(subfolder_record_cache[fuid])
+        record_uids.update(get_folder_record_uids(params, fuid))
     return record_uids
 
 
 def _get_records_in_folder(params, folder_uid: str):
-    """Return list of (record_uid, title, record_type, login) for records in folder_uid.
-    record_type from record for autodetect (e.g. pamUser, pamMachine, login)."""
-    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
-    result = []
-    for ruid in subfolder_record_cache.get(folder_uid, []):
-        try:
-            rec = vault.KeeperRecord.load(params, ruid)
-            title = getattr(rec, "title", "") or ""
-            rtype = ""
-            if hasattr(rec, "record_type"):
-                rtype = getattr(rec, "record_type", "") or ""
-            login = ""
-            fields = getattr(rec, "fields", None)
-            if isinstance(fields, list):
-                field = next((x for x in fields if getattr(x, "type", "") == "login"), None)
-                if field and hasattr(field, "get_default_value"):
-                    login = (field.get_default_value() or "") or ""
-            result.append((ruid, title, rtype, login))
-        except Exception:
-            pass
-    return result
+    """Return list of (record_uid, title, record_type, login) for records in folder_uid."""
+    return get_records_in_folder(params, folder_uid)
 
 
 def _get_all_ksm_app_records(params, ksm_shared_folders: list) -> list:
@@ -415,15 +390,7 @@ class PAMProjectExtendCommand(Command):
         # no need to populate params.enterprise (users/teams caches).
         # since extend only adds new records to existing folders
 
-        configuration = None
-        if config_name in params.record_cache:
-            configuration = vault.KeeperRecord.load(params, config_name)
-        else:
-            l_name = config_name.casefold()
-            for c in vault_extensions.find_records(params, record_version=6):
-                if c.title.casefold() == l_name:
-                    configuration = c
-                    break
+        configuration = find_pam_configuration(params, config_name)
 
         if not (configuration and isinstance(configuration, vault.TypedRecord) and configuration.version == 6):
             raise CommandError("pam project extend", f"""PAM configuration not found: "{config_name}" """)
@@ -478,7 +445,7 @@ class PAMProjectExtendCommand(Command):
             raise CommandError("pam project extend", f"""PAM KSM Application record not found: "{ksmapp_uid}" """)
 
         # Find KSM Application shared folders
-        ksm_shared_folders = self.get_app_shared_folders(params, ksmapp_uid)
+        ksm_shared_folders = self.get_app_shared_folders(params, ksmapp_uid, configuration.record_uid)
         if not ksm_shared_folders:
             raise CommandError("pam project extend", f""" No shared folders found for KSM Application: "{ksmapp_uid}" """)
 
@@ -559,31 +526,52 @@ class PAMProjectExtendCommand(Command):
             return
         self.process_data(params, project)
 
-    def get_app_shared_folders(self, params, ksm_app_uid: str) -> list[dict]:
-        ksm_shared_folders = []
-
-        try:
-            app_info_list = KSMCommand.get_app_info(params, ksm_app_uid)
-            if app_info_list and len(app_info_list) > 0:
-                app_info = app_info_list[0]
-                shares = [x for x in app_info.shares if x.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER] # pylint: disable=no-member
-                for share in shares:
-                    folder_uid = utils.base64_url_encode(share.secretUid)
-                    if folder_uid in params.shared_folder_cache:
-                        cached_sf = params.shared_folder_cache[folder_uid]
-                        folder_name = cached_sf.get('name_unencrypted', 'Unknown')
-                        is_editable = share.editable if hasattr(share, 'editable') else False
-
-                        ksm_shared_folders.append({
-                            'uid': folder_uid,
-                            'name': folder_name,
-                            'editable': is_editable,
-                            'permissions': "Editable" if is_editable else "Read-Only"
-                        })
-        except Exception as e:
-            logging.error(f"Could not retrieve KSM application shares: {e}")
-
+    def get_app_shared_folders(self, params, ksm_app_uid: str, configuration_uid: Optional[str]=None) -> list[dict]:
+        ksm_shared_folders = get_ksm_app_folders(params, ksm_app_uid)
+        if not ksm_shared_folders and configuration_uid:
+            ksm_shared_folders.extend(self.get_nsf_project_folders(params, configuration_uid))
         return ksm_shared_folders
+
+    @staticmethod
+    def get_nsf_project_folders(params, configuration_uid: str) -> list[dict]:
+        folder_uids = []
+        for folder_uid in find_record_folders(params, configuration_uid):
+            if folder_uid and is_nested_share_folder(params, folder_uid):
+                folder_uids.append(folder_uid)
+
+        if not folder_uids:
+            return []
+
+        project_folder_uids = []
+        for folder_uid in folder_uids:
+            folder = params.folder_cache.get(folder_uid)
+            if not folder:
+                continue
+            parent_uid = folder.parent_uid
+            if parent_uid:
+                for uid, candidate in params.folder_cache.items():
+                    if candidate.parent_uid == parent_uid and is_nested_share_folder(params, uid):
+                        project_folder_uids.append(uid)
+            else:
+                project_folder_uids.append(folder_uid)
+
+        result = []
+        seen = set()
+        for folder_uid in project_folder_uids:
+            if folder_uid in seen:
+                continue
+            seen.add(folder_uid)
+            folder = params.folder_cache.get(folder_uid)
+            if not folder:
+                continue
+            result.append({
+                'uid': folder_uid,
+                'name': folder.name or folder_uid,
+                'editable': True,
+                'permissions': 'Editable',
+                'source': 'nested_share_folder',
+            })
+        return result
 
     def process_folders(self, params, project: dict) -> dict:
         """Step 1: Parse folder_paths from pam_data, build tree, process paths, optionally create new folders.
@@ -1103,7 +1091,6 @@ class PAMProjectExtendCommand(Command):
         step3_errors = []
         folders_out = project.get("folders") or {}
         ksm_shared_folders = project.get("ksm_shared_folders") or []
-        subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
 
         new_no_path = []
         for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
@@ -1137,7 +1124,7 @@ class PAMProjectExtendCommand(Command):
         non_empty = []
         for shf in ksm_shared_folders:
             uids = _folder_uids_under_shf(shf)
-            if any(subfolder_record_cache.get(fuid) for fuid in uids):
+            if any(get_folder_record_uids(params, fuid) for fuid in uids):
                 non_empty.append(shf)
         if len(non_empty) == 0:
             step3_errors.append("Autodetect: no folders contain records; cannot assign resources/users folders.")
@@ -1189,6 +1176,20 @@ class PAMProjectExtendCommand(Command):
         # folder_uid: if provided, create folder with this UID (same as records with pre-generated uid).
 
         name = str(folder_name or "").strip()
+        if is_nested_share_folder(params, parent_uid):
+            if folder_uid:
+                return create_nsf_subfolder(params, name, parent_uid, folder_uid=folder_uid)
+            from ...nested_share_folder.folder_api import create_folder_v3
+            result = create_folder_v3(params, name, parent_uid=parent_uid)
+            if isinstance(result, dict) and result.get('success') is False:
+                raise CommandError("pam project extend", result.get('message') or 'Failed to create Nested Share Folder')
+            new_uid = result.get('folder_uid') if isinstance(result, dict) else None
+            if not new_uid:
+                raise CommandError("pam project extend", f'Nested Share Folder creation did not return UID: {name}')
+            api.sync_down(params)
+            params.environment_variables[LAST_FOLDER_UID] = new_uid
+            return new_uid
+
         base_folder = params.folder_cache.get(parent_uid, None) or params.root_folder
 
         shared_folder = True if permissions else False
@@ -1255,6 +1256,18 @@ class PAMProjectExtendCommand(Command):
         result = [v for k, v in matches.items() if
                   (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
+        if not is_shared_folder:
+            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
+                nsf_parent = nsf.get('parent_uid') or None
+                if nsf_parent == puid and nsf.get('name') == folder:
+                    result.append(SimpleNamespace(
+                        uid=uid,
+                        name=nsf.get('name'),
+                        parent_uid=nsf_parent,
+                        type=BaseFolderNode.UserFolderType,
+                        UserFolderType=BaseFolderNode.UserFolderType,
+                        SharedFolderType=BaseFolderNode.SharedFolderType,
+                    ))
         return result
 
     def create_ksm_app(self, params, app_name) -> str:
@@ -1382,7 +1395,7 @@ class PAMProjectExtendCommand(Command):
             logging.warning(f"Processing external users: {len(new_users)}")
             for n, user in enumerate(new_users):
                 folder_uid = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, folder_uid)
+                extend_create_record(params, user, folder_uid)
                 if n % pdelta == 0:
                     print(f"{n}/{len(new_users)}")
             print(f"{len(new_users)}/{len(new_users)}\n")
@@ -1397,7 +1410,7 @@ class PAMProjectExtendCommand(Command):
                 print(f"{n}/{len(new_resources)}")
             folder_uid = getattr(mach, "resolved_folder_uid", None) or shfres
             admin_uid = get_admin_credential(mach, True)
-            mach.create_record(params, folder_uid)
+            extend_create_record(params, mach, folder_uid)
             tdag.link_resource_to_config(mach.uid)
             if isinstance(mach, PamRemoteBrowserObject):
                 args = parse_command_options(mach, True)
@@ -1464,7 +1477,7 @@ class PAMProjectExtendCommand(Command):
                 if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, ufolder)
+                extend_create_record(params, user, ufolder)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1499,7 +1512,7 @@ class PAMProjectExtendCommand(Command):
                 if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                user.create_record(params, ufolder)
+                extend_create_record(params, user, ufolder)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1545,7 +1558,7 @@ class PAMProjectExtendCommand(Command):
         if pce and getattr(pce, "environment", "") == "domain":
             if getattr(pce, "admin_credential_ref", None):
                 pcuid = (project.get("pam_config") or {}).get("pam_config_uid")
-                pcrec = vault.KeeperRecord.load(params, pcuid) if pcuid else None
+                pcrec = load_pam_record(params, pcuid) if pcuid else None
                 if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
                     if pcrec.record_type == "pamDomainConfiguration":
                         prf = pcrec.get_typed_field("pamResources")
@@ -1555,7 +1568,18 @@ class PAMProjectExtendCommand(Command):
                         prf.value = prf.value or [{}]
                         if isinstance(prf.value[0], dict):
                             prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
-                            record_management.update_record(params, pcrec)
+                            # NSF PAM configs live under NSF folders; classic still use record_management.
+                            force_nsf = is_pam_nsf_record(params, pcuid)
+                            if not force_nsf:
+                                for folder_uid in find_record_folders(params, pcuid):
+                                    if is_nested_share_folder(params, folder_uid):
+                                        force_nsf = True
+                                        break
+                            if force_nsf:
+                                update_pam_record(
+                                    params, pcrec, command='pam-project-extend', force_nsf=True)
+                            else:
+                                record_management.update_record(params, pcrec)
                             tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin="on")
                         else:
                             logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")
@@ -1569,4 +1593,3 @@ class PAMProjectExtendCommand(Command):
                 add_pam_scripts(params, pam_cfg_uid, refs)
         logging.debug("Done processing project data.")
         return
-

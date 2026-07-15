@@ -14,10 +14,11 @@ from keepercommander.commands.pam.pam_dto import (
     GatewayActionIdpGroupList,
 )
 from keepercommander.commands.pam.router_helper import router_send_action_to_gateway
+from keepercommander.commands.pam.vault_target import (
+    create_record_in_folder, resolve_access_user_save_folder)
 from keepercommander.error import CommandError
-from keepercommander import api, crypto, record_management, vault
+from keepercommander import api, crypto, vault
 from keepercommander.proto import pam_pb2
-from keepercommander.subfolder import find_parent_top_folder
 
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,7 @@ class PAMAccessUserProvisionCommand(Command):
     parser.add_argument('--save-record', '-s', dest='save_record', action='store_true',
                         help='Save provisioned credentials as a pamUser record')
     parser.add_argument('--folder', '-f', dest='folder_uid',
-                        help='Folder UID to save the record in (used with --save-record)')
+                        help='Folder UID, name, or path to save the record in (used with --save-record)')
     parser.add_argument('--gateway', '-g', dest='gateway',
                         help='Gateway UID or name')
 
@@ -304,13 +305,10 @@ class PAMAccessUserProvisionCommand(Command):
                 user_id_label = idp_label_map.get(idp_type, 'IdP User ID')
                 record.custom.append(vault.TypedField.new_field('text', user_id, user_id_label))
 
-            folder_uid = kwargs.get('folder_uid')
-            if not folder_uid:
-                shared_folders = find_parent_top_folder(params, config_uid)
-                if shared_folders:
-                    sf = shared_folders[0]
-                    folder_uid = sf.parent_uid if sf.parent_uid else sf.uid
-            record_management.add_record_to_folder(params, record, folder_uid)
+            folder_uid = resolve_access_user_save_folder(
+                params, config_uid, folder_spec=kwargs.get('folder_uid'))
+
+            create_record_in_folder(params, record, folder_uid, command='pam-access-user-provision')
             params.sync_data = True
 
             print(f'  Record UID:   {record.record_uid}')

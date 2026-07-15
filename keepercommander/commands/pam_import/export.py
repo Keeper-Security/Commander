@@ -21,6 +21,7 @@ from .base import (
 )
 from ..base import Command
 from ..pam.config_facades import PamConfigurationRecordFacade
+from .record_loader import iter_accessible_record_uids, load_pam_record
 from ... import vault
 from ...display import bcolors
 
@@ -79,7 +80,7 @@ class PAMProjectExportCommand(Command):
             return
 
         # 1. Load PAM configuration record (v6)
-        config_record = vault.KeeperRecord.load(params, project_uid)
+        config_record = load_pam_record(params, project_uid)
         if not config_record:
             logging.warning(
                 f"{bcolors.FAIL}PAM configuration '{project_uid}' not found in vault{bcolors.ENDC}"
@@ -203,7 +204,7 @@ class PAMProjectExportCommand(Command):
         title_to_uid = self._build_user_title_index(params)
 
         for res_uid in resource_uids:
-            res_record = vault.KeeperRecord.load(params, res_uid)
+            res_record = load_pam_record(params, res_uid)
             if not res_record or not isinstance(res_record, vault.TypedRecord):
                 logging.debug("Export: skipping resource UID %s (not found or not TypedRecord)", res_uid)
                 continue
@@ -251,10 +252,9 @@ class PAMProjectExportCommand(Command):
     def _build_user_title_index(self, params):
         """Index every pamUser / login record by lowercased title for title-based linking."""
         index = {}
-        record_cache = getattr(params, "record_cache", {}) or {}
-        for uid in record_cache:
+        for uid in iter_accessible_record_uids(params):
             try:
-                rec = vault.KeeperRecord.load(params, uid)
+                rec = load_pam_record(params, uid)
             except Exception:
                 continue
             if not rec or not isinstance(rec, vault.TypedRecord):
@@ -302,7 +302,7 @@ class PAMProjectExportCommand(Command):
 
     def _load_user_obj(self, params, usr_uid):
         """Load a pamUser/login record and return a plain dict, or None on failure."""
-        usr_record = vault.KeeperRecord.load(params, usr_uid)
+        usr_record = load_pam_record(params, usr_uid)
         if not usr_record or not isinstance(usr_record, vault.TypedRecord):
             logging.debug("Export: user UID %s not found or not TypedRecord", usr_uid)
             return None

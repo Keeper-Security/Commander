@@ -72,6 +72,11 @@ nested_share_folder_list_parser.add_argument(
 nested_share_folder_list_parser.add_argument(
     '--records', action='store_true', help='Show only records')
 nested_share_folder_list_parser.add_argument(
+    '--roe-eligible', dest='roe_eligible', action='store_true',
+    help='only list Nested Share Folders eligible for --rotate-on-expiration '
+         '(contain at least one pamUser record with rotation configured; '
+         'implies --folders)')
+nested_share_folder_list_parser.add_argument(
     '--format', dest='format', choices=['table', 'csv', 'json'], default='table',
     help='Output format (default: table)')
 nested_share_folder_list_parser.add_argument(
@@ -104,6 +109,12 @@ _sf_expire.add_argument(
 _sf_expire.add_argument(
     '--expire-in', dest='expire_in', action='store', metavar='PERIOD',
     help='share expiration: never or period (e.g. 30d, 6mo, 1y, 24h, 30mi)')
+nested_share_folder_share_parser.add_argument(
+    '-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
+    help='rotate the password when the share access expires. '
+         'Only valid on grant; requires a positive --expire-at/--expire-in '
+         '(not "never") and at least one pamUser record with rotation '
+         'configured in the folder.')
 nested_share_folder_share_parser.add_argument(
     'folder', nargs='+', type=str, help='Nested Share Folder path or UID')
 
@@ -227,6 +238,11 @@ _sr_expire.add_argument(
     '--expire-in', dest='expire_in',
     metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears]', type=str,
     help='share expiration: never or period (e.g. 30d, 6mo, 1y)')
+nested_share_record_share_parser.add_argument(
+    '-roe', '--rotate-on-expiration', dest='rotate_on_expiration', action='store_true',
+    help='rotate the password when the share access expires. '
+         'Only valid on grant; requires a positive --expire-at/--expire-in '
+         '(not "never") and a pamUser record with rotation configured.')
 
 
 nested_share_record_permission_parser = _make_parser(

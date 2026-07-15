@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 def create_record_data_v3(record_uid, record_key, data,
                            non_shared_data=None, folder_uid=None,
                            folder_key=None, record_key_type=None,
-                           client_modified_time=None, data_key=None):
+                           client_modified_time=None, data_key=None,
+                           owner_key=None, audit=None):
     ra = record_endpoints_pb2.RecordAdd()
     ra.recordUid = utils.base64_url_decode(record_uid)
 
@@ -44,6 +45,10 @@ def create_record_data_v3(record_uid, record_key, data,
             raise ValueError("data_key required when creating at vault root")
         ra.recordKey = crypto.encrypt_aes_v2(record_key, data_key)
 
+    owner_encryption_key = owner_key or data_key
+    if owner_encryption_key is not None:
+        ra.recordKeyEncryptedByOwnerKey = crypto.encrypt_aes_v2(record_key, owner_encryption_key)
+
     ra.recordKeyType = (record_key_type if record_key_type is not None
                         else folder_pb2.encrypted_by_data_key_gcm)
 
@@ -57,6 +62,8 @@ def create_record_data_v3(record_uid, record_key, data,
         ra.nonSharedData = crypto.encrypt_aes_v2(ns_bytes, record_key)
     if client_modified_time:
         ra.clientModifiedTime = client_modified_time
+    if audit is not None:
+        ra.audit.CopyFrom(audit)
     return ra
 
 
@@ -74,6 +81,18 @@ def record_add_v3(params, records, client_time=None, security_data_key_type=None
     if security_data_key_type:
         rq.securityDataKeyType = security_data_key_type
     return api.communicate_rest(params, rq, 'vault/records/v3/add',
+                                rs_type=record_pb2.RecordsModifyResponse)
+
+
+def record_add_pam_configuration_v3(params, records, client_time=None, security_data_key_type=None):
+    if not records or len(records) > 1000:
+        raise ValueError("Provide 1..1000 records")
+    rq = record_endpoints_pb2.RecordsAddRequest()
+    rq.records.extend(records)
+    rq.clientTime = client_time if client_time is not None else utils.current_milli_time()
+    if security_data_key_type:
+        rq.securityDataKeyType = security_data_key_type
+    return api.communicate_rest(params, rq, 'vault/records/v3/add_pam_configuration',
                                 rs_type=record_pb2.RecordsModifyResponse)
 
 
@@ -96,8 +115,8 @@ def record_update_v3(params, records, client_time=None, security_data_key_type=N
 
 def create_record_v3(params, record_type='', title='', fields=None,
                      folder_uid=None, notes=None, custom_fields=None,
-                     record_data=None):
-    uid = utils.generate_uid()
+                     record_data=None, record_uid=None):
+    uid = record_uid or utils.generate_uid()
     rk = os.urandom(32)
 
     if record_data is not None:
@@ -135,16 +154,15 @@ def create_record_v3(params, record_type='', title='', fields=None,
 def update_record_v3(params, record_uid, data=None, title=None,
                      record_type=None, fields=None, notes=None,
                      non_shared_data=None, revision=None):
-    if record_uid not in params.record_cache:
+    rec = get_record_from_cache(params, record_uid)
+    if not rec:
         from .. import sync_down
         sync_down.sync_down(params)
-        if record_uid not in params.record_cache:
-            raise ValueError(f"Record {record_uid} not found")
+        rec = get_record_from_cache(params, record_uid)
+    if not rec:
+        raise ValueError(f"Record {record_uid} not found")
 
-    rec = params.record_cache[record_uid]
-    rk = rec.get('record_key_unencrypted')
-    if not rk:
-        raise ValueError(f"Record key not available for {record_uid}")
+    rk = rec.get('record_key_unencrypted') or get_record_key(params, record_uid)
 
     if data is None:
         existing = None
@@ -339,6 +357,8 @@ def get_record_accesses_v3(params, record_uids):
         # Proto3 scalar fields have no presence; only test the submessage.
         if d.HasField('tlaProperties'):
             ao['tla_expiration'] = d.tlaProperties.expiration
+            ao['tla_rotate_on_expiration'] = bool(
+                getattr(d.tlaProperties, 'rotateOnExpiration', False))
         result['record_accesses'].append(ao)
     for fu in rs.forbiddenRecords:
         result['forbidden_records'].append(utils.base64_url_encode(fu))
@@ -363,8 +383,11 @@ def find_direct_user_share_access(access_result, record_uid, email):
 _SHARE_EXPIRATION_NOOP_TOLERANCE_MS = 60_000
 
 
-def is_record_share_update_noop(existing, access_role_type, expiration_timestamp):
-    """True when an update would leave role and expiration unchanged."""
+def is_record_share_update_noop(existing, access_role_type, expiration_timestamp,
+                                 rotate_on_expiration=False):
+    """True when an update would leave role, expiration, and ROE unchanged."""
+    if rotate_on_expiration and not existing.get('tla_rotate_on_expiration'):
+        return False
     if existing.get('access_role_type') != access_role_type:
         return False
     existing_exp = existing.get('tla_expiration')
@@ -383,13 +406,16 @@ def is_record_share_update_noop(existing, access_role_type, expiration_timestamp
 # Record sharing  (Strategy: share / update / revoke)
 # ══════════════════════════════════════════════════════════════════════════
 
-def _apply_share_expiration_tla(tla_props, expiration_timestamp):
-    """Set expiration / notification fields on a TLAProperties proto."""
+def _apply_share_expiration_tla(tla_props, expiration_timestamp,
+                                 rotate_on_expiration=False):
+    """Set expiration / notification / ROE fields on a TLAProperties proto."""
     if expiration_timestamp is None:
         return
     tla_props.expiration = expiration_timestamp
     if expiration_timestamp > 0:
         tla_props.timerNotificationType = tla_pb2.NOTIFY_OWNER
+        if rotate_on_expiration:
+            tla_props.rotateOnExpiration = True
 
 
 def _build_revoke_permission(params, record_uid, recipient_email):
@@ -409,7 +435,8 @@ def _build_revoke_permission(params, record_uid, recipient_email):
 
 
 def _build_share_permissions(params, record_uid, recipient_email, access_role_type,
-                              expiration_timestamp, include_role, skip_sync=False):
+                              expiration_timestamp, include_role, skip_sync=False,
+                              rotate_on_expiration=False):
     """Build a Permissions protobuf for share/update — single source of truth."""
     if not skip_sync:
         from .. import sync_down as sd
@@ -444,7 +471,9 @@ def _build_share_permissions(params, record_uid, recipient_email, access_role_ty
     perm.rules.owner = False
     if include_role and access_role_type is not None:
         perm.rules.accessRoleType = access_role_type
-    _apply_share_expiration_tla(perm.rules.tlaProperties, expiration_timestamp)
+    _apply_share_expiration_tla(
+        perm.rules.tlaProperties, expiration_timestamp,
+        rotate_on_expiration=rotate_on_expiration)
     return perm
 
 
@@ -459,10 +488,12 @@ def _send_revoke_share_request(params, record_uid, recipient_email):
 
 
 def _send_create_share_request(params, record_uid, recipient_email, access_role_type,
-                               expiration_timestamp, skip_sync=False):
+                               expiration_timestamp, skip_sync=False,
+                               rotate_on_expiration=False):
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True, skip_sync=skip_sync)
+                                     include_role=True, skip_sync=skip_sync,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.createSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
@@ -472,10 +503,11 @@ def _send_create_share_request(params, record_uid, recipient_email, access_role_
 
 
 def share_record_v3(params, record_uid, recipient_email, access_role_type,
-                    expiration_timestamp=None):
+                    expiration_timestamp=None, rotate_on_expiration=False):
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True)
+                                     include_role=True,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.createSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
@@ -484,8 +516,82 @@ def share_record_v3(params, record_uid, recipient_email, access_role_type,
     return {'results': results, 'success': all(r['success'] for r in results)}
 
 
+def _application_record_role(is_editable):
+    return folder_pb2.CONTENT_MANAGER if is_editable else folder_pb2.VIEWER
+
+
+def _build_application_share_permission(params, record_uid, app_uid, app_key,
+                                         is_editable=False, include_key=True):
+    rec = get_record_from_cache(params, record_uid)
+    if not rec:
+        raise ValueError(f"Record {record_uid} not found in cache")
+    rk = rec.get('record_key_unencrypted')
+    if not rk and include_key:
+        rk = get_record_key(params, record_uid, raise_on_missing=False)
+    if include_key and not rk:
+        raise ValueError(f"Record {record_uid} has no decrypted key")
+    if not app_uid:
+        raise ValueError('Application UID is required')
+
+    app_uid_bytes = utils.base64_url_decode(app_uid)
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+
+    perm = record_sharing_pb2.Permissions()
+    perm.recipientUid = app_uid_bytes
+    perm.recordUid = record_uid_bytes
+    if include_key:
+        perm.recordKey = crypto.encrypt_aes_v2(rk, app_key)
+        perm.useEccKey = False
+
+    perm.rules.accessTypeUid = app_uid_bytes
+    perm.rules.accessType = folder_pb2.AT_APPLICATION
+    perm.rules.recordUid = record_uid_bytes
+    perm.rules.owner = False
+    perm.rules.accessRoleType = _application_record_role(is_editable)
+    return perm
+
+
+def share_record_to_application_v3(params, record_uid, app_uid, app_key,
+                                    is_editable=False):
+    """Share an NSF record with a Secrets Manager application via records/v3/share."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key, is_editable=is_editable, include_key=True)
+    rq = record_sharing_pb2.Request()
+    rq.createSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.createdSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
+def update_record_share_to_application_v3(params, record_uid, app_uid, app_key,
+                                           is_editable=False):
+    """Update an NSF record's application share role."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key, is_editable=is_editable, include_key=True)
+    rq = record_sharing_pb2.Request()
+    rq.updateSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
+def unshare_record_from_application_v3(params, record_uid, app_uid):
+    """Revoke a Secrets Manager application's access to an NSF record."""
+    perm = _build_application_share_permission(
+        params, record_uid, app_uid, app_key=None, is_editable=False, include_key=False)
+    rq = record_sharing_pb2.Request()
+    rq.revokeSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
+
+
 def update_record_share_v3(params, record_uid, recipient_email,
-                            access_role_type=None, expiration_timestamp=None):
+                            access_role_type=None, expiration_timestamp=None,
+                            rotate_on_expiration=False):
     """Update an existing direct share.
 
     Role changes use ``updateSharingPermissions``.  Positive expirations use
@@ -518,18 +624,19 @@ def update_record_share_v3(params, record_uid, recipient_email,
             recipient_email)
         return _send_create_share_request(
             params, record_uid, recipient_email, access_role_type,
-            expiration_timestamp, skip_sync=True)
+            expiration_timestamp, skip_sync=True,
+            rotate_on_expiration=rotate_on_expiration)
 
     perm = _build_share_permissions(params, record_uid, recipient_email,
                                      access_role_type, expiration_timestamp,
-                                     include_role=True, skip_sync=True)
+                                     include_role=True, skip_sync=True,
+                                     rotate_on_expiration=rotate_on_expiration)
     rq = record_sharing_pb2.Request()
     rq.updateSharingPermissions.append(perm)
     rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
                               rs_type=record_sharing_pb2.Response)
     results = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
     return {'results': results, 'success': all(r['success'] for r in results)}
-
 
 def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
     if not skip_sync:

@@ -18,7 +18,7 @@ class RecordsAddRequest(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[RecordAdd, _Mapping]]] = ..., clientTime: _Optional[int] = ..., securityDataKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ...) -> None: ...
 
 class RecordAdd(_message.Message):
-    __slots__ = ("recordUid", "recordKey", "recordKeyType", "recordKeyEncryptedBy", "clientModifiedTime", "data", "nonSharedData", "folderUid", "recordLinks", "audit", "securityData", "securityScoreData")
+    __slots__ = ("recordUid", "recordKey", "recordKeyType", "recordKeyEncryptedBy", "clientModifiedTime", "data", "nonSharedData", "folderUid", "recordLinks", "audit", "securityData", "securityScoreData", "recordKeyEncryptedByOwnerKey")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDKEY_FIELD_NUMBER: _ClassVar[int]
     RECORDKEYTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -31,6 +31,7 @@ class RecordAdd(_message.Message):
     AUDIT_FIELD_NUMBER: _ClassVar[int]
     SECURITYDATA_FIELD_NUMBER: _ClassVar[int]
     SECURITYSCOREDATA_FIELD_NUMBER: _ClassVar[int]
+    RECORDKEYENCRYPTEDBYOWNERKEY_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
     recordKey: bytes
     recordKeyType: _folder_pb2.EncryptedKeyType
@@ -43,4 +44,5 @@ class RecordAdd(_message.Message):
     audit: _record_pb2.RecordAudit
     securityData: _record_pb2.SecurityData
     securityScoreData: _record_pb2.SecurityScoreData
-    def __init__(self, recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_folder_pb2.EncryptedKeyType, str]] = ..., recordKeyEncryptedBy: _Optional[_Union[_folder_pb2.FolderKeyEncryptionType, str]] = ..., clientModifiedTime: _Optional[int] = ..., data: _Optional[bytes] = ..., nonSharedData: _Optional[bytes] = ..., folderUid: _Optional[bytes] = ..., recordLinks: _Optional[_Iterable[_Union[_record_pb2.RecordLink, _Mapping]]] = ..., audit: _Optional[_Union[_record_pb2.RecordAudit, _Mapping]] = ..., securityData: _Optional[_Union[_record_pb2.SecurityData, _Mapping]] = ..., securityScoreData: _Optional[_Union[_record_pb2.SecurityScoreData, _Mapping]] = ...) -> None: ...
+    recordKeyEncryptedByOwnerKey: bytes
+    def __init__(self, recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_folder_pb2.EncryptedKeyType, str]] = ..., recordKeyEncryptedBy: _Optional[_Union[_folder_pb2.FolderKeyEncryptionType, str]] = ..., clientModifiedTime: _Optional[int] = ..., data: _Optional[bytes] = ..., nonSharedData: _Optional[bytes] = ..., folderUid: _Optional[bytes] = ..., recordLinks: _Optional[_Iterable[_Union[_record_pb2.RecordLink, _Mapping]]] = ..., audit: _Optional[_Union[_record_pb2.RecordAudit, _Mapping]] = ..., securityData: _Optional[_Union[_record_pb2.SecurityData, _Mapping]] = ..., securityScoreData: _Optional[_Union[_record_pb2.SecurityScoreData, _Mapping]] = ..., recordKeyEncryptedByOwnerKey: _Optional[bytes] = ...) -> None: ...
