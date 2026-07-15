@@ -164,6 +164,49 @@ _LEGACY_TO_KD_FOLDER_MSG = (
     "only on Nested Share Folders."
 )
 
+_OWNER_SHARE_TARGET_MSG = (
+    "'{email}' is the owner of this {entity} and already has full access. "
+    "Share permissions cannot be granted, changed, or revoked for the owner."
+)
+
+
+def owner_share_target_message(email, entity='record'):
+    """User-facing message when a share command targets the owner."""
+    return _OWNER_SHARE_TARGET_MSG.format(email=email, entity=entity)
+
+
+def is_nested_share_folder_owner_email(params, folder_uid, email):
+    """True when *email* matches the NSF folder owner from sync-down."""
+    if not folder_uid or not email:
+        return False
+    fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid) or {}
+    owner_username = fobj.get('owner_username') or ''
+    return bool(owner_username) and owner_username.casefold() == email.casefold()
+
+
+def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *, allow_owner_transfer=False):
+    """Raise CommandError when *email* is the owner of *record_uid*.
+
+    Ownership transfer (``-a owner``) is allowed unless the target already owns
+    the record (``allow_owner_transfer=True`` then raises a no-op-style error).
+    """
+    from ...nested_share_folder.record_api import (
+        get_record_accesses_v3, find_record_owner_username)
+    try:
+        access_result = get_record_accesses_v3(params, [record_uid])
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "Could not resolve owner for record '%s': %s", record_uid, exc)
+        return
+    owner = find_record_owner_username(access_result, record_uid)
+    if not owner or owner.casefold() != email.casefold():
+        return
+    if allow_owner_transfer:
+        raise CommandError(
+            cmd_name,
+            f"'{email}' already owns this record. Ownership transfer is a no-op.")
+    raise CommandError(cmd_name, owner_share_target_message(email, entity='record'))
+
 
 def is_nested_share_record(params, record_uid):
     """Return True when *record_uid* is a Nested Share Folder (v3) record."""
