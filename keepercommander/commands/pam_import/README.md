@@ -11,6 +11,33 @@ Initial Import.
 - `--dry-run`, `-d` → Test import without modifying vault.
 
 
+### Sample data (Discovery Playground)
+
+Generate a ready-to-run PAM project that matches the [discovery-playground](https://github.com/Keeper-Security) docker stack — folders, KSM app, gateway, PAM configuration, sample records **and** a matching `docker-compose.yaml`.
+`pam project import --sample-data [--name "My Playground"] [--dry-run]`
+
+- `--sample-data`, `-s` → Generate sample data _(default project name: `Discovery Playground`)_.
+
+What it creates:
+- Vault records for MySQL, PostgreSQL, MariaDB, MSSQL, MongoDB, SSH (password + key), VNC, RDP, Telnet, OpenLDAP and a Remote Browser (RBI) resource.
+- A `docker-compose.yaml` in the current directory (falls back to the OS temp dir if the cwd is not writable). If a `docker-compose.yaml` already exists it is written with a timestamp/random suffix instead of overwriting.
+- A `docker-seccomp.json` next to the compose file (required by the gateway's `security_opt: seccomp:docker-seccomp.json`). It is written only if absent — the profile is identical for every run and is never overwritten.
+
+All credentials are generated fresh per run and stored **both** in the vault records and in the generated compose — no secrets are hard-coded. They satisfy your enterprise password-complexity policy (a random password built to the policy's length / character-class / special-set rules, matching the Web Vault) and prefer characters that need no escaping in a shell, JSON or YAML — falling back to the policy's own special set when it requires one. On success the command prints exactly two lines: the absolute path of the compose file and the canonical seccomp URL.
+
+The generated gateway uses `image: keeper/gateway:latest` and `security_opt: [seccomp:docker-seccomp.json, apparmor=unconfined]`, with its `GATEWAY_CONFIG` set to the base64 config of the gateway created during the import. Start the stack with `docker compose up -d`.
+
+To re-download the seccomp profile manually:
+```sh
+curl -O https://raw.githubusercontent.com/Keeper-Security/KeeperPAM/refs/heads/main/gateway/docker-seccomp.json
+```
+
+Notes:
+- **RBI** (Remote Browser) is a Keeper record only — it has no compose service.
+- **OpenLDAP** (`server-openldap-1`, image `rroemhild/test-openldap`) uses image-fixed demo credentials (`cn=admin` / `GoodNewsEveryone`, domain `planetexpress.com`); the compose block carries no secrets and the demo users reset on container restart.
+- **Telnet** (`server-telnet`, `ddhhz/nyancat-server`) has no authentication; the Keeper pamUser exists only for rotation/discovery testing.
+
+
 Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
 `pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--dry-run]`
 
@@ -850,7 +877,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"host": "127.0.0.8",
 				"port": "27017",
 				"use_ssl": true,
-				"users": [{"type": "pamUser","login": "pamuser2","password": "p4mus3r2!"}]
+				"users": [{"type": "pamUser","login": "pamuser2","password": "*****"}]
 			}
 		]
 	}
@@ -924,7 +951,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"host": "127.0.0.8",
 				"port": "636",
 				"use_ssl": true,
-				"users": [{"type": "pamUser","login": "pamuser2","password": "p4mus3r2!"}]
+				"users": [{"type": "pamUser","login": "pamuser2","password": "*****"}]
 			}
 		]
 	}
@@ -1002,7 +1029,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"type": "login",
 				"title": "rbi_hotmail_user1",
 				"login": "user1@hotmail.com",
-				"password": "User1Pa$$w0rd!",
+				"password": "*****",
 				"otp": "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ExampleApp"
 			}
 		]
@@ -1022,7 +1049,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"title": "PAM User1 - general rotation",
 				"notes": "PAM User1 Notes",
 				"login": "pamuser1",
-				"password": "pamuser1Pa$$w0rd!",
+				"password": "*****",
 				"private_pem_key": "-----BEGIN RSA PRIVATE KEY-----\n-----END RSA PRIVATE KEY-----",
 				"distinguished_name": "User1 Distinguished Name",
 				"connect_database": "user1_connect_db1",
@@ -1041,7 +1068,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"type": "pamUser",
 				"title": "PAM User2 - iam_user rotation",
 				"login": "pamuser2",
-				"password": "pamuser2Pa$$w0rd!",
+				"password": "*****",
 				"rotation_settings": {
 					"rotation": "iam_user",
 					"enabled": "on",
@@ -1053,7 +1080,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"type": "pamUser",
 				"title": "PAM User3 - scripts_only rotation (NOOP)",
 				"login": "pamuser3",
-				"password": "pamuser3Pa$$w0rd!",
+				"password": "*****",
 				"rotation_settings": {
 					"rotation": "scripts_only",
 					"enabled": "on",
