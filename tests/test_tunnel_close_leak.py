@@ -13,11 +13,12 @@ Steps:
   4. Assert the SSH process dies within CLOSE_TIMEOUT_S
   5. Assert the tunnel session is unregistered from _GLOBAL_TUNNEL_SESSIONS
 """
+import logging
+import os
 import subprocess
 import sys
 import threading
 import time
-import logging
 
 # Linux-only e2e repro: shells out to `sshpass`/`ssh` with `/dev/null` paths and
 # needs an SSH container on 127.0.0.1:2222. Bail before importing the native
@@ -39,13 +40,12 @@ from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     register_tunnel_session,
     get_tunnel_session,
     TunnelSession,
-    CloseConnectionReasons,
 )
 
 SSH_HOST = "127.0.0.1"
 SSH_PORT = 2222
 SSH_USER = "linuxuser"
-SSH_PASS = "alpine"
+SSH_PASS = os.environ.get("TEST_SSH_PASS", "")
 CLOSE_TIMEOUT_S = 5
 
 TEST_CALLBACK_TOKEN = "TEST_MODE_CALLBACK_TOKEN"
@@ -135,7 +135,7 @@ def main():
     print(f"    Tunnel ready — {listen_addr}")
     time.sleep(0.3)
 
-    print(f"[2] Opening SSH session through tunnel ...")
+    print("[2] Opening SSH session through tunnel ...")
     ssh_proc = subprocess.Popen(
         [
             "sshpass", f"-p{SSH_PASS}",
@@ -198,10 +198,10 @@ def main():
     # Check 1: tunnel session must be unregistered
     remaining_session = get_tunnel_session(server_id)
     if remaining_session is not None:
-        print(f"FAIL: tunnel session still registered after connection_state_changed=closed")
+        print("FAIL: tunnel session still registered after connection_state_changed=closed")
         ssh_proc.kill()
         sys.exit(2)
-    print(f"    Session unregistered ✓")
+    print("    Session unregistered ✓")
 
     # Check 2: SSH process must die within CLOSE_TIMEOUT_S
     try:
