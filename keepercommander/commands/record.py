@@ -1263,7 +1263,7 @@ class RecordGetUidCommand(Command):
         """Display rotation info for pamUser records in table format (similar to web vault)"""
         from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
         from .tunnel.port_forward.TunnelGraph import TunnelDAG
-        from keeper_dag.edge import EdgeType
+        from ..keeper_dag import EdgeType  # vendored; bare `keeper_dag` is not importable
 
         try:
             # Get rotation data from cache

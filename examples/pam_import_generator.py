@@ -30,10 +30,21 @@ import copy
 import csv
 import json
 import os
+import secrets
+import string
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+_ALPHANUM = string.ascii_letters + string.digits
+
+
+def _random_alphanumeric(length: int = 16) -> str:
+    return "".join(secrets.choice(_ALPHANUM) for _ in range(length))
+
+
+_AD_DEMO = _random_alphanumeric()
+_MACHINE_DEMO = _random_alphanumeric()
 
 DEFAULT_IMPORT_TEMPLATE = """{
     "project": "Project1",
@@ -70,7 +81,7 @@ DEFAULT_IMPORT_TEMPLATE = """{
                     "title": "XXX:DomainAdmin",
                     "_comment_login_password": "Must provide valid credentials but delete sensitive data/json after import",
                     "login": "XXX:administrator@demo.local",
-                    "password": "XXX:P4ssw0rd_123",
+                    "password": "XXX:__AD_DEMO__",
                     "rotation_settings": { "rotation": "general", "enabled": "on", "schedule": {"type": "on-demand"}}
                 }]
             },
@@ -106,13 +117,13 @@ DEFAULT_IMPORT_TEMPLATE = """{
                     "_comment_login": "username value from CSV",
                     "login": "xxx:Administrator",
                     "_comment_password": "password value from CSV",
-                    "password": "xxx:P4ssw0rd_123",
+                    "password": "xxx:__MACHINE_DEMO__",
                     "rotation_settings": { "rotation": "general", "enabled": "on", "schedule": {"type": "on-demand"} }
                 }]
             }
         ]
     }
-}"""
+}""".replace("__AD_DEMO__", _AD_DEMO).replace("__MACHINE_DEMO__", _MACHINE_DEMO)
 
 
 def _build_cli() -> argparse.ArgumentParser:
