@@ -1654,7 +1654,7 @@ class SuperShellApp(App):
                 try:
                     from keepercommander.commands.tunnel.port_forward.tunnel_helpers import get_keeper_tokens
                     from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
-                    from keeper_dag.edge import EdgeType
+                    from keepercommander.keeper_dag import EdgeType  # vendored; bare `keeper_dag` is not importable
 
                     encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(self.params)
                     tdag = TunnelDAG(self.params, encrypted_session_token, encrypted_transmission_key, record_uid,
