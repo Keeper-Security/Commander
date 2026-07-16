@@ -198,6 +198,7 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         self.assertTrue(mock_TunnelDAG.called)
         self.assertEqual(mock_typed_record.record_key, b'\x00' * 16)
 
+    @patch('keepercommander.commands.discoveryrotation.api.sync_down')
     @patch('keepercommander.commands.discoveryrotation.router_set_record_rotation_information')
     @patch('keepercommander.vault_extensions.find_records')
     @patch('keepercommander.commands.discoveryrotation.resolve_pam_record')
@@ -207,13 +208,14 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
     @patch('keepercommander.rest_api.SERVER_PUBLIC_KEYS', {8: ec.generate_private_key(ec.SECP256R1()).public_key()})
     def test_execute_pam_user_with_config_no_resource(self, mock_TunnelDAG, mock_get_keeper_tokens, mock_load,
                                                       mock_resolve_pam_record, mock_find_records,
-                                                      mock_router_set_rotation):
+                                                      mock_router_set_rotation, mock_sync_down):
         record_uid = 'OYNvVgpPPJBrVfYOIRtdag'
         config_uid = 'bU2LVM6LjX_hmCoSMDA7vg'
         resource_uid = 'dU2LVM6LjX_hmCoSMDA7vx'
 
         mock_params, mock_typed_record = create_mock_params_and_record()
         mock_params.record_rotation_cache = {}
+        mock_params.nested_share_records = {}
         mock_typed_record.record_uid = record_uid
         mock_load.return_value = mock_typed_record
 
@@ -254,6 +256,7 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         mock_config_dag.link_resource_to_config.assert_called_once_with(resource_uid)
         mock_config_dag.link_user_to_resource.assert_called_once_with(record_uid, resource_uid, belongs_to=True)
         self.assertTrue(mock_router_set_rotation.called)
+        mock_sync_down.assert_called()
         config_call = mock_TunnelDAG.call_args_list[1]
         self.assertTrue(config_call.kwargs.get('is_config'))
 
