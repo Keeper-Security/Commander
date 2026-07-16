@@ -16,7 +16,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ....commands.base import Command, raise_parse_exception, suppress_exit
 from ....display import bcolors
@@ -26,8 +26,10 @@ from ..service_docker_setup import ServiceDockerSetupCommand
 from ...config.config_validation import ConfigValidator, ValidationError
 from ...docker import (
     SetupResult, DockerSetupPrinter, DockerSetupConstants,
-    ServiceConfig, DockerComposeBuilder, DockerSetupBase
+    ServiceConfig, DockerComposeBuilder, DockerSetupBase, ApprovalsConfig,
 )
+from .approvals_setup import ApprovalsChannelProfile, collect_approvals_config, is_valid_keeper_uid
+from .approvals_sync import merge_approvals_custom_fields, run_approvals_sync_down
 
 UUID_PATTERN = re.compile(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -48,7 +50,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         """e.g. 'Slack', 'Teams' -- drives all naming conventions."""
 
     @abstractmethod
-    def collect_integration_config(self) -> Any:
+    def collect_integration_config(self, params) -> Any:
         """Prompt user for config values, return a config dataclass."""
 
     @abstractmethod
@@ -62,6 +64,14 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     @abstractmethod
     def print_integration_commands(self) -> None:
         """Print available bot commands for this integration."""
+
+    def get_approvals_profile(self) -> Optional[ApprovalsChannelProfile]:
+        """Return approvals profile when this integration supports multi-channel approvers."""
+        return None
+
+    def get_integration_config_marker_field(self) -> str:
+        """Custom field label that identifies this integration's config record."""
+        return f'{self.get_integration_name().lower()}_app_token'
 
     # -- Convention defaults (derived from name, override if needed) -
 
@@ -97,7 +107,15 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return f'keeper-service-{self.get_integration_name().lower()}'
 
     def get_service_commands(self) -> str:
-        return 'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,sync-down,list-sf'
+        commands = (
+            'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,'
+            'record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,'
+            'sync-down,list-sf,list-team'
+        )
+        # Allow service API callers to run --sync-down for multi-channel approvals configs.
+        if self.get_approvals_profile() is not None:
+            commands = f'{commands},{self.get_command_name()}'
+        return commands
 
     # -- Parser (auto-built from name, cached per subclass) ----------
 
@@ -138,7 +156,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         )
         parser.add_argument(
             '--config-path', dest='config_path', type=str,
-            help='Path to config.json file (default: ~/.keeper/config.json)'
+            help='Path to config.json file (default: active session config file)'
         )
         parser.add_argument(
             '--timeout', dest='timeout', type=str, default=DockerSetupConstants.DEFAULT_TIMEOUT,
@@ -148,6 +166,22 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             '--skip-device-setup', dest='skip_device_setup', action='store_true',
             help='Skip device registration and setup if already configured'
         )
+        if self.get_approvals_profile() is not None:
+            parser.add_argument(
+                '--sync-down', dest='sync_down', action='store_true',
+                help=(
+                    'Non-interactively sync multi-channel approvals config with the vault '
+                    '(remove deleted teams; drop missing shared-folder/record UIDs; '
+                    'refresh team names). Requires an existing integration config record.'
+                )
+            )
+            parser.add_argument(
+                '--integration-record', '-r', dest='integration_record_uid', type=str,
+                help=(
+                    'UID of the integration config record for --sync-down '
+                    f'(optional; defaults to "{default_record}" in "{default_folder}")'
+                )
+            )
         parser.error = raise_parse_exception
         parser.exit = suppress_exit
         return parser
@@ -156,6 +190,31 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def execute(self, params, **kwargs):
         name = self.get_integration_name()
+
+        if kwargs.get('sync_down'):
+            if self.get_approvals_profile() is None:
+                raise CommandError(
+                    self.get_command_name(),
+                    f'{name} does not support multi-channel approver sync yet',
+                )
+            record_uid = kwargs.get('integration_record_uid')
+            sync_vault = True
+            if record_uid:
+                record_uid = record_uid.strip()
+                if not is_valid_keeper_uid(record_uid):
+                    raise CommandError(
+                        self.get_command_name(),
+                        f'Invalid integration record UID: {record_uid}',
+                    )
+            else:
+                # Default resolution already syncs the vault.
+                record_uid = self._resolve_default_integration_record(
+                    params, kwargs.get('integration_record_name')
+                )
+                sync_vault = False
+            self._execute_sync_down(params, record_uid, sync_vault=sync_vault)
+            return
+
         self._require_file_based_config(params, f'{name.lower()}-app-setup')
 
         # Phase 1 -- Docker service mode setup
@@ -178,9 +237,11 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, ServiceConfig, str]:
         docker_cmd = ServiceDockerSetupCommand()
 
-        config_path = kwargs.get('config_path') or os.path.expanduser('~/.keeper/config.json')
-        if not os.path.isfile(config_path):
-            raise CommandError(self.get_command_name(), f'Config file not found: {config_path}')
+        config_path = self._require_commander_config_file(
+            self.get_command_name(),
+            kwargs.get('config_path'),
+            params,
+        )
 
         DockerSetupPrinter.print_header("Docker Setup")
 
@@ -248,7 +309,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
 
         DockerSetupPrinter.print_header(f"{name} App Configuration")
-        config = self.collect_integration_config()
+        config = self.collect_integration_config(params)
 
         DockerSetupPrinter.print_step(1, 2, f"Creating {name} config record '{record_name}'...")
         custom_fields = self.build_record_custom_fields(config)
@@ -306,6 +367,70 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             api.sync_down(params)
         except Exception as e:
             raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
+
+    def _patch_record_approvals(self, params, record_uid: str, approvals: ApprovalsConfig) -> None:
+        try:
+            record = vault.KeeperRecord.load(params, record_uid)
+            if not record:
+                raise CommandError(self.get_command_name(), f'Record not found: {record_uid}')
+            if not isinstance(record, vault.TypedRecord):
+                raise CommandError(
+                    self.get_command_name(),
+                    f'Record {record_uid} is not a typed record and cannot store approvals config',
+                )
+            record.custom = merge_approvals_custom_fields(record.custom, approvals)
+            record_management.update_record(params, record)
+            params.sync_data = True
+            api.sync_down(params)
+        except CommandError:
+            raise
+        except Exception as e:
+            raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
+
+    def _find_folder_uid_by_name(self, params, folder_name: str) -> Optional[str]:
+        # Prefer shared folders; integration setup always creates a shared folder.
+        for folder_uid, folder_data in params.shared_folder_cache.items():
+            if folder_data.get('name') == folder_name:
+                return folder_uid
+        return None
+
+    def _resolve_default_integration_record(self, params, record_name: Optional[str] = None) -> str:
+        """Find the default integration config record by folder/name when -r is omitted."""
+        params.sync_data = True
+        api.sync_down(params)
+
+        record_name = record_name or self.get_default_record_name()
+        folder_name = self.get_default_folder_name()
+        folder_uid = self._find_folder_uid_by_name(params, folder_name)
+        if not folder_uid:
+            raise CommandError(
+                self.get_command_name(),
+                f'Default folder "{folder_name}" not found. Pass --integration-record <UID>.',
+            )
+
+        record_uid = self._find_record_in_folder(params, folder_uid, record_name)
+        if not record_uid:
+            raise CommandError(
+                self.get_command_name(),
+                f'Record "{record_name}" not found in folder "{folder_name}". '
+                f'Pass --integration-record <UID>.',
+            )
+        return record_uid
+
+    def _execute_sync_down(self, params, record_uid: str, sync_vault: bool = True) -> None:
+        name = self.get_integration_name()
+        print(f"\n{bcolors.BOLD}{name} App Config Sync{bcolors.ENDC}")
+        print(f"  Reconciling approver teams, shared folders, and records with the vault")
+        print(f"  Config record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
+
+        run_approvals_sync_down(
+            params=params,
+            record_uid=record_uid,
+            marker_field=self.get_integration_config_marker_field(),
+            update_record=lambda uid, approvals: self._patch_record_approvals(params, uid, approvals),
+            command_name=self.get_command_name(),
+            sync_vault=sync_vault,
+        )
 
     # -- Docker Compose update -----------------------------------------
 
@@ -381,7 +506,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _collect_pedm_config(self) -> Tuple[bool, int]:
         print(f"\n{bcolors.BOLD}EPM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
         print(f"  Integrate with Keeper EPM for privilege elevation")
-        enabled = input(f"{bcolors.OKBLUE}Enable EPM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        enabled = self._prompt_yes_no('Enable EPM?', default=False)
         interval = 120
         if enabled:
             interval_input = input(f"{bcolors.OKBLUE}EPM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
@@ -392,7 +517,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
         print(f"\n{bcolors.BOLD}SSO Cloud Device Approval Integration (optional):{bcolors.ENDC}")
         print(f"  Approve SSO Cloud device registrations via {name}")
-        enabled = input(f"{bcolors.OKBLUE}Enable Device Approval? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        enabled = self._prompt_yes_no('Enable Device Approval?', default=False)
         interval = 120
         if enabled:
             interval_input = input(f"{bcolors.OKBLUE}Device approval polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
@@ -400,6 +525,28 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return enabled, interval
 
     # -- Input / validation --------------------------------------------
+
+    def _prompt_yes_no(self, question: str, default: bool = False) -> bool:
+        suffix = '[Press Enter for Yes] (y/n):' if default else '[Press Enter for No] (y/n):'
+        while True:
+            response = input(
+                f"{bcolors.OKBLUE}{question} {suffix}{bcolors.ENDC} "
+            ).strip().lower()
+            if not response:
+                return default
+            if response == 'y':
+                return True
+            if response == 'n':
+                return False
+            print(f"{bcolors.FAIL}Error: Enter y, n, or press Enter for default{bcolors.ENDC}")
+
+    def _collect_approvals_config(self, params, profile: ApprovalsChannelProfile) -> ApprovalsConfig:
+        return collect_approvals_config(
+            params=params,
+            prompt_yes_no=self._prompt_yes_no,
+            prompt_with_validation=self._prompt_with_validation,
+            profile=profile,
+        )
 
     def _prompt_with_validation(self, prompt: str, validator, error_msg: str) -> str:
         while True:

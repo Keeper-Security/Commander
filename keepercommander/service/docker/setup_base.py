@@ -40,6 +40,24 @@ class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
 
     @staticmethod
+    def resolve_commander_config_path(config_path: str = None, params=None) -> str:
+        """Resolve config.json using the same rules as login/shell startup."""
+        if config_path:
+            resolved = os.path.expanduser(config_path)
+        elif params and getattr(params, 'config_filename', None):
+            resolved = os.path.expanduser(params.config_filename)
+        else:
+            resolved = str(utils.get_default_path() / 'config.json')
+        return os.path.abspath(resolved)
+
+    @staticmethod
+    def _require_commander_config_file(command_name: str, config_path: str = None, params=None) -> str:
+        resolved = DockerSetupBase.resolve_commander_config_path(config_path, params)
+        if not os.path.isfile(resolved):
+            raise CommandError(command_name, f'Config file not found: {resolved}')
+        return resolved
+
+    @staticmethod
     def _require_file_based_config(params, command_name: str) -> None:
         """Raise CommandError if credentials are in the OS keychain rather than config.json."""
         from ...config_storage.loader import CONFIG_STORAGE_URL, _is_os_keychain_url
