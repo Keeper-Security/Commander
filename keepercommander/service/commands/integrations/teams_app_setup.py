@@ -28,7 +28,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
 
     # ── Teams-specific configuration ──────────────────────────────
 
-    def collect_integration_config(self):
+    def collect_integration_config(self, params):
         print(f"\n{bcolors.BOLD}CLIENT_ID:{bcolors.ENDC}")
         print(f"  Azure AD App Registration Client ID")
         client_id = self._prompt_with_validation(
