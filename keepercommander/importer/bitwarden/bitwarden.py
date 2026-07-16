@@ -17,9 +17,14 @@ from .. import importer
 from ...record_types import FieldTypes
 
 
+def _to_keeper_path(name):  # type: (str) -> str
+    # protect literal Keeper delimiters, then translate Bitwarden nesting '/' -> '\'
+    return name.replace('\\', '\\\\').replace('/', '\\')
+
+
 class BitwardenImporter(importer.BaseFileImporter):
     def do_import(self, filename, **kwargs):
-        # type: (importer.BaseImporter, str, dict) -> Iterable[Union[importer.Record]]
+        # type: (importer.BaseImporter, str, dict) -> Iterable[Union[importer.Record, importer.SharedFolder]]
 
         with open(filename, 'r', encoding='utf-8') as bw_file:
             bw_import = json.load(bw_file)
@@ -30,9 +35,22 @@ class BitwardenImporter(importer.BaseFileImporter):
             raise Exception(f'File {filename}: Encrypted Bitwarden JSON export not supported.')
 
         folders = {}
+        shared_folders = {}
         for f in bw_import.get('folders', []):
             if 'id' in f and 'name' in f:
                 folders[f['id']] = f['name']
+        for c in bw_import.get('collections', []):
+            if 'id' in c and 'name' in c:
+                shared_folders[c['id']] = c['name']
+
+        seen_sf = set()
+        for name in shared_folders.values():
+            domain = name.partition('/')[0].replace('\\', '\\\\')
+            if domain and domain not in seen_sf:
+                seen_sf.add(domain)
+                sf = importer.SharedFolder()
+                sf.path = domain
+                yield sf
 
         for i in bw_import.get('items') or []:
             record = importer.Record()
@@ -56,11 +74,23 @@ class BitwardenImporter(importer.BaseFileImporter):
                 else:
                     record.notes = note
 
+            record_folders = []
+            for cid in i.get('collectionIds') or []:
+                if cid in shared_folders:
+                    name = shared_folders[cid]
+                    first, _, rest = name.partition('/')
+                    f = importer.Folder()
+                    f.domain = first.replace('\\', '\\\\')   # shared folder = first segment
+                    if rest:
+                        f.path = _to_keeper_path(rest)        # remaining segments nest beneath it
+                    record_folders.append(f)
             folder_id = i.get('folderId') or ''
             if folder_id in folders:
                 f = importer.Folder()
-                f.path = folders[folder_id]
-                record.folders = [f]
+                f.path = _to_keeper_path(folders[folder_id])
+                record_folders.append(f)
+            if record_folders:
+                record.folders = record_folders
             fields = i.get('fields')
             if isinstance(fields, list):
                 for field in fields:
