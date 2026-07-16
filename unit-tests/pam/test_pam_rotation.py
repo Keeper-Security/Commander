@@ -976,6 +976,7 @@ class TestResolveRecordRotationRevision(unittest.TestCase):
     def test_returns_cached_revision_without_sync(self):
         params = MagicMock()
         params.record_rotation_cache = {'record_uid': {'revision': 42}}
+        params.nested_share_records = {}
         with patch('keepercommander.commands.discoveryrotation.api.sync_down') as sync_down:
             revision = resolve_record_rotation_revision(params, 'record_uid')
         self.assertEqual(revision, 42)
@@ -984,6 +985,7 @@ class TestResolveRecordRotationRevision(unittest.TestCase):
     def test_syncs_when_revision_missing_from_cache(self):
         params = MagicMock()
         params.record_rotation_cache = {}
+        params.nested_share_records = {}
 
         def _sync(p):
             params.record_rotation_cache['record_uid'] = {'revision': 17}
@@ -995,9 +997,19 @@ class TestResolveRecordRotationRevision(unittest.TestCase):
     def test_returns_zero_when_no_rotation_after_sync(self):
         params = MagicMock()
         params.record_rotation_cache = {}
+        params.nested_share_records = {}
         with patch('keepercommander.commands.discoveryrotation.api.sync_down'):
             revision = resolve_record_rotation_revision(params, 'record_uid')
         self.assertEqual(revision, 0)
+
+    def test_uses_nsf_record_revision_when_rotation_cache_empty(self):
+        params = MagicMock()
+        params.record_rotation_cache = {}
+        params.nested_share_records = {'nsf_uid': {'revision': 9, 'record_uid': 'nsf_uid'}}
+        with patch('keepercommander.commands.discoveryrotation.api.sync_down') as sync_down:
+            revision = resolve_record_rotation_revision(params, 'nsf_uid')
+        self.assertEqual(revision, 9)
+        sync_down.assert_not_called()
 
 
 USER_UID = 'AAAAAAAAAAAAAAAAAAAAAA'
@@ -1005,11 +1017,12 @@ CONFIG_UID = 'BBBBBBBBBBBBBBBBBBBBBB'
 CRON_SCHEDULE_JSON = '{"type":"CRON","cron":"0 0 3 ? * 2","tz":"Etc/UTC"}'
 
 
-class TestResolveRecordRotationRevision(unittest.TestCase):
+class TestResolveRecordRotationRevisionIam(unittest.TestCase):
 
     def test_returns_cached_revision_without_sync(self):
         params = MagicMock()
         params.record_rotation_cache = {USER_UID: {'revision': 42}}
+        params.nested_share_records = {}
         with patch('keepercommander.commands.discoveryrotation.api.sync_down') as sync_down:
             revision = resolve_record_rotation_revision(params, USER_UID)
         self.assertEqual(revision, 42)
@@ -1018,6 +1031,7 @@ class TestResolveRecordRotationRevision(unittest.TestCase):
     def test_syncs_when_revision_missing_from_cache(self):
         params = MagicMock()
         params.record_rotation_cache = {}
+        params.nested_share_records = {}
 
         def _sync(p):
             params.record_rotation_cache[USER_UID] = {'revision': 17}
@@ -1029,6 +1043,7 @@ class TestResolveRecordRotationRevision(unittest.TestCase):
     def test_returns_zero_when_no_rotation_after_sync(self):
         params = MagicMock()
         params.record_rotation_cache = {}
+        params.nested_share_records = {}
         with patch('keepercommander.commands.discoveryrotation.api.sync_down'):
             revision = resolve_record_rotation_revision(params, USER_UID)
         self.assertEqual(revision, 0)
