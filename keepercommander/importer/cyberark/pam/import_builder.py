@@ -291,6 +291,27 @@ def format_duration(seconds: float) -> str:
     return f"{s}s"
 
 
+def format_unmapped_section(unmapped_items: Optional[List[dict]]) -> str:
+    """Format the UNMAPPED manual-action section for debug logging."""
+    if not unmapped_items:
+        return ''
+    lines = [
+        ' UNMAPPED — REQUIRES MANUAL ACTION',
+        ' ' + '-' * 40,
+    ]
+    by_category = {}  # type: Dict[str, List[dict]]
+    for item in unmapped_items:
+        cat = item.get("category", "Other")
+        by_category.setdefault(cat, []).append(item)
+    for cat, items in sorted(by_category.items()):
+        lines.append(f'   {cat}:')
+        for item in items:
+            lines.append(f'     {item.get("item", "")}')
+            lines.append(f'       Action: {item.get("action", "")}')
+        lines.append('')
+    return "\n".join(lines)
+
+
 def build_report(project_name: str, safes_processed: int, total_accounts: int,
                  resource_counts: Dict[str, Dict[str, int]],
                  platform_counts: Dict[str, Dict[str, Any]],
@@ -402,20 +423,9 @@ def build_report(project_name: str, safes_processed: int, total_accounts: int,
             lines.append(f'   Incomplete (missing fields): {incomplete_count}')
         lines.append('')
 
-    # UNMAPPED section
+    # UNMAPPED details are debug-only (see format_unmapped_section / logging.debug)
     if unmapped_items:
-        lines.append(' UNMAPPED — REQUIRES MANUAL ACTION')
-        lines.append(' ' + '-' * 40)
-        by_category = {}  # type: Dict[str, List[dict]]
-        for item in unmapped_items:
-            cat = item.get("category", "Other")
-            by_category.setdefault(cat, []).append(item)
-        for cat, items in sorted(by_category.items()):
-            lines.append(f'   {cat}:')
-            for item in items:
-                lines.append(f'     {item.get("item", "")}')
-                lines.append(f'       Action: {item.get("action", "")}')
-            lines.append('')
+        logging.debug('\n%s', format_unmapped_section(unmapped_items))
 
     # Gateway deployment
     gw_token = ''
@@ -435,9 +445,13 @@ def build_report(project_name: str, safes_processed: int, total_accounts: int,
     # Next steps
     lines.append(' NEXT STEPS')
     lines.append(' ' + '-' * 40)
-    lines.append(f'   1. Review UNMAPPED section — action each item')
-    lines.append(f'   2. Verify: pam gateway list')
-    lines.append(f'   3. Cleanup: pam project cyberark-cleanup --name "{project_name}"')
+    step = 1
+    if unmapped_items:
+        lines.append(f'   {step}. Review unmapped items in debug log (--debug)')
+        step += 1
+    lines.append(f'   {step}. Verify: pam gateway list')
+    step += 1
+    lines.append(f'   {step}. Cleanup: pam project cyberark-cleanup --name "{project_name}"')
     lines.append('')
 
     # Command (redacted)

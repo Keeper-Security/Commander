@@ -2555,32 +2555,37 @@ class TestGetRetry429:
 class TestEnhancedReport:
     """Tests for the enhanced build_report with all sections."""
 
-    def test_report_has_all_sections(self):
+    def test_report_has_all_sections(self, caplog):
+        import logging
         from keepercommander.importer.cyberark.cyberark_pam import build_report
-        report = build_report(
-            project_name="Test",
-            safes_processed=3,
-            total_accounts=50,
-            resource_counts={"pamMachine": {"ok": 20, "skip": 0, "err": 0},
-                             "login": {"ok": 10, "skip": 0, "err": 0}},
-            platform_counts={"UnixSSH": {"rotation": "general", "count": 20}},
-            skipped=[{"reason": "password retrieval failed"}],
-            incomplete_count=2,
-            duration=120.0,
-            unmapped_items=[{"category": "Master Policy",
-                             "item": "Dual control = Active",
-                             "action": "Use ticketing"}],
-            server="pvwa.example.com",
-        )
+        with caplog.at_level(logging.DEBUG):
+            report = build_report(
+                project_name="Test",
+                safes_processed=3,
+                total_accounts=50,
+                resource_counts={"pamMachine": {"ok": 20, "skip": 0, "err": 0},
+                                 "login": {"ok": 10, "skip": 0, "err": 0}},
+                platform_counts={"UnixSSH": {"rotation": "general", "count": 20}},
+                skipped=[{"reason": "password retrieval failed"}],
+                incomplete_count=2,
+                duration=120.0,
+                unmapped_items=[{"category": "Master Policy",
+                                 "item": "Dual control = Active",
+                                 "action": "Use ticketing"}],
+                server="pvwa.example.com",
+            )
         assert "SOURCE SUMMARY" in report
         assert "IMPORT RESULTS" in report
         assert "PLATFORM MAPPING" in report
         assert "SKIPPED ACCOUNTS" in report
-        assert "UNMAPPED" in report
+        assert "UNMAPPED — REQUIRES MANUAL ACTION" not in report
+        assert "Dual control" not in report
+        assert "debug log" in report
         assert "NEXT STEPS" in report
         assert "COMMAND" in report
         assert "pvwa.example.com" in report
-        assert "Dual control" in report
+        assert "UNMAPPED — REQUIRES MANUAL ACTION" in caplog.text
+        assert "Dual control" in caplog.text
 
     def test_report_gateway_token(self):
         from keepercommander.importer.cyberark.cyberark_pam import build_report
