@@ -105,7 +105,8 @@ class WorkflowGetApprovalRequestsCommand(Command):
     def _decrypt_param(params, record_uid, encrypted_bytes):
         if not encrypted_bytes:
             return None
-        record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
+        from ...nested_share_folder.common import get_record_key
+        record_key = get_record_key(params, record_uid, raise_on_missing=False)
         if not record_key:
             return 'No permission to view. Only users with record access can view this information.'
         try:

@@ -249,12 +249,15 @@ def submit_access_request(params: KeeperParams, record_uid: str,
     record = vault.KeeperRecord.load(params, record_uid)
     record_name = record.title if record else record_uid
 
-    record_key = params.record_cache.get(record_uid, {}).get('record_key_unencrypted')
-    if not record_key and (reason or ticket):
-        raise CommandError(
-            '', 'Record key not available — cannot encrypt reason/ticket. '
-                'You do not have sufficient access to this record to send encrypted parameters.',
-        )
+    record_key = None
+    if reason or ticket:
+        from ...nested_share_folder.common import get_record_key
+        record_key = get_record_key(params, record_uid, raise_on_missing=False)
+        if not record_key:
+            raise CommandError(
+                '', 'Record key not available — cannot encrypt reason/ticket. '
+                    'You do not have sufficient access to this record to send encrypted parameters.',
+            )
 
     access_request = workflow_pb2.WorkflowAccessRequest()
     access_request.resource.CopyFrom(ProtobufRefBuilder.record_ref(record_uid_bytes, record_name))
@@ -302,12 +305,16 @@ class RecordResolver:
 
     @staticmethod
     def resolve(params, record_input, allow_missing=False):
-        if record_input in params.record_cache:
-            return record_input, vault.KeeperRecord.load(params, record_input)
-        for uid in params.record_cache:
-            rec = vault.KeeperRecord.load(params, uid)
-            if rec and rec.title == record_input:
-                return uid, rec
+        from ..pam.vault_target import resolve_pam_record
+
+        if not record_input:
+            if allow_missing:
+                return None, None
+            raise CommandError('', 'Record is required')
+
+        rec = resolve_pam_record(params, record_input)
+        if rec:
+            return rec.record_uid, rec
         if allow_missing:
             return None, None
         raise CommandError('', f'Record "{record_input}" not found')
@@ -327,8 +334,10 @@ class RecordResolver:
 
     @staticmethod
     def get_uid_bytes(params: KeeperParams, record_uid: str) -> bytes:
+        from ..pam.vault_target import record_exists_in_vault
+
         uid_bytes = utils.base64_url_decode(record_uid)
-        if record_uid not in params.record_cache:
+        if not record_exists_in_vault(params, record_uid):
             raise CommandError('', f'Record {record_uid} not found')
         return uid_bytes
 
@@ -339,7 +348,11 @@ class RecordResolver:
         if resource_ref.value:
             rec_uid = utils.base64_url_encode(resource_ref.value)
             rec = vault.KeeperRecord.load(params, rec_uid)
-            return rec.title if rec else ''
+            if rec:
+                return rec.title
+            from ..pam.vault_target import get_vault_record_title_type
+            title, _ = get_vault_record_title_type(params, rec_uid)
+            return title if title and title != '[record inaccessible]' else ''
         return ''
 
     @staticmethod
