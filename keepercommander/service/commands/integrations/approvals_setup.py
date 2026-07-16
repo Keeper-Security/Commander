@@ -74,7 +74,7 @@ def is_valid_keeper_uid(value: str) -> bool:
 def parse_comma_separated_uids(raw: str) -> List[str]:
     if not raw or not raw.strip():
         return []
-    return [part.strip() for part in raw.split(',') if part.strip()]
+    return list(dict.fromkeys(part.strip() for part in raw.split(',') if part.strip()))
 
 
 def build_team_lookup(
@@ -247,6 +247,9 @@ def collect_approvals_config(
     by_uid, by_name_lower = build_team_lookup(params)
     while True:
         team_uid, team_name = _prompt_keeper_team(by_uid, by_name_lower)
+        if any(team.team_uid == team_uid for team in teams):
+            print(f"{bcolors.FAIL}Error: Team \"{team_name}\" is already configured{bcolors.ENDC}")
+            continue
         channel_id = _prompt_channel(
             profile,
             prompt_with_validation,

@@ -107,12 +107,15 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return f'keeper-service-{self.get_integration_name().lower()}'
 
     def get_service_commands(self) -> str:
-        # Include this integration's setup command so apps can call --sync-down via the service API.
-        return (
+        commands = (
             'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,'
             'record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,'
-            f'sync-down,list-sf,list-team,{self.get_command_name()}'
+            'sync-down,list-sf,list-team'
         )
+        # Allow service API callers to run --sync-down for multi-channel approvals configs.
+        if self.get_approvals_profile() is not None:
+            commands = f'{commands},{self.get_command_name()}'
+        return commands
 
     # -- Parser (auto-built from name, cached per subclass) ----------
 
@@ -163,15 +166,22 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             '--skip-device-setup', dest='skip_device_setup', action='store_true',
             help='Skip device registration and setup if already configured'
         )
-        parser.add_argument(
-            '--integration-record', '-r', dest='integration_record_uid', type=str,
-            help='Integration config record UID for --sync-down '
-                 f'(optional; defaults to "{default_record}" in "{default_folder}")'
-        )
-        parser.add_argument(
-            '--sync-down', dest='sync_down', action='store_true',
-            help='Sync approver team/folder/record references in an existing config record with the vault'
-        )
+        if self.get_approvals_profile() is not None:
+            parser.add_argument(
+                '--sync-down', dest='sync_down', action='store_true',
+                help=(
+                    'Non-interactively sync multi-channel approvals config with the vault '
+                    '(remove deleted teams; drop missing shared-folder/record UIDs; '
+                    'refresh team names). Requires an existing integration config record.'
+                )
+            )
+            parser.add_argument(
+                '--integration-record', '-r', dest='integration_record_uid', type=str,
+                help=(
+                    'UID of the integration config record for --sync-down '
+                    f'(optional; defaults to "{default_record}" in "{default_folder}")'
+                )
+            )
         parser.error = raise_parse_exception
         parser.exit = suppress_exit
         return parser
@@ -182,13 +192,13 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
 
         if kwargs.get('sync_down'):
-            profile = self.get_approvals_profile()
-            if profile is None:
+            if self.get_approvals_profile() is None:
                 raise CommandError(
                     self.get_command_name(),
                     f'{name} does not support multi-channel approver sync yet',
                 )
             record_uid = kwargs.get('integration_record_uid')
+            sync_vault = True
             if record_uid:
                 record_uid = record_uid.strip()
                 if not is_valid_keeper_uid(record_uid):
@@ -197,10 +207,12 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                         f'Invalid integration record UID: {record_uid}',
                     )
             else:
+                # Default resolution already syncs the vault.
                 record_uid = self._resolve_default_integration_record(
                     params, kwargs.get('integration_record_name')
                 )
-            self._execute_sync_down(params, record_uid)
+                sync_vault = False
+            self._execute_sync_down(params, record_uid, sync_vault=sync_vault)
             return
 
         self._require_file_based_config(params, f'{name.lower()}-app-setup')
@@ -357,23 +369,28 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
 
     def _patch_record_approvals(self, params, record_uid: str, approvals: ApprovalsConfig) -> None:
-        record = vault.KeeperRecord.load(params, record_uid)
-        if not record:
-            raise CommandError(self.get_command_name(), f'Record not found: {record_uid}')
-        if not isinstance(record, vault.TypedRecord):
-            raise CommandError(
-                self.get_command_name(),
-                f'Record {record_uid} is not a typed record and cannot store approvals config',
-            )
-        merged = merge_approvals_custom_fields(record.custom, approvals)
-        self._update_record_custom_fields(params, record_uid, merged)
+        try:
+            record = vault.KeeperRecord.load(params, record_uid)
+            if not record:
+                raise CommandError(self.get_command_name(), f'Record not found: {record_uid}')
+            if not isinstance(record, vault.TypedRecord):
+                raise CommandError(
+                    self.get_command_name(),
+                    f'Record {record_uid} is not a typed record and cannot store approvals config',
+                )
+            record.custom = merge_approvals_custom_fields(record.custom, approvals)
+            record_management.update_record(params, record)
+            params.sync_data = True
+            api.sync_down(params)
+        except CommandError:
+            raise
+        except Exception as e:
+            raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
 
     def _find_folder_uid_by_name(self, params, folder_name: str) -> Optional[str]:
+        # Prefer shared folders; integration setup always creates a shared folder.
         for folder_uid, folder_data in params.shared_folder_cache.items():
             if folder_data.get('name') == folder_name:
-                return folder_uid
-        for folder_uid, folder in params.folder_cache.items():
-            if getattr(folder, 'name', None) == folder_name:
                 return folder_uid
         return None
 
@@ -400,7 +417,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             )
         return record_uid
 
-    def _execute_sync_down(self, params, record_uid: str) -> None:
+    def _execute_sync_down(self, params, record_uid: str, sync_vault: bool = True) -> None:
         name = self.get_integration_name()
         print(f"\n{bcolors.BOLD}{name} App Config Sync{bcolors.ENDC}")
         print(f"  Reconciling approver teams, shared folders, and records with the vault")
@@ -412,6 +429,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             marker_field=self.get_integration_config_marker_field(),
             update_record=lambda uid, approvals: self._patch_record_approvals(params, uid, approvals),
             command_name=self.get_command_name(),
+            sync_vault=sync_vault,
         )
 
     # -- Docker Compose update -----------------------------------------

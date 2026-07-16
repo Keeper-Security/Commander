@@ -352,7 +352,3 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
                         break
         
         return {'token_expiration': ''}
-
-    def _get_config_path(self, config_path: str = None) -> str:
-        """Get and validate config file path"""
-        return self._require_commander_config_file('service-docker-setup', config_path)

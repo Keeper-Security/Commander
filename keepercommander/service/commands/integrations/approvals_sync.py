@@ -89,19 +89,25 @@ def parse_approvals_from_record(
         if not isinstance(raw_teams, list):
             raise CommandError(command_name, f'{FIELD_APPROVALS_TEAMS} must be a JSON array')
 
+        seen_team_uids = set()
         for item in raw_teams:
             if not isinstance(item, dict):
                 continue
             team_uid = str(item.get('team_uid', '')).strip()
             channel_id = str(item.get('channel_id', '')).strip()
-            if not team_uid or not channel_id:
+            if not team_uid or not channel_id or team_uid in seen_team_uids:
                 continue
+            seen_team_uids.add(team_uid)
             teams.append(ApproverTeam(
                 team_uid=team_uid,
                 name=str(item.get('name', '')).strip() or team_uid,
                 channel_id=channel_id,
-                folder_uids=[str(u).strip() for u in (item.get('folder_uids') or []) if str(u).strip()],
-                record_uids=[str(u).strip() for u in (item.get('record_uids') or []) if str(u).strip()],
+                folder_uids=list(dict.fromkeys(
+                    str(u).strip() for u in (item.get('folder_uids') or []) if str(u).strip()
+                )),
+                record_uids=list(dict.fromkeys(
+                    str(u).strip() for u in (item.get('record_uids') or []) if str(u).strip()
+                )),
             ))
 
     return ApprovalsConfig(
@@ -215,9 +221,11 @@ def run_approvals_sync_down(
     marker_field: str,
     update_record: Callable[[str, ApprovalsConfig], None],
     command_name: str = '',
+    sync_vault: bool = True,
 ) -> ApprovalsConfig:
-    params.sync_data = True
-    api.sync_down(params)
+    if sync_vault:
+        params.sync_data = True
+        api.sync_down(params)
 
     record = vault.KeeperRecord.load(params, record_uid)
     if not record:

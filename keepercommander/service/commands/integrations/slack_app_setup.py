@@ -60,7 +60,9 @@ class SlackAppSetupCommand(IntegrationSetupCommand):
             "Invalid Slack Signing Secret (must be exactly 32 characters)"
         )
 
-        approvals = self._collect_approvals_config(params, SLACK_APPROVALS_PROFILE)
+        profile = self.get_approvals_profile()
+        assert profile is not None
+        approvals = self._collect_approvals_config(params, profile)
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
