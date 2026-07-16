@@ -188,14 +188,30 @@ def parse_schedule_data(kwargs):
 
 def resolve_record_rotation_revision(params, record_uid):
     # type: (KeeperParams, str) -> int
-    """Return server-assigned rotation revision from cache, syncing when missing (not sequential)."""
+    """Return server-assigned rotation revision from cache, syncing when missing (not sequential).
+
+    NSF rotations may not yet arrive via sync_down into ``record_rotation_cache``.
+    """
     cached = params.record_rotation_cache.get(record_uid)
-    if cached is None or cached.get('revision') is None:
-        api.sync_down(params)
-        cached = params.record_rotation_cache.get(record_uid)
-    if cached is None or cached.get('revision') is None:
-        return 0
-    return cached['revision']
+    if cached is not None and cached.get('revision') is not None:
+        return cached['revision']
+
+    nsf_records = getattr(params, 'nested_share_records', None)
+    if isinstance(nsf_records, dict):
+        nsf_rec = nsf_records.get(record_uid) or {}
+        if isinstance(nsf_rec, dict) and nsf_rec.get('revision') is not None:
+            return nsf_rec['revision']
+
+    api.sync_down(params)
+    cached = params.record_rotation_cache.get(record_uid)
+    if cached is not None and cached.get('revision') is not None:
+        return cached['revision']
+
+    if isinstance(nsf_records, dict):
+        nsf_rec = nsf_records.get(record_uid) or {}
+        if isinstance(nsf_rec, dict) and nsf_rec.get('revision') is not None:
+            return nsf_rec['revision']
+    return 0
 
 
 def schedule_from_pam_config(record_pam_config):
@@ -224,18 +240,6 @@ def resolve_record_schedule_data(schedule_data, current_record_rotation, schedul
             pass
         return None
     return schedule_from_pam_config(record_pam_config)
-
-
-def resolve_record_rotation_revision(params, record_uid):
-    # type: (KeeperParams, str) -> int
-    """Return server-assigned rotation revision from cache, syncing when missing (not sequential)."""
-    cached = params.record_rotation_cache.get(record_uid)
-    if cached is None or cached.get('revision') is None:
-        api.sync_down(params)
-        cached = params.record_rotation_cache.get(record_uid)
-    if cached is None or cached.get('revision') is None:
-        return 0
-    return cached['revision']
 
 
 def refresh_vault_for_schedule_config(params):
@@ -1164,7 +1168,7 @@ class PAMCreateRecordRotationCommand(Command):
                         noop_rotation = True
 
                 rq = router_pb2.RouterRecordRotationRequest()
-                rq.revision = current_record_rotation.get('revision', 0)
+                rq.revision = resolve_record_rotation_revision(params, target_record.record_uid)
                 rq.recordUid = utils.base64_url_decode(target_record.record_uid)
                 rq.configurationUid = utils.base64_url_decode(record_config_uid)
                 rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
@@ -1395,8 +1399,7 @@ class PAMCreateRecordRotationCommand(Command):
 
             # 6. Construct Request object
             rq = router_pb2.RouterRecordRotationRequest()
-            if current_record_rotation:
-                rq.revision = current_record_rotation.get('revision', 0)
+            rq.revision = resolve_record_rotation_revision(params, target_record.record_uid)
             rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
             rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
@@ -1751,12 +1754,10 @@ class PAMListRecordRotationCommand(Command):
             row.append(f'{schedule_str}')
 
             # Controller Info
-
-            enterprise_controllers_connected = router_get_connected_gateways(params)
             connected_controller = None
-            if enterprise_controllers_connected and controller_details:
+            if enterprise_controllers_connected_resp and controller_details:
                 router_controllers = {controller.controllerUid: controller for controller in
-                                      list(enterprise_controllers_connected.controllers)}
+                                      list(enterprise_controllers_connected_resp.controllers)}
                 connected_controller = router_controllers.get(controller_details.controllerUid)
 
             if connected_controller:
