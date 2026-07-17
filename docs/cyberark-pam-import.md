@@ -2,9 +2,9 @@
 
 ## Overview
 
-Imports privileged accounts from CyberArk (self-hosted PVWA or Privilege Cloud) into KeeperPAM as properly structured PAM records with folder hierarchy, credential rotation, session recording, and access control.
+Imports privileged accounts from CyberArk (self-hosted PVWA or Privilege Cloud) into KeeperPAM as properly structured PAM records with folder hierarchy, credential rotation and access control.
 
-**Commands**: `pam project cyberark-import` (alias: `ca`) and `pam project cyberark-cleanup` (alias: `CC`)
+**Commands**: `pam project cyberark-import` (alias: `ci`) and `pam project cyberark-cleanup` (alias: `cc`)
 
 ---
 
@@ -56,7 +56,7 @@ Keeper Vault/
 | UnixSSHKey, UnixSSHKeys | pamMachine | ssh | 22 |
 | WinDomain, WinLocalAccount, WinServerLocal, WinDesktopLocal | pamMachine | rdp | 3389 |
 | MSSql | pamDatabase | mssql | 1433 |
-| Oracle | pamDatabase | sql-server | 1521 |
+| Oracle | pamDatabase | oracle | 1521 |
 | MySQL | pamDatabase | mysql | 3306 |
 | PostgreSQL | pamDatabase | postgresql | 5432 |
 | PaloAltoNetworks, CiscoIOS, CiscoASA, JuniperJunos, F5BigIP, CheckPointGAIA | pamMachine | ssh | 22 |
@@ -257,7 +257,6 @@ Before building the import JSON, the importer warns about:
 | Self-hosted PVWA (v10.4+) | CyberArk/LDAP/RADIUS/Windows | Implemented |
 | Privilege Cloud (SaaS) | OAuth2 service account | Implemented |
 | Privilege Cloud Shared Services (ISPSS) | OAuth2 with platform discovery | Implemented |
-| PrivateArk / Digital Vault | No REST API | Not accessible |
 | User Portal (Identity) | Separate importer (cyberark_portal) | Different scope |
 
 ---
@@ -270,17 +269,6 @@ Before building the import JSON, the importer warns about:
 - No credential logging: passwords never appear in logs or error messages
 - Rate limit handling: automatic retry on HTTP 429 with exponential backoff
 - Pagination cap: MAX_FETCH_RECORDS (50,000) prevents OOM attacks
-- Ticket ID support: for CyberArk policies requiring audit trail
-
 ---
 
-## Project Stats
 
-| Metric | Value |
-|---|---|
-| Source files | cyberark_pam.py (1,648 lines), cyberark_import.py (1,065 lines) |
-| Test file | test_cyberark_pam_import.py (3,164 lines) |
-| Total code | 5,877 lines |
-| Tests | 287 (unit + integration) |
-| Commits | 29 on feature branch |
-| Base | Keeper Commander Release v17.2.13 |
