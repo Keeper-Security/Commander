@@ -10,6 +10,7 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from .constants import SCHEDULE_ON_DEMAND
 from .user_team_matcher import UserTeamMatcher
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -205,9 +206,9 @@ def build_import_json(project_name: str, gateway_name: Optional[str],
     # days" (PasswordChangeDays) when present — see MasterPolicyMapper. Falls
     # back to on-demand so an admin without master-policy read access still
     # gets a working PAM Configuration.
-    rotation_schedule = mp.get("default_rotation_schedule") or {"type": "on-demand"}
+    rotation_schedule = mp.get("default_rotation_schedule") or {"type": SCHEDULE_ON_DEMAND}
     if not isinstance(rotation_schedule, dict):
-        rotation_schedule = {"type": "on-demand"}
+        rotation_schedule = {"type": SCHEDULE_ON_DEMAND}
     pam_config = {
         "environment": "local",
         "title": f"{project_name} Configuration",

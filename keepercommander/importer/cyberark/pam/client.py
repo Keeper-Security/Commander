@@ -22,7 +22,7 @@ from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
 
 import requests as _requests_module
 
-from .constants import MAX_FETCH_RECORDS, VALID_LOGON_TYPES
+from .constants import MAX_FETCH_RECORDS, VALID_LOGON_TYPES, IDENTITY_LOGIN_SUCCESS
 from .ui import _esc
 
 
@@ -405,10 +405,10 @@ class CyberArkPVWAClient:
             )
             if advance_result is None:
                 return False
-            if advance_result.get("Summary") == "LoginSuccess":
+            if advance_result.get("Summary") == IDENTITY_LOGIN_SUCCESS:
                 break
 
-        if not advance_result or advance_result.get("Summary") != "LoginSuccess":
+        if not advance_result or advance_result.get("Summary") != IDENTITY_LOGIN_SUCCESS:
             summary = (advance_result or {}).get("Summary") or "unknown"
             print_formatted_text(HTML(
                 f"<ansired>Authentication did not complete successfully</ansired> (status: {_esc(summary)})"
@@ -549,7 +549,7 @@ class CyberArkPVWAClient:
         result = _post(dict(base, Action="StartOOB"))
         if result is None:
             return None
-        if result.get("Summary") == "LoginSuccess":
+        if result.get("Summary") == IDENTITY_LOGIN_SUCCESS:
             return result
         print_formatted_text(HTML(
             f"Out-of-band authentication started via <b>{_esc(prompt_label)}</b>."
@@ -748,16 +748,29 @@ class CyberArkPVWAClient:
     @staticmethod
     def _encode_safe_path(safe_url_id: str) -> Optional[str]:
         """Normalize and URL-encode a CyberArk safe identifier for path use.
+
+        Validates *before* any percent-decoding so encoded separators
+        (``%2f``, ``%5c``, ``%2e%2e``) cannot bypass the path-traversal
+        guards.
         """
         if not safe_url_id or not isinstance(safe_url_id, str):
             return None
         s = safe_url_id.strip()
         if not s or len(s) > 200:
             return None
-        # Path-traversal / separator guards before any decoding/encoding.
-        if any(ch in s for ch in ("/", "\\", "\x00")) or s in ("..", "."):
+        # Reject raw and percent-encoded path separators / traversal before
+        # any decoding so crafted inputs cannot slip through unquote().
+        lower = s.lower()
+        if (
+            any(ch in s for ch in ("/", "\\", "\x00"))
+            or s in ("..", ".")
+            or "%2f" in lower
+            or "%5c" in lower
+            or "%00" in lower
+            or "%2e%2e" in lower
+        ):
             logging.warning(
-                'Safe URL ID rejected (contains path separator): %s',
+                'Safe URL ID rejected (contains path separator/traversal): %s',
                 re.sub(r'[^A-Za-z0-9_. \-%]', '?', s),
             )
             return None
@@ -765,9 +778,13 @@ class CyberArkPVWAClient:
             decoded = unquote(s)
         except (TypeError, ValueError):
             decoded = s
-        if any(ch in decoded for ch in ("/", "\\", "\x00")):
+        if (
+            any(ch in decoded for ch in ("/", "\\", "\x00"))
+            or decoded in ("..", ".")
+            or ".." in decoded
+        ):
             logging.warning(
-                'Safe URL ID rejected after decode (contains separator): %s',
+                'Safe URL ID rejected after decode (contains separator/traversal): %s',
                 re.sub(r'[^A-Za-z0-9_. \-%]', '?', s),
             )
             return None
@@ -1032,7 +1049,7 @@ class CyberArkPVWAClient:
         try:
             data = response.json()
         except (ValueError, KeyError):
-            logging.debug('Master session-monitoring (.asmx) response not valid JSON')
+            logging.error('Master session-monitoring (.asmx) response not valid JSON')
             return None
         if isinstance(data, dict) and data:
             logging.debug('Master session-monitoring fetched (.asmx)')

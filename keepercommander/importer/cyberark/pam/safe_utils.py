@@ -8,10 +8,31 @@
 
 import fnmatch
 import logging
+import os
 import re
 from typing import Dict, List, Optional
 
-from .constants import MAX_SAFE_NAME_LENGTH, SYSTEM_SAFES
+from .constants import MAX_SAFE_NAME_LENGTH, SYSTEM_SAFES, register_system_safes
+
+
+def _load_system_safes_from_env() -> None:
+    """Merge extra system-safe names from ``KEEPER_CYBERARK_SYSTEM_SAFES``."""
+    raw = os.environ.get("KEEPER_CYBERARK_SYSTEM_SAFES", "")
+    if not raw:
+        return
+    register_system_safes(*(p.strip() for p in raw.split(",") if p.strip()))
+
+
+def _safe_marked_system(safe: dict) -> bool:
+    """Return True when the PVWA Safe payload indicates a system/internal safe."""
+    if not isinstance(safe, dict):
+        return False
+    for key in ("isSystem", "IsSystem", "isPredefined", "IsPredefined"):
+        if safe.get(key) is True:
+            return True
+    safe_type = str(safe.get("safeType") or safe.get("SafeType") or "").strip().lower()
+    return safe_type in ("system", "internal", "predefined")
+
 
 def exclude_system_safes(safes: List[dict], include_system: bool = False) -> List[dict]:
     """Remove CyberArk system/internal safes from the list.
@@ -19,7 +40,18 @@ def exclude_system_safes(safes: List[dict], include_system: bool = False) -> Lis
     System safes (VaultInternal, PVWAConfig, etc.) don't contain
     user-managed accounts and should be excluded from migration.
     Override with include_system=True (--include-system-safes flag).
+
+    Also registers any safes the PVWA API flags as system/predefined so
+    newly introduced CyberArk system safes are excluded without a code
+    update, and merges names from ``KEEPER_CYBERARK_SYSTEM_SAFES``.
     """
+    _load_system_safes_from_env()
+    # Dynamically learn system safes from API metadata when present.
+    for s in safes:
+        if _safe_marked_system(s):
+            name = s.get("safeName") or s.get("SafeName") or ""
+            if name:
+                register_system_safes(str(name))
     if include_system:
         return safes
     before = len(safes)

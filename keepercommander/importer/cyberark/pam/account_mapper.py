@@ -12,7 +12,16 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .client import CyberArkPVWAClient
-from .constants import DEFAULT_PLATFORM_MAP, FALLBACK_PLATFORM_MAP
+from .constants import (
+    DEFAULT_PLATFORM_MAP,
+    FALLBACK_PLATFORM_MAP,
+    MAX_PLATFORM_METADATA_FIELDS,
+    MAX_PLATFORM_METADATA_VALUE_LEN,
+    RECORD_TYPE_LOGIN,
+    RECORD_TYPE_PAM_DATABASE,
+    RECORD_TYPE_PAM_MACHINE,
+    SCHEDULE_ON_DEMAND,
+)
 from .master_policy_mapper import MasterPolicyMapper
 from .platform_mapping import (
     _CATEGORY_PREFIX_RE,
@@ -33,6 +42,10 @@ from .policy_rules import (
 )
 
 
+class StrictPolicyError(RuntimeError):
+    """Raised when ``--strict-policies`` is set and a platform policy is missing."""
+
+
 class AccountMapper:
     """Maps CyberArk accounts to KeeperPAM record dicts matching pam project import JSON schema."""
 
@@ -41,17 +54,21 @@ class AccountMapper:
                  client: Optional['CyberArkPVWAClient'] = None,
                  default_rotation_schedule: Optional[dict] = None,
                  master_rotation_exceptions: Optional[Dict[str, dict]] = None,
-                 master_change_days: int = 0):
+                 master_change_days: int = 0,
+                 strict_policies: bool = False):
         self.platform_map = copy.deepcopy(DEFAULT_PLATFORM_MAP)
         if platform_map_override:
             self.platform_map.update(platform_map_override)
         self.unmapped_platforms = {}  # platformId → count
+        # When True, inaccessible per-platform rotation policies fail the
+        # import instead of silently inheriting the master policy default.
+        self.strict_policies = bool(strict_policies)
         # Schedule applied to each imported user's rotation_settings so the
         # CyberArk Master Policy "Require password change every X days" rule
         # is honored at the per-record level (the project-level
         # default_rotation_schedule alone does not affect already-imported
         # users — Keeper PAM rotation reads the per-record schedule first).
-        self._default_rotation_schedule: dict = {"type": "on-demand"}
+        self._default_rotation_schedule: dict = {"type": SCHEDULE_ON_DEMAND}
         if isinstance(default_rotation_schedule, dict) and default_rotation_schedule:
             self._default_rotation_schedule = default_rotation_schedule
         # Master-policy rotation exceptions from
@@ -262,10 +279,14 @@ class AccountMapper:
 
         raw = self._client.fetch_platform_rotation_policy(platform_id)
         if not raw:
-            logging.info(
-                "Platform '%s' rotation-policy not accessible — inheriting "
-                "master policy default.", platform_id,
+            msg = (
+                f"Platform '{platform_id}' rotation-policy not accessible — "
+                "inheriting master policy default."
             )
+            if self.strict_policies:
+                logging.error(msg)
+                raise StrictPolicyError(msg)
+            logging.info(msg)
             self._platform_schedule_cache[platform_id] = None
             return None
 
@@ -385,7 +406,7 @@ class AccountMapper:
                 break
 
         if auto_rotate is False:
-            schedule = {"type": "on-demand"}
+            schedule = {"type": SCHEDULE_ON_DEMAND}
         else:
             cron = MasterPolicyMapper.days_to_cron(days)
             schedule = {"type": "CRON", "cron": cron} if cron else None
@@ -477,17 +498,25 @@ class AccountMapper:
             return self._platform_metadata_cache[platform_id]
 
         out: List[dict] = []
+
+        def _add(label: str, val):
+            if val in (None, "", [], {}):
+                return
+            if len(out) >= MAX_PLATFORM_METADATA_FIELDS:
+                return
+            text = str(val)
+            if len(text) > MAX_PLATFORM_METADATA_VALUE_LEN:
+                text = text[:MAX_PLATFORM_METADATA_VALUE_LEN]
+            # Strip control chars that could corrupt record payloads.
+            text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+            out.append({
+                "type": "text", "label": label[:120], "value": [text],
+            })
+
         rotation_raw = self._client.fetch_platform_rotation_policy(platform_id)
         if isinstance(rotation_raw, dict):
             change = rotation_raw.get("change") if isinstance(rotation_raw.get("change"), dict) else {}
             verify = rotation_raw.get("verify") if isinstance(rotation_raw.get("verify"), dict) else {}
-
-            def _add(label: str, val):
-                if val in (None, "", [], {}):
-                    return
-                out.append({
-                    "type": "text", "label": label, "value": [str(val)],
-                })
 
             # Rotation cadence operational settings — preserved on the
             # Keeper record so a user can reproduce them in CyberArk.
@@ -517,17 +546,11 @@ class AccountMapper:
         wf_raw = self._client.fetch_platform_workflows_policy(platform_id)
         if isinstance(wf_raw, dict):
             if "minValidityPeriod" in wf_raw and wf_raw.get("minValidityPeriod") not in (None, ""):
-                out.append({
-                    "type": "text",
-                    "label": "CyberArk Min Validity Period (min)",
-                    "value": [str(wf_raw.get("minValidityPeriod"))],
-                })
+                _add("CyberArk Min Validity Period (min)",
+                     wf_raw.get("minValidityPeriod"))
             if wf_raw.get("unlockIfFail") is not None:
-                out.append({
-                    "type": "text",
-                    "label": "CyberArk Unlock If Fail",
-                    "value": ["Yes" if wf_raw.get("unlockIfFail") else "No"],
-                })
+                _add("CyberArk Unlock If Fail",
+                     "Yes" if wf_raw.get("unlockIfFail") else "No")
 
         self._platform_metadata_cache[platform_id] = out
         if out:
@@ -877,7 +900,7 @@ class AccountMapper:
             if mapping_source in ("pvwa-platform", "keyword-guess", "fallback-ssh"):
                 mapping = self._enrich_port_from_details(platform_id, mapping)
 
-        record_type = mapping.get("record_type", "pamMachine")
+        record_type = mapping.get("record_type", RECORD_TYPE_PAM_MACHINE)
         props = account.get("platformAccountProperties", {}) or {}
 
         # Extract fields
@@ -913,10 +936,10 @@ class AccountMapper:
             account.get("name", "?"), platform_id or "?", port or "(empty)", port_source,
         )
 
-        if record_type == "login":
+        if record_type == RECORD_TYPE_LOGIN:
             # BusinessWebsite → login record (not pamMachine)
             record = {
-                "type": "login",
+                "type": RECORD_TYPE_LOGIN,
                 "title": item_name or title,
                 "login": login,
                 "password": password or "",
@@ -925,7 +948,7 @@ class AccountMapper:
                 record["url"] = url
             return record
 
-        if record_type in ("pamMachine", "pamDatabase"):
+        if record_type in (RECORD_TYPE_PAM_MACHINE, RECORD_TYPE_PAM_DATABASE):
             secret_type_check = account.get("secretType", "password").lower()
             # No target host and no SSH key material → route to login. A
             # pamMachine without a host can never be reached by the gateway,
@@ -938,7 +961,7 @@ class AccountMapper:
                         if platform_id else
                         "CyberArk account had no address — imported as login")
                 return {
-                    "type": "login",
+                    "type": RECORD_TYPE_LOGIN,
                     "title": title or raw_name,
                     "login": login,
                     "password": password or "",
@@ -964,7 +987,7 @@ class AccountMapper:
                 user_record["password"] = ""
             # Map Database property for database platforms (MSSql, MySQL, Oracle, PostgreSQL)
             database_name = props.get("Database", "")
-            if database_name and record_type == "pamDatabase":
+            if database_name and record_type == RECORD_TYPE_PAM_DATABASE:
                 user_record["connect_database"] = database_name
             # Map DistinguishedName for Active Directory accounts
             dn = props.get("DistinguishedName", "") or props.get("distinguishedName", "")
@@ -1001,7 +1024,7 @@ class AccountMapper:
                     else:
                         schedule = copy.deepcopy(self._default_rotation_schedule)
                 else:
-                    schedule = {"type": "on-demand"}
+                    schedule = {"type": SCHEDULE_ON_DEMAND}
                 user_record["rotation_settings"] = {
                     "rotation": mapping["rotation"],
                     "enabled": "on" if cpm_enabled else "off",
@@ -1040,13 +1063,13 @@ class AccountMapper:
                 "users": [user_record],
             }
             # Map LogonDomain → domain_name on resource (Windows AD domain)
-            if logon_domain and record_type == "pamMachine":
+            if logon_domain and record_type == RECORD_TYPE_PAM_MACHINE:
                 resource["domain_name"] = logon_domain
             # Derive operating_system on pamMachine so downstream consumers
             # (notably ``pam action service add``, which only mounts on Windows
             # hosts) can dispatch on it. Inferred from platformId keywords,
             # fallback to protocol (rdp ⇒ windows, ssh ⇒ linux).
-            if record_type == "pamMachine":
+            if record_type == RECORD_TYPE_PAM_MACHINE:
                 inferred_os = self._infer_operating_system(
                     platform_id, mapping.get("protocol"),
                 )
@@ -1056,7 +1079,7 @@ class AccountMapper:
             # the correct DB icon/template. Mapping carries it from the
             # platform tables in constants.py / platform_mapping.py. Skipped
             # for non-DB record types and when the mapping has no entry.
-            if record_type == "pamDatabase":
+            if record_type == RECORD_TYPE_PAM_DATABASE:
                 db_type = mapping.get("database_type") or ""
                 if db_type:
                     resource["database_type"] = db_type

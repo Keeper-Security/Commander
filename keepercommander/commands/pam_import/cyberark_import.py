@@ -5,8 +5,8 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2025 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Copyright 2026 Keeper Security Inc.
+# Contact: commander@keepersecurity.com
 #
 # CyberArk → KeeperPAM import orchestrator
 # Fetches accounts from CyberArk PVWA, maps them to PAM record types,
@@ -25,7 +25,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from prompt_toolkit import HTML, print_formatted_text
 
@@ -36,6 +36,7 @@ from ...importer.cyberark.cyberark_pam import (
     _esc,
     CyberArkPVWAClient,
     AccountMapper,
+    StrictPolicyError,
     MasterPolicyMapper,
     UserTeamMatcher,
     PermissionMapper,
@@ -56,6 +57,12 @@ from ...importer.cyberark.cyberark_pam import (
     format_duration,
     strip_credentials,
     validate_import_data,
+    RECORD_TYPE_LOGIN,
+    RECORD_TYPE_PAM_MACHINE,
+    RECORD_TYPE_PAM_DATABASE,
+    RECORD_TYPE_PAM_DIRECTORY,
+    SCHEDULE_ON_DEMAND,
+    ROTATION_UNMAPPED,
 )
 from ...importer.cyberark.pam.idempotency import (
     ExistingRecordIndex,
@@ -147,10 +154,11 @@ class ImportRunOptions:
     batch_size: int
     batch_delay: float
     platform_map_override: Optional[dict]
-    state_filter: Optional[List[str]]
+    state_filter: Optional[list[str]]
     include_system_safes: bool
     user_map_file: str
     sync_mode: str = "upsert"
+    strict_policies: bool = False
     raw_kwargs: dict = field(default_factory=dict)
 
 
@@ -158,17 +166,17 @@ class ImportRunOptions:
 class MappedImportResult:
     """Output of the account-mapping phase."""
 
-    pam_resources: List[dict]
-    pam_users: List[dict]
-    incomplete: List[dict]
-    skipped: List[dict]
-    platform_counts: Dict[str, dict]
+    pam_resources: list[dict]
+    pam_users: list[dict]
+    incomplete: list[dict]
+    skipped: list[dict]
+    platform_counts: dict[str, dict]
     total_accounts: int
-    accounts_by_safe: Dict[str, List[dict]]
+    accounts_by_safe: dict[str, list[dict]]
     mapper: AccountMapper
     folder_mapper: SafeFolderMapper
-    unmapped_items: List[dict]
-    dependents: List[dict] = field(default_factory=list)
+    unmapped_items: list[dict]
+    dependents: list[dict] = field(default_factory=list)
     import_duration: float = 0.0
 
 
@@ -184,7 +192,7 @@ class CyberArkImportOrchestrator:
         self._temp = _temp_store
 
     def run(self) -> None:
-        unmapped_items: List[dict] = []
+        unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
         safes, system_excluded = self._prepare_safes()
         if not safes:
@@ -269,7 +277,7 @@ class CyberArkImportOrchestrator:
             user_team_matcher, idempotency_ctx,
         )
 
-    def _load_master_policy(self, unmapped_items: List[dict]) -> dict:
+    def _load_master_policy(self, unmapped_items: list[dict]) -> dict:
         master_policy_config = dict(MasterPolicyMapper.DEFAULTS)
         print_formatted_text(HTML("Fetching Master Policy..."))
         policy_data = self.client.fetch_master_policy()
@@ -317,19 +325,19 @@ class CyberArkImportOrchestrator:
                 json.dumps(policy_data, indent=2, sort_keys=True),
             )
         except (TypeError, ValueError) as e:
-            logging.debug("Could not serialize Master Policy for display: %s", type(e).__name__)
+            logging.error("Could not serialize Master Policy for display: %s", type(e).__name__)
 
     @staticmethod
     def _print_master_policy_summary(master_policy_config: dict):
         sched = master_policy_config.get("default_rotation_schedule") or {}
-        sched_type = str(sched.get("type", "on-demand")).lower()
+        sched_type = str(sched.get("type", SCHEDULE_ON_DEMAND)).lower().replace("_", "-")
         if sched_type == "cron":
             rotation_summary = (
                 f"every {master_policy_config.get('password_change_days', 0)} days "
                 f"({sched.get('cron', '')})"
             )
         else:
-            rotation_summary = "on-demand"
+            rotation_summary = SCHEDULE_ON_DEMAND
         exc_schedules = master_policy_config.get("rotation_exception_schedules") or {}
         exc_note = ""
         if exc_schedules:
@@ -342,7 +350,7 @@ class CyberArkImportOrchestrator:
             f"connections=<b>{master_policy_config.get('connections', 'on')}</b>, "
             f"rotation=<b>{_esc(rotation_summary)}</b>{exc_note}"))
 
-    def _prepare_safes(self) -> Tuple[List[dict], int]:
+    def _prepare_safes(self) -> tuple[list[dict], int]:
         all_safes = self.client.fetch_safes()
         if not all_safes:
             return [], 0
@@ -359,7 +367,7 @@ class CyberArkImportOrchestrator:
             print_formatted_text(HTML("<ansiyellow>No safes match the filter criteria</ansiyellow>"))
         return safes, system_excluded
 
-    def _maybe_interactive_safe_pick(self, safes: List[dict]) -> List[dict]:
+    def _maybe_interactive_safe_pick(self, safes: list[dict]) -> list[dict]:
         opts = self.options
         if (opts.safe_include or opts.safe_exclude or opts.skip_confirm
                 or opts.dry_run or opts.output_file
@@ -374,14 +382,14 @@ class CyberArkImportOrchestrator:
             print_formatted_text(HTML("<ansiyellow>No safes selected</ansiyellow>"))
         return picked
 
-    def _fetch_safe_members(self, safe_names: List[str]) -> Tuple[dict, List[dict]]:
+    def _fetch_safe_members(self, safe_names: list[str]) -> tuple[dict, list[dict]]:
         opts = self.options
         if opts.skip_members or opts.dry_run:
             return {}, []
         print_formatted_text(HTML(
             f"\nFetching safe members from <b>{len(safe_names)}</b> safes..."))
-        safe_member_map: Dict[str, List[dict]] = {}
-        member_unmapped: List[dict] = []
+        safe_member_map: dict[str, list[dict]] = {}
+        member_unmapped: list[dict] = []
         for safe_url_id in safe_names:
             mapped = []
             for m in self.client.fetch_safe_members(safe_url_id):
@@ -436,9 +444,9 @@ class CyberArkImportOrchestrator:
             raise CommandError("pam project cyberark-import",
                                f"Failed to load --user-map file: {e}") from e
 
-    def _load_keeper_identities(self) -> Tuple[List[dict], List[dict]]:
-        keeper_users: List[dict] = []
-        keeper_teams: List[dict] = []
+    def _load_keeper_identities(self) -> tuple[list[dict], list[dict]]:
+        keeper_users: list[dict] = []
+        keeper_teams: list[dict] = []
         if hasattr(self.params, 'enterprise') and self.params.enterprise:
             for u in self.params.enterprise.get('users', []):
                 keeper_users.append({
@@ -456,7 +464,7 @@ class CyberArkImportOrchestrator:
                 keeper_teams.append({'name': t.get('team_name', '')})
         return keeper_users, keeper_teams
 
-    def _fetch_accounts(self, safe_names: List[str]) -> Dict[str, List[dict]]:
+    def _fetch_accounts(self, safe_names: list[str]) -> dict[str, list[dict]]:
         print_formatted_text(HTML(
             f"\nFetching accounts from <b>{len(safe_names)}</b> safes..."))
         return self.client.fetch_accounts(safe_names, state_filter=self.options.state_filter)
@@ -469,9 +477,9 @@ class CyberArkImportOrchestrator:
         print(f"Estimated import time: ~{format_duration(est_seconds)}")
 
 
-    def _map_accounts(self, accounts_by_safe: Dict[str, List[dict]], safe_names: List[str],
+    def _map_accounts(self, accounts_by_safe: dict[str, list[dict]], safe_names: list[str],
                       master_policy_config: dict,
-                      unmapped_items: List[dict]) -> MappedImportResult:
+                      unmapped_items: list[dict]) -> MappedImportResult:
         opts = self.options
         try:
             ca_platforms = self.client.fetch_platforms()
@@ -480,7 +488,7 @@ class CyberArkImportOrchestrator:
                     "Loaded %d CyberArk platform definitions for mapping", len(ca_platforms),
                 )
         except Exception as e:
-            logging.debug("fetch_platforms failed (%s) — proceeding without platform metadata",
+            logging.error("fetch_platforms failed (%s) — proceeding without platform metadata",
                           type(e).__name__)
             ca_platforms = []
         mapper = AccountMapper(
@@ -491,15 +499,16 @@ class CyberArkImportOrchestrator:
             master_rotation_exceptions=master_policy_config.get(
                 "rotation_exception_schedules"),
             master_change_days=master_policy_config.get("password_change_days", 0),
+            strict_policies=opts.strict_policies,
         )
         folder_mapper = SafeFolderMapper(mode=opts.folder_mode)
-        pam_resources: List[dict] = []
-        pam_users: List[dict] = []
-        incomplete: List[dict] = []
-        skipped: List[dict] = []
-        platform_counts: Dict[str, dict] = {}
-        skip_all_passwords: Dict[str, bool] = {}
-        dependents: List[dict] = []
+        pam_resources: list[dict] = []
+        pam_users: list[dict] = []
+        incomplete: list[dict] = []
+        skipped: list[dict] = []
+        platform_counts: dict[str, dict] = {}
+        skip_all_passwords: dict[str, bool] = {}
+        dependents: list[dict] = []
         for safe_name, accounts in accounts_by_safe.items():
             for account in accounts:
                 self._map_single_account(
@@ -524,38 +533,57 @@ class CyberArkImportOrchestrator:
     def _map_single_account(
         self, account: dict, safe_name: str, mapper: AccountMapper,
         folder_mapper: SafeFolderMapper, master_policy_config: dict,
-        pam_resources: List[dict], pam_users: List[dict], incomplete: List[dict],
-        skipped: List[dict], platform_counts: Dict[str, dict],
-        skip_all_passwords: dict, unmapped_items: List[dict],
-        dependents: List[dict],
+        pam_resources: list[dict], pam_users: list[dict], incomplete: list[dict],
+        skipped: list[dict], platform_counts: dict[str, dict],
+        skip_all_passwords: dict, unmapped_items: list[dict],
+        dependents: list[dict],
     ):
         opts = self.options
-        platform_id = account.get("platformId", "Unknown")
+        if not isinstance(account, dict):
+            logging.error("Skipping account mapping: expected dict, got %s", type(account).__name__)
+            return
+        # CyberArk API field is camelCase and case-sensitive.
+        platform_id = account.get("platformId") or "Unknown"
         if platform_id not in platform_counts:
-            mapping = mapper.platform_map.get(platform_id, {})
+            mapping = mapper.platform_map.get(platform_id)
+            if not isinstance(mapping, dict):
+                mapping = {}
             platform_counts[platform_id] = {
-                "rotation": mapping.get("rotation", "UNMAPPED"),
+                "rotation": mapping.get("rotation", ROTATION_UNMAPPED),
                 "count": 0,
             }
         platform_counts[platform_id]["count"] += 1
         is_incomplete, reason = mapper.is_incomplete(account)
-        password = None
-        if not opts.dry_run or opts.include_creds:
-            password = self.client.retrieve_password(
-                account.get("id", ""),
-                account_name=account.get("name", ""),
-                safe_name=safe_name,
-                skip_all=skip_all_passwords,
-            )
-            if password is None:
-                skipped.append({
-                    "account": account.get("name", ""),
-                    "safe": safe_name,
-                    "reason": "password retrieval failed",
-                })
-                return
-        record = mapper.map_account(account, password, safe_name)
-        if record is None:
+        # Hold the retrieved credential as ``token`` (not ``password``) so
+        # accidental log formatting is less likely to leak the secret name.
+        # Clear it immediately after map_account copies it into the record.
+        token = None
+        record = None
+        try:
+            if not opts.dry_run or opts.include_creds:
+                token = self.client.retrieve_password(
+                    account.get("id", ""),
+                    account_name=account.get("name", ""),
+                    safe_name=safe_name,
+                    skip_all=skip_all_passwords,
+                )
+                if token is None:
+                    skipped.append({
+                        "account": account.get("name", ""),
+                        "safe": safe_name,
+                        "reason": "password retrieval failed",
+                    })
+                    return
+            try:
+                record = mapper.map_account(account, token, safe_name)
+            except StrictPolicyError as e:
+                raise CommandError("pam project cyberark-import", str(e)) from e
+        finally:
+            # Drop the local plaintext reference as soon as mapping finishes
+            # (or fails). The record dict still holds the credential for vault
+            # import when needed — that is intentional and short-lived.
+            token = None
+        if not isinstance(record, dict):
             skipped.append({
                 "account": account.get("name", ""),
                 "safe": safe_name,
@@ -572,6 +600,8 @@ class CyberArkImportOrchestrator:
         if account_id:
             annotate_record_with_marker(record, account_id, safe_name)
             for nested in record.get("users") or []:
+                if not isinstance(nested, dict):
+                    continue
                 # Nested pamUsers share the parent account's CyberArk id
                 # because CyberArk models the credential+resource as a
                 # single account.  The marker is idempotent so re-runs
@@ -593,10 +623,10 @@ class CyberArkImportOrchestrator:
                           "configuration in KeeperPAM rotation settings",
             })
         if (not opts.skip_linked and not opts.dry_run and not opts.skip_users
-                and record.get("type") != "login"):
+                and record.get("type") != RECORD_TYPE_LOGIN):
             self._attach_linked_accounts(record, account, safe_name, folder_mapper)
         self._collect_dependents(account, record, dependents, unmapped_items)
-        if record.get("type") == "login":
+        if record.get("type") == RECORD_TYPE_LOGIN:
             pam_users.append(record)
         else:
             if opts.skip_users:
@@ -604,7 +634,7 @@ class CyberArkImportOrchestrator:
             pam_resources.append(record)
 
     def _collect_dependents(self, account: dict, record: dict,
-                            dependents: List[dict], unmapped_items: List[dict]):
+                            dependents: list[dict], unmapped_items: list[dict]):
         """Resolve CyberArk dependents (services/tasks/IIS pools) for ``account``
         and append them to ``dependents`` for post-import service mapping.
 
@@ -617,12 +647,20 @@ class CyberArkImportOrchestrator:
         opts = self.options
         if opts.skip_dependents or opts.dry_run:
             return
-        if record.get("type") != "pamMachine":
+        if not isinstance(account, dict) or not isinstance(record, dict):
+            logging.error(
+                "Skipping dependents: account/record must be dicts (got %s / %s)",
+                type(account).__name__, type(record).__name__,
+            )
+            return
+        # Keeper record types are case-sensitive (pamMachine ≠ Pammachine).
+        if record.get("type") != RECORD_TYPE_PAM_MACHINE:
             return
         users = record.get("users") or []
-        if not users:
+        if not isinstance(users, list) or not users:
             return
-        master_user_title = users[0].get("title", "") or ""
+        first_user = users[0] if isinstance(users[0], dict) else {}
+        master_user_title = first_user.get("title", "") or ""
         if not master_user_title:
             return
         try:
@@ -630,13 +668,21 @@ class CyberArkImportOrchestrator:
                 self.client, account, master_user_title,
             )
         except Exception as e:  # noqa: BLE001 — never block import on optional fetch
-            logging.debug('Dependents resolution failed for %s: %s',
+            logging.error('Dependents resolution failed for %s: %s',
                           account.get("name", "?"), type(e).__name__)
             return
         if not account_dependents:
             return
+        if not isinstance(account_dependents, list):
+            logging.error(
+                "Dependents resolution returned non-list for %s: %s",
+                account.get("name", "?"), type(account_dependents).__name__,
+            )
+            return
         machine_title = record.get("title", "")
         for dep in account_dependents:
+            if not isinstance(dep, dict):
+                continue
             dep["machine_title"] = machine_title
             if dep.get("service_type") is None:
                 unmapped_items.append({
@@ -685,7 +731,7 @@ class CyberArkImportOrchestrator:
             # right subfolder.
             res_sub = f"{safe_folder}/{safe_folder} - Resources"
             usr_sub = f"{safe_folder}/{safe_folder} - Users"
-            if record.get("type") == "login":
+            if record.get("type") == RECORD_TYPE_LOGIN:
                 record["folder_path"] = usr_sub
             else:
                 record["folder_path"] = res_sub
@@ -694,7 +740,7 @@ class CyberArkImportOrchestrator:
             return
         res_root = f"{opts.project_name} - Resources"
         usr_root = f"{opts.project_name} - Users"
-        if record.get("type") == "login":
+        if record.get("type") == RECORD_TYPE_LOGIN:
             record["folder_path"] = f"{usr_root}/{safe_folder}"
         else:
             record["folder_path"] = f"{res_root}/{safe_folder}"
@@ -731,7 +777,7 @@ class CyberArkImportOrchestrator:
                     for lu in linked_users:
                         lu["folder_path"] = f"{usr_root}/{safe_folder}"
 
-    def _print_mapping_summary(self, mapped: MappedImportResult, unmapped_items: List[dict]):
+    def _print_mapping_summary(self, mapped: MappedImportResult, unmapped_items: list[dict]):
         resource_count = len(mapped.pam_resources)
         user_count = sum(len(r.get("users", [])) for r in mapped.pam_resources)
         login_count = len(mapped.pam_users)
@@ -782,7 +828,7 @@ class CyberArkImportOrchestrator:
         print()
 
     @staticmethod
-    def _print_validation_warnings(validation_warnings: List[str]):
+    def _print_validation_warnings(validation_warnings: list[str]):
         print_formatted_text(HTML(
             f"\n<ansiyellow>⚠ {len(validation_warnings)} validation warning(s):</ansiyellow>"))
         for w in validation_warnings:
@@ -917,7 +963,7 @@ class CyberArkImportOrchestrator:
             return
 
         folders_info = project_result.get("folders") or {}
-        safe_folders: List[dict] = []
+        safe_folders: list[dict] = []
         config_folder_uid = ""
         config_folder_name = ""
         legacy_resources_uid = ""
@@ -971,7 +1017,7 @@ class CyberArkImportOrchestrator:
 
         project_result["folders"] = folders_info
 
-    def _finalize_report(self, mapped: MappedImportResult, unmapped_items: List[dict],
+    def _finalize_report(self, mapped: MappedImportResult, unmapped_items: list[dict],
                          project_result: Optional[dict], total_accounts: int,
                          user_team_matcher: Optional[UserTeamMatcher],
                          idempotency_ctx: Optional[dict] = None):
@@ -1103,7 +1149,7 @@ class CyberArkImportOrchestrator:
         # wrapper user folder(s).  Records live inside these (and
         # inside their Resources / Users subfolders for the
         # safe-per-folder layout).
-        shared_folder_uids: List[str] = []
+        shared_folder_uids: list[str] = []
         seen: set = set()
         for wrapper_uid in wrapper_uids:
             wrapper = self.params.folder_cache.get(wrapper_uid)
@@ -1138,7 +1184,7 @@ class CyberArkImportOrchestrator:
             "wrapper_uids": wrapper_uids,
         }
 
-    def _find_project_wrapper_uids(self, project_name: str) -> List[str]:
+    def _find_project_wrapper_uids(self, project_name: str) -> list[str]:
         """Locate the project wrapper user-folder(s) under PAM Environments.
 
         Delegates to :class:`CyberArkPAMCleanupCommand` so cleanup /
@@ -1188,7 +1234,7 @@ class CyberArkImportOrchestrator:
         return ""
 
     @staticmethod
-    def _get_hostname_port(record) -> Tuple[str, str]:
+    def _get_hostname_port(record) -> tuple[str, str]:
         """Extract ``(hostName, port)`` from a pamHostname typed field."""
         for f in getattr(record, "fields", []) or []:
             if (getattr(f, "type", "") or "") != "pamHostname":
@@ -1204,7 +1250,7 @@ class CyberArkImportOrchestrator:
                 return raw, ""
         return "", ""
 
-    def _diff_incoming_vs_existing(self, existing_rec, incoming: dict) -> List[str]:
+    def _diff_incoming_vs_existing(self, existing_rec, incoming: dict) -> list[str]:
         """Return the list of field names where the two records differ.
 
         Only the fields the CyberArk mapper actually writes are
@@ -1220,7 +1266,7 @@ class CyberArkImportOrchestrator:
         An empty list means the record is unchanged.  Any non-empty
         return puts the record on the update path.
         """
-        changes: List[str] = []
+        changes: list[str] = []
 
         rtype = incoming.get("type", "") or ""
 
@@ -1257,12 +1303,12 @@ class CyberArkImportOrchestrator:
                 if (incoming.get("connect_database") or "") != self._get_field_value(
                         existing_rec, "text", "connectDatabase"):
                     changes.append("connect_database")
-            if rtype == "login":
+            if rtype == RECORD_TYPE_LOGIN:
                 if (incoming.get("url") or "") != self._get_field_value(existing_rec, "url"):
                     changes.append("url")
 
         # Resource-family fields
-        if rtype in ("pamMachine", "pamDatabase", "pamDirectory"):
+        if rtype in (RECORD_TYPE_PAM_MACHINE, RECORD_TYPE_PAM_DATABASE, RECORD_TYPE_PAM_DIRECTORY):
             e_host, e_port = self._get_hostname_port(existing_rec)
             i_host = (incoming.get("host") or "").strip()
             i_port = (incoming.get("port") or "").strip()
@@ -1270,7 +1316,7 @@ class CyberArkImportOrchestrator:
                 changes.append("host")
             if i_port and i_port != e_port:
                 changes.append("port")
-            if rtype == "pamMachine":
+            if rtype == RECORD_TYPE_PAM_MACHINE:
                 if (incoming.get("operating_system") or "") != self._get_field_value(
                         existing_rec, "text", "operatingSystem"):
                     changes.append("operating_system")
@@ -1293,7 +1339,7 @@ class CyberArkImportOrchestrator:
         ``build_import_json`` constructs the payload, so a slice
         assignment on either propagates to the other.
         """
-        decisions_by_id: Dict[int, RecordDecision] = {
+        decisions_by_id: dict[int, RecordDecision] = {
             id(d.incoming): d for d in idempotency_ctx.get("decisions", [])
         }
 
@@ -1372,7 +1418,7 @@ class CyberArkImportOrchestrator:
         return summary
 
     def _apply_field_changes(self, record, incoming: dict,
-                             changed_fields: List[str]) -> None:
+                             changed_fields: list[str]) -> None:
         """Mutate ``record`` (a loaded KeeperRecord) in place.
 
         Only the fields listed in ``changed_fields`` are touched —
@@ -1456,7 +1502,7 @@ class CyberArkImportOrchestrator:
 
     def _apply_service_dependent_mappings(
         self, mapped: MappedImportResult, project_result: dict,
-        unmapped_items: List[dict],
+        unmapped_items: list[dict],
     ) -> Optional[dict]:
         """Replay CyberArk dependents as KeeperPAM service-account mappings.
 
@@ -1616,7 +1662,7 @@ class CyberArkImportOrchestrator:
         return summary
 
     def _build_record_indexes(self, mapped: MappedImportResult, vault, vault_extensions
-                              ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+                              ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build ``(machine, user)`` record lookups from freshly imported vault data.
 
         Indexes pamMachine records by lowercased host AND lowercased title, and
@@ -1625,11 +1671,11 @@ class CyberArkImportOrchestrator:
         to titles the importer just produced keeps the lookup O(imported) rather
         than O(vault).
         """
-        machine_index: Dict[str, Any] = {}
-        user_index: Dict[str, Any] = {}
+        machine_index: dict[str, Any] = {}
+        user_index: dict[str, Any] = {}
         imported_machine_titles = {
             (r.get("title") or "").casefold()
-            for r in mapped.pam_resources if r.get("type") == "pamMachine"
+            for r in mapped.pam_resources if r.get("type") == RECORD_TYPE_PAM_MACHINE
         }
         imported_user_titles = set()
         for r in mapped.pam_resources:
@@ -1640,7 +1686,7 @@ class CyberArkImportOrchestrator:
         for rec in vault_extensions.find_records(self.params, record_version=3):
             rtype = getattr(rec, "record_type", "") or ""
             title = (getattr(rec, "title", "") or "").casefold()
-            if rtype == "pamMachine" and title in imported_machine_titles:
+            if rtype == RECORD_TYPE_PAM_MACHINE and title in imported_machine_titles:
                 loaded = vault.KeeperRecord.load(self.params, rec.record_uid)
                 if loaded is None:
                     continue
@@ -1667,7 +1713,7 @@ class CyberArkImportOrchestrator:
         return machine_index, user_index
 
     @staticmethod
-    def _find_machine_record(address: str, machine_index: Dict[str, Any]
+    def _find_machine_record(address: str, machine_index: dict[str, Any]
                              ) -> Any:
         """Resolve a CyberArk dependent ``Address`` to a Keeper PAM Machine.
 
@@ -1728,8 +1774,8 @@ class CyberArkImportOrchestrator:
         print()
 
     @staticmethod
-    def _build_resource_counts(mapped: MappedImportResult) -> Dict[str, Dict[str, int]]:
-        resource_counts: Dict[str, Dict[str, int]] = {
+    def _build_resource_counts(mapped: MappedImportResult) -> dict[str, dict[str, int]]:
+        resource_counts: dict[str, dict[str, int]] = {
             "pamMachine": {"ok": 0, "skip": 0, "err": 0},
             "pamDatabase": {"ok": 0, "skip": 0, "err": 0},
             "pamUser": {"ok": 0, "skip": 0, "err": 0},
@@ -1747,10 +1793,10 @@ class CyberArkImportOrchestrator:
 
     def _attach_report_files(self, notes_text: str, report_config_uid: str,
                              user_team_matcher: Optional[UserTeamMatcher]):
-        tmp_files: List[str] = []
+        tmp_files: list[str] = []
         try:
             from ..record_edit import RecordUploadAttachmentCommand
-            attachments: List[str] = []
+            attachments: list[str] = []
             report_tmp = tempfile.NamedTemporaryFile(
                 mode='w', suffix='.md', prefix='CyberArk-Import-Report-',
                 delete=False, encoding='utf-8',
@@ -1885,6 +1931,11 @@ Examples:
                              "records, update changed ones, skip unchanged. "
                              "create: legacy always-create (may produce "
                              "duplicates on re-run).")
+    parser.add_argument("--strict-policies", required=False, dest="strict_policies",
+                        action="store_true", default=False,
+                        help="Fail the import when a platform's rotation policy "
+                             "is inaccessible instead of inheriting the master "
+                             "policy default")
 
     def get_parser(self):
         return CyberArkPAMImportCommand.parser
@@ -1993,6 +2044,7 @@ Examples:
                 include_system_safes=kwargs.get("include_system_safes", False),
                 user_map_file=kwargs.get("user_map", ""),
                 sync_mode=(kwargs.get("sync_mode") or "upsert").lower(),
+                strict_policies=bool(kwargs.get("strict_policies", False)),
                 raw_kwargs=kwargs,
             )
             CyberArkImportOrchestrator(self, params, client, options).run()
@@ -2001,7 +2053,7 @@ Examples:
 
     def _execute_import(self, params, import_data: dict, project_name: str,
                         config_uid: str, batch_size: int, batch_delay: float,
-                        resources: List[dict], users: List[dict]) -> Optional[dict]:
+                        resources: list[dict], users: list[dict]) -> Optional[dict]:
         """Execute the vault import using pam project import/extend commands."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2045,7 +2097,7 @@ Examples:
 
     def _multi_batch_import(self, params, import_data: dict,
                             project_name: str, config_uid: str,
-                            resources: List[dict], users: List[dict],
+                            resources: list[dict], users: list[dict],
                             batch_size: int, batch_delay: float) -> dict:
         """Import records in multiple batches with adaptive throttling."""
         from .edit import PAMProjectImportCommand
@@ -2129,7 +2181,7 @@ Examples:
         return candidates[0].record_uid
 
     @staticmethod
-    def _list_safes_detailed(safes: List[dict], system_excluded: int):
+    def _list_safes_detailed(safes: list[dict], system_excluded: int):
         """List safes with details for --list-safes output."""
         print(f'\n{bcolors.OKBLUE}Available CyberArk Safes:{bcolors.ENDC}')
         print('=' * 60)
@@ -2150,7 +2202,7 @@ Examples:
         print()
 
     @staticmethod
-    def _interactive_safe_picker(safes: List[dict]) -> Optional[str]:
+    def _interactive_safe_picker(safes: list[dict]) -> Optional[str]:
         """Show safes and let user select which to import.
 
         Returns comma-separated safe names for apply_safe_filter,
@@ -2192,7 +2244,7 @@ Examples:
 
 
 class CyberArkPAMCleanupCommand(Command):
-    """Delete all records and folders created by a CyberArk PAM import."""
+    """Remove a CyberArk-imported project: records, folders, gateway, KSM app."""
 
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-cleanup",
@@ -2230,7 +2282,10 @@ Examples:
             raise CommandError("pam project cyberark-cleanup",
                                "Either --name or --config is required")
 
-        from ... import api, vault, vault_extensions
+        from ... import api, utils, vault, vault_extensions
+        from ..pam import gateway_helper
+        from ..pam.config_helper import configuration_controller_get
+        from ...loginv3 import CommonHelperMethods
 
         api.sync_down(params)
 
@@ -2253,6 +2308,33 @@ Examples:
                 raise CommandError("pam project cyberark-cleanup",
                                    f"PAM config for project '{project_name}' not found")
 
+        # Resolve gateway linked to this PAM config
+        gateway_uid = None
+        gateway_name = None
+        gw_match = None
+        try:
+            controller = configuration_controller_get(
+                params, CommonHelperMethods.url_safe_str_to_bytes(
+                    config_rec.record_uid))
+            if controller and controller.controllerUid:
+                gateway_uid = controller.controllerUid
+                all_gw = gateway_helper.get_all_gateways(params)
+                gw_match = next((g for g in all_gw
+                                 if g.controllerUid == gateway_uid), None)
+                if gw_match:
+                    gateway_name = gw_match.controllerName
+        except Exception as e:
+            logging.debug("Could not resolve gateway: %s", e)
+
+        # Resolve KSM application linked to the gateway
+        ksm_app_uid = None
+        ksm_app_name = None
+        if gw_match and gw_match.applicationUid:
+            ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
+            app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
+            if app_rec:
+                ksm_app_name = getattr(app_rec, "title", ksm_app_uid)
+
         # Find shared folders. The new safe-per-folder layout creates one
         # shared folder per CyberArk safe under the project wrapper folder
         # plus an admin Config folder; each safe folder has two
@@ -2263,7 +2345,6 @@ Examples:
         # wrapper user-folder under PAM Environments so cleanup handles
         # both shapes (and any subset thereof) without hardcoding names.
         sf_uids = []
-        record_count = 0
         sf_names: list = []
         all_record_uids: set = set()
         res_name = f"{project_name} - Resources"
@@ -2284,6 +2365,33 @@ Examples:
                     continue
                 for sub_uid in getattr(folder, "subfolders", []) or []:
                     stack.append(sub_uid)
+
+        def _delete_folder(folder_uid: str) -> bool:
+            folder = params.folder_cache.get(folder_uid)
+            if not folder:
+                return False
+            del_obj = {
+                "delete_resolution": "unlink",
+                "object_uid": folder.uid,
+                "object_type": folder.type,
+            }
+            parent = params.folder_cache.get(folder.parent_uid)
+            if parent:
+                del_obj["from_uid"] = parent.uid
+                del_obj["from_type"] = parent.type
+            else:
+                del_obj["from_type"] = "user_folder"
+            rq = {"command": "pre_delete", "objects": [del_obj]}
+            rs = api.communicate(params, rq)
+            if rs.get("result") != "success":
+                return False
+            pdr = rs.get("pre_delete_response", {})
+            del_rq = {
+                "command": "delete",
+                "pre_delete_token": pdr.get("pre_delete_token", ""),
+            }
+            api.communicate(params, del_rq)
+            return True
 
         project_folder_uids = self._find_project_wrapper_folder_uids(
             params, project_name,
@@ -2318,17 +2426,25 @@ Examples:
                     sf_uids.append(sf_uid)
                     sf_names.append(name)
                     _collect_records_recursive(sf_uid)
-        record_count = len(all_record_uids)
+
+        # Ensure PAM config is included even if it lives outside the
+        # discovered shared-folder tree.
+        if config_uid:
+            all_record_uids.add(config_uid)
 
         print(f"\nCyberArk PAM Project Cleanup")
         print("=" * 50)
-        print(f"  Project:   {project_name}")
-        print(f"  Config:    {config_uid}")
-        print(f"  Folders:   {len(sf_uids)}")
+        print(f"  Project:     {project_name}")
+        print(f"  PAM Config:  {config_uid}")
+        print(f"  Gateway:     {gateway_name or '(not found)'}")
+        print(f"  KSM App:     {ksm_app_name or ksm_app_uid or '(not found)'}")
+        print(f"  Folders:     {len(sf_uids)}")
         for sf_name in sf_names:
             if sf_name:
                 print(f"    • {sf_name}")
-        print(f"  Records:   ~{record_count}")
+        if project_folder_uids:
+            print(f"  Wrappers:    {len(project_folder_uids)}")
+        print(f"  Records:     {len(all_record_uids)}")
 
         if dry_run:
             print("  (dry run — no changes made)")
@@ -2336,35 +2452,79 @@ Examples:
             return
 
         if not auto_confirm:
-            answer = input("\n  Delete all records and folders? [y/N]: ").strip().lower()
+            answer = input("\n  Delete all of the above? [y/N]: ").strip().lower()
             if answer not in ("y", "yes"):
                 print("  Cancelled.")
                 return
 
-        # Delete records in shared folders (and any of their nested
-        # ``Resources``/``Users`` subfolders for the safe-per-folder
-        # layout). We already collected every record UID under the
-        # project tree above into ``all_record_uids``.
-        from ..record_edit import RecordDeleteCommand
         deleted = 0
         failed = 0
-        for rec_uid in list(all_record_uids):
+
+        # Delete records in batches (same API as api.delete_record)
+        if all_record_uids:
+            logging.warning("Deleting %d records...", len(all_record_uids))
+            uid_list = list(all_record_uids)
+            batch_size = 50
+            for i in range(0, len(uid_list), batch_size):
+                batch = uid_list[i:i + batch_size]
+                try:
+                    rq = {"command": "record_update", "delete_records": batch}
+                    api.communicate(params, rq)
+                    deleted += len(batch)
+                except Exception as e:
+                    failed += len(batch)
+                    logging.warning("Failed to delete record batch: %s", e)
+
+        # Delete shared folders (safe folders + Config folder)
+        if sf_uids:
+            logging.warning("Removing %d shared folder(s)...", len(sf_uids))
+            for sf_uid in sf_uids:
+                try:
+                    if not _delete_folder(sf_uid):
+                        failed += 1
+                        logging.warning("Failed to remove shared folder %s",
+                                        sf_uid)
+                except Exception as e:
+                    failed += 1
+                    logging.warning("Failed to remove shared folder %s: %s",
+                                    sf_uid, e)
+
+        # Delete project wrapper user-folder(s) under PAM Environments
+        if project_folder_uids:
+            logging.warning("Removing %d project wrapper folder(s)...",
+                            len(project_folder_uids))
+            for wrapper_uid in project_folder_uids:
+                try:
+                    if not _delete_folder(wrapper_uid):
+                        failed += 1
+                        logging.warning("Failed to remove wrapper folder %s",
+                                        wrapper_uid)
+                except Exception as e:
+                    failed += 1
+                    logging.warning("Failed to remove wrapper folder %s: %s",
+                                    wrapper_uid, e)
+
+        # Remove gateway
+        if gateway_uid:
+            logging.warning("Removing gateway \"%s\"...",
+                            gateway_name or gateway_uid)
             try:
-                RecordDeleteCommand().execute(params, force=True, record=rec_uid)
-                deleted += 1
+                gateway_helper.remove_gateway(params, gateway_uid)
             except Exception as e:
                 failed += 1
-                logging.warning("Failed to delete record %s: %s",
-                                rec_uid, type(e).__name__)
+                logging.warning("Failed to remove gateway: %s", e)
 
-        # Delete PAM config record
-        try:
-            RecordDeleteCommand().execute(params, force=True, record=config_uid)
-            deleted += 1
-        except Exception as e:
-            failed += 1
-            logging.warning("Failed to delete PAM config record %s: %s",
-                            config_uid, type(e).__name__)
+        # Remove KSM application
+        if ksm_app_uid:
+            logging.warning("Removing KSM app \"%s\"...",
+                            ksm_app_name or ksm_app_uid)
+            try:
+                from ..ksm import KSMCommand
+                KSMCommand.remove_v5_app(params, ksm_app_uid,
+                                         purge=True, force=True)
+            except Exception as e:
+                failed += 1
+                logging.warning("Failed to remove KSM app: %s", e)
 
         api.sync_down(params)
         msg = f"\nCleanup complete: {deleted} records deleted"

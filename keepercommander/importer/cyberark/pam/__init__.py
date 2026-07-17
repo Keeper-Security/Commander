@@ -8,7 +8,7 @@
 
 """CyberArk → KeeperPAM import library (organized subpackage)."""
 
-from .account_mapper import AccountMapper
+from .account_mapper import AccountMapper, StrictPolicyError
 from .application_mapper import ApplicationMapper
 from .client import CyberArkPVWAClient
 from .constants import (
@@ -16,8 +16,17 @@ from .constants import (
     FALLBACK_PLATFORM_MAP,
     MAX_FETCH_RECORDS,
     MAX_SAFE_NAME_LENGTH,
+    RECORD_TYPE_LOGIN,
+    RECORD_TYPE_PAM_DATABASE,
+    RECORD_TYPE_PAM_DIRECTORY,
+    RECORD_TYPE_PAM_MACHINE,
+    ROTATION_UNMAPPED,
+    SCHEDULE_ON_DEMAND,
     SYSTEM_SAFES,
     VALID_LOGON_TYPES,
+    IDENTITY_LOGIN_SUCCESS,
+    register_system_safes,
+    reset_system_safes,
 )
 from .import_builder import (
     build_extend_json,
@@ -86,7 +95,15 @@ __all__ = [
     "RecordKind",
     "SafeFolderMapper",
     "SessionRecordingResolver",
+    "RECORD_TYPE_LOGIN",
+    "RECORD_TYPE_PAM_DATABASE",
+    "RECORD_TYPE_PAM_DIRECTORY",
+    "RECORD_TYPE_PAM_MACHINE",
+    "ROTATION_UNMAPPED",
+    "SCHEDULE_ON_DEMAND",
+    "IDENTITY_LOGIN_SUCCESS",
     "SYSTEM_SAFES",
+    "StrictPolicyError",
     "UserTeamMatcher",
     "VALID_LOGON_TYPES",
     "_esc",
@@ -110,6 +127,8 @@ __all__ = [
     "partition_records",
     "pick_admin_credentials",
     "pick_launch_credentials",
+    "register_system_safes",
+    "reset_system_safes",
     "resolve_account_dependents",
     "resolve_linked_accounts",
     "sanitize_safe_name",

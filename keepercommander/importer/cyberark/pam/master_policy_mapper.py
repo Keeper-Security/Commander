@@ -9,6 +9,9 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from .constants import SCHEDULE_ON_DEMAND
+
+
 class MasterPolicyMapper:
     """Maps CyberArk Master Policy rules to Keeper PAM Configuration settings.
 
@@ -61,7 +64,7 @@ class MasterPolicyMapper:
         # the import JSON expects — see PamConfigEnvironment.load() and
         # build_import_json() below. ``password_change_days`` is kept
         # alongside as informational metadata for the import report.
-        "default_rotation_schedule": {"type": "on-demand"},
+        "default_rotation_schedule": {"type": SCHEDULE_ON_DEMAND},
         "password_change_days": 0,
     }
 
@@ -112,7 +115,7 @@ class MasterPolicyMapper:
         the Master Policy default itself always is.
         """
         cron = MasterPolicyMapper.days_to_cron(days)
-        return {"type": "CRON", "cron": cron} if cron else {"type": "on-demand"}
+        return {"type": "CRON", "cron": cron} if cron else {"type": SCHEDULE_ON_DEMAND}
 
     @staticmethod
     def _exception_platform_id(entry: dict) -> Optional[str]:
@@ -284,6 +287,13 @@ class MasterPolicyMapper:
             return None
         if d <= 0:
             return None
+        # Cap absurd intervals (e.g. 10000 days) at annual so callers cannot
+        # accidentally produce surprising multi-year bucket math.
+        if d > 365:
+            logging.debug(
+                "PasswordChangeDays=%s exceeds 365 — capping to annual CRON", d,
+            )
+            return "0 0 0 1 1 ?"
         # Each branch produces a 6-field Quartz expression (sec min hour dom
         # month dow) with ``?`` in either dom or dow as Keeper's
         # validate_cron_expression(for_rotation=True) requires. Only the
@@ -311,7 +321,7 @@ class MasterPolicyMapper:
             if months >= 12:
                 return "0 0 0 1 1 ?"
             return f"0 0 0 1 */{months} ?"
-        # Annual or longer — Jan 1 at midnight
+        # Exactly 365 days — annual
         return "0 0 0 1 1 ?"
 
     @staticmethod

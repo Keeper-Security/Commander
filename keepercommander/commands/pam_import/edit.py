@@ -800,11 +800,12 @@ class PAMProjectImportCommand(Command):
             # inside validate_cron_expression().
             sched = pce.default_rotation_schedule
             if isinstance(sched, dict):
-                if str(sched.get("type", "")).upper() == "CRON":
+                sched_type = str(sched.get("type", "")).lower().replace("_", "-")
+                if sched_type == "cron":
                     cron_expr = str(sched.get("cron", "") or "").strip()
                     if cron_expr:
                         args["default_schedule"] = cron_expr
-                # ON_DEMAND → omit args["default_schedule"] → server defaults to On-Demand
+                # on-demand / ON_DEMAND → omit args["default_schedule"] → server defaults to On-Demand
             elif isinstance(sched, str) and sched.strip():
                 args["default_schedule"] = sched.strip()
 
@@ -1587,7 +1588,7 @@ class PAMProjectImportCommand(Command):
                         # use "cron" (lowercase). Compare in lowercase so
                         # both shapes are honored.
                         schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
-                        schedule_type_lc = (schedule_type or "").lower()
+                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
                         if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
                         elif schedule_type_lc == "cron":

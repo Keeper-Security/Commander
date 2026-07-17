@@ -1490,7 +1490,7 @@ class PAMProjectExtendCommand(Command):
                         # Case-insensitive schedule type; cron value must be a list.
                         schedule = getattr(rs, "schedule", None)
                         schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        schedule_type_lc = (schedule_type or "").lower()
+                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
                         if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
                         elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
@@ -1529,7 +1529,7 @@ class PAMProjectExtendCommand(Command):
                         # ``schedule_cron_data`` is wrapped in a list.
                         schedule = getattr(rs, "schedule", None)
                         schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        schedule_type_lc = (schedule_type or "").lower()
+                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
                         if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
                         elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
