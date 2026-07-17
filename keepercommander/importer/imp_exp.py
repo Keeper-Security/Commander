@@ -721,6 +721,7 @@ def _import(params, file_format, filename, **kwargs):
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
     update_flag = kwargs.get('update_flag') or False
+    no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
 
@@ -883,7 +884,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
         import_uids = {}
 
-        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, params, records)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
         if show_skipped and record_exists:
             for existing_record in record_exists:
                 folder_name = ''
@@ -2063,7 +2064,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, params, records):
+def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
     # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
@@ -2121,7 +2122,7 @@ def prepare_record_add_or_update(update_flag, params, records):
                     f.value = LARGE_FIELD_MSG.format(atta.name)
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
-        if record_hash in preexisting_entire_record_hash:
+        if no_shortcuts is False and record_hash in preexisting_entire_record_hash:
             record_uid = preexisting_entire_record_hash[record_hash]
             if import_record.uid:
                 external_lookup[import_record.uid] = record_uid
