@@ -167,6 +167,9 @@ pam project cyberark-import pvwa.company.com --dry-run --output import.json --in
 # Filter specific safes
 pam project cyberark-import pvwa.company.com --safes "Production,Staging" --exclude-safes "Archive*"
 
+# Import into Nested Share Folders (folders, records, rotation, PAM config)
+pam project cyberark-import pvwa.company.com --name "CyberArk Migration" --gateway "My Gateway" --nsf
+
 # Extend existing project
 pam project cyberark-import pvwa.company.com --config <pam-config-uid>
 
@@ -196,7 +199,8 @@ pam project cyberark-cleanup --name "CyberArk Migration" --dry-run
 | `--name`, `-n` | Project name |
 | `--config`, `-c` | Extend existing PAM config UID |
 | `--gateway`, `-g` | Gateway name or UID |
-| `--folder-mode` | flat, exact, ksm (default) |
+| `--folder-mode` | flat, exact, ksm, safe (default: safe) |
+| `--nsf` | Create project folders/records/PAM config in Nested Share Folders |
 | `--safes` | Include only these safes (comma/glob) |
 | `--exclude-safes` | Exclude safes (comma/glob) |
 | `--list-safes` | List safes and exit |
