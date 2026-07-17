@@ -231,7 +231,8 @@ class PamConfigEnvironment():
         # {"type": "on-demand"} or {"type": "CRON", "cron": "30 18 * * *", "tz": "America/Chicago" }
         val = settings.get("default_rotation_schedule", None)
         if isinstance(val, dict):
-            schedule_type = str(val.get("type", "")).lower()
+            # Normalize ON_DEMAND/on_demand/on-demand and CRON/cron (case + underscore).
+            schedule_type = str(val.get("type", "")).lower().replace("_", "-")
             schedule_type = {"on-demand": "ON_DEMAND", "cron": "CRON"}.get(schedule_type, "")
             if schedule_type != "":
                 if schedule_type == "ON_DEMAND":
@@ -477,12 +478,13 @@ class PamRotationScheduleObject():
         if not isinstance(data, dict): return obj
 
         type = data.get("type", None)
-        if type and isinstance(type, str) and type.strip().lower() in schedule_types:
-            obj.type = type.strip().lower()
+        type_norm = type.strip().lower().replace("_", "-") if isinstance(type, str) else ""
+        if type_norm in schedule_types:
+            obj.type = type_norm
         elif type:
             logging.error(f"""Schedule type "{str(type)[:80]}" is unknown - must be one of {schedule_types}""")
 
-        if obj.type.lower() == "cron":
+        if obj.type.lower().replace("_", "-") == "cron":
             cron = data.get("cron", None)
             if isinstance(cron, str) and cron.strip() != "": obj.cron = cron.strip()
             if obj.cron:  # validate

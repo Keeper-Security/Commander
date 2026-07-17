@@ -177,10 +177,28 @@ class PAMProjectImportCommand(Command):
             perms = section.get("permissions") if isinstance(section, dict) else None
             return isinstance(perms, list) and len(perms) > 0
 
+        def _has_safe_folder_perms():
+            # CyberArk per-safe folders carry their own permission lists.
+            # Any non-empty ``permissions`` array means we need enterprise
+            # data to resolve the principals before creating folders.
+            data = project["data"] if isinstance(project["data"], dict) else {}
+            sf = data.get("safe_folders") if isinstance(data, dict) else None
+            if not isinstance(sf, list):
+                return False
+            for entry in sf:
+                if not isinstance(entry, dict):
+                    continue
+                perms = entry.get("permissions")
+                if isinstance(perms, list) and len(perms) > 0:
+                    return True
+            return False
+
         needs_enterprise_data = (
             not project["options"]["dry_run"]
             and not project["options"]["sample_data"]
-            and (_has_perms("shared_folder_users") or _has_perms("shared_folder_resources"))
+            and (_has_perms("shared_folder_users")
+                 or _has_perms("shared_folder_resources")
+                 or _has_safe_folder_perms())
         )
         if not params.enterprise and needs_enterprise_data:
             try:
@@ -254,7 +272,10 @@ class PAMProjectImportCommand(Command):
             "resources_folder": f"""{project["options"]["project_name"]} - Resources""",
             "resources_folder_uid": "",
             "users_folder": f"""{project["options"]["project_name"]} - Users""",
-            "users_folder_uid": ""
+            "users_folder_uid": "",
+            # CyberArk --folder-mode safe: per-safe folder UID lookup by folder_path.
+            "safe_folder_map": {},
+            "safe_folders": [],
         }
 
         # Project structure:
@@ -262,6 +283,13 @@ class PAMProjectImportCommand(Command):
         # PAM Environments > Project 1 (shared) > Users - PAMUser ONLY: All other types go into Resources
 
         # if project["data"].get("tool_version", "") != "": # CLI generated export else: # Manually generated import file
+
+        data = project["data"] if isinstance(project.get("data"), dict) else {}
+        safe_folders_def = data.get("safe_folders") if isinstance(data, dict) else None
+        use_safe_layout = (
+            isinstance(safe_folders_def, list)
+            and any(isinstance(x, dict) and x.get("name") for x in safe_folders_def)
+        )
 
         # FolderListCommand().execute(params, folders_only=True, pattern="/")
         use_nsf = project["options"].get("use_nsf", False) is True
@@ -305,24 +333,27 @@ class PAMProjectImportCommand(Command):
                     res["project_folder_uid"] = fuid
 
                     puid = res["project_folder_uid"]
-                    sfn = project["data"].get("shared_folder_resources", None)
-                    fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
-                    fname = fname.strip() or f"""{res["project_folder"]} - Resources"""
-                    fperm, rperm = self.get_folder_permissions(users_folder=False, data=project["data"])
-                    fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
-                    res["resources_folder_uid"] = fuid
+                    if use_safe_layout:
+                        self._create_safe_folders(params, project, puid, res, safe_folders_def)
+                    else:
+                        sfn = project["data"].get("shared_folder_resources", None)
+                        fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
+                        fname = fname.strip() or f"""{res["project_folder"]} - Resources"""
+                        fperm, rperm = self.get_folder_permissions(users_folder=False, data=project["data"])
+                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
+                        res["resources_folder_uid"] = fuid
 
-                    sfn = project["data"].get("shared_folder_users", None)
-                    fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
-                    fname = fname.strip() or f"""{res["project_folder"]} - Users"""
-                    fperm, uperm = self.get_folder_permissions(users_folder=True, data=project["data"])
-                    fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
-                    res["users_folder_uid"] = fuid
+                        sfn = project["data"].get("shared_folder_users", None)
+                        fname = sfn["folder_name"] if isinstance(sfn, dict) and isinstance(sfn.get("folder_name", None), str) else ""
+                        fname = fname.strip() or f"""{res["project_folder"]} - Users"""
+                        fperm, uperm = self.get_folder_permissions(users_folder=True, data=project["data"])
+                        fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
+                        res["users_folder_uid"] = fuid
 
-                    # add users and teams
-                    self.verify_users_and_teams(params, rperm + uperm)
-                    self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
-                    self.add_folder_permissions(params, res["users_folder_uid"], uperm)
+                        # add users and teams
+                        self.verify_users_and_teams(params, rperm + uperm)
+                        self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
+                        self.add_folder_permissions(params, res["users_folder_uid"], uperm)
                 break
 
         if project["options"].get("dry_run", False) is True:
@@ -331,6 +362,14 @@ class PAMProjectImportCommand(Command):
             else:
                 print(f"""Will create new {"NSF " if use_nsf else ""}PAM root folder: {res["root_folder_target"]}""")
             print(f"""Will create new {"NSF " if use_nsf else ""}Project folder: {res["project_folder"]}""")
+            if use_safe_layout:
+                safe_names = [str(x.get("name") or "").strip()
+                              for x in safe_folders_def if isinstance(x, dict)]
+                safe_names = [n for n in safe_names if n]
+                print(f"Will create {len(safe_names) + 1} shared folders under project "
+                      f"(one per safe + 1 admin Config folder)")
+                for n in safe_names:
+                    print(f"  • {n}")
         else:
             if use_nsf:
                 from .nsf_helpers import sync_down_preserving_nsf_keys
@@ -339,6 +378,137 @@ class PAMProjectImportCommand(Command):
                 api.sync_down(params)
 
         return res
+
+    def _create_safe_folders(self, params, project: dict, project_folder_uid: str,
+                             res: dict, safe_folders_def: list) -> None:
+        """Create per-safe shared folders and the admin-only Config folder.
+
+        Fills ``res["safe_folder_map"]`` so process_data can route by ``folder_path``.
+        Config folder UID is also stored in the legacy resources/users slots.
+        """
+        safe_folder_map: dict = {}
+        safe_folder_records: list = []
+        use_nsf = project["options"].get("use_nsf", False) is True
+
+        # Default folder-level permissions for safe folders.
+        default_fperm = {
+            "manage_users": True,
+            "manage_records": True,
+            "can_edit": True,
+            "can_share": True,
+        }
+
+        # Collect all user/team permission entries across safes so we can
+        # verify them up-front in a single batch (process_data does the
+        # same for legacy mode).
+        all_user_perms: list = []
+        for entry in safe_folders_def:
+            if not isinstance(entry, dict):
+                continue
+            folder_name = str(entry.get("name") or "").strip()
+            if not folder_name:
+                continue
+            fperm = dict(default_fperm)
+            for key in ("manage_users", "manage_records", "can_edit", "can_share"):
+                if key in entry:
+                    fperm[key] = bool(entry.get(key))
+
+            uperm: list = []
+            perm_list = entry.get("permissions") if isinstance(entry.get("permissions"), list) else []
+            for item in perm_list:
+                if not isinstance(item, dict):
+                    continue
+                uid_ = item.get("uid", None)
+                name_ = item.get("name", None)
+                if uid_ is None and name_ is None:
+                    logging.warning(
+                        "Safe folder '%s' permission entry missing both uid and name (skipped)",
+                        folder_name,
+                    )
+                    continue
+                uperm.append({
+                    "uid": uid_,
+                    "name": name_,
+                    "manage_users": True if str(item.get("manage_users", False)).upper() == "TRUE" else False,
+                    "manage_records": True if str(item.get("manage_records", False)).upper() == "TRUE" else False,
+                })
+            all_user_perms.extend(uperm)
+            safe_folder_records.append({
+                "name": folder_name,
+                "safe_name": str(entry.get("safe_name") or folder_name),
+                "fperm": fperm,
+                "uperm": uperm,
+            })
+
+        # Admin-only "Config" folder that holds the PAM Configuration v6
+        # record. Cannot live in any safe folder, or the safe's members
+        # would gain access to the central config record.
+        config_folder_name = f"""{res["project_folder"]} - Config"""
+        config_uid = self.create_subfolder(
+            params, folder_name=config_folder_name,
+            parent_uid=project_folder_uid, permissions=dict(default_fperm),
+            use_nsf=use_nsf,
+        )
+        res["resources_folder"] = config_folder_name
+        res["users_folder"] = config_folder_name
+        res["resources_folder_uid"] = config_uid
+        res["users_folder_uid"] = config_uid
+        res["config_folder_uid"] = config_uid
+        res["config_folder"] = config_folder_name
+
+        # Verify principals once (avoids one round-trip per safe).
+        if all_user_perms:
+            self.verify_users_and_teams(params, all_user_perms)
+
+        # Create one shared folder per safe under the project wrapper and
+        # apply its specific permission set. Inside each safe folder,
+        # create two organizational subfolders named
+        # ``{safe} - Resources`` (for the asset records) and
+        # ``{safe} - Users`` (for the credential records) so the
+        # imported records mirror the legacy two-folder split, but with
+        # the access boundary still drawn at the per-safe level. The
+        # subfolders inherit the safe's permission set automatically
+        # because they're ``shared_folder_folder`` children — we don't
+        # need to re-attach permissions per subfolder. Prefixing the
+        # subfolder names with the safe name keeps them
+        # self-identifying in the Keeper UI even when listed flat.
+        for record in safe_folder_records:
+            folder_uid = self.create_subfolder(
+                params, folder_name=record["name"],
+                parent_uid=project_folder_uid, permissions=record["fperm"],
+                use_nsf=use_nsf,
+            )
+            # Top-level lookup key (no slash) maps to the safe folder
+            # itself for callers that still emit ``folder_path = "<safe>"``
+            # (e.g. older versions of the importer or hand-written JSON).
+            safe_folder_map[record["name"]] = folder_uid
+
+            res_sub_name = f"{record['name']} - Resources"
+            usr_sub_name = f"{record['name']} - Users"
+            res_sub_uid = self.create_subfolder(
+                params, folder_name=res_sub_name, parent_uid=folder_uid,
+                use_nsf=use_nsf,
+            )
+            usr_sub_uid = self.create_subfolder(
+                params, folder_name=usr_sub_name, parent_uid=folder_uid,
+                use_nsf=use_nsf,
+            )
+            safe_folder_map[f"{record['name']}/{res_sub_name}"] = res_sub_uid
+            safe_folder_map[f"{record['name']}/{usr_sub_name}"] = usr_sub_uid
+
+            res["safe_folders"].append({
+                "name": record["name"],
+                "safe_name": record["safe_name"],
+                "uid": folder_uid,
+                "resources_subfolder": res_sub_name,
+                "resources_subfolder_uid": res_sub_uid,
+                "users_subfolder": usr_sub_name,
+                "users_subfolder_uid": usr_sub_uid,
+            })
+            if record["uperm"]:
+                self.add_folder_permissions(params, folder_uid, record["uperm"])
+
+        res["safe_folder_map"] = safe_folder_map
 
     def process_ksm_app(self, params, project: dict) -> dict:
         res = {
@@ -382,13 +552,36 @@ class PAMProjectImportCommand(Command):
         if preserved is not None:
             # create_ksm_app sync_down clears NSF caches; restore before NSF secret share.
             restore_nsf_folder_keys(params, preserved)
-        for sf_uid in [project["folders"].get("resources_folder_uid", ""),
-                       project["folders"].get("users_folder_uid", "")]:
-            if sf_uid.strip():
-                KSMCommand().execute(params,
-                                     command=("secret", "add"),
-                                     app=res["app_uid"],
-                                     secret=[sf_uid], editable=True)
+
+        # The KSM app must have access to every shared folder containing
+        # PAM records. Legacy mode emits exactly two folders (Resources +
+        # Users). Safe-per-folder mode emits one folder per CyberArk safe
+        # plus the admin Config folder; collect them all here (dedup'd in
+        # case the same UID surfaces twice — e.g. config == resources in
+        # safe mode where resources_folder_uid mirrors the config folder).
+        sf_uids_to_grant = []
+        seen_sf_uids = set()
+
+        def _add_sf(sf_uid: str):
+            sf_uid = (sf_uid or "").strip()
+            if not sf_uid or sf_uid in seen_sf_uids:
+                return
+            seen_sf_uids.add(sf_uid)
+            sf_uids_to_grant.append(sf_uid)
+
+        folders = project["folders"]
+        _add_sf(folders.get("resources_folder_uid", ""))
+        _add_sf(folders.get("users_folder_uid", ""))
+        _add_sf(folders.get("config_folder_uid", ""))
+        for entry in folders.get("safe_folders", []) or []:
+            if isinstance(entry, dict):
+                _add_sf(entry.get("uid", ""))
+
+        for sf_uid in sf_uids_to_grant:
+            KSMCommand().execute(params,
+                                 command=("secret", "add"),
+                                 app=res["app_uid"],
+                                 secret=[sf_uid], editable=True)
 
         if use_nsf or any(is_nested_share_folder(params, uid)
                           for uid in (project["folders"].get("resources_folder_uid", ""),
@@ -600,7 +793,21 @@ class PAMProjectImportCommand(Command):
                 if pce.oci_tenancy: args["oci_tenancy"] = pce.oci_tenancy
                 if pce.oci_region: args["oci_region"] = pce.oci_region
 
-            if pce.default_rotation_schedule: args["default_schedule"] = pce.default_rotation_schedule
+            # `default_schedule` for PAMConfigurationNewCommand is a CRON string (or absent for
+            # on-demand). PamConfigEnvironment normalizes it into a dict ({"type": "ON_DEMAND"} or
+            # {"type": "CRON", "cron": "...", "tz": "..."}), so unpack back into the expected form
+            # — passing the dict through causes AttributeError: 'dict' object has no attribute 'strip'
+            # inside validate_cron_expression().
+            sched = pce.default_rotation_schedule
+            if isinstance(sched, dict):
+                sched_type = str(sched.get("type", "")).lower().replace("_", "-")
+                if sched_type == "cron":
+                    cron_expr = str(sched.get("cron", "") or "").strip()
+                    if cron_expr:
+                        args["default_schedule"] = cron_expr
+                # on-demand / ON_DEMAND → omit args["default_schedule"] → server defaults to On-Demand
+            elif isinstance(sched, str) and sched.strip():
+                args["default_schedule"] = sched.strip()
 
         res["pam_config_uid"] = PAMConfigurationNewCommand().execute(params, **args)
         users_folder_uid = project["folders"].get("users_folder_uid", "")
@@ -1014,6 +1221,17 @@ class PAMProjectImportCommand(Command):
 
         shfres = project["folders"].get("resources_folder_uid", "")
         shfusr = project["folders"].get("users_folder_uid", "")
+        # Per-safe folder routing (CyberArk --folder-mode safe); empty for legacy layout.
+        safe_folder_map = project["folders"].get("safe_folder_map") or {}
+
+        def _resolve_folder_uid(obj, default_uid: str) -> str:
+            if not safe_folder_map:
+                return default_uid
+            fp = getattr(obj, "folder_path", None) or ""
+            fp = fp.strip() if isinstance(fp, str) else ""
+            if not fp:
+                return default_uid
+            return safe_folder_map.get(fp, default_uid)
 
         usrs = pam_data["users"] if "users" in pam_data and isinstance(pam_data["users"], list) else []
         rsrs = pam_data["resources"] if "resources" in pam_data and isinstance(pam_data["resources"], list) else []
@@ -1270,7 +1488,7 @@ class PAMProjectImportCommand(Command):
         if users:
             logging.warning(f"Processing external users: {len(users)}")
             for n, user in enumerate(users):  # standalone users
-                user.create_record(params, shfusr)
+                user.create_record(params, _resolve_folder_uid(user, shfusr))
                 if n % pdelta == 0: print(f"{n}/{len(users)}")
             print(f"{len(users)}/{len(users)}\n")
 
@@ -1282,7 +1500,8 @@ class PAMProjectImportCommand(Command):
             # Machine - create machine first to avoid error:
             # Resource <UID> does not belong to the configuration
             admin_uid = get_admin_credential(mach, True)
-            mach.create_record(params, shfres)
+            mach_folder_uid = _resolve_folder_uid(mach, shfres)
+            mach.create_record(params, mach_folder_uid)
             tdag.link_resource_to_config(mach.uid)
             if isinstance(mach, PamRemoteBrowserObject): # RBI
                 args = parse_command_options(mach, True)
@@ -1350,7 +1569,11 @@ class PAMProjectImportCommand(Command):
                 if (isinstance(user, PamUserObject) and user.rotation_settings and
                     user.rotation_settings.rotation.lower() == "general"):
                     user.rotation_settings.resourceUid = mach.uid # DAG only
-                user.create_record(params, shfusr)
+                # Nested users default to the same safe folder as their
+                # owning machine so safe-level permissions apply uniformly
+                # to every record originating from that CyberArk safe.
+                user_folder_uid = _resolve_folder_uid(user, mach_folder_uid)
+                user.create_record(params, user_folder_uid)
                 if isinstance(user, PamUserObject):  # rotation setup
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
                     if user.rotation_settings:
@@ -1359,12 +1582,19 @@ class PAMProjectImportCommand(Command):
                         key = {"on": "enable", "off": "disable"}.get(enabled, "")
                         if key: args[key] = True
                         # args["schedule_config"] = True  # Schedule from Configuration
+                        # Schedule type is case-insensitive; CyberArk
+                        # importer emits "CRON" (uppercase) per Keeper's
+                        # on-the-wire convention, while older import paths
+                        # use "cron" (lowercase). Compare in lowercase so
+                        # both shapes are honored.
                         schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
-                        if schedule_type == "on-demand":
+                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
+                        if schedule_type_lc == "on-demand":
                             args["on_demand"] = True
-                        elif schedule_type == "cron":
+                        elif schedule_type_lc == "cron":
                             if user.rotation_settings.schedule.cron:
-                                args["schedule_cron_data"] = user.rotation_settings.schedule.cron
+                                # Must be a list for parse_schedule_data (CLI uses action=append).
+                                args["schedule_cron_data"] = [user.rotation_settings.schedule.cron]
                             else:
                                 logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
                         if user.rotation_settings.password_complexity:

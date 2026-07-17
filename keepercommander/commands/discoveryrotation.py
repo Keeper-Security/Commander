@@ -171,18 +171,24 @@ def parse_schedule_data(kwargs):
     schedule_cron_data = kwargs.get('schedule_cron_data')
     schedule_on_demand = kwargs.get('on_demand') is True
     schedule_data = None  # type: Optional[List]
+    if isinstance(schedule_json_data, str):
+        schedule_json_data = [schedule_json_data]
     if isinstance(schedule_json_data, list):
         schedule_data = [json.loads(x) for x in schedule_json_data]
-    elif isinstance(schedule_cron_data, list):
-        # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
-        if schedule_cron_data and isinstance(schedule_cron_data[0], str):
-            valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
-            if valid:
-                schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
-            else:
-                logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
-    elif schedule_on_demand is True:
-        schedule_data = []
+    else:
+        # Programmatic callers may pass a bare cron string; argparse uses a list.
+        if isinstance(schedule_cron_data, str):
+            schedule_cron_data = [schedule_cron_data]
+        if isinstance(schedule_cron_data, list):
+            # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+            if schedule_cron_data and isinstance(schedule_cron_data[0], str):
+                valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
+                if valid:
+                    schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
+                else:
+                    logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+        elif schedule_on_demand is True:
+            schedule_data = []
     return schedule_data
 
 
