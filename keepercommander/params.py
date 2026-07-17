@@ -245,6 +245,7 @@ class KeeperParams:
         self.biometric = None
         self.via_desktop_login = False
         self.via_desktop_session_terminated = False
+        self.desktop_lifecycle_monitor = None
         self.desktop_account_uid = None
         self.desktop_user = ''
         self.desktop_account_username = None
@@ -254,6 +255,13 @@ class KeeperParams:
         self._pedm_plugin = None    # type:
 
     def clear_session(self):
+        monitor = getattr(self, 'desktop_lifecycle_monitor', None)
+        self.desktop_lifecycle_monitor = None
+        if monitor is not None:
+            try:
+                monitor.stop()
+            except Exception:
+                pass
         self.auth_verifier = None
         self.user = ''
         self.password = ''

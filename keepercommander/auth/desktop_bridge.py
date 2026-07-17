@@ -107,6 +107,11 @@ def login_via_desktop(params, bridge_module=None, bridge_socket=None, timeout_ms
     )
     _verify_ka_account_binding(params, binding_account_uid)
     _apply_vault_account_binding(params, vault_account_binding)
+    try:
+        _start_vault_lifecycle_monitor(params, module, request.config)
+    except Exception:
+        _clear_desktop_lifecycle_state(params)
+        raise
     logging.info('Authenticated through Keeper Desktop bridge.')
 
 
@@ -784,6 +789,75 @@ def _build_bridge_config(module, params, bridge_socket, timeout_ms, verification
         # Older KDBC wheels do not expose verification_policy.
         kwargs.pop('verification_policy', None)
         return module.BridgeClientConfig(**kwargs)
+
+
+def _start_vault_lifecycle_monitor(params, module, config):
+    bridge_client = getattr(module, 'BridgeClient', None)
+    if bridge_client is None:
+        raise DesktopBridgeLoginError(
+            'KDBC lifecycle monitor API is unavailable',
+            code=KDBC_KA_LOGIN_FAILED,
+            kind='kdbc_lifecycle_monitor_unavailable',
+            actor='bridge',
+        )
+
+    client = bridge_client()
+    start_monitor = getattr(client, 'start_vault_lifecycle_monitor', None)
+    if not callable(start_monitor):
+        raise DesktopBridgeLoginError(
+            'KDBC lifecycle monitor API is unavailable',
+            code=KDBC_KA_LOGIN_FAILED,
+            kind='kdbc_lifecycle_monitor_unavailable',
+            actor='bridge',
+        )
+
+    _stop_vault_lifecycle_monitor(params)
+    monitor = start_monitor(config, lambda notice: _handle_vault_lifecycle_notice(params, notice))
+    params.desktop_lifecycle_monitor = monitor
+    return monitor
+
+
+def _stop_vault_lifecycle_monitor(params):
+    monitor = getattr(params, 'desktop_lifecycle_monitor', None)
+    params.desktop_lifecycle_monitor = None
+    if monitor is None:
+        return
+    try:
+        monitor.stop()
+    except Exception as err:
+        logging.debug('Unable to stop Vault lifecycle monitor: %s', err)
+
+
+def _close_desktop_lifecycle_tunnels(params):
+    from ..commands.tunnel.tunnel_lifecycle import close_pam_tunnels_on_logout
+    close_pam_tunnels_on_logout(params)
+
+
+def _suspend_desktop_pam_state(params):
+    from ..commands.tunnel import pam_state_bridge
+    pam_state_bridge.suspend_desktop_bridge_state(params, clear_binding=True)
+
+
+def _clear_desktop_lifecycle_state(params):
+    try:
+        _suspend_desktop_pam_state(params)
+    except Exception as err:
+        logging.debug('Unable to suspend Desktop PAM state sync: %s', err)
+    params.clear_session()
+
+
+def _handle_vault_lifecycle_notice(params, notice):
+    reason = getattr(notice, 'reason', None) or 'vault_desktop_disconnected'
+    # The monitor invokes this callback from its own reader, so detach it before
+    # clearing the session to avoid stopping or joining that reader recursively.
+    params.desktop_lifecycle_monitor = None
+    try:
+        _close_desktop_lifecycle_tunnels(params)
+    except Exception as err:
+        logging.warning('Unable to close PAM tunnels after Vault lifecycle terminal: %s', err)
+    _clear_desktop_lifecycle_state(params)
+    params.via_desktop_session_terminated = True
+    logging.warning('Vault Desktop lifecycle terminal; cleared Keeper session: %s', reason)
 
 
 def _resolve_verification_policy(params, verification_policy):
