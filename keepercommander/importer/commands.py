@@ -65,6 +65,8 @@ import_parser.add_argument('-p', '--permissions', dest='permissions', action='st
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
                            help='update records with common login, url or title')
+import_parser.add_argument('--no-shortcuts',  dest='no_shortcuts',  action='store_true',
+                           help='disable shortcut handling (only new records)')
 import_parser.add_argument('--users',  dest='users_only',  action='store_true',
                            help='update shared folder user permissions only')
 import_parser.add_argument('--record-type', dest='record_type', action='store',
