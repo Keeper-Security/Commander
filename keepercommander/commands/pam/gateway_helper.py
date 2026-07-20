@@ -93,6 +93,8 @@ def create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min
 
         one_time_token = config_str_and_config_dict.get('config_str')
 
+    # New controller may not appear in a warm get_all_gateways() cache.
+    invalidate_gateway_cache()
     return one_time_token
 
 
