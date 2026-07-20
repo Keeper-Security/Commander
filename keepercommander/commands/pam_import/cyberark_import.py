@@ -2276,7 +2276,7 @@ Examples:
 
 
 class CyberArkPAMCleanupCommand(Command):
-    """Remove a CyberArk-imported project: records, folders, gateway, KSM app."""
+    """Remove a CyberArk-imported project: records, folders, and PAM config."""
 
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-cleanup",
@@ -2450,47 +2450,66 @@ Examples:
             return
 
         if not auto_confirm:
-            answer = input("\n  Delete all records and folders? [y/N]: ").strip().lower()
+            answer = input("\n  Delete project folders (and all records inside)? [y/N]: ").strip().lower()
             if answer not in ("y", "yes"):
                 print("  Cancelled.")
                 return
 
-        from ..record_edit import RecordDeleteCommand
+        from ..folder import FolderRemoveCommand
+        from ..record import RecordRemoveCommand
+        from ..nested_share_folder.folder_commands import NestedShareFolderRemoveCommand
         from ..nested_share_folder.record_commands import NestedShareRecordRemoveCommand
 
-        deleted = 0
-        failed = 0
-        for rec_uid in list(all_record_uids):
+        # Prefer folder deletion: records (and nested subfolders) are removed
+        # with the folder tree. Delete content folders first, then wrappers.
+        folders_deleted = 0
+        folders_failed = 0
+        folders_to_remove = list(sf_uids) + list(project_folder_uids)
+        for folder_uid in folders_to_remove:
             try:
-                if is_pam_nsf_record(params, rec_uid) or any(
-                        is_nested_share_folder(params, fuid) for fuid in sf_uids):
-                    NestedShareRecordRemoveCommand().execute(
-                        params, records=[rec_uid], force=True, operation="owner-trash")
+                if is_nested_share_folder(params, folder_uid):
+                    NestedShareFolderRemoveCommand().execute(
+                        params, folders=[folder_uid], force=True,
+                        operation="folder-trash", quiet=True)
                 else:
-                    RecordDeleteCommand().execute(params, force=True, record=rec_uid)
-                deleted += 1
+                    FolderRemoveCommand().execute(
+                        params, pattern=[folder_uid], force=True, quiet=True)
+                folders_deleted += 1
             except Exception as e:
-                failed += 1
-                logging.warning("Failed to delete record %s: %s",
-                                rec_uid, type(e).__name__)
-
-        # Delete PAM config record
-        try:
-            if is_pam_nsf_record(params, config_uid):
-                NestedShareRecordRemoveCommand().execute(
-                    params, records=[config_uid], force=True, operation="owner-trash")
-            else:
-                RecordDeleteCommand().execute(params, force=True, record=config_uid)
-            deleted += 1
-        except Exception as e:
-            failed += 1
-            logging.warning("Failed to delete PAM config record %s: %s",
-                            config_uid, type(e).__name__)
+                folders_failed += 1
+                logging.warning("Failed to delete folder %s: %s",
+                                folder_uid, type(e).__name__)
 
         api.sync_down(params)
-        msg = f"\nCleanup complete: {deleted} records deleted"
-        if failed:
-            msg += f" ({failed} failed — see warnings above)"
+
+        # PAM config may already be gone with its Config folder; remove only
+        # if it survived (e.g. legacy layout / config outside project folders).
+        config_deleted = False
+        if config_uid and (
+                config_uid in (params.record_cache or {})
+                or config_uid in (getattr(params, "nested_share_records", None) or {})
+                or vault.KeeperRecord.load(params, config_uid)
+                or load_pam_record(params, config_uid)):
+            try:
+                if is_pam_nsf_record(params, config_uid):
+                    NestedShareRecordRemoveCommand().execute(
+                        params, records=[config_uid], force=True,
+                        operation="owner-trash")
+                else:
+                    RecordRemoveCommand().execute(
+                        params, force=True, record=config_uid)
+                config_deleted = True
+                api.sync_down(params)
+            except Exception as e:
+                folders_failed += 1
+                logging.warning("Failed to delete PAM config record %s: %s",
+                                config_uid, type(e).__name__)
+
+        msg = f"\nCleanup complete: {folders_deleted} folders deleted"
+        if config_deleted:
+            msg += " (PAM config removed)"
+        if folders_failed:
+            msg += f" ({folders_failed} failed — see warnings above)"
         print(msg)
         print("=" * 50)
 
