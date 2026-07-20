@@ -17,10 +17,18 @@ from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
 from .parse_keeper_response import parse_keeper_response, ensure_record_add_json_format
+from .throttle import (
+    RESULT_EDGE_429,
+    RESULT_THROTTLED,
+    is_throttle_error,
+    throttle_error_response,
+)
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
 from ...crypto import encrypt_aes_v2
+from ...error import KeeperApiError
+
 
 class CommandExecutor:
     @staticmethod
@@ -114,6 +122,28 @@ class CommandExecutor:
                 raise
         return response
 
+    @staticmethod
+    def _status_code_from_response(response: dict) -> int:
+        if 'status_code' in response:
+            return response.pop('status_code')
+        if response.get('status') in ('error', 'warning'):
+            return 400
+        return 200
+
+    @classmethod
+    def _finalize_parsed_response(cls, response: Any) -> Tuple[Any, int]:
+        if not isinstance(response, dict):
+            return response, 200
+
+        status_code = cls._status_code_from_response(response)
+        result_code = response.get('result_code')
+        if status_code == 429 or result_code in (RESULT_THROTTLED, RESULT_EDGE_429):
+            body, status_code = throttle_error_response(response.get('error'), result_code)
+            if 'command' in response:
+                body['command'] = response['command']
+            return body, status_code
+        return response, status_code
+
     @classmethod
     def execute(cls, command: str) -> Tuple[Any, int]:
         logger.debug(f"Executing command: {command}")
@@ -142,19 +172,7 @@ class CommandExecutor:
             
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
-            
-            if isinstance(response, dict):
-                # Extract status_code and remove it from response body
-                if 'status_code' in response:
-                    status_code = response.pop('status_code')
-                elif response.get("status") == "error":
-                    status_code = 400
-                elif response.get("status") == "warning":
-                    status_code = 400
-                else:
-                    status_code = 200
-            else:
-                status_code = 200
+            response, status_code = cls._finalize_parsed_response(response)
             
             response = CommandExecutor.encrypt_response(response)
             logger.debug(f"Command executed successfully")
@@ -162,16 +180,17 @@ class CommandExecutor:
         except CommandExecutionError as e:
             # Return the actual command error instead of generic "server busy"
             logger.error(f"Command execution error: {e}")
-            error_response = {
-                "status": "error",
-                "error": str(e)
-            }
-            return error_response, 400
+            if is_throttle_error(e):
+                return throttle_error_response(str(e))
+            return {"status": "error", "error": str(e)}, 400
+        except KeeperApiError as e:
+            if is_throttle_error(e):
+                return throttle_error_response(e.message or str(e), e.result_code)
+            logger.error(f"Unexpected error during command execution: {e}")
+            return {"status": "error", "error": f"Unexpected error: {str(e)}"}, 500
         except Exception as e:
+            if is_throttle_error(e):
+                return throttle_error_response(str(e))
             # Log unexpected errors and return a proper error response
             logger.error(f"Unexpected error during command execution: {e}")
-            error_response = {
-                "status": "error",
-                "error": f"Unexpected error: {str(e)}"
-            }
-            return error_response, 500
+            return {"status": "error", "error": f"Unexpected error: {str(e)}"}, 500

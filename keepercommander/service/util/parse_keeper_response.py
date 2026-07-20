@@ -12,6 +12,8 @@
 from typing import Any, Dict, List, Optional, Tuple
 import re, json
 
+from .throttle import RESULT_THROTTLED, clean_throttle_message, is_throttle_text
+
 class KeeperResponseParser:
     @staticmethod
     def _clean_ansi_codes(text: str) -> str:
@@ -1054,7 +1056,16 @@ class KeeperResponseParser:
         ]
         
         has_success_indicator = any(indicator in response_lower for indicator in success_indicators)
-        
+
+        if is_throttle_text(response_str):
+            return {
+                "status": "error",
+                "status_code": 429,
+                "command": command.split()[0] if command.split() else command,
+                "error": clean_throttle_message(response_str),
+                "result_code": RESULT_THROTTLED,
+            }
+
         forbidden_patterns = [
             "not an msp administrator",
             "permission denied",

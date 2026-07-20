@@ -216,6 +216,7 @@ result_retention: 3600       # Result retention (1 hour)
 - **Default limits**: 60/minute, 600/hour, 6000/day
 - **Per-endpoint tracking**: Each API endpoint has independent rate limit counters
 - **Example**: Setting `"20/minute"` provides 20 requests per minute per endpoint per IP address
+- Service rate limits are local (per client IP/endpoint). They are not the same as Keeper’s per-user API throttle; one service HTTP call may trigger many Keeper API calls.
 
 #### Error Responses
 
@@ -224,7 +225,10 @@ result_retention: 3600       # Result retention (1 hour)
 - **401 Unauthorized**: Missing, invalid, or expired API key; no active session
 - **403 Forbidden**: IP not allowed, access denied, or command not in allowed list
 - **404 Not Found**: Request ID not found
-- **429 Too Many Requests**: Rate limit exceeded
+- **429 Too Many Requests**: JSON `{"status":"error","error":"<message>","result_code":"..."}`
+  - `rate_limited` — service-local Flask limiter
+  - `throttled` — upstream Keeper API throttle (same as Commander)
+  - `429` — upstream edge/gateway “Too Many Requests”
 
 **Server Errors (5xx):**
 - **500 Internal Server Error**: Command execution failed or unexpected server error
