@@ -159,6 +159,7 @@ class ImportRunOptions:
     user_map_file: str
     sync_mode: str = "upsert"
     strict_policies: bool = False
+    use_nsf: bool = False
     raw_kwargs: dict = field(default_factory=dict)
 
 
@@ -927,6 +928,7 @@ class CyberArkImportOrchestrator:
                 self.params, import_data, opts.project_name, opts.config_uid,
                 opts.batch_size, opts.batch_delay,
                 mapped.pam_resources, mapped.pam_users,
+                use_nsf=opts.use_nsf,
             )
         except Exception as e:
             logging.error("Import failed: %s", type(e).__name__)
@@ -976,28 +978,22 @@ class CyberArkImportOrchestrator:
 
         seen_uids: set = set()
         for wrapper_uid in wrapper_uids:
-            wrapper = self.params.folder_cache.get(wrapper_uid)
-            if not wrapper:
-                continue
-            for child_uid in getattr(wrapper, "subfolders", []) or []:
-                child = self.params.folder_cache.get(child_uid)
-                if not child or getattr(child, "type", "") != "shared_folder":
+            for child_uid, name in CyberArkPAMCleanupCommand._iter_project_child_folders(
+                    self.params, wrapper_uid):
+                if child_uid in seen_uids:
                     continue
-                if child.uid in seen_uids:
-                    continue
-                seen_uids.add(child.uid)
-                name = getattr(child, "name", "") or ""
+                seen_uids.add(child_uid)
                 if name == config_suffix:
-                    config_folder_uid = child.uid
+                    config_folder_uid = child_uid
                     config_folder_name = name
                 elif name == resources_suffix:
-                    legacy_resources_uid = child.uid
+                    legacy_resources_uid = child_uid
                     legacy_resources_name = name
                 elif name == users_suffix:
-                    legacy_users_uid = child.uid
+                    legacy_users_uid = child_uid
                     legacy_users_name = name
                 else:
-                    safe_folders.append({"name": name, "uid": child.uid})
+                    safe_folders.append({"name": name, "uid": child_uid})
 
         if config_folder_uid:
             folders_info["config_folder"] = config_folder_name
@@ -1145,26 +1141,19 @@ class CyberArkImportOrchestrator:
             # pay the full-vault scan cost for nothing.
             return None
 
-        # Collect all shared folders directly under the project
-        # wrapper user folder(s).  Records live inside these (and
-        # inside their Resources / Users subfolders for the
-        # safe-per-folder layout).
-        shared_folder_uids: list[str] = []
+        # Collect all shared / NSF folders directly under the project
+        # wrapper folder(s).  Records live inside these (and inside
+        # their Resources / Users subfolders for the safe-per-folder
+        # layout).
+        shared_folder_uids: List[str] = []
         seen: set = set()
         for wrapper_uid in wrapper_uids:
-            wrapper = self.params.folder_cache.get(wrapper_uid)
-            if not wrapper:
-                continue
-            for child_uid in getattr(wrapper, "subfolders", []) or []:
-                child = self.params.folder_cache.get(child_uid)
-                if child is None:
+            for child_uid, _name in CyberArkPAMCleanupCommand._iter_project_child_folders(
+                    self.params, wrapper_uid):
+                if child_uid in seen:
                     continue
-                if getattr(child, "type", "") != "shared_folder":
-                    continue
-                if child.uid in seen:
-                    continue
-                seen.add(child.uid)
-                shared_folder_uids.append(child.uid)
+                seen.add(child_uid)
+                shared_folder_uids.append(child_uid)
 
         existing = build_existing_index(self.params, shared_folder_uids)
         if not existing.by_account_id and not existing.by_title:
@@ -1865,6 +1854,9 @@ Examples:
 
   # Self-hosted with SSL verification disabled
   pam project cyberark-import pvwa.internal.com --no-verify-ssl --name "Internal"
+
+  # Import into Nested Share Folders (NSF)
+  pam project cyberark-import pvwa.example.com --name "PAM Migration" --nsf
         ''')
     parser.add_argument("server", action="store", help="CyberArk PVWA host (e.g. mycompany.cyberark.cloud or pvwa.example.com)")
     parser.add_argument("--name", "-n", required=False, dest="project_name", action="store",
@@ -1881,7 +1873,12 @@ Examples:
                              "control. 'ksm'/'exact' nest safe-named subfolders under the "
                              "legacy Resources/Users shared folders. 'flat' puts every "
                              "record into the two legacy shared folders with aggregated "
-                             "permissions.")
+                             "permissions. With --nsf, the same layout is created using "
+                             "Nested Share Folders instead of classic shared folders.")
+    parser.add_argument("--nsf", required=False, dest="use_nsf", action="store_true",
+                        default=False,
+                        help="Create project folders and records in Nested Share Folders "
+                             "(folders, records, rotation, PAM config, and permissions).")
     parser.add_argument("--safes", required=False, dest="safes", action="store",
                         default="", help="Include only matching Safes (comma-separated, supports globs)")
     parser.add_argument("--exclude-safes", required=False, dest="exclude_safes", action="store",
@@ -2045,6 +2042,7 @@ Examples:
                 user_map_file=kwargs.get("user_map", ""),
                 sync_mode=(kwargs.get("sync_mode") or "upsert").lower(),
                 strict_policies=bool(kwargs.get("strict_policies", False)),
+                use_nsf=kwargs.get("use_nsf", False) is True,
                 raw_kwargs=kwargs,
             )
             CyberArkImportOrchestrator(self, params, client, options).run()
@@ -2053,7 +2051,8 @@ Examples:
 
     def _execute_import(self, params, import_data: dict, project_name: str,
                         config_uid: str, batch_size: int, batch_delay: float,
-                        resources: list[dict], users: list[dict]) -> Optional[dict]:
+                        resources: list[dict], users: list[dict],
+                        use_nsf: bool = False) -> Optional[dict]:
         """Execute the vault import using pam project import/extend commands."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2064,17 +2063,18 @@ Examples:
         if total_records <= batch_size:
             # Single batch — use import or extend directly
             return self._single_batch_import(
-                params, import_data, project_name, config_uid
+                params, import_data, project_name, config_uid, use_nsf=use_nsf
             )
         else:
             # Multi-batch: first batch creates project, remaining extend
             return self._multi_batch_import(
                 params, import_data, project_name, config_uid,
-                resources, users, batch_size, batch_delay,
+                resources, users, batch_size, batch_delay, use_nsf=use_nsf,
             )
 
     def _single_batch_import(self, params, import_data: dict,
-                             project_name: str, config_uid: str) -> dict:
+                             project_name: str, config_uid: str,
+                             use_nsf: bool = False) -> dict:
         """Import all records in a single batch."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2082,12 +2082,18 @@ Examples:
         tmp_path = _temp_store.write_json(import_data)
         try:
             if config_uid:
+                # Extend auto-detects NSF from the existing project tree.
+                if use_nsf:
+                    logging.info(
+                        "--nsf is ignored when extending an existing project "
+                        "(--config); Nested Share Folders are detected automatically.")
                 PAMProjectExtendCommand().execute(
                     params, config=config_uid, file_name=tmp_path, dry_run=False
                 )
             else:
                 PAMProjectImportCommand().execute(
-                    params, project_name=project_name, file_name=tmp_path, dry_run=False
+                    params, project_name=project_name, file_name=tmp_path,
+                    dry_run=False, use_nsf=use_nsf,
                 )
         finally:
             _temp_store.remove(tmp_path)
@@ -2098,7 +2104,8 @@ Examples:
     def _multi_batch_import(self, params, import_data: dict,
                             project_name: str, config_uid: str,
                             resources: list[dict], users: list[dict],
-                            batch_size: int, batch_delay: float) -> dict:
+                            batch_size: int, batch_delay: float,
+                            use_nsf: bool = False) -> dict:
         """Import records in multiple batches with adaptive throttling."""
         from .edit import PAMProjectImportCommand
         from .extend import PAMProjectExtendCommand
@@ -2126,7 +2133,8 @@ Examples:
                 tmp_path = _temp_store.write_json(first_batch_data)
                 try:
                     PAMProjectImportCommand().execute(
-                        params, project_name=project_name, file_name=tmp_path, dry_run=False
+                        params, project_name=project_name, file_name=tmp_path,
+                        dry_run=False, use_nsf=use_nsf,
                     )
                 finally:
                     _temp_store.remove(tmp_path)
@@ -2136,7 +2144,7 @@ Examples:
                 if not config_uid:
                     config_uid = self._find_config_uid(params, project_name)
             else:
-                # Subsequent batches: extend
+                # Subsequent batches: extend (NSF auto-detected from project)
                 extend_data = build_extend_json(batch_resources, batch_users)
                 tmp_path = _temp_store.write_json(extend_data)
                 try:
@@ -2159,17 +2167,41 @@ Examples:
 
     def _find_config_uid(self, params, project_name: str) -> str:
         """Find PAM configuration UID by project name after initial import.
-        Handles #N suffix deduplication from PAMProjectImportCommand."""
+        Handles #N suffix deduplication from PAMProjectImportCommand.
+        Searches classic vault records and Nested Share Folder caches.
+        """
         from ... import api, vault_extensions
+        from .nsf_helpers import find_pam_configuration
+        from .record_loader import iter_accessible_record_uids, load_pam_record
 
         api.sync_down(params)
         config_base = f"{project_name} Configuration".casefold()
         candidates = []
+
+        # Classic path (keeps existing unit-test mocks working)
         for c in vault_extensions.find_records(params, record_version=6):
             t = c.title.casefold()
             if t == config_base or (t.startswith(config_base) and re.match(r' #\d+$', t[len(config_base):])):
                 candidates.append(c)
+
+        # NSF / full-access path — pick up configs that live only in NSF caches
+        seen_uids = {getattr(c, "record_uid", "") for c in candidates}
+        for uid in iter_accessible_record_uids(params):
+            if uid in seen_uids:
+                continue
+            rec = load_pam_record(params, uid)
+            if not rec or getattr(rec, "version", None) != 6:
+                continue
+            title = getattr(rec, "title", "") or ""
+            t = title.casefold()
+            if t == config_base or (t.startswith(config_base) and re.match(r' #\d+$', t[len(config_base):])):
+                candidates.append(rec)
+                seen_uids.add(uid)
+
         if not candidates:
+            exact = find_pam_configuration(params, f"{project_name} Configuration")
+            if exact:
+                return exact.record_uid
             logging.warning(f"PAM configuration not found for project '{project_name}' after import")
             return ""
         # Prefer highest suffix number (most recently created)
@@ -2244,7 +2276,7 @@ Examples:
 
 
 class CyberArkPAMCleanupCommand(Command):
-    """Remove a CyberArk-imported project: records, folders, gateway, KSM app."""
+    """Remove a CyberArk-imported project: records, folders, and PAM config."""
 
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-cleanup",
@@ -2282,16 +2314,18 @@ Examples:
             raise CommandError("pam project cyberark-cleanup",
                                "Either --name or --config is required")
 
-        from ... import api, utils, vault, vault_extensions
-        from ..pam import gateway_helper
-        from ..pam.config_helper import configuration_controller_get
-        from ...loginv3 import CommonHelperMethods
+        from ... import api, vault, vault_extensions
 
         api.sync_down(params)
 
-        # Find PAM config by name or UID
+        # Find PAM config by name or UID (classic + NSF)
+        from .nsf_helpers import find_pam_configuration
+        from .record_loader import iter_accessible_record_uids, load_pam_record
+
         if config_uid:
             config_rec = vault.KeeperRecord.load(params, config_uid)
+            if not config_rec:
+                config_rec = load_pam_record(params, config_uid)
             if not config_rec:
                 raise CommandError("pam project cyberark-cleanup",
                                    f"PAM config record '{config_uid}' not found")
@@ -2305,46 +2339,39 @@ Examples:
                     config_uid = c.record_uid
                     break
             if not config_rec:
+                for uid in iter_accessible_record_uids(params):
+                    rec = load_pam_record(params, uid)
+                    if not rec or getattr(rec, "version", None) != 6:
+                        continue
+                    title = getattr(rec, "title", "") or ""
+                    if title.casefold().startswith(config_base):
+                        config_rec = rec
+                        config_uid = uid
+                        break
+            if not config_rec:
+                exact = find_pam_configuration(params, f"{project_name} Configuration")
+                if exact:
+                    config_rec = exact
+                    config_uid = exact.record_uid
+            if not config_rec:
                 raise CommandError("pam project cyberark-cleanup",
                                    f"PAM config for project '{project_name}' not found")
 
-        # Resolve gateway linked to this PAM config
-        gateway_uid = None
-        gateway_name = None
-        gw_match = None
-        try:
-            controller = configuration_controller_get(
-                params, CommonHelperMethods.url_safe_str_to_bytes(
-                    config_rec.record_uid))
-            if controller and controller.controllerUid:
-                gateway_uid = controller.controllerUid
-                all_gw = gateway_helper.get_all_gateways(params)
-                gw_match = next((g for g in all_gw
-                                 if g.controllerUid == gateway_uid), None)
-                if gw_match:
-                    gateway_name = gw_match.controllerName
-        except Exception as e:
-            logging.debug("Could not resolve gateway: %s", e)
-
-        # Resolve KSM application linked to the gateway
-        ksm_app_uid = None
-        ksm_app_name = None
-        if gw_match and gw_match.applicationUid:
-            ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
-            app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
-            if app_rec:
-                ksm_app_name = getattr(app_rec, "title", ksm_app_uid)
-
-        # Find shared folders. The new safe-per-folder layout creates one
-        # shared folder per CyberArk safe under the project wrapper folder
+        # Find shared / NSF folders. The new safe-per-folder layout creates one
+        # folder per CyberArk safe under the project wrapper folder
         # plus an admin Config folder; each safe folder has two
-        # ``Resources``/``Users`` shared_folder_folder subfolders that
+        # ``Resources``/``Users`` subfolders that
         # hold the records. The legacy layout creates exactly two folders
         # ("{project} - Resources" and "{project} - Users") with safe-named
         # subfolders inside. Discover everything by walking the project
-        # wrapper user-folder under PAM Environments so cleanup handles
-        # both shapes (and any subset thereof) without hardcoding names.
+        # wrapper under PAM Environments so cleanup handles
+        # both classic shared folders and Nested Share Folders
+        # (and any subset thereof) without hardcoding names.
+        from .nsf_helpers import get_folder_record_uids
+        from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record
+
         sf_uids = []
+        record_count = 0
         sf_names: list = []
         all_record_uids: set = set()
         res_name = f"{project_name} - Resources"
@@ -2354,44 +2381,25 @@ Examples:
         def _collect_records_recursive(folder_uid: str):
             """Walk the folder subtree and accumulate every record UID
             (records living directly in this folder + records living in
-            any descendant ``shared_folder_folder``)."""
+            any descendant classic or NSF subfolder)."""
             stack = [folder_uid]
+            visited: set = set()
             while stack:
                 fuid = stack.pop()
-                for ruid in params.subfolder_record_cache.get(fuid, set()) or set():
-                    all_record_uids.add(ruid)
+                if not fuid or fuid in visited:
+                    continue
+                visited.add(fuid)
+                all_record_uids.update(get_folder_record_uids(params, fuid))
                 folder = params.folder_cache.get(fuid)
                 if not folder:
+                    # NSF-only parents may still appear in nested_share_folders
+                    nsf = getattr(params, "nested_share_folders", None) or {}
+                    for child_uid, info in nsf.items():
+                        if (info.get("parent_uid") or None) == fuid:
+                            stack.append(child_uid)
                     continue
                 for sub_uid in getattr(folder, "subfolders", []) or []:
                     stack.append(sub_uid)
-
-        def _delete_folder(folder_uid: str) -> bool:
-            folder = params.folder_cache.get(folder_uid)
-            if not folder:
-                return False
-            del_obj = {
-                "delete_resolution": "unlink",
-                "object_uid": folder.uid,
-                "object_type": folder.type,
-            }
-            parent = params.folder_cache.get(folder.parent_uid)
-            if parent:
-                del_obj["from_uid"] = parent.uid
-                del_obj["from_type"] = parent.type
-            else:
-                del_obj["from_type"] = "user_folder"
-            rq = {"command": "pre_delete", "objects": [del_obj]}
-            rs = api.communicate(params, rq)
-            if rs.get("result") != "success":
-                return False
-            pdr = rs.get("pre_delete_response", {})
-            del_rq = {
-                "command": "delete",
-                "pre_delete_token": pdr.get("pre_delete_token", ""),
-            }
-            api.communicate(params, del_rq)
-            return True
 
         project_folder_uids = self._find_project_wrapper_folder_uids(
             params, project_name,
@@ -2399,23 +2407,14 @@ Examples:
         if project_folder_uids:
             sf_uids_seen: set = set()
             for project_uid in project_folder_uids:
-                project_folder = params.folder_cache.get(project_uid)
-                if not project_folder:
-                    continue
-                for child_uid in getattr(project_folder, "subfolders", []) or []:
-                    child = params.folder_cache.get(child_uid)
-                    if not child:
+                for child_uid, child_name in self._iter_project_child_folders(
+                        params, project_uid):
+                    if child_uid in sf_uids_seen:
                         continue
-                    # Only collect shared folders that we created — i.e.
-                    # the type is SharedFolderType.
-                    if getattr(child, "type", "") != "shared_folder":
-                        continue
-                    if child.uid in sf_uids_seen:
-                        continue
-                    sf_uids_seen.add(child.uid)
-                    sf_uids.append(child.uid)
-                    sf_names.append(getattr(child, "name", "") or "")
-                    _collect_records_recursive(child.uid)
+                    sf_uids_seen.add(child_uid)
+                    sf_uids.append(child_uid)
+                    sf_names.append(child_name)
+                    _collect_records_recursive(child_uid)
         else:
             # Fallback: scan the shared-folder cache by name. Catches the
             # legacy two-folder layout when the project wrapper folder was
@@ -2426,25 +2425,24 @@ Examples:
                     sf_uids.append(sf_uid)
                     sf_names.append(name)
                     _collect_records_recursive(sf_uid)
-
-        # Ensure PAM config is included even if it lives outside the
-        # discovered shared-folder tree.
-        if config_uid:
-            all_record_uids.add(config_uid)
+            # NSF fallback by name under nested_share_folders
+            for nsf_uid, info in (getattr(params, "nested_share_folders", None) or {}).items():
+                name = info.get("name", "") or ""
+                if name in (res_name, usr_name, config_name) and nsf_uid not in sf_uids:
+                    sf_uids.append(nsf_uid)
+                    sf_names.append(name)
+                    _collect_records_recursive(nsf_uid)
+        record_count = len(all_record_uids)
 
         print(f"\nCyberArk PAM Project Cleanup")
         print("=" * 50)
-        print(f"  Project:     {project_name}")
-        print(f"  PAM Config:  {config_uid}")
-        print(f"  Gateway:     {gateway_name or '(not found)'}")
-        print(f"  KSM App:     {ksm_app_name or ksm_app_uid or '(not found)'}")
-        print(f"  Folders:     {len(sf_uids)}")
+        print(f"  Project:   {project_name}")
+        print(f"  Config:    {config_uid}")
+        print(f"  Folders:   {len(sf_uids)}")
         for sf_name in sf_names:
             if sf_name:
                 print(f"    • {sf_name}")
-        if project_folder_uids:
-            print(f"  Wrappers:    {len(project_folder_uids)}")
-        print(f"  Records:     {len(all_record_uids)}")
+        print(f"  Records:   ~{record_count}")
 
         if dry_run:
             print("  (dry run — no changes made)")
@@ -2452,131 +2450,207 @@ Examples:
             return
 
         if not auto_confirm:
-            answer = input("\n  Delete all of the above? [y/N]: ").strip().lower()
+            answer = input("\n  Delete project folders (and all records inside)? [y/N]: ").strip().lower()
             if answer not in ("y", "yes"):
                 print("  Cancelled.")
                 return
 
-        deleted = 0
-        failed = 0
+        from ..folder import FolderRemoveCommand
+        from ..record import RecordRemoveCommand
+        from ..nested_share_folder.folder_commands import NestedShareFolderRemoveCommand
+        from ..nested_share_folder.record_commands import NestedShareRecordRemoveCommand
 
-        # Delete records in batches (same API as api.delete_record)
-        if all_record_uids:
-            logging.warning("Deleting %d records...", len(all_record_uids))
-            uid_list = list(all_record_uids)
-            batch_size = 50
-            for i in range(0, len(uid_list), batch_size):
-                batch = uid_list[i:i + batch_size]
-                try:
-                    rq = {"command": "record_update", "delete_records": batch}
-                    api.communicate(params, rq)
-                    deleted += len(batch)
-                except Exception as e:
-                    failed += len(batch)
-                    logging.warning("Failed to delete record batch: %s", e)
-
-        # Delete shared folders (safe folders + Config folder)
-        if sf_uids:
-            logging.warning("Removing %d shared folder(s)...", len(sf_uids))
-            for sf_uid in sf_uids:
-                try:
-                    if not _delete_folder(sf_uid):
-                        failed += 1
-                        logging.warning("Failed to remove shared folder %s",
-                                        sf_uid)
-                except Exception as e:
-                    failed += 1
-                    logging.warning("Failed to remove shared folder %s: %s",
-                                    sf_uid, e)
-
-        # Delete project wrapper user-folder(s) under PAM Environments
-        if project_folder_uids:
-            logging.warning("Removing %d project wrapper folder(s)...",
-                            len(project_folder_uids))
-            for wrapper_uid in project_folder_uids:
-                try:
-                    if not _delete_folder(wrapper_uid):
-                        failed += 1
-                        logging.warning("Failed to remove wrapper folder %s",
-                                        wrapper_uid)
-                except Exception as e:
-                    failed += 1
-                    logging.warning("Failed to remove wrapper folder %s: %s",
-                                    wrapper_uid, e)
-
-        # Remove gateway
-        if gateway_uid:
-            logging.warning("Removing gateway \"%s\"...",
-                            gateway_name or gateway_uid)
+        # Prefer folder deletion: records (and nested subfolders) are removed
+        # with the folder tree. Delete content folders first, then wrappers.
+        folders_deleted = 0
+        folders_failed = 0
+        folders_to_remove = list(sf_uids) + list(project_folder_uids)
+        for folder_uid in folders_to_remove:
             try:
-                gateway_helper.remove_gateway(params, gateway_uid)
+                if is_nested_share_folder(params, folder_uid):
+                    NestedShareFolderRemoveCommand().execute(
+                        params, folders=[folder_uid], force=True,
+                        operation="folder-trash", quiet=True)
+                else:
+                    FolderRemoveCommand().execute(
+                        params, pattern=[folder_uid], force=True, quiet=True)
+                folders_deleted += 1
             except Exception as e:
-                failed += 1
-                logging.warning("Failed to remove gateway: %s", e)
-
-        # Remove KSM application
-        if ksm_app_uid:
-            logging.warning("Removing KSM app \"%s\"...",
-                            ksm_app_name or ksm_app_uid)
-            try:
-                from ..ksm import KSMCommand
-                KSMCommand.remove_v5_app(params, ksm_app_uid,
-                                         purge=True, force=True)
-            except Exception as e:
-                failed += 1
-                logging.warning("Failed to remove KSM app: %s", e)
+                folders_failed += 1
+                logging.warning("Failed to delete folder %s: %s",
+                                folder_uid, type(e).__name__)
 
         api.sync_down(params)
-        msg = f"\nCleanup complete: {deleted} records deleted"
-        if failed:
-            msg += f" ({failed} failed — see warnings above)"
+
+        # PAM config may already be gone with its Config folder; remove only
+        # if it survived (e.g. legacy layout / config outside project folders).
+        config_deleted = False
+        if config_uid and (
+                config_uid in (params.record_cache or {})
+                or config_uid in (getattr(params, "nested_share_records", None) or {})
+                or vault.KeeperRecord.load(params, config_uid)
+                or load_pam_record(params, config_uid)):
+            try:
+                if is_pam_nsf_record(params, config_uid):
+                    NestedShareRecordRemoveCommand().execute(
+                        params, records=[config_uid], force=True,
+                        operation="owner-trash")
+                else:
+                    RecordRemoveCommand().execute(
+                        params, force=True, record=config_uid)
+                config_deleted = True
+                api.sync_down(params)
+            except Exception as e:
+                folders_failed += 1
+                logging.warning("Failed to delete PAM config record %s: %s",
+                                config_uid, type(e).__name__)
+
+        msg = f"\nCleanup complete: {folders_deleted} folders deleted"
+        if config_deleted:
+            msg += " (PAM config removed)"
+        if folders_failed:
+            msg += f" ({folders_failed} failed — see warnings above)"
         print(msg)
         print("=" * 50)
 
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
     @classmethod
+    def _is_project_content_folder(cls, params, folder_uid: str, folder=None) -> bool:
+        """True for classic shared folders or Nested Share Folders under a project."""
+        from ..pam.vault_target import is_nested_share_folder
+        from ...subfolder import BaseFolderNode
+
+        if is_nested_share_folder(params, folder_uid):
+            return True
+        folder = folder or (params.folder_cache or {}).get(folder_uid)
+        if not folder:
+            return False
+        ftype = getattr(folder, "type", "") or ""
+        return ftype in (
+            BaseFolderNode.SharedFolderType,
+            BaseFolderNode.NestedShareFolderType,
+        )
+
+    @classmethod
+    def _iter_project_child_folders(cls, params, wrapper_uid: str):
+        """Yield ``(uid, name)`` for content folders under a project wrapper.
+
+        Includes classic shared folders and Nested Share Folders so
+        report / idempotency / cleanup share one discovery path.
+        """
+        seen: set = set()
+        folder_cache = getattr(params, "folder_cache", None) or {}
+        wrapper = folder_cache.get(wrapper_uid)
+        if wrapper:
+            for child_uid in getattr(wrapper, "subfolders", []) or []:
+                if child_uid in seen:
+                    continue
+                child = folder_cache.get(child_uid)
+                if not child or not cls._is_project_content_folder(params, child_uid, child):
+                    continue
+                seen.add(child_uid)
+                yield child_uid, getattr(child, "name", "") or ""
+
+        # NSF children may exist in nested_share_folders before folder_cache
+        # parent.subfolders is fully linked after a partial sync.
+        for child_uid, info in (getattr(params, "nested_share_folders", None) or {}).items():
+            if child_uid in seen:
+                continue
+            if (info.get("parent_uid") or None) != wrapper_uid:
+                continue
+            if not cls._is_project_content_folder(params, child_uid):
+                continue
+            seen.add(child_uid)
+            yield child_uid, info.get("name", "") or ""
+
+    @classmethod
     def _find_project_wrapper_folder_uids(cls, params, project_name: str) -> list:
-        """Return UIDs of every project wrapper user-folder under
+        """Return UIDs of every project wrapper folder under
         ``PAM Environments`` whose name matches ``project_name`` (or
         ``project_name #N`` when the project was imported multiple times).
 
-        The wrapper folder is a *user folder* (not shared), and per-safe
-        shared folders are created as direct children of it. Returning a
-        list keeps cleanup correct in the rare case where two projects
-        share a name (PAMProjectImportCommand allows duplicates via the
-        ``#N`` suffix).
+        Supports classic user-folder wrappers and Nested Share Folder
+        wrappers created with ``--nsf``. Returning a list keeps cleanup
+        correct in the rare case where two projects share a name
+        (PAMProjectImportCommand allows duplicates via the ``#N`` suffix).
         """
+        from ..pam.vault_target import is_nested_share_folder
+        from ...subfolder import BaseFolderNode
+
         wrapper_uids: list = []
         folders = params.folder_cache if params and params.folder_cache else {}
         if not isinstance(folders, dict):
-            return wrapper_uids
+            folders = {}
 
-        # Locate root "PAM Environments" user folder(s).
+        # Locate root "PAM Environments" folder(s) — classic user folder
+        # and/or Nested Share Folder.
         root_uids: list = []
+        seen_roots: set = set()
         for uid, f in folders.items():
             if not f or getattr(f, "parent_uid", None):
                 continue
-            if getattr(f, "type", "") != "user_folder":
+            ftype = getattr(f, "type", "") or ""
+            if ftype not in (
+                BaseFolderNode.UserFolderType,
+                BaseFolderNode.NestedShareFolderType,
+            ):
                 continue
-            if getattr(f, "name", "") == cls.PAM_ROOT_FOLDER_NAME:
-                root_uids.append(uid)
+            if getattr(f, "name", "") != cls.PAM_ROOT_FOLDER_NAME:
+                continue
+            root_uids.append(uid)
+            seen_roots.add(uid)
+
+        for uid, info in (getattr(params, "nested_share_folders", None) or {}).items():
+            if uid in seen_roots:
+                continue
+            if (info.get("parent_uid") or None) is not None:
+                continue
+            if info.get("name", "") != cls.PAM_ROOT_FOLDER_NAME:
+                continue
+            root_uids.append(uid)
+            seen_roots.add(uid)
+
         if not root_uids:
             return wrapper_uids
 
         # PAMProjectImportCommand emits "{project_name}" or
-        # "{project_name} #N" for the wrapper user folder, so match both
-        # shapes here.
+        # "{project_name} #N" for the wrapper folder, so match both
+        # shapes here (classic user folder or NSF).
         base = project_name
+        name_re = re.compile(rf"^{re.escape(base)} #\d+$")
+        seen_wrappers: set = set()
+
+        def _maybe_add_wrapper(uid: str, name: str, folder=None) -> None:
+            if uid in seen_wrappers:
+                return
+            if name != base and not name_re.match(name):
+                return
+            ftype = getattr(folder, "type", "") if folder else ""
+            if folder is not None:
+                if ftype not in (
+                    BaseFolderNode.UserFolderType,
+                    BaseFolderNode.NestedShareFolderType,
+                ):
+                    return
+            elif not is_nested_share_folder(params, uid):
+                return
+            wrapper_uids.append(uid)
+            seen_wrappers.add(uid)
+
         for root_uid in root_uids:
             root_folder = folders.get(root_uid)
-            if not root_folder:
-                continue
-            for child_uid in getattr(root_folder, "subfolders", []) or []:
-                child = folders.get(child_uid)
-                if not child or getattr(child, "type", "") != "user_folder":
+            if root_folder:
+                for child_uid in getattr(root_folder, "subfolders", []) or []:
+                    child = folders.get(child_uid)
+                    if not child:
+                        continue
+                    name = getattr(child, "name", "") or ""
+                    _maybe_add_wrapper(child_uid, name, child)
+
+            for child_uid, info in (getattr(params, "nested_share_folders", None) or {}).items():
+                if (info.get("parent_uid") or None) != root_uid:
                     continue
-                name = getattr(child, "name", "") or ""
-                if name == base or re.match(rf"^{re.escape(base)} #\d+$", name):
-                    wrapper_uids.append(child.uid)
+                _maybe_add_wrapper(child_uid, info.get("name", "") or "")
+
         return wrapper_uids

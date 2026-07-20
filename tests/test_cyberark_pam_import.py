@@ -711,6 +711,7 @@ class TestCyberArkPAMImportCommandParser:
             "--platform-map", "map.json",
             "--state-filter", "active,inactive",
             "--no-verify-ssl",
+            "--nsf",
         ])
         assert args.server == "pvwa.example.com"
         assert args.project_name == "My Project"
@@ -735,6 +736,7 @@ class TestCyberArkPAMImportCommandParser:
         assert args.platform_map == "map.json"
         assert args.state_filter == "active,inactive"
         assert args.no_verify_ssl is True
+        assert args.use_nsf is True
 
     def test_minimal_args(self):
         cmd = CyberArkPAMImportCommand()
@@ -742,6 +744,12 @@ class TestCyberArkPAMImportCommandParser:
         assert args.server == "pvwa.example.com"
         assert args.project_name == ""
         assert args.dry_run is False
+        assert args.use_nsf is False
+
+    def test_nsf_flag(self):
+        cmd = CyberArkPAMImportCommand()
+        args = cmd.parser.parse_args(["pvwa.example.com", "--nsf"])
+        assert args.use_nsf is True
 
     def test_folder_mode_choices(self):
         cmd = CyberArkPAMImportCommand()
@@ -2646,6 +2654,133 @@ class TestCleanupCommand:
         cmd = CyberArkPAMCleanupCommand()
         args = cmd.parser.parse_args(["--config", "uid123"])
         assert args.config_uid == "uid123"
+
+
+class TestCyberArkImportNsfSupport:
+    """NSF (--nsf) wiring for cyberark-import / cleanup / discovery."""
+
+    def test_single_batch_passes_use_nsf_to_import(self):
+        from keepercommander.commands.pam_import.cyberark_import import (
+            CyberArkPAMImportCommand, _temp_store,
+        )
+        cmd = CyberArkPAMImportCommand()
+        params = MagicMock()
+        import_data = {"pam_data": {"resources": [], "users": []}}
+
+        with patch.object(_temp_store, "write_json", return_value="/tmp/x.json"), \
+             patch.object(_temp_store, "remove"), \
+             patch("keepercommander.commands.pam_import.edit.PAMProjectImportCommand") as mock_import, \
+             patch.object(cmd, "_find_config_uid", return_value="cfg-uid"):
+            mock_import.return_value.execute.return_value = None
+            result = cmd._single_batch_import(
+                params, import_data, "Proj", "", use_nsf=True,
+            )
+
+        assert result["config_uid"] == "cfg-uid"
+        kwargs = mock_import.return_value.execute.call_args.kwargs
+        assert kwargs.get("use_nsf") is True
+        assert kwargs.get("project_name") == "Proj"
+
+    def test_single_batch_extend_ignores_use_nsf_flag(self):
+        from keepercommander.commands.pam_import.cyberark_import import (
+            CyberArkPAMImportCommand, _temp_store,
+        )
+        cmd = CyberArkPAMImportCommand()
+        params = MagicMock()
+        import_data = {"pam_data": {"resources": [], "users": []}}
+
+        with patch.object(_temp_store, "write_json", return_value="/tmp/x.json"), \
+             patch.object(_temp_store, "remove"), \
+             patch("keepercommander.commands.pam_import.extend.PAMProjectExtendCommand") as mock_extend:
+            mock_extend.return_value.execute.return_value = None
+            result = cmd._single_batch_import(
+                params, import_data, "Proj", "existing-cfg", use_nsf=True,
+            )
+
+        assert result["config_uid"] == "existing-cfg"
+        kwargs = mock_extend.return_value.execute.call_args.kwargs
+        assert "use_nsf" not in kwargs
+        assert kwargs.get("config") == "existing-cfg"
+
+    def test_find_nsf_project_wrapper_uids(self):
+        from types import SimpleNamespace
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
+        from keepercommander.subfolder import NestedShareFolderNode
+
+        root = NestedShareFolderNode()
+        root.uid = "nsf-root"
+        root.name = "PAM Environments"
+        root.parent_uid = None
+        root.subfolders = ["nsf-proj"]
+
+        proj = NestedShareFolderNode()
+        proj.uid = "nsf-proj"
+        proj.name = "CyberArk Migration"
+        proj.parent_uid = "nsf-root"
+        proj.subfolders = ["nsf-safe"]
+
+        safe = NestedShareFolderNode()
+        safe.uid = "nsf-safe"
+        safe.name = "Win_Local"
+        safe.parent_uid = "nsf-proj"
+        safe.subfolders = []
+
+        params = SimpleNamespace(
+            folder_cache={
+                "nsf-root": root,
+                "nsf-proj": proj,
+                "nsf-safe": safe,
+            },
+            nested_share_folders={
+                "nsf-root": {"name": "PAM Environments", "parent_uid": None},
+                "nsf-proj": {"name": "CyberArk Migration", "parent_uid": "nsf-root"},
+                "nsf-safe": {"name": "Win_Local", "parent_uid": "nsf-proj"},
+            },
+            shared_folder_cache={},
+            subfolder_record_cache={},
+            nested_share_folder_records={"nsf-safe": {"rec-1"}},
+        )
+
+        wrappers = CyberArkPAMCleanupCommand._find_project_wrapper_folder_uids(
+            params, "CyberArk Migration",
+        )
+        assert wrappers == ["nsf-proj"]
+
+        children = list(CyberArkPAMCleanupCommand._iter_project_child_folders(
+            params, "nsf-proj",
+        ))
+        assert children == [("nsf-safe", "Win_Local")]
+
+    def test_find_classic_wrapper_still_works(self):
+        from types import SimpleNamespace
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
+        from keepercommander.subfolder import BaseFolderNode
+
+        root = SimpleNamespace(
+            uid="uf-root", name="PAM Environments", parent_uid=None,
+            type=BaseFolderNode.UserFolderType, subfolders=["uf-proj"],
+        )
+        proj = SimpleNamespace(
+            uid="uf-proj", name="MyProj", parent_uid="uf-root",
+            type=BaseFolderNode.UserFolderType, subfolders=["sf-safe"],
+        )
+        safe = SimpleNamespace(
+            uid="sf-safe", name="SafeA", parent_uid="uf-proj",
+            type=BaseFolderNode.SharedFolderType, subfolders=[],
+        )
+        params = SimpleNamespace(
+            folder_cache={"uf-root": root, "uf-proj": proj, "sf-safe": safe},
+            nested_share_folders={},
+            shared_folder_cache={},
+        )
+        wrappers = CyberArkPAMCleanupCommand._find_project_wrapper_folder_uids(
+            params, "MyProj",
+        )
+        assert wrappers == ["uf-proj"]
+        children = list(CyberArkPAMCleanupCommand._iter_project_child_folders(
+            params, "uf-proj",
+        ))
+        assert children == [("sf-safe", "SafeA")]
 
 
 class TestSSHKeyImport:
