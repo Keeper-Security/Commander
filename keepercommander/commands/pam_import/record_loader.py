@@ -21,20 +21,17 @@ def iter_accessible_record_uids(params) -> Iterator[str]:
     """Yield record UIDs from classic and Nested Shared Folder caches."""
     seen = set()
     for attr in ('record_cache', 'nested_share_records'):
-        cache = getattr(params, attr, None)
-        if not isinstance(cache, dict):
-            continue
+        cache = getattr(params, attr, None) or {}
         for uid in cache:
             if uid not in seen:
                 seen.add(uid)
                 yield uid
 
-    nsf_record_data = getattr(params, 'nested_share_record_data', None)
-    if isinstance(nsf_record_data, dict):
-        for uid in nsf_record_data:
-            if uid not in seen:
-                seen.add(uid)
-                yield uid
+    nsf_record_data = getattr(params, 'nested_share_record_data', None) or {}
+    for uid in nsf_record_data:
+        if uid not in seen:
+            seen.add(uid)
+            yield uid
 
 
 def load_pam_record(params, record_uid: str) -> Optional[vault.KeeperRecord]:
