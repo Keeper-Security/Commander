@@ -208,11 +208,9 @@ def build_existing_index(params, folder_uids) -> ExistingRecordIndex:
     if not folder_cache and not getattr(params, "nested_share_folders", None):
         return index
 
-    # Prefer NSF-aware record lookup so Nested Share Folder projects are
-    # indexed the same way as classic shared-folder projects.
     try:
         from keepercommander.commands.pam_import.nsf_helpers import get_folder_record_uids
-    except ImportError:  # pragma: no cover — defensive for alternate layouts
+    except ImportError:  # pragma: no cover
         get_folder_record_uids = None
 
     # Recursively collect record UIDs from every subfolder.
@@ -235,13 +233,11 @@ def build_existing_index(params, folder_uids) -> ExistingRecordIndex:
         folder = folder_cache.get(fuid)
         for sub_uid in (getattr(folder, "subfolders", []) or []) if folder else []:
             stack.append(sub_uid)
-        # NSF children may only be linked via nested_share_folders
         for child_uid, info in (getattr(params, "nested_share_folders", None) or {}).items():
             if (info.get("parent_uid") or None) == fuid and child_uid not in visited:
                 stack.append(child_uid)
 
     for ruid in all_record_uids:
-        # Prefer NSF-aware loader so Nested Share Folder records resolve.
         try:
             from keepercommander.commands.pam_import.record_loader import load_pam_record
             rec = load_pam_record(params, ruid) or vault.KeeperRecord.load(params, ruid)
