@@ -340,13 +340,11 @@ def resolve_pam_record(params, identifier, rec_type=None):
         folder, record_title = rs
         if folder is not None and record_title is not None:
             folder_uid = folder.uid or ''
-            subfolder_cache = getattr(params, 'subfolder_record_cache', None) or {}
-            if folder_uid in subfolder_cache:
-                for uid in subfolder_cache[folder_uid]:
-                    record = vault.KeeperRecord.load(params, uid)
-                    if record and record.title.casefold() == record_title.casefold():
-                        if _record_matches_type(record, rec_type):
-                            return record
+            for uid in records_in_folder(params, folder_uid):
+                record = vault.KeeperRecord.load(params, uid)
+                if record and record.title.casefold() == record_title.casefold():
+                    if _record_matches_type(record, rec_type):
+                        return record
 
     l_name = identifier.casefold()
     matches = []

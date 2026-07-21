@@ -29,7 +29,7 @@ from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.vault_target import (
-    format_pam_folder_display, resolve_pam_folder_uid,
+    format_pam_folder_display, resolve_pam_folder_uid, is_nested_share_folder,
     resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
@@ -3690,9 +3690,10 @@ def _is_rotation_allowed_by_enforcement(params):
 
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
-    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
+    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store',
+                        help='Record UID, path, or title to rotate (includes Nested Share Records)')
     parser.add_argument('--folder', '-f', dest='folder', action='store',
-                        help='Shared folder UID or title pattern to rotate')
+                        help='Shared folder / Nested Share Folder UID or title pattern to rotate')
     # parser.add_argument('--recursive', '-a', dest='recursive', default=False, action='store', help='Enable recursion to rotate sub-folders too')
     # parser.add_argument('--record-pattern', '-p', dest='pattern', action='store', help='Record title match pattern')
     parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
@@ -3709,6 +3710,12 @@ class PAMGatewayActionRotateCommand(Command):
                         help='Email address to send credentials after rotation')
     parser.add_argument('--email-message', dest='email_message', action='store',
                         help='Custom message to include in email')
+
+    _ROTATABLE_FOLDER_TYPES = (
+        BaseFolderNode.SharedFolderType,
+        BaseFolderNode.SharedFolderFolderType,
+        BaseFolderNode.NestedShareFolderType,
+    )
 
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
@@ -3762,39 +3769,55 @@ class PAMGatewayActionRotateCommand(Command):
                 f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
             return
 
-        # single record UID - ignore all folder options
+        # single record - ignore all folder options (NSF-aware UID/path/title resolution)
         if not folder:
-            self.record_rotate(params, record_uid)
+            rec = resolve_pam_record(params, record_uid)
+            self.record_rotate(params, rec.record_uid if rec else record_uid)
             return
 
         # folder UID or pattern (ignore --record-uid/-r option)
         folders = []  # root folders matching UID or title pattern
         records = []  # record UIDs of all v3/pamUser records
+        rotatable_types = PAMGatewayActionRotateCommand._ROTATABLE_FOLDER_TYPES
 
-        # 1. find all shared_folder/shared_folder_folder matching --folder=UID/pattern
+        # 1. find shared_folder / shared_folder_folder / nested_share_folder matching --folder
         if folder in params.folder_cache:  # folder UID
             fldr = params.folder_cache.get(folder)
-            # only shared_folder can be shared to KSM App/Gateway for rotation
-            # but its children shared_folder_folder can contain rotation records too
-            if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+            # shared_folder (and NSF) can be shared to KSM App/Gateway for rotation;
+            # children shared_folder_folder / NSF subfolders can contain rotation records too
+            if fldr.type in rotatable_types or is_nested_share_folder(params, folder):
                 folders.append(folder)
             else:
-                logging.debug(f'Folder skipped (not a shared folder/subfolder) - {folder} {fldr.name}')
+                logging.debug(f'Folder skipped (not a shared folder/subfolder/NSF) - {folder} {fldr.name}')
+        elif is_nested_share_folder(params, folder):
+            folders.append(folder)
         else:
-            rx_name = self.str_to_regex(folder)
-            for fuid in params.folder_cache:
-                fldr = params.folder_cache.get(fuid)
-                # requirement - shared folder only (not for user_folder containing shf w/ recursion)
-                if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
-                    if fldr.name and rx_name.search(fldr.name):
-                        folders.append(fldr.uid)
+            resolved = resolve_pam_folder_uid(params, folder)
+            if resolved:
+                folders.append(resolved)
+            else:
+                rx_name = self.str_to_regex(folder)
+                for fuid in params.folder_cache:
+                    fldr = params.folder_cache.get(fuid)
+                    # shared folder / NSF only (not user_folder containing shf w/ recursion)
+                    if fldr.type in rotatable_types or is_nested_share_folder(params, fuid):
+                        if fldr.name and rx_name.search(fldr.name):
+                            folders.append(fldr.uid)
+                for fuid, nsf in getattr(params, 'nested_share_folders', {}).items():
+                    if fuid in folders:
+                        continue
+                    name = nsf.get('name', '') if isinstance(nsf, dict) else ''
+                    if name and rx_name.search(name):
+                        folders.append(fuid)
 
         folders = list(set(folders))  # Remove duplicate UIDs
         # 2. pattern could match both parent and child - drop all children (w/ a matching parent)
         if recursive and len(folders) > 1:
-            roots: dict[str, list] = {}  # group by shared_folder_uid
+            roots: dict[str, list] = {}  # group by shared_folder_uid (or NSF root)
             for fuid in folders:  # no shf inside shf yet
-                roots.setdefault(params.folder_cache.get(fuid).shared_folder_uid, []).append(fuid)
+                fobj = params.folder_cache.get(fuid)
+                root_uid = getattr(fobj, 'shared_folder_uid', None) or fuid
+                roots.setdefault(root_uid, []).append(fuid)
             uniq = []
             for fuid in roots:
                 fldrs = list(set(roots[fuid]))
@@ -3807,9 +3830,12 @@ class PAMGatewayActionRotateCommand(Command):
                     for fldr in fldrs:
                         path = []
                         child = fldr
-                        while params.folder_cache[child].uid != fuid:
+                        while child in params.folder_cache and params.folder_cache[child].uid != fuid:
                             path.append(child)
-                            child = params.folder_cache[child].parent_uid
+                            parent = params.folder_cache[child].parent_uid
+                            if not parent:
+                                break
+                            child = parent
                         path.append(child)  # add root shf
                         path = path[1:] if path else []  # skip child uid
                         if not set(path) & fldrset:  # no intersect
@@ -3821,12 +3847,13 @@ class PAMGatewayActionRotateCommand(Command):
             if recursive:
                 logging.warning('--recursive/-a option not implemented (ignored)')
                 # params.folder_cache: type=shared_folder_folder, uid=shffUID, shared_folder_uid ='shfUID'
-                # params.subfolder_cache/subfolder_record_cache
+                # params.subfolder_cache/subfolder_record_cache / nested_share_folder_records
 
-            if fldr not in params.subfolder_record_cache:
-                logging.debug(f"folder {fldr} empty - not in subfolder_record_cache (skipped)")
+            folder_records = records_in_folder(params, fldr)
+            if not folder_records:
+                logging.debug(f"folder {fldr} empty - no records in folder caches (skipped)")
                 continue
-            for ruid in params.subfolder_record_cache[fldr]:
+            for ruid in folder_records:
                 if ruid in params.record_cache:
                     if params.record_cache[ruid].get('version') == 3:
                         data = params.record_cache[ruid].get('data_unencrypted', '')
@@ -3843,9 +3870,13 @@ class PAMGatewayActionRotateCommand(Command):
             for fldr in folders:
                 fobj = params.folder_cache.get(fldr, None)
                 title = fobj.name if isinstance(fobj, BaseFolderNode) else ''
+                if not title:
+                    nsf = getattr(params, 'nested_share_folders', {}).get(fldr)
+                    if isinstance(nsf, dict):
+                        title = nsf.get('name', '')
                 logging.debug(f'Rotation Folder UID: {fldr} {title}')
             for rec in records:
-                title = json.loads(params.record_cache.get(rec, {}).get('data_unencrypted', '')).get('title', '')
+                title, _ = get_vault_record_title_type(params, rec)
                 logging.debug(f'Rotation Record UID: {rec} {title}')
 
         # 6. exit if --dry-run

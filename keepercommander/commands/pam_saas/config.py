@@ -4,10 +4,8 @@ from ..pam.pam_dto import GatewayAction
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from . import get_plugins_map, make_script_signature, SaasCatalog, get_field_input
-from ... import api, subfolder, utils, crypto, vault, vault_extensions, attachment, record_management
-from ...proto import record_pb2
-from ...api import get_records_add_request, sync_down
-from ...error import KeeperApiError
+from ... import utils, vault, attachment
+from ...api import sync_down
 from tempfile import TemporaryDirectory
 import os
 import json
@@ -74,7 +72,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                         help='Update an existing SaaS configuration.')
 
     parser.add_argument('--shared-folder-uid', '-s', required=False, dest='shared_folder_uid',
-                        action='store', help='Shared folder to store SaaS configuration.')
+                        action='store',
+                        help='Shared folder or Nested Share Folder UID/name to store SaaS configuration.')
 
     def get_parser(self):
         return PAMActionSaasConfigCommand.parser
@@ -142,10 +141,48 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
 
     @staticmethod
+    def _resolve_target_folder(params: KeeperParams, gateway_context: GatewayContext,
+                               shared_folder_uid: Optional[str]) -> Optional[str]:
+        from ..pam.vault_target import resolve_pam_folder_uid, pam_folder_exists
+
+        shared_folders = gateway_context.get_shared_folders(params)
+        allowed_uids = {x.get('uid') for x in shared_folders if x.get('uid')}
+
+        if shared_folder_uid is None:
+            if len(shared_folders) == 1:
+                return shared_folders[0].get('uid')
+            print("")
+            print(f"{bcolors.FAIL}Multiple shared folders found. "
+                  f"Please use '-s' to select a shared folder.{bcolors.ENDC}")
+            if shared_folders:
+                print("Available folders:")
+                for sf in shared_folders:
+                    print(f"  * {sf.get('name') or sf.get('uid')} ({sf.get('uid')})")
+            return None
+
+        resolved = resolve_pam_folder_uid(params, shared_folder_uid, allow_legacy_user=True)
+        if not resolved and pam_folder_exists(params, shared_folder_uid):
+            resolved = shared_folder_uid
+        if not resolved:
+            print("")
+            print(f"{bcolors.FAIL}Folder not found: {shared_folder_uid}{bcolors.ENDC}")
+            return None
+
+        if resolved not in allowed_uids:
+            print("")
+            print(f"{bcolors.FAIL}The shared folder is not part of the gateway application.{bcolors.ENDC}")
+            return None
+        return resolved
+
+    @staticmethod
     def _create_config(params: KeeperParams,
                        plugin: SaasCatalog,
                        shared_folder_uid: str,
                        plugin_code_bytes: Optional[bytes] = None):
+        from ..pam.vault_target import (
+            create_record_in_folder, update_pam_record, is_nested_share_folder,
+        )
+        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 
         custom_fields = [
             vault.TypedField.new_field(
@@ -198,59 +235,18 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         for item in custom_fields:
             record.custom.append(item)
 
-        folder = params.folder_cache.get(shared_folder_uid)
-        folder_key = None  # type: Optional[bytes]
-        if isinstance(folder, subfolder.SharedFolderFolderNode):
-            shared_folder_uid = folder.shared_folder_uid
-        elif isinstance(folder, subfolder.SharedFolderNode):
-            shared_folder_uid = folder.uid
-        else:
-            shared_folder_uid = None
-        if shared_folder_uid and shared_folder_uid in params.shared_folder_cache:
-            shared_folder = params.shared_folder_cache.get(shared_folder_uid)
-            folder_key = shared_folder.get('shared_folder_key_unencrypted')
-
-        add_record = record_pb2.RecordAdd()
-        add_record.record_uid = utils.base64_url_decode(record.record_uid)
-        add_record.record_key = crypto.encrypt_aes_v2(record.record_key, params.data_key)
-        add_record.client_modified_time = utils.current_milli_time()
-        add_record.folder_type = record_pb2.user_folder
-        if folder:
-            add_record.folder_uid = utils.base64_url_decode(folder.uid)
-            if folder.type == 'shared_folder':
-                add_record.folder_type = record_pb2.shared_folder
-            elif folder.type == 'shared_folder_folder':
-                add_record.folder_type = record_pb2.shared_folder_folder
-            if folder_key:
-                add_record.folder_key = crypto.encrypt_aes_v2(record.record_key, folder_key)
-
-        data = vault_extensions.extract_typed_record_data(record)
-        json_data = api.get_record_data_json_bytes(data)
-        add_record.data = crypto.encrypt_aes_v2(json_data, record.record_key)
-
-        if params.enterprise_ec_key:
-            audit_data = vault_extensions.extract_audit_data(record)
-            if audit_data:
-                add_record.audit.version = 0
-                add_record.audit.data = crypto.encrypt_ec(
-                    json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
-
-        rq = get_records_add_request(params)
-        rq.records.append(add_record)
-        rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
-        record_rs = next((x for x in rs.records if utils.base64_url_encode(x.record_uid) == record.record_uid), None)
-        if record_rs:
-            if record_rs.status != record_pb2.RS_SUCCESS:
-                raise KeeperApiError(record_rs.status, rs.message)
-        record.revision = rs.revision
-
-        params.sync_data = True
+        create_record_in_folder(
+            params, record, folder_uid=shared_folder_uid, command='pam action saas config',
+        )
 
         # If this is not a built-in or custom script, we need to attach it to the config record.
         if plugin_code_bytes is not None and plugin.file_name:
 
             with TemporaryDirectory() as temp_dir:
-                sync_down(params)
+                if is_nested_share_folder(params, shared_folder_uid):
+                    sync_down_preserving_nsf_keys(params)
+                else:
+                    sync_down(params)
 
                 existing_record = vault.TypedRecord.load(params, record.record_uid)  # type: TypedRecord
                 if existing_record is None:
@@ -272,14 +268,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
                 attachment.upload_attachments(params, existing_record, [task])
 
-                record.fields = [
-                    vault.TypedField.new_field(
-                        field_type="fileRef",
-                        field_value=list(existing_record.linked_keys.keys()))
-                ]
-
-                record_management.update_record(params, existing_record)
-                params.sync_data = True
+                # upload_attachments updates fileRef on existing_record via facade
+                update_pam_record(params, existing_record, command='pam action saas config')
 
         print("")
         print(f"{bcolors.OKGREEN}Created SaaS configuration record with UID of {record.record_uid}{bcolors.ENDC}")
@@ -332,17 +322,10 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
             elif do_create:
 
-                shared_folders = gateway_context.get_shared_folders(params)
-                if shared_folder_uid is None:
-                    if len(shared_folders) == 1:
-                        shared_folder_uid = shared_folders[0].get("uid")
-                    else:
-                        print("")
-                        print(f"{bcolors.FAIL}Multiple shared folders found. "
-                              f"Please use '-s' to select a shared folder.{bcolors.ENDC}")
-                if next((x for x in shared_folders if x.get("uid") == shared_folder_uid), None) is None:
-                    print("")
-                    print(f"{bcolors.FAIL}The shared folder is not part of the gateway application.{bcolors.ENDC}")
+                shared_folder_uid = self._resolve_target_folder(
+                    params, gateway_context, shared_folder_uid,
+                )
+                if not shared_folder_uid:
                     return
 
                 # For catalog plugins, we need to download the python file from GitHub.

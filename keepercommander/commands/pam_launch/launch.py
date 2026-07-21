@@ -72,7 +72,7 @@ from .rust_log_filter import (
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_get_connected_gateways
 from ..ssh_agent import try_extract_private_key
-from ... import api, vault
+from ... import vault
 from ...subfolder import try_resolve_path
 from ...error import CommandError
 from ...utils import value_to_boolean
@@ -490,18 +490,21 @@ class PAMLaunchCommand(Command):
         """
         try:
             record = vault.KeeperRecord.load(params, record_uid)
-            if not isinstance(record, vault.TypedRecord):
-                return False
-            if record.version != 3:
-                return False
-            return record.record_type in self.VALID_PAM_RECORD_TYPES
+            if isinstance(record, vault.TypedRecord):
+                if record.version != 3:
+                    return False
+                return record.record_type in self.VALID_PAM_RECORD_TYPES
+            # NSF fallback when the typed record is not in record_cache
+            from ..pam.vault_target import get_vault_record_title_type
+            _, rec_type = get_vault_record_title_type(params, record_uid)
+            return rec_type in self.VALID_PAM_RECORD_TYPES
         except Exception as e:
             logging.debug(f"Error checking record type for {record_uid}: {e}")
             return False
 
     def find_record(self, params: KeeperParams, record_token: str) -> Optional[str]:
         """
-        Find a record by UID, path, or title.
+        Find a record by UID, path, or title (classic + Nested Share Folder records).
 
         Args:
             params: KeeperParams instance
@@ -515,10 +518,12 @@ class PAMLaunchCommand(Command):
 
         record_token = record_token.strip()
 
-        # Step 1: Try UID lookup
+        from ..pam.vault_target import record_exists_in_vault
+
+        # Step 1: Try UID lookup (classic + Nested Share Folder)
         uid_pattern = re.compile(r'^[A-Za-z0-9_-]{22}$')
         if uid_pattern.match(record_token):
-            if record_token in params.record_cache:
+            if record_exists_in_vault(params, record_token):
                 logging.debug(f"Found record by UID: {record_token}")
                 return record_token
 
@@ -543,7 +548,7 @@ class PAMLaunchCommand(Command):
 
     def _find_by_path(self, params: KeeperParams, path: str) -> Optional[str]:
         """
-        Find record by path resolution.
+        Find record by path resolution (classic folders + Nested Share Folders).
 
         If exactly one record matches (any type), returns its UID. If two or more
         match, filters to PAM types only: returns the single PAM UID if one,
@@ -552,24 +557,44 @@ class PAMLaunchCommand(Command):
         Returns:
             Record UID if found, None otherwise
         """
+        from ..pam.vault_target import records_in_folder, resolve_pam_folder_uid
+
+        folder_uid = None
+        name = None
+
         rs = try_resolve_path(params, path)
-        if rs is None:
+        if rs is not None:
+            folder, name = rs
+            if folder is not None and name is not None:
+                folder_uid = folder.uid or ''
+
+        # NSF / unresolved path fallback: "FolderName/RecordTitle" or nested path
+        if (not folder_uid or name is None or name == '') and '/' in path.strip('/'):
+            parent, _, title = path.rstrip('/').rpartition('/')
+            if parent and title:
+                resolved_folder = resolve_pam_folder_uid(params, parent, allow_legacy_user=True)
+                if resolved_folder:
+                    folder_uid = resolved_folder
+                    name = title
+
+        if not folder_uid or name is None or name == '':
             return None
 
-        folder, name = rs
-        if folder is None or name is None:
-            return None
-
-        folder_uid = folder.uid or ''
-        if folder_uid not in params.subfolder_record_cache:
+        folder_records = records_in_folder(params, folder_uid)
+        if not folder_records:
             return None
 
         # All records in folder with matching title (any type)
         all_matched = []
-        for uid in params.subfolder_record_cache[folder_uid]:
-            r = api.get_record(params, uid)
-            if r and r.title and r.title.lower() == name.lower():
+        for uid in folder_records:
+            record = vault.KeeperRecord.load(params, uid)
+            if record and record.title and record.title.lower() == name.lower():
                 all_matched.append(uid)
+            elif not record:
+                from ..pam.vault_target import get_vault_record_title_type
+                title, _ = get_vault_record_title_type(params, uid)
+                if title and title.lower() == name.lower() and title != '[record inaccessible]':
+                    all_matched.append(uid)
 
         if len(all_matched) == 1:
             logging.debug(f"Found record by path: {path} -> {all_matched[0]}")
@@ -596,7 +621,7 @@ class PAMLaunchCommand(Command):
 
     def _find_by_title(self, params: KeeperParams, title: str) -> Optional[str]:
         """
-        Find record by exact title match.
+        Find record by exact title match (classic + Nested Share Folder records).
 
         If exactly one record matches (any type), returns its UID. If two or more
         match, filters to PAM types only: returns the single PAM UID if one,
@@ -606,10 +631,27 @@ class PAMLaunchCommand(Command):
             Record UID if found, None otherwise
         """
         all_matched = []
+        seen = set()
+        title_lower = title.lower()
+
         for record_uid in params.record_cache:
             record = vault.KeeperRecord.load(params, record_uid)
-            if record and record.title and record.title.lower() == title.lower():
+            if record and record.title and record.title.lower() == title_lower:
                 all_matched.append(record_uid)
+                seen.add(record_uid)
+
+        # NSF titles that may only be present in nested_share_record_data
+        nsf_data = getattr(params, 'nested_share_record_data', {}) or {}
+        for record_uid, rd in nsf_data.items():
+            if record_uid in seen:
+                continue
+            data_json = rd.get('data_json', {}) if isinstance(rd, dict) else {}
+            if not isinstance(data_json, dict):
+                continue
+            nsf_title = data_json.get('title') or ''
+            if isinstance(nsf_title, str) and nsf_title.lower() == title_lower:
+                all_matched.append(record_uid)
+                seen.add(record_uid)
 
         if len(all_matched) == 1:
             logging.debug(f"Found record by title: {title} -> {all_matched[0]}")
@@ -650,7 +692,12 @@ class PAMLaunchCommand(Command):
         token_lower = token.lower()
         # candidate tuple: (uid, title, [(hostName, port), ...])
         candidates: list = []
-        for record_uid in params.record_cache:
+        seen = set()
+        for record_uid in list(getattr(params, 'record_cache', {})) + list(
+                getattr(params, 'nested_share_records', {}) or {}):
+            if record_uid in seen:
+                continue
+            seen.add(record_uid)
             try:
                 record = vault.KeeperRecord.load(params, record_uid)
             except Exception:
