@@ -2809,6 +2809,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
+    # Fields that the backend previously required but now treats as optional for pamAzureConfiguration.
+    AZURE_OPTIONAL_FIELDS = frozenset({'clientId', 'clientSecret'})
+
     def verify_required(self, record):  # type: (vault.TypedRecord) -> None
         for field in record.fields:
             if field.required:
@@ -2817,6 +2820,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
                         field.value = [{
                             'type': 'ON_DEMAND'
                         }]
+                    elif (record.record_type == 'pamAzureConfiguration'
+                          and field.label in self.AZURE_OPTIONAL_FIELDS):
+                        pass
                     else:
                         self.warnings.append(f'Empty required field: "{field.get_field_name()}"')
         for custom in record.custom:
