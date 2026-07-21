@@ -143,8 +143,8 @@ class PamConfigEnvironment():
 
         # Azure environment: pamAzureConfiguration
         self.az_entra_id: str = ""              # required, text:azureId
-        self.az_client_id: str = ""             # required, secret:clientId
-        self.az_client_secret: str = ""         # required, secret:clientSecret
+        self.az_client_id: str = ""             # optional, secret:clientId
+        self.az_client_secret: str = ""         # optional, secret:clientSecret
         self.az_subscription_id: str = ""       # required, secret:subscriptionId
         self.az_tenant_id: str = ""             # required, secret:tenantId
         self.az_resource_groups: List[str] = [] # optional, multiline:resourceGroups
@@ -277,9 +277,9 @@ class PamConfigEnvironment():
         elif environment_type == "azure":
             val = settings.get("az_entra_id", None) # required
             if isinstance(val, str): self.az_entra_id = val
-            val = settings.get("az_client_id", None) # required
+            val = settings.get("az_client_id", None) # optional
             if isinstance(val, str): self.az_client_id = val
-            val = settings.get("az_client_secret", None) # required
+            val = settings.get("az_client_secret", None) # optional
             if isinstance(val, str): self.az_client_secret = val
             val = settings.get("az_subscription_id", None) # required
             if isinstance(val, str): self.az_subscription_id = val
