@@ -5,6 +5,7 @@ from ..discover import (PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM
                         MultiConfigurationException, multi_conf_msg)
 from ...display import bcolors
 from ... import vault
+from . import load_pam_record
 from ...discovery_common.record_link import RecordLink
 from typing import Optional, TYPE_CHECKING
 
@@ -55,7 +56,7 @@ class PAMDebugLinkCommand(PAMGatewayActionDiscoverCommandBase):
                                  logger=logging,
                                  debug_level=debug_level, use_per_graph_endpoints=False)
 
-        resource_record = vault.KeeperRecord.load(params, resource_uid)  # type: Optional[TypedRecord]
+        resource_record = load_pam_record(params, resource_uid)  # type: Optional[TypedRecord]
         if resource_record is None:
             print(f"{bcolors.FAIL}The parent record does not exists.{bcolors.ENDC}")
             return

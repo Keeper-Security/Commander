@@ -23,6 +23,8 @@ from packaging import version as packaging_version
 
 from typing import List, Optional, Union, Callable, Tuple, Any, Dict, TYPE_CHECKING
 
+from ..pam_import.record_loader import iter_accessible_record_uids, load_pam_record
+
 if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import KeeperRecord, ApplicationRecord
@@ -84,12 +86,32 @@ class GatewayContext:
         """
 
         configuration_list = []
-        if value_to_boolean(os.environ.get("PAM_RECORD_TYPE_MATCH")):
+        seen = set()
+        type_match = value_to_boolean(os.environ.get("PAM_RECORD_TYPE_MATCH"))
+        if type_match:
             for record in list(vault_extensions.find_records(params, record_version=iter([3, 6]))):
                 if re.search(r"pam.+Configuration", record.record_type):
                     configuration_list.append(record)
+                    seen.add(record.record_uid)
         else:
-            configuration_list = list(vault_extensions.find_records(params, record_version=6))
+            for record in list(vault_extensions.find_records(params, record_version=6)):
+                configuration_list.append(record)
+                seen.add(record.record_uid)
+
+        # Include Nested Share Folder PAM configs that are not mirrored into record_cache yet.
+        for uid in iter_accessible_record_uids(params):
+            if uid in seen:
+                continue
+            record = load_pam_record(params, uid)
+            if not record or not isinstance(record, vault.TypedRecord):
+                continue
+            if type_match:
+                if not re.search(r"pam.+Configuration", record.record_type or ''):
+                    continue
+            elif record.version != 6:
+                continue
+            configuration_list.append(record)
+            seen.add(uid)
         return configuration_list
 
     @classmethod
@@ -134,7 +156,7 @@ class GatewayContext:
         if gateways is None:
             gateways = GatewayContext.all_gateways(params)
 
-        configuration_record = vault.KeeperRecord.load(params, configuration_uid)
+        configuration_record = load_pam_record(params, configuration_uid)
         if not isinstance(configuration_record, vault.TypedRecord):
             print(f'{bcolors.FAIL}PAM Configuration [{configuration_uid}] is not available.{bcolors.ENDC}')
             return None
@@ -190,7 +212,10 @@ class GatewayContext:
             logging.debug(f"checking configuration record {configuration_record.title}")
 
             # Load the configuration record and get the gateway_uid from the facade.
-            configuration_record = vault.KeeperRecord.load(params, configuration_record.record_uid)
+            configuration_record = load_pam_record(params, configuration_record.record_uid)
+            if not isinstance(configuration_record, vault.TypedRecord):
+                logging.debug(f" * configuration record could not be loaded, skipping.")
+                continue
             configuration_facade = PamConfigurationRecordFacade()
             configuration_facade.record = configuration_record
 
@@ -288,14 +313,21 @@ class GatewayContext:
                     uid_str = utils.base64_url_encode(shared.secretUid)
                     shared_type = APIRequest_pb2.ApplicationShareType.Name(shared.shareType)
                     if shared_type == 'SHARE_TYPE_FOLDER':
-                        if uid_str not in params.shared_folder_cache:
+                        if uid_str in params.shared_folder_cache:
+                            cached_shared_folder = params.shared_folder_cache[uid_str]
+                            self._shared_folders.append({
+                                "uid": uid_str,
+                                "name": cached_shared_folder.get('name_unencrypted'),
+                                "folder": cached_shared_folder
+                            })
                             continue
-                        cached_shared_folder = params.shared_folder_cache[uid_str]
-                        self._shared_folders.append({
-                            "uid": uid_str,
-                            "name": cached_shared_folder.get('name_unencrypted'),
-                            "folder": cached_shared_folder
-                        })
+                        nsf = getattr(params, 'nested_share_folders', {}).get(uid_str)
+                        if nsf:
+                            self._shared_folders.append({
+                                "uid": uid_str,
+                                "name": nsf.get('name'),
+                                "folder": nsf
+                            })
         return self._shared_folders
 
     def info(self, params: KeeperParams) -> Optional[Dict]:

@@ -3,6 +3,7 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase
 from ...display import bcolors
 from ... import vault
+from . import load_pam_record
 from ...proto import router_pb2
 from ...sync_down import sync_down
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -49,7 +50,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
 
-        user_record = vault.KeeperRecord.load(params, user_record_uid)  # type: Optional[TypedRecord]
+        user_record = load_pam_record(params, user_record_uid)  # type: Optional[TypedRecord]
         if user_record is None:
             print(f"{bcolors.FAIL}The PAM user record does not exists.{bcolors.ENDC}")
             return
@@ -68,7 +69,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                       f"-c, --configuration-record-uid parameter for this command.{bcolors.ENDC}")
                 return
 
-            configuration_record = vault.KeeperRecord.load(params,
+            configuration_record = load_pam_record(params,
                                                            configuration_record_uid)  # type: Optional[TypedRecord]
             if configuration_record is None:
                 print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
@@ -94,7 +95,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
 
             if resource_record_uid is not None:
 
-                resource_record = vault.KeeperRecord.load(params,
+                resource_record = load_pam_record(params,
                                                           resource_record_uid)  # type: Optional[TypedRecord]
                 if resource_record is None:
                     print(f"{bcolors.FAIL}The resource record does not exists.{bcolors.ENDC}")
@@ -142,7 +143,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
 
         print(f"{bcolors.BOLD}Configuration Record UID{bcolors.ENDC}: {configuration_record_uid}")
 
-        configuration_record = vault.KeeperRecord.load(params,
+        configuration_record = load_pam_record(params,
                                                        configuration_record_uid)  # type: Optional[TypedRecord]
         if configuration_record is None:
             print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
@@ -153,7 +154,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
 
             print(f"{bcolors.BOLD}Resource Record UID{bcolors.ENDC}: {resource_record_uid}")
 
-            resource_record = vault.KeeperRecord.load(params,
+            resource_record = load_pam_record(params,
                                                       resource_record_uid)  # type: Optional[TypedRecord]
             if resource_record is None:
                 print(f"{bcolors.FAIL}The resource record does not exists.{bcolors.ENDC}")

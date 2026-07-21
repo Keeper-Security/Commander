@@ -5,6 +5,7 @@ import logging
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import vault
+from . import load_pam_record
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
 from ...discovery_common.jobs import Jobs
@@ -120,7 +121,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 if current_content.record_uid is None:
                     text += f"{pad}{ls}{current_vertex.uid}; {current_content.title} does not have a record."
                 else:
-                    record = vault.KeeperRecord.load(params, current_content.record_uid)  # type: Optional[TypedRecord]
+                    record = load_pam_record(params, current_content.record_uid)  # type: Optional[TypedRecord]
                     if record is not None:
                         text += f"{pad}{ls}" + cf(f"{current_vertex.uid}; {record.title}; {record.record_uid}")
                     else:
@@ -165,7 +166,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                  debug_level=debug_level, use_per_graph_endpoints=False)
         configuration = record_link.dag.get_root
         
-        record = vault.KeeperRecord.load(params, configuration.uid)  # type: Optional[TypedRecord]
+        record = load_pam_record(params, configuration.uid)  # type: Optional[TypedRecord]
         if record is None:
             print(self._f("Configuration record does not exists."))
             return
@@ -193,7 +194,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             }
 
             for vertex in configuration_vertex.has_vertices():
-                record = vault.KeeperRecord.load(params, vertex.uid)  # type: Optional[TypedRecord]
+                record = load_pam_record(params, vertex.uid)  # type: Optional[TypedRecord]
                 if record is None:
                     group[PAMDebugGraphCommand.NO_RECORD].append({
                         "v": vertex
@@ -263,7 +264,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     if len(children) > 0:
                         bad = []
                         for child in children:
-                            child_record = vault.KeeperRecord.load(params, child.uid)  # type: Optional[TypedRecord]
+                            child_record = load_pam_record(params, child.uid)  # type: Optional[TypedRecord]
                             if child_record is None:
                                 if child.active:
                                     bad.append(self._f(f"- Record UID {child.uid} does not exists."))
@@ -329,7 +330,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             if not resource_vertex.active:
                 continue
 
-            machine_record = vault.KeeperRecord.load(params, resource_vertex.uid)  # type: Optional[TypedRecord]
+            machine_record = load_pam_record(params, resource_vertex.uid)  # type: Optional[TypedRecord]
             if machine_record is None or machine_record.record_type != PAM_MACHINE:
                 continue
 
@@ -342,7 +343,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 if not user_vertex.active:
                     continue
 
-                user_record = vault.KeeperRecord.load(params, user_vertex.uid)  # type: Optional[TypedRecord]
+                user_record = load_pam_record(params, user_vertex.uid)  # type: Optional[TypedRecord]
                 acl = record_link.get_acl(parent_record_uid=resource_vertex.uid, record_uid=user_vertex.uid)
                 if acl is not None and acl.controls_services:
                     if resource_vertex.uid not in machine_dict:
@@ -365,7 +366,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 if not us_machine_vertex.active:
                     continue
 
-                machine_record = vault.KeeperRecord.load(params, us_machine_vertex.uid)  # type: Optional[TypedRecord]
+                machine_record = load_pam_record(params, us_machine_vertex.uid)  # type: Optional[TypedRecord]
                 if machine_record is not None:
                     machine_name = f"{machine_record.title}, {machine_record.record_uid}"
                 else:
@@ -381,7 +382,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     if service_acl is None:
                         continue
 
-                    user_record = vault.KeeperRecord.load(params, us_user_vertex.uid)  # type: Optional[TypedRecord]
+                    user_record = load_pam_record(params, us_user_vertex.uid)  # type: Optional[TypedRecord]
 
                     if us_machine_vertex.uid not in machine_dict:
                         machine_dict[us_machine_vertex.uid] = {

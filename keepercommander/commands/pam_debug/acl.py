@@ -5,6 +5,7 @@ from ..discover import (PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM
                         multi_conf_msg)
 from ...display import bcolors
 from ... import vault
+from . import load_pam_record
 from ...discovery_common.record_link import RecordLink
 from ...discovery_common.types import UserAcl
 from typing import Optional, TYPE_CHECKING
@@ -59,7 +60,7 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
                                  logger=logging,
                                  debug_level=debug_level, use_per_graph_endpoints=False)
 
-        user_record = vault.KeeperRecord.load(params, user_uid)  # type: Optional[TypedRecord]
+        user_record = load_pam_record(params, user_uid)  # type: Optional[TypedRecord]
         if user_record is None:
             print(f"{bcolors.FAIL}The user record does not exists.{bcolors.ENDC}")
             return
@@ -70,7 +71,7 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}The user record is not a PAM User record.{bcolors.ENDC}")
             return
 
-        parent_record = vault.KeeperRecord.load(params, parent_uid)  # type: Optional[TypedRecord]
+        parent_record = load_pam_record(params, parent_uid)  # type: Optional[TypedRecord]
         if parent_record is None:
             print(f"{bcolors.FAIL}The parent record does not exists.{bcolors.ENDC}")
             return

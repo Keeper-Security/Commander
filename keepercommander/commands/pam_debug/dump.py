@@ -9,12 +9,15 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..base import Command, FolderMixin
 from ...subfolder import get_folder_uids
-from ... import vault, api
+from ... import vault
 from ...keeper_dag import DAG, EdgeType
 from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamGraphId
+from ...nested_share_folder.common import get_record_from_cache, get_record_key
+from ..pam.vault_target import resolve_pam_folder_uid
 from ..pam_import.keeper_ai_settings import get_resource_settings
+from ..pam_import.nsf_helpers import get_folder_record_uids
 from ...keeper_dag.crypto import decrypt_aes
-from . import get_connection
+from . import get_connection, load_pam_record
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -58,8 +61,14 @@ class PAMDebugDumpCommand(Command):
                 fh.write(json.dumps(data, indent=2))
             logging.info('Saved %d record(s) to %s', len(data), p)
 
-        # 1. Resolve folder UID(s) from UID or path
+        # 1. Resolve folder UID(s) from UID or path (classic + NSF)
         folder_uids = get_folder_uids(params, folder_uid_arg)
+        if not folder_uids:
+            resolved = resolve_pam_folder_uid(params, folder_uid_arg)
+            if resolved:
+                folder_uids = {resolved}
+            elif folder_uid_arg in getattr(params, 'nested_share_folders', {}):
+                folder_uids = {folder_uid_arg}
         if not folder_uids:
             logging.warning('Cannot resolve folder: %r', folder_uid_arg)
             _write_result([])
@@ -69,25 +78,46 @@ class PAMDebugDumpCommand(Command):
         # record_uid → (folder_uid, folder_parent_uid)
         record_folder_map: Dict[str, Tuple[str, str]] = {}
 
+        def _folder_parent_uid(f_uid: str) -> str:
+            if not f_uid:
+                return ''
+            folder_node = params.folder_cache.get(f_uid)
+            if folder_node is not None:
+                return getattr(folder_node, 'parent_uid', None) or ''
+            nsf = getattr(params, 'nested_share_folders', {}).get(f_uid) or {}
+            return nsf.get('parent_uid') or ''
+
         if recursive:
             def _on_folder(f):
                 f_uid = f.uid or ''
                 f_parent_uid = getattr(f, 'parent_uid', None) or ''
-                for rec_uid in params.subfolder_record_cache.get(f_uid, set()):
+                for rec_uid in get_folder_record_uids(params, f_uid):
                     if rec_uid not in record_folder_map:
                         record_folder_map[rec_uid] = (f_uid, f_parent_uid)
 
             for fuid in folder_uids:
                 FolderMixin.traverse_folder_tree(params, fuid, _on_folder)
+                # NSF folders may not yet be reconstructed into folder_cache nodes;
+                # walk nested_share_folders children as a fallback.
+                nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+                if fuid in nsf_folders or any(v.get('parent_uid') == fuid for v in nsf_folders.values()):
+                    stack = [fuid]
+                    seen = set()
+                    while stack:
+                        current = stack.pop()
+                        if not current or current in seen:
+                            continue
+                        seen.add(current)
+                        for rec_uid in get_folder_record_uids(params, current):
+                            if rec_uid not in record_folder_map:
+                                record_folder_map[rec_uid] = (current, _folder_parent_uid(current))
+                        for child_uid, child in nsf_folders.items():
+                            if child.get('parent_uid') == current and child_uid not in seen:
+                                stack.append(child_uid)
         else:
             for fuid in folder_uids:
-                if fuid:
-                    folder_node = params.folder_cache.get(fuid)
-                    f_parent_uid = getattr(folder_node, 'parent_uid', None) or '' if folder_node else ''
-                else:
-                    # root folder has no parent
-                    f_parent_uid = ''
-                for rec_uid in params.subfolder_record_cache.get(fuid, set()):
+                f_parent_uid = _folder_parent_uid(fuid)
+                for rec_uid in get_folder_record_uids(params, fuid):
                     if rec_uid not in record_folder_map:
                         record_folder_map[rec_uid] = (fuid, f_parent_uid)
 
@@ -103,12 +133,17 @@ class PAMDebugDumpCommand(Command):
         valid_uids: List[str] = []  # passed version filter, in discovery order
 
         for rec_uid in record_folder_map:
-            rec = params.record_cache.get(rec_uid)
+            rec = get_record_from_cache(params, rec_uid)
             if rec is None:
-                logging.warning('skipping record %s version unknown - not in record cache', rec_uid)
-                continue
+                loaded = load_pam_record(params, rec_uid)
+                if loaded is None:
+                    logging.warning('skipping record %s version unknown - not in record cache', rec_uid)
+                    continue
+                version = getattr(loaded, 'version', None)
+                rec = {'version': version, 'revision': 0, 'shared': False}
+            else:
+                version = rec.get('version')
 
-            version = rec.get('version')
             if version is None or version <= 2:
                 logging.warning(
                     'skipping record %s version %s - PAM records have version >= 3',
@@ -161,7 +196,7 @@ class PAMDebugDumpCommand(Command):
         conn = get_connection(params)
 
         for config_uid in config_to_records:
-            config_record = vault.KeeperRecord.load(params, config_uid)
+            config_record = load_pam_record(params, config_uid)
             if config_record is None:
                 logging.error('Configuration record %s not found; skipping graph load.', config_uid)
                 for graph_id in ALL_GRAPH_IDS:
@@ -185,10 +220,11 @@ class PAMDebugDumpCommand(Command):
 
         for rec_uid in valid_uids:
             folder_uid, folder_parent_uid = record_folder_map[rec_uid]
-            rec = params.record_cache[rec_uid]  # guaranteed present after step 3
-            version = rec.get('version')
-            shared = rec.get('shared', False)
-            revision = rec.get('revision', 0)
+            rec = get_record_from_cache(params, rec_uid) or {}
+            nsf_meta = getattr(params, 'nested_share_records', {}).get(rec_uid) or {}
+            version = rec.get('version') or nsf_meta.get('version')
+            shared = rec.get('shared', nsf_meta.get('shared', False))
+            revision = rec.get('revision', nsf_meta.get('revision', 0))
 
             client_modified_time = None
             cmt = rec.get('client_modified_time')
@@ -205,15 +241,29 @@ class PAMDebugDumpCommand(Command):
                 'revision': revision,
             }
 
-            # data - same structure as `get --format=json`
+            # data - same structure as `get --format=json` (classic + NSF)
             data = {}
             try:
-                r = api.get_record(params, rec_uid)
-                if r:
-                    raw = rec.get('data_unencrypted', b'{}')
+                raw = rec.get('data_unencrypted')
+                if raw:
                     data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-                    if r.notes:
-                        data['notes'] = r.notes
+                else:
+                    nsf_data = getattr(params, 'nested_share_record_data', {}).get(rec_uid) or {}
+                    data = dict(nsf_data.get('data_json') or {})
+                if not data:
+                    loaded = load_pam_record(params, rec_uid)
+                    if loaded is not None:
+                        from ... import vault_extensions
+                        if isinstance(loaded, vault.TypedRecord):
+                            data = vault_extensions.extract_typed_record_data(loaded)
+                        notes = getattr(loaded, 'notes', None)
+                        if notes:
+                            data['notes'] = notes
+                else:
+                    loaded = load_pam_record(params, rec_uid)
+                    notes = getattr(loaded, 'notes', None) if loaded else None
+                    if notes:
+                        data['notes'] = notes
             except Exception as err:
                 logging.warning('Could not build data for record %s: %s', rec_uid, err)
 
@@ -304,8 +354,13 @@ def _collect_edges_for_record(dag: 'DAGType', record_uid: str, params: 'KeeperPa
                     pwd_complexity_enc = rotation_settings.get('pwd_complexity')
                     if pwd_complexity_enc and isinstance(pwd_complexity_enc, str):
                         for uid in (head_uid, tail_uid):
-                            raw_rec = params.record_cache.get(uid) or {}
+                            raw_rec = get_record_from_cache(params, uid) or {}
                             rec_key = raw_rec.get('record_key_unencrypted')
+                            if not rec_key:
+                                try:
+                                    rec_key = get_record_key(params, uid, raise_on_missing=False)
+                                except Exception:
+                                    rec_key = None
                             if not rec_key:
                                 continue
                             try:
