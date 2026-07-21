@@ -1288,6 +1288,59 @@ class TestNestedShareFolderFolderApi(TestCase):
         self.assertTrue(parsed['success'])
         self.assertEqual(parsed['status'], 'SUCCESS')
 
+    def test_resolve_uid_to_team_name_uses_team_cache(self):
+        from keepercommander.nested_share_folder.folder_api import _resolve_uid_to_team_name
+
+        team_uid = utils.generate_uid()
+        params = _make_params(team_cache={
+            team_uid: {'name': 'Engineering Team', 'team_uid': team_uid},
+        })
+        self.assertEqual(
+            _resolve_uid_to_team_name(params, team_uid), 'Engineering Team')
+
+    @patch('keepercommander.nested_share_folder.folder_api.api.get_share_objects')
+    def test_resolve_uid_to_team_name_falls_back_to_share_objects(self, mock_share_objects):
+        from keepercommander.nested_share_folder.folder_api import _resolve_uid_to_team_name
+
+        team_uid = utils.generate_uid()
+        mock_share_objects.return_value = {
+            'teams': {team_uid: {'name': 'Ops Team'}},
+        }
+        params = _make_params()
+        self.assertEqual(_resolve_uid_to_team_name(params, team_uid), 'Ops Team')
+
+    @patch('keepercommander.nested_share_folder.folder_api.api.communicate_rest')
+    @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
+    def test_get_folder_access_v3_resolves_team_accessor_name(
+            self, mock_resolve_folder, mock_communicate):
+        from keepercommander.nested_share_folder.folder_api import get_folder_access_v3
+        from keepercommander.proto import folder_access_pb2
+
+        folder_uid = utils.generate_uid()
+        team_uid = utils.generate_uid()
+        mock_resolve_folder.return_value = folder_uid
+
+        access_result = folder_access_pb2.GetFolderAccessResult()
+        access_result.folderUid = utils.base64_url_decode(folder_uid)
+        accessor = access_result.accessors.add()
+        accessor.accessTypeUid = utils.base64_url_decode(team_uid)
+        accessor.accessType = folder_pb2.AT_TEAM
+        accessor.accessRoleType = folder_pb2.VIEWER
+
+        response = folder_access_pb2.GetFolderAccessResponse()
+        response.folderAccessResults.append(access_result)
+        mock_communicate.return_value = response
+
+        params = _make_params(team_cache={
+            team_uid: {'name': 'Engineering Team', 'team_uid': team_uid},
+        })
+        result = get_folder_access_v3(params, [folder_uid])
+        team_accessor = result['results'][0]['accessors'][0]
+
+        self.assertEqual(team_accessor['username'], 'Engineering Team')
+        self.assertEqual(team_accessor['accessor_uid'], team_uid)
+        self.assertEqual(team_accessor['access_type'], 'AT_TEAM')
+
 
 class TestNestedShareFolderRecordApi(TestCase):
 
@@ -1485,6 +1538,38 @@ class TestNestedShareFolderDisplayCommands(TestCase):
     @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
     def test_get_record_access(self, mock_accesses):
         pass
+
+    @patch('keepercommander.nested_share_folder.get_folder_access_v3')
+    def test_folder_json_uses_team_name_in_team_permissions(self, mock_access):
+        """nsf-get JSON should show team names, not team UIDs, in team_permissions."""
+        from keepercommander.commands.nested_share_folder.display_commands import NestedShareGetCommand
+
+        folder_uid, folder_obj = _make_folder(name='Shared Folder')
+        team_uid = utils.generate_uid()
+        mock_access.return_value = {
+            'results': [{
+                'success': True,
+                'accessors': [{
+                    'accessor_uid': team_uid,
+                    'username': 'Engineering Team',
+                    'access_type': 'AT_TEAM',
+                    'role': 'VIEWER',
+                    'inherited': False,
+                    'permissions': {},
+                }],
+            }],
+        }
+
+        captured = []
+        with mock.patch('builtins.print', side_effect=captured.append):
+            NestedShareGetCommand._folder_json(
+                _make_params(nested_share_folders={folder_uid: folder_obj}),
+                folder_uid,
+                verbose=False,
+            )
+
+        payload = json.loads(captured[-1])
+        self.assertEqual(payload['team_permissions'][0]['accessor'], 'Engineering Team')
 
 
 class TestCommandRegistration(TestCase):
