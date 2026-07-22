@@ -611,9 +611,6 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
 
     params.revision = revision
 
-    if nsf_enabled:
-        nested_share_folder_sync.process(params, nsf_acc)
-
     for sf in params.shared_folder_cache.values():
         owner = sf.get('owner_username')
         if not owner:
@@ -762,6 +759,11 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
     for team_uid in to_delete:
         del params.team_cache[team_uid]
     to_delete.clear()
+
+    # NSF folder keys may be wrapped with team keys (ENCRYPTED_BY_TEAM_KEY /
+    # folderAccesses). Decrypt only after team keys are available.
+    if nsf_enabled:
+        nested_share_folder_sync.process(params, nsf_acc)
 
     logging.debug('Decrypting shared folder keys')
     for shared_folder_uid, shared_folder in params.shared_folder_cache.items():
