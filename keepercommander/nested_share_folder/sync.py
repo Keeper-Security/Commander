@@ -668,73 +668,169 @@ def _try_decrypt_with_user_keys(enc_key, params):
     return None
 
 
+def _try_decrypt_with_typed_key(encrypted_key, key_type, aes_key=None, rsa_key=None, ecc_key=None):
+    """Decrypt *encrypted_key* using the algorithm indicated by *key_type*.
+
+    Returns plaintext bytes or None. Mirrors Web Vault ``decryptFolderKeyByType``.
+    """
+    try:
+        if key_type == folder_pb2.encrypted_by_data_key_gcm:
+            if aes_key is not None:
+                return crypto.decrypt_aes_v2(encrypted_key, aes_key)
+        elif key_type == folder_pb2.encrypted_by_data_key:
+            if aes_key is not None:
+                return crypto.decrypt_aes_v1(encrypted_key, aes_key)
+        elif key_type == folder_pb2.encrypted_by_public_key:
+            if rsa_key is not None:
+                return crypto.decrypt_rsa(encrypted_key, rsa_key)
+        elif key_type == folder_pb2.encrypted_by_public_key_ecc:
+            if ecc_key is not None:
+                return crypto.decrypt_ec(encrypted_key, ecc_key)
+    except Exception:
+        return None
+    return None
+
+
+def _team_decrypt_material(params, team_uid):
+    """Return (aes_key, rsa_private_key, ecc_private_key) for a decrypted team, or Nones."""
+    team_cache = getattr(params, 'team_cache', None) or {}
+    team = team_cache.get(team_uid)
+    if not team or 'team_key_unencrypted' not in team:
+        return None, None, None
+
+    aes_key = team['team_key_unencrypted']
+    rsa_key = None
+    ecc_key = None
+    if 'team_private_key_unencrypted' in team:
+        try:
+            rsa_key = crypto.load_rsa_private_key(team['team_private_key_unencrypted'])
+        except Exception:
+            pass
+    if 'team_ec_private_key_unencrypted' in team:
+        try:
+            ecc_key = crypto.load_ec_private_key(team['team_ec_private_key_unencrypted'])
+        except Exception:
+            pass
+    return aes_key, rsa_key, ecc_key
+
+
+def _try_decrypt_from_folder_access(folder_uid, params):
+    """Unwrap a folder key from folderAccesses (user or team), mirroring Web Vault.
+
+    Team-shared NSF folders store the sharee's copy of the folder key in
+    folderAccesses encrypted with the team AES/RSA/ECC key. Direct user shares
+    use the recipient's data key or public key.
+    """
+    accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid) or []
+    team_cache = getattr(params, 'team_cache', None) or {}
+
+    for fa in accesses:
+        if 'folder_key' not in fa:
+            continue
+
+        encrypted_key = fa['folder_key']['encrypted_key']
+        key_type = fa['folder_key']['encrypted_key_type']
+        access_type = fa.get('access_type')
+        access_uid = fa.get('access_type_uid')
+
+        use_team = (
+            access_type == folder_pb2.AT_TEAM
+            or (access_uid and access_uid in team_cache)
+        )
+
+        try:
+            folder_key = None
+            if use_team and access_uid:
+                team_aes, team_rsa, team_ecc = _team_decrypt_material(params, access_uid)
+                folder_key = _try_decrypt_with_typed_key(
+                    encrypted_key, key_type,
+                    aes_key=team_aes, rsa_key=team_rsa, ecc_key=team_ecc,
+                )
+                # Algorithm fallbacks (typed decrypt may disagree with wire type)
+                if not folder_key and team_aes is not None:
+                    folder_key = _try_decrypt_symmetric(encrypted_key, team_aes)
+                if not folder_key and team_rsa is not None:
+                    try:
+                        folder_key = crypto.decrypt_rsa(encrypted_key, team_rsa)
+                    except Exception:
+                        pass
+                if not folder_key and team_ecc is not None:
+                    try:
+                        folder_key = crypto.decrypt_ec(encrypted_key, team_ecc)
+                    except Exception:
+                        pass
+
+            if not folder_key:
+                folder_key = _try_decrypt_with_typed_key(
+                    encrypted_key, key_type,
+                    aes_key=params.data_key,
+                    rsa_key=params.rsa_key2,
+                    ecc_key=params.ecc_key,
+                )
+            if not folder_key:
+                folder_key = _try_decrypt_with_user_keys(encrypted_key, params)
+
+            if folder_key and len(folder_key) == 32:
+                return folder_key
+        except Exception as e:
+            logging.debug(
+                'Failed to decrypt folder key for %s from access data: %s', folder_uid, e
+            )
+    return None
+
+
 def _decrypt_nested_share_folder_keys(params):
-    """Decrypt Nested Share Folder folder and record keys."""
+    """Decrypt Nested Share Folder folder and record keys.
+
+    Mirrors Web Vault ``process-keeper-drive-folders``:
+    - ENCRYPTED_BY_USER_KEY → user keys, then folderAccesses
+    - ENCRYPTED_BY_PARENT_KEY → parent folder key, then folderAccesses
+    - ENCRYPTED_BY_TEAM_KEY → folderAccesses (team-wrapped keys)
+    """
     newly_decrypted = True
-    
+
     while newly_decrypted:
         newly_decrypted = False
-        
+
         for folder_uid, folder_obj in params.nested_share_folders.items():
             if 'folder_key_unencrypted' in folder_obj:
                 continue
 
             folder_key = None
+            force_accesses = False
 
             if folder_uid in params.nested_share_folder_keys:
                 for fk in params.nested_share_folder_keys[folder_uid]:
                     enc_key = fk['encrypted_key']
+                    key_type = fk['key_type']
                     try:
-                        if fk['key_type'] == folder_pb2.ENCRYPTED_BY_USER_KEY:
-                            # FolderKeyEncryptionType only tells us the KEY SOURCE (user vs parent),
-                            # not the encryption algorithm.  Try all algorithms in likelihood order:
-                            #   AES-256-GCM (60 B) — modern default
-                            #   AES-256-CBC (48 B) — legacy
-                            #   RSA-2048    (256 B) — shared folder re-encrypted for this user
-                            #   ECC                — EC-based key wrap
+                        if key_type == folder_pb2.ENCRYPTED_BY_TEAM_KEY:
+                            # Key lives in folderAccesses encrypted with the team key.
+                            force_accesses = True
+                            break
+                        if key_type == folder_pb2.ENCRYPTED_BY_USER_KEY:
+                            # FolderKeyEncryptionType is KEY SOURCE, not algorithm.
                             folder_key = _try_decrypt_with_user_keys(enc_key, params)
                             if folder_key:
                                 break
-                        elif fk['key_type'] == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
-                            parent_uid = folder_obj.get('parent_uid')
+                            force_accesses = True
+                        elif key_type == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
+                            parent_uid = fk.get('parent_uid') or folder_obj.get('parent_uid')
                             if parent_uid and parent_uid in params.nested_share_folders:
                                 parent_folder = params.nested_share_folders[parent_uid]
                                 if 'folder_key_unencrypted' in parent_folder:
-                                    parent_key = parent_folder['folder_key_unencrypted']
-                                    folder_key = _try_decrypt_symmetric(enc_key, parent_key)
+                                    folder_key = _try_decrypt_symmetric(
+                                        enc_key, parent_folder['folder_key_unencrypted']
+                                    )
                                     if folder_key:
                                         break
+                            # Sharees often get PARENT_KEY metadata without the owner parent.
+                            force_accesses = True
                     except Exception as e:
-                        logging.debug(f"Failed to decrypt folder key for {folder_uid}: {e}")
+                        logging.debug('Failed to decrypt folder key for %s: %s', folder_uid, e)
 
-            # Fallback: try from folder access data (EncryptedDataKey — has explicit algorithm)
-            if not folder_key and folder_uid in params.nested_share_folder_accesses:
-                for fa in params.nested_share_folder_accesses[folder_uid]:
-                    if 'folder_key' not in fa:
-                        continue
-
-                    try:
-                        encrypted_key = fa['folder_key']['encrypted_key']
-                        key_type = fa['folder_key']['encrypted_key_type']
-
-                        if key_type == folder_pb2.encrypted_by_data_key_gcm:
-                            folder_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
-                        elif key_type == folder_pb2.encrypted_by_data_key:
-                            folder_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                        elif key_type == folder_pb2.encrypted_by_public_key:
-                            if params.rsa_key2:
-                                folder_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
-                        elif key_type == folder_pb2.encrypted_by_public_key_ecc:
-                            if params.ecc_key:
-                                folder_key = crypto.decrypt_ec(encrypted_key, params.ecc_key)
-                        else:
-                            # Unknown type — try all user keys as a last resort
-                            folder_key = _try_decrypt_with_user_keys(encrypted_key, params)
-
-                        if folder_key:
-                            break
-                    except Exception as e:
-                        logging.debug(f"Failed to decrypt folder key for {folder_uid} from access data: {e}")
+            if not folder_key and (force_accesses or folder_uid in params.nested_share_folder_accesses):
+                folder_key = _try_decrypt_from_folder_access(folder_uid, params)
 
             if folder_key:
                 folder_obj['folder_key_unencrypted'] = folder_key
@@ -748,7 +844,7 @@ def _decrypt_nested_share_folder_keys(params):
                         if 'color' in data_json:
                             folder_obj['color'] = data_json['color']
                     except Exception as e:
-                        logging.debug(f"Failed to decrypt folder data for {folder_uid}: {e}")
+                        logging.debug('Failed to decrypt folder data for %s: %s', folder_uid, e)
 
     _decrypt_nested_share_record_keys(params)
 
