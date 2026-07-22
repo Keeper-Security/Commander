@@ -68,25 +68,38 @@ class TestRegister(TestCase):
         cmd.execute(params, email=['user2@keepersecurity.com'], action='revoke', record=record_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
+    def _shared_with_owner_side_effect(self, owner_username=None, extra_users=None):
+        """Build a get_record_shares side_effect that marks *owner_username* as owner.
+
+        Defaults to the session user. *extra_users* is an optional list of
+        non-owner emails included in user_permissions.
+        """
+        extras = list(extra_users or [])
+
+        def shared_with_owner(params_, record_uids, is_share_admin):
+            owner = owner_username if owner_username is not None else params_.user
+            for uid in record_uids:
+                if uid not in params_.record_cache:
+                    continue
+                perms = [{'username': owner, 'owner': True}]
+                for email in extras:
+                    perms.append({
+                        'username': email, 'owner': False,
+                        'shareable': False, 'editable': False,
+                    })
+                params_.record_cache[uid]['shares'] = {'user_permissions': perms}
+
+        return shared_with_owner
+
     def test_share_record_rejects_grant_to_owner(self):
         """Granting share permissions to the record owner must fail client-side."""
         params = get_synced_params()
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
         cmd = register.ShareRecordCommand()
 
-        def shared_with_owner(params_, record_uids, is_share_admin):
-            for uid in record_uids:
-                if uid in params_.record_cache:
-                    params_.record_cache[uid]['shares'] = {
-                        'user_permissions': [
-                            {'username': params_.user, 'owner': True},
-                            {'username': 'user2@keepersecurity.com', 'owner': False,
-                             'shareable': False, 'editable': False},
-                        ]
-                    }
-
         self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
-        self.record_share_mock.side_effect = shared_with_owner
+        self.record_share_mock.side_effect = self._shared_with_owner_side_effect(
+            extra_users=['user2@keepersecurity.com'])
 
         with self.assertRaises(CommandError) as ctx:
             cmd.prep_request(params, dict(
@@ -103,17 +116,8 @@ class TestRegister(TestCase):
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
         cmd = register.ShareRecordCommand()
 
-        def shared_with_owner(params_, record_uids, is_share_admin):
-            for uid in record_uids:
-                if uid in params_.record_cache:
-                    params_.record_cache[uid]['shares'] = {
-                        'user_permissions': [
-                            {'username': params_.user, 'owner': True},
-                        ]
-                    }
-
         self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
-        self.record_share_mock.side_effect = shared_with_owner
+        self.record_share_mock.side_effect = self._shared_with_owner_side_effect()
 
         with self.assertRaises(CommandError) as ctx:
             cmd.prep_request(params, dict(

@@ -189,14 +189,20 @@ def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *
 
     Ownership transfer (``-a owner``) is allowed unless the target already owns
     the record (``allow_owner_transfer=True`` then raises a no-op-style error).
+
+    If owner lookup via ``get_record_accesses_v3`` fails, we log a warning and
+    return without raising. Blocking the share on a transient access-API error
+    would reject legitimate grants to non-owners; the server still rejects
+    invalid owner-targeted shares if we miss the check client-side.
     """
     from ...nested_share_folder.record_api import (
         get_record_accesses_v3, find_record_owner_username)
     try:
         access_result = get_record_accesses_v3(params, [record_uid])
     except Exception as exc:
-        logging.getLogger(__name__).debug(
-            "Could not resolve owner for record '%s': %s", record_uid, exc)
+        logging.getLogger(__name__).warning(
+            "Could not resolve owner for record '%s'; proceeding without "
+            "client-side owner check: %s", record_uid, exc)
         return
     owner = find_record_owner_username(access_result, record_uid)
     if not owner or owner.casefold() != email.casefold():

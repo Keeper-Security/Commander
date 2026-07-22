@@ -313,7 +313,16 @@ def _owner_share_target_message(email, entity='record'):
 
 def _is_shared_folder_owner_email(shared_folder, email, params=None):
     # type: (dict, str, Optional[KeeperParams]) -> bool
-    """True when *email* matches the classic shared folder owner from sync-down."""
+    """True when *email* matches the classic shared folder owner from sync-down.
+
+    Resolution order:
+      1. ``owner_username`` from sync-down (primary; present for most folders)
+      2. ``users[].owner`` flag when sync includes it on the user row
+      3. ``owner_account_uid`` matched to the current session user — only used
+         when username/flag are absent. If sync omits ``owner_account_uid`` or
+         the session has no ``account_uid_bytes``, this path is skipped and we
+         return False rather than guessing.
+    """
     if not shared_folder or not email:
         return False
     email_cf = email.casefold()
@@ -321,16 +330,20 @@ def _is_shared_folder_owner_email(shared_folder, email, params=None):
     if owner_username and owner_username.casefold() == email_cf:
         return True
     # Some sync payloads also put an owner flag on the user row.
-    for user in shared_folder.get('users', []):
-        username = (user.get('username') or '')
-        if username.casefold() != email_cf:
-            continue
-        if user.get('owner') is True:
-            return True
-    # Fall back: owner_account_uid + current session user.
+    users = shared_folder.get('users', [])
+    if any(
+        user.get('owner') is True
+        and (user.get('username') or '').casefold() == email_cf
+        for user in users
+    ):
+        return True
+    # Last resort: only when the target is the logged-in user and sync exposes
+    # owner_account_uid. Skipped when either field is missing.
     owner_uid = shared_folder.get('owner_account_uid')
-    if params and owner_uid and params.user and params.user.casefold() == email_cf:
-        if owner_uid == utils.base64_url_encode(params.account_uid_bytes):
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None) if params else None
+    if (params and owner_uid and account_uid_bytes
+            and params.user and params.user.casefold() == email_cf):
+        if owner_uid == utils.base64_url_encode(account_uid_bytes):
             return True
     return False
 
@@ -591,10 +604,18 @@ class ShareFolderCommand(Command):
                 if all_users or all_records:
                     if all_users:
                         if 'users' in sh_fol:
-                            sf_users.update(
-                                (x['username'] for x in sh_fol['users']
-                                 if x['username'] != params.user
-                                 and not _is_shared_folder_owner_email(sh_fol, x['username'], params=params)))
+                            for x in sh_fol['users']:
+                                username = x.get('username')
+                                if not username or username == params.user:
+                                    continue
+                                if _is_shared_folder_owner_email(
+                                        sh_fol, username, params=params):
+                                    logging.debug(
+                                        "share-folder: skipping owner '%s' in "
+                                        "bulk user update for folder '%s'",
+                                        username, sf_uid)
+                                    continue
+                                sf_users.add(username)
                         if 'teams' in sh_fol:
                             sf_teams.update((x['team_uid'] for x in sh_fol['teams']))
                     if all_records:
@@ -1163,6 +1184,10 @@ class ShareRecordCommand(Command):
             owner_username = _find_record_owner_username(
                 existing_shares, params=params, record_uid=record_uid)
             for email in all_users:
+                # Precedence: owner rejection runs before existing-share add/update
+                # logic below. Granting/revoking the owner is never valid, even when
+                # they also appear in existing_shares; "already shared" handling only
+                # applies to non-owners.
                 if owner_username and email.casefold() == owner_username.casefold():
                     # Ownership transfer (-a owner) is allowed only when the target
                     # is not already the owner. Grant/revoke must never target owner.
