@@ -62,6 +62,11 @@ _SUBMODULE_MAP = {
         'find_nested_share_folders_for_record',
         'resolve_nested_share_record_uid', 'resolve_nested_share_folder_uid',
     ],
+    'acl_cache': [
+        'warm_for_tree', 'warm_nsf_folder_share_cache', 'warm_nsf_record_share_cache',
+        'warm_classic_record_shares', 'clear_share_caches', 'ensure_share_caches',
+        'get_nsf_folder_share_accessors', 'get_nsf_record_share_accessors',
+    ],
 }
 
 _LAZY_REGISTRY = {}
