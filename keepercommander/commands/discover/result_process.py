@@ -8,6 +8,10 @@ from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
                                  router_configure_resource)
+from ..pam.vault_target import records_in_folder, is_nested_share_folder
+from ...nested_share_folder.record_api import create_record_data_v3, record_add_v3
+from ...nested_share_folder.common import get_folder_key
+from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...display import bcolors
 from ...proto import router_pb2, record_pb2, pam_pb2
@@ -23,7 +27,7 @@ from ...discovery_common.types import (
 from ...discovery_common.constants import PAM_USER
 from ...discovery_common.constants import VERTICES_SORT_MAP
 from pydantic import BaseModel
-from typing import Optional, List, Any, Tuple, Dict, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from ...api import get_records_add_request
 
 if TYPE_CHECKING:
@@ -101,21 +105,21 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 record_type == "pamAzureConfiguration")
 
     @staticmethod
-    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> Optional[str]:
+    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> str | None:
         while True:
             shared_folders = gateway_context.get_shared_folders(params)
             index = 0
             for folder in shared_folders:
                 print(f"{pad}* {_h(str(index+1))} - {folder.get('uid')}  {folder.get('name')}")
                 index += 1
-            selected = input(f"{pad}Enter number of the shared folder>")
+            selected = input(f"{pad}Enter number of the shared folder or Nested Share Folder>")
             try:
                 return shared_folders[int(selected) - 1].get("uid")
             except ValueError:
                 print(f"{pad}{_f('Input was not a number.')}")
 
     @staticmethod
-    def get_field_values(record: TypedRecord, field_type: str) -> Optional[List[Any]]:
+    def get_field_values(record: TypedRecord, field_type: str) -> list[Any] | None:
         return next(
             (f.value
              for f in record.fields
@@ -124,7 +128,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         )
 
     def get_keys_by_record(self, params: KeeperParams, gateway_context: GatewayContext,
-                           record: TypedRecord) -> List[str]:
+                           record: TypedRecord) -> list[str]:
         """
         For the record, get the values of fields that are key for this record type.
 
@@ -137,7 +141,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         key_field = Process.get_key_field(record.record_type)
         keys = []
         if key_field == "host_port":
-            values = self.get_field_values(record, "pamHostname")  # type: List[dict]
+            values = self.get_field_values(record, "pamHostname")  # type: list[dict]
             if len(values) == 0:
                 return []
 
@@ -182,8 +186,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     @staticmethod
     def _record_lookup(record_uid: str,
-                       context: Optional[Any] = None,
-                       allow_sm: bool = False) -> Optional[NormalizedRecord]:
+                       context: Any | None = None,
+                       allow_sm: bool = False) -> NormalizedRecord | None:
 
         """
         Get the record from the Vault, normalize it, and return it.
@@ -192,7 +196,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         """
 
         params = context.get("params")
-        record = vault.TypedRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+        record = vault.TypedRecord.load(params, record_uid)  # type: TypedRecord | None
         if record is None:
             return None
 
@@ -232,6 +236,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         logging.debug(f"building the PAM record cache")
 
         # Make a cache of existing record by the criteria per record type
+        # (includes Nested Share Folder records)
         cache = {
             "pamUser": {},
             "pamMachine": {},
@@ -241,28 +246,31 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         # Set all the PAM Records
         records = list(vault_extensions.find_records(params, "pam*", use_regex=True))
+        seen_uids = {getattr(r, 'record_uid', None) for r in records}
+        # Include NSF PAM records that may not appear in find_records edge cases
+        for record_uid in getattr(params, 'nested_share_records', {}) or {}:
+            if record_uid not in seen_uids:
+                rec = vault.TypedRecord.load(params, record_uid)
+                if rec is not None:
+                    records.append(rec)
+                    seen_uids.add(record_uid)
         for record in records:
-            # If the record type is not part of the cache, skip the record
-            if record.record_type not in cache:
-                continue
+            if record.record_type in cache:
+                # Load the full record
+                record = vault.TypedRecord.load(params, record.record_uid)  # type: TypedRecord | None
 
-            # Load the full record
-            record = vault.TypedRecord.load(params, record.record_uid)  # type: Optional[TypedRecord]
-
-            cache_keys = self.get_keys_by_record(
-                params=params,
-                gateway_context=gateway_context,
-                record=record
-            )
-            if len(cache_keys) == 0:
-                continue
-
-            for cache_key in cache_keys:
-                cache[record.record_type][cache_key] = record.record_uid
+                cache_keys = self.get_keys_by_record(
+                    params=params,
+                    gateway_context=gateway_context,
+                    record=record
+                )
+                if cache_keys:
+                    for cache_key in cache_keys:
+                        cache[record.record_type][cache_key] = record.record_uid
 
         return cache
 
-    def _edit_record(self, content: DiscoveryObject, pad: str, editable: List[str]) -> bool:
+    def _edit_record(self, content: DiscoveryObject, pad: str, editable: list[str]) -> bool:
 
         edit_label = input(f"{pad}Enter 'title' or the name of the {_ok('Label')} to edit, RETURN to cancel> ")
 
@@ -354,7 +362,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     @staticmethod
     def _add_all_preprocess(vertex: DAGVertex, content: DiscoveryObject, parent_vertex: DAGVertex,
-                            acl: Optional[UserAcl] = None) -> Optional[PromptResult]:
+                            acl: UserAcl | None = None) -> PromptResult | None:
         """
         This is client side check if we should skip prompting the user.
 
@@ -377,7 +385,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     return PromptResult(action=PromptActionEnum.SKIP)
         return None
 
-    def _prompt_display_fields(self, content: DiscoveryObject, pad: str) -> List[str]:
+    def _prompt_display_fields(self, content: DiscoveryObject, pad: str) -> list[str]:
 
         editable = []
         for section in ["fields", "custom"]:
@@ -454,13 +462,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 content: DiscoveryObject,
                 acl: UserAcl,
                 parent_vertex: DAGVertex,
-                vertex: Optional[DAGVertex] = None,
+                vertex: DAGVertex | None = None,
                 resource_has_admin: bool = True,
                 item_count: int = 0,
                 items_left: int = 0,
                 indent: int = 0,
                 block_auto_add: bool = False,
-                context: Optional[Any] = None) -> PromptResult:
+                context: Any | None = None) -> PromptResult:
 
         if context is None:
             raise Exception("Context not set for processing the discovery results")
@@ -614,8 +622,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     def _find_user_record(self,
                           params: KeeperParams,
-                          bulk_convert_records: List[BulkRecordConvert],
-                          context: Optional[Any] = None) -> Tuple[Optional[TypedRecord], bool]:
+                          bulk_convert_records: list[BulkRecordConvert],
+                          context: Any | None = None) -> tuple[TypedRecord | None, bool]:
 
         gateway_context = context.get("gateway_context")  # type: GatewayContext
         record_link = context.get("record_link")  # type: RecordLink
@@ -623,12 +631,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         # Get the latest records
         params.sync_data = True
 
-        # Make a list of all records in the shared folders.
+        # Make a list of all records in the shared folders / Nested Share Folders.
         # We will use this to check if a selected user is in the shared folders.
+
         shared_record_uids = []
         for shared_folder in gateway_context.get_shared_folders(params):
-            folder = shared_folder.get("folder")
-            if "records" in folder:
+            folder = shared_folder.get("folder") or {}
+            folder_uid = shared_folder.get("uid")
+            if folder_uid and is_nested_share_folder(params, folder_uid):
+                shared_record_uids.extend(records_in_folder(params, folder_uid))
+            elif isinstance(folder, dict) and "records" in folder:
                 for record in folder["records"]:
                     shared_record_uids.append(record.get("record_uid"))
 
@@ -656,7 +668,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 return None, False
 
             # Find usable admin records.
-            admin_search_results = []  # type: List[AdminSearchResult]
+            admin_search_results = []  # type: list[AdminSearchResult]
             for record in user_record:
 
                 user_record = vault.KeeperRecord.load(params, record.record_uid)
@@ -692,7 +704,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     is_directory_user = False
                     if record_vertex is not None:
                         parent_record_uid = record_link.get_parent_record_uid(user_record.record_uid)
-                        parent_record = vault.TypedRecord.load(params, parent_record_uid)  # type: Optional[TypedRecord]
+                        parent_record = vault.TypedRecord.load(params, parent_record_uid)  # type: TypedRecord | None
                         if parent_record is not None:
                             is_directory_user = self._is_directory_user(parent_record.record_type)
                             if not is_directory_user:
@@ -801,7 +813,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     @staticmethod
     def _handle_admin_record_from_record(record: TypedRecord,
                                          content: DiscoveryObject,
-                                         context: Optional[Any] = None) -> Optional[PromptResult]:
+                                         context: Any | None = None) -> PromptResult | None:
 
         params = context.get("param")  # type: KeeperParams
         gateway_context = context.get("gateway_context")  # type: GatewayContext
@@ -892,9 +904,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                       parent_vertex: DAGVertex,
                       content: DiscoveryObject,
                       acl: UserAcl,
-                      bulk_convert_records: List[BulkRecordConvert],
+                      bulk_convert_records: list[BulkRecordConvert],
                       indent: int = 0,
-                      context: Optional[Any] = None) -> Optional[PromptResult]:
+                      context: Any | None = None) -> PromptResult | None:
 
         if content is None:
             raise Exception("The admin content was not passed in to prompt the user.")
@@ -961,7 +973,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print("")
 
     @staticmethod
-    def _display_auto_add_results(bulk_add_records: List[BulkRecordAdd]):
+    def _display_auto_add_results(bulk_add_records: list[BulkRecordAdd]):
 
         """
         Display the number of record created from rule engine ADD results and smart add function.
@@ -974,7 +986,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                   f"record{'' if add_count == 1 else 's'} to be added.{bcolors.ENDC}")
 
     @staticmethod
-    def _prompt_confirm_add(bulk_add_records: List[BulkRecordAdd]):
+    def _prompt_confirm_add(bulk_add_records: list[BulkRecordAdd]):
 
         """
         If we quit, we want to ask the user if they want to add record for discovery objects that they selected
@@ -1000,7 +1012,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print(f"{bcolors.FAIL}Did not get 'Y' or 'N'{bcolors.ENDC}")
 
     @staticmethod
-    def _prepare_record(content: DiscoveryObject, context: Optional[Any] = None) -> Tuple[Any, str]:
+    def _prepare_record(content: DiscoveryObject, context: Any | None = None) -> tuple[Any, str]:
 
         """
         Prepare the Vault record side.
@@ -1009,12 +1021,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         It will be created at the end of the processing run in bulk.
         We to build a record to get a record UID.
 
+        For Nested Share Folders, returns a TypedRecord (created via NSF v3 APIs).
+        For legacy shared folders, returns a RecordAdd protobuf.
+
         :params content: The discovery object instance.
         :params context: Optionally, it will contain information set from the run() method.
         :returns: Returns an unsaved Keeper record instance.
         """
 
         params = context.get("params")
+        from ..pam.vault_target import is_nested_share_folder
 
         # DEFINE V3 RECORD
 
@@ -1050,8 +1066,12 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 record_field.required = field.required
                 record.custom.append(record_field)
 
+        # Nested Share Folder: keep TypedRecord; created later via NSF v3 APIs.
+        if content.shared_folder_uid and is_nested_share_folder(params, content.shared_folder_uid):
+            return record, record.record_uid
+
         folder = params.folder_cache.get(content.shared_folder_uid)
-        folder_key = None  # type: Optional[bytes]
+        folder_key = None  # type: bytes | None
         if isinstance(folder, subfolder.SharedFolderFolderNode):
             shared_folder_uid = folder.shared_folder_uid
         elif isinstance(folder, subfolder.SharedFolderNode):
@@ -1092,7 +1112,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return record_add_protobuf, record.record_uid
 
     @classmethod
-    def _create_records(cls, bulk_add_records: List[BulkRecordAdd], context: Optional[Any] = None) -> (
+    def _create_records(cls, bulk_add_records: list[BulkRecordAdd], context: Any | None = None) -> (
             BulkProcessResults):
 
         """
@@ -1109,31 +1129,88 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         build_process_results = BulkProcessResults()
 
+        nsf_bulk = [r for r in bulk_add_records
+                    if r.shared_folder_uid and is_nested_share_folder(params, r.shared_folder_uid)]
+        legacy_bulk = [r for r in bulk_add_records
+                       if not (r.shared_folder_uid and is_nested_share_folder(params, r.shared_folder_uid))]
+
         ##############################################################################################################
         #
         # STEP 1 - Batch add new records
 
-        # Generate a list of RecordAdd instance.
-        # In BulkRecordAdd they will be the record instance.
-        record_add_list = [r.record for r in bulk_add_records]  # type: List[record_pb2.RecordAdd]
-
         records_per_request = 999
+        add_results = []  # type: list[record_pb2.RecordModifyResult]
+        created_nsf = False
+        skipped_uids = set()
 
-        add_results = []  # type: List[record_pb2.RecordModifyResult]
-        logging.debug("adding record in batches")
-        print("batch record create: ", end="")
-        sys.stdout.flush()
-        while record_add_list:
-            print(".", end="")
+        # NSF path: vault/records/v3/add with folder key encryption
+        if nsf_bulk:
+            logging.debug("adding NSF records in batches")
+            print("batch NSF record create: ", end="")
             sys.stdout.flush()
-            logging.debug(f"* adding batch")
-            rq = get_records_add_request(params)
-            rq.records.extend(record_add_list[:records_per_request])
-            record_add_list = record_add_list[records_per_request:]
-            rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
-            add_results.extend(rs.records)
-        print("")
-        sys.stdout.flush()
+            nsf_adds = []
+            for bulk_record in nsf_bulk:
+                record = bulk_record.record
+                if not isinstance(record, vault.TypedRecord):
+                    build_process_results.failure.append(
+                        BulkRecordFail(
+                            title=bulk_record.title,
+                            error="NSF create expected a TypedRecord preparation payload.",
+                        )
+                    )
+                    skipped_uids.add(bulk_record.record_uid)
+                    continue
+                folder_key = get_folder_key(
+                    params, bulk_record.shared_folder_uid, raise_on_missing=False,
+                )
+                if not folder_key:
+                    build_process_results.failure.append(
+                        BulkRecordFail(
+                            title=bulk_record.title,
+                            error=f"NSF folder key not available for {bulk_record.shared_folder_uid}.",
+                        )
+                    )
+                    skipped_uids.add(bulk_record.record_uid)
+                    continue
+                data = vault_extensions.extract_typed_record_data(record)
+                nsf_adds.append(create_record_data_v3(
+                    record_uid=bulk_record.record_uid,
+                    record_key=record.record_key or utils.generate_aes_key(),
+                    data=data,
+                    folder_uid=bulk_record.shared_folder_uid,
+                    folder_key=folder_key,
+                    data_key=params.data_key,
+                    client_modified_time=utils.current_milli_time(),
+                ))
+
+            while nsf_adds:
+                print(".", end="")
+                sys.stdout.flush()
+                chunk = nsf_adds[:records_per_request]
+                nsf_adds = nsf_adds[records_per_request:]
+                rs = record_add_v3(params, chunk)
+                add_results.extend(rs.records)
+                created_nsf = True
+            print("")
+            sys.stdout.flush()
+
+        # Legacy path: vault/records_add
+        if legacy_bulk:
+            record_add_list = [r.record for r in legacy_bulk]  # type: list[record_pb2.RecordAdd]
+            logging.debug("adding record in batches")
+            print("batch record create: ", end="")
+            sys.stdout.flush()
+            while record_add_list:
+                print(".", end="")
+                sys.stdout.flush()
+                logging.debug(f"* adding batch")
+                rq = get_records_add_request(params)
+                rq.records.extend(record_add_list[:records_per_request])
+                record_add_list = record_add_list[records_per_request:]
+                rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
+                add_results.extend(rs.records)
+            print("")
+            sys.stdout.flush()
 
         logging.debug(f"add_result: {add_results}")
 
@@ -1159,20 +1236,22 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             if bulk_record.record_uid in created_cache:
                 logging.debug(f"found a duplicate of record uid: {bulk_record.record_uid}")
                 continue
+            if bulk_record.record_uid in skipped_uids:
+                continue
             print(".", end="")
             sys.stdout.flush()
 
             # Grab the type Keeper record instance, and title from that record.
-            pb_add_record = bulk_record.record
             title = bulk_record.title
+            rec_uid_bytes = utils.base64_url_decode(bulk_record.record_uid)
 
             rotation_disabled = False
 
             # Find the result for this record.
             result = None
             for x in add_results:
-                logging.debug(f"{pb_add_record.record_uid} vs {x.record_uid}")
-                if pb_add_record.record_uid == x.record_uid:
+                logging.debug(f"{rec_uid_bytes} vs {x.record_uid}")
+                if rec_uid_bytes == x.record_uid:
                     result = x
                     break
 
@@ -1246,12 +1325,14 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         print("")
         sys.stdout.flush()
 
+        if created_nsf:
+            sync_down_preserving_nsf_keys(params)
         params.sync_data = True
 
         return build_process_results
 
     @classmethod
-    def _convert_records(cls, bulk_convert_records: List[BulkRecordConvert], context: Optional[Any] = None):
+    def _convert_records(cls, bulk_convert_records: list[BulkRecordConvert], context: Any | None = None):
 
         params = context.get("params")
         gateway_context = context.get("gateway_context")
@@ -1291,7 +1372,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     @staticmethod
     def _get_directory_info(domain: str,
                             skip_users: bool = False,
-                            context: Optional[Any] = None) -> Optional[DirectoryInfo]:
+                            context: Any | None = None) -> DirectoryInfo | None:
         """
         Get information about this record from the vault records.
 
@@ -1305,7 +1386,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         # Find the all directory records, in for this gateway, that have a domain that matches what we are looking for.
         for directory_record in vault_extensions.find_records(params, record_type="pamDirectory"):
             directory_record = vault.TypedRecord.load(params,
-                                                      directory_record.record_uid)  # type: Optional[TypedRecord]
+                                                      directory_record.record_uid)  # type: TypedRecord | None
 
             info = params.record_rotation_cache.get(directory_record.record_uid)
             if info is None:
@@ -1391,7 +1472,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 "pamDirectory": "Directories",
                 "pamMachine": "Machines",
                 "pamDatabase": "Databases"
-            }  # type: Dict[str, Optional[str]]
+            }  # type: dict[str, str | None]
 
             for rv in record_type_to_vertices_map[rt]:  # type: DAGVertex
                 if not rv.active or not rv.has_data:

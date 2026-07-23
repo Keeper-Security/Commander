@@ -7,6 +7,7 @@ from ..pam.config_facades import PamConfigurationRecordFacade
 from ..pam.router_helper import get_response_payload
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_send_action_to_gateway
+from ..pam.vault_target import pam_folder_exists, get_pam_folder_path
 from ..ksm import KSMCommand
 from ... import utils, vault_extensions
 from ... import vault
@@ -21,7 +22,10 @@ import base64
 import re
 from packaging import version as packaging_version
 
-from typing import List, Optional, Union, Callable, Tuple, Any, Dict, TYPE_CHECKING
+from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
+
+from ..pam_import.record_loader import iter_accessible_record_uids, load_pam_record
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -33,7 +37,7 @@ class MultiConfigurationException(Exception):
     """
     If the gateway has multiple configuration
     """
-    def __init__(self, items: List[Dict]):
+    def __init__(self, items: list[dict]):
         super().__init__()
         self.items = items
 
@@ -66,14 +70,14 @@ class GatewayContext:
         self.gateway = gateway
         self.application = application
         self._shared_folders = None
-        self._info: Optional[Dict] = None
+        self._info: dict | None = None
 
     @staticmethod
     def all_gateways(params: KeeperParams):
         return get_all_gateways(params)
 
     @staticmethod
-    def get_configuration_records(params) -> List[KeeperRecord]:
+    def get_configuration_records(params) -> list[KeeperRecord]:
 
         """
         Get PAM configuration records.
@@ -84,17 +88,37 @@ class GatewayContext:
         """
 
         configuration_list = []
-        if value_to_boolean(os.environ.get("PAM_RECORD_TYPE_MATCH")):
+        seen = set()
+        type_match = value_to_boolean(os.environ.get("PAM_RECORD_TYPE_MATCH"))
+        if type_match:
             for record in list(vault_extensions.find_records(params, record_version=iter([3, 6]))):
                 if re.search(r"pam.+Configuration", record.record_type):
                     configuration_list.append(record)
+                    seen.add(record.record_uid)
         else:
-            configuration_list = list(vault_extensions.find_records(params, record_version=6))
+            for record in list(vault_extensions.find_records(params, record_version=6)):
+                configuration_list.append(record)
+                seen.add(record.record_uid)
+
+        # Include Nested Share Folder PAM configs that are not mirrored into record_cache yet.
+        for uid in iter_accessible_record_uids(params):
+            if uid in seen:
+                continue
+            record = load_pam_record(params, uid)
+            if not record or not isinstance(record, vault.TypedRecord):
+                continue
+            if type_match:
+                if not re.search(r"pam.+Configuration", record.record_type or ''):
+                    continue
+            elif record.version != 6:
+                continue
+            configuration_list.append(record)
+            seen.add(uid)
         return configuration_list
 
     @classmethod
-    def find_gateway(cls, params: KeeperParams, find_func: Callable, gateways: Optional[List] = None) \
-            -> Tuple[Optional[GatewayContext], Any]:
+    def find_gateway(cls, params: KeeperParams, find_func: Callable, gateways: list | None = None) \
+            -> tuple[GatewayContext | None, Any]:
 
         """
         Populate the context from matching using the function passed in.
@@ -121,8 +145,8 @@ class GatewayContext:
         return None, None
 
     @staticmethod
-    def from_configuration_uid(params: KeeperParams, configuration_uid: str, gateways: Optional[List] = None) \
-            -> Optional[GatewayContext]:
+    def from_configuration_uid(params: KeeperParams, configuration_uid: str, gateways: list | None = None) \
+            -> GatewayContext | None:
 
         """
         Populate context using the configuration UID.
@@ -134,7 +158,7 @@ class GatewayContext:
         if gateways is None:
             gateways = GatewayContext.all_gateways(params)
 
-        configuration_record = vault.KeeperRecord.load(params, configuration_uid)
+        configuration_record = load_pam_record(params, configuration_uid)
         if not isinstance(configuration_record, vault.TypedRecord):
             print(f'{bcolors.FAIL}PAM Configuration [{configuration_uid}] is not available.{bcolors.ENDC}')
             return None
@@ -161,8 +185,8 @@ class GatewayContext:
         )
 
     @staticmethod
-    def from_gateway(params: KeeperParams, gateway: str, configuration_uid: Optional[str] = None) \
-            -> Optional[GatewayContext]:
+    def from_gateway(params: KeeperParams, gateway: str, configuration_uid: str | None = None) \
+            -> GatewayContext | None:
 
         """
         Populate context use the gateway, and optional configuration UID.
@@ -190,7 +214,10 @@ class GatewayContext:
             logging.debug(f"checking configuration record {configuration_record.title}")
 
             # Load the configuration record and get the gateway_uid from the facade.
-            configuration_record = vault.KeeperRecord.load(params, configuration_record.record_uid)
+            configuration_record = load_pam_record(params, configuration_record.record_uid)
+            if not isinstance(configuration_record, vault.TypedRecord):
+                logging.debug(f" * configuration record could not be loaded, skipping.")
+                continue
             configuration_facade = PamConfigurationRecordFacade()
             configuration_facade.record = configuration_record
 
@@ -276,7 +303,7 @@ class GatewayContext:
         return (request_gateway == utils.base64_url_encode(self.gateway.controllerUid) or
                 request_gateway.lower() == self.gateway_name.lower())
 
-    def get_shared_folders(self, params: KeeperParams) -> List[dict]:
+    def get_shared_folders(self, params: KeeperParams) -> list[dict]:
         if self._shared_folders is None:
             self._shared_folders = []
             application_uid = utils.base64_url_encode(self.gateway.applicationUid)
@@ -288,17 +315,35 @@ class GatewayContext:
                     uid_str = utils.base64_url_encode(shared.secretUid)
                     shared_type = APIRequest_pb2.ApplicationShareType.Name(shared.shareType)
                     if shared_type == 'SHARE_TYPE_FOLDER':
-                        if uid_str not in params.shared_folder_cache:
+                        if uid_str in params.shared_folder_cache:
+                            cached_shared_folder = params.shared_folder_cache[uid_str]
+                            self._shared_folders.append({
+                                "uid": uid_str,
+                                "name": cached_shared_folder.get('name_unencrypted'),
+                                "folder": cached_shared_folder
+                            })
                             continue
-                        cached_shared_folder = params.shared_folder_cache[uid_str]
-                        self._shared_folders.append({
-                            "uid": uid_str,
-                            "name": cached_shared_folder.get('name_unencrypted'),
-                            "folder": cached_shared_folder
-                        })
+                        nsf = getattr(params, 'nested_share_folders', {}).get(uid_str)
+                        if nsf:
+                            self._shared_folders.append({
+                                "uid": uid_str,
+                                "name": nsf.get('name', uid_str),
+                                "folder": nsf
+                            })
+            # PAM config application folder (often NSF) may not appear in app shares listing.
+            app_folder_uid = self.default_shared_folder_uid
+            if app_folder_uid and not any(f.get('uid') == app_folder_uid for f in self._shared_folders):
+                if pam_folder_exists(params, app_folder_uid):
+                    nsf = getattr(params, 'nested_share_folders', {}).get(app_folder_uid)
+                    name = (nsf.get('name') if nsf else None) or get_pam_folder_path(params, app_folder_uid) or app_folder_uid
+                    self._shared_folders.append({
+                        "uid": app_folder_uid,
+                        "name": name,
+                        "folder": nsf or params.shared_folder_cache.get(app_folder_uid) or {},
+                    })
         return self._shared_folders
 
-    def info(self, params: KeeperParams) -> Optional[Dict]:
+    def info(self, params: KeeperParams) -> dict | None:
         if self._info is None:
             from ..pam.pam_dto import GatewayActionGatewayInfo
 
@@ -333,7 +378,7 @@ class GatewayContext:
 
         return self._info
 
-    def _gateway_version(self, params: KeeperParams) -> Optional[packaging_version.Version]:
+    def _gateway_version(self, params: KeeperParams) -> packaging_version.Version | None:
 
         try:
             info = self.info(params)
@@ -367,7 +412,7 @@ class GatewayContext:
         ciphertext = encrypt_aes_v2(json_data.encode(), self.configuration.record_key)
         return base64.b64encode(ciphertext).decode()
 
-    def encrypt_str(self, data: Union[bytes, str]) -> str:
+    def encrypt_str(self, data: bytes | str) -> str:
         if isinstance(data, str):
             data = data.encode()
         ciphertext = encrypt_aes_v2(data, self.configuration.record_key)
@@ -419,7 +464,7 @@ class PAMGatewayActionDiscoverCommandBase(Command):
     }
 
     @staticmethod
-    def get_response_data(router_response: dict) -> Optional[dict]:
+    def get_response_data(router_response: dict) -> dict | None:
 
         if router_response is None:
             return None

@@ -1,7 +1,9 @@
 from __future__ import annotations
 from ...utils import value_to_boolean
 import os
-from typing import  TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+from ..pam_import.record_loader import load_pam_record  # noqa: F401  — re-export for pam_debug modules
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
