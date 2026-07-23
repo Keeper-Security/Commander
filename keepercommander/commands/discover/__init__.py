@@ -7,6 +7,7 @@ from ..pam.config_facades import PamConfigurationRecordFacade
 from ..pam.router_helper import get_response_payload
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_send_action_to_gateway
+from ..pam.vault_target import pam_folder_exists, get_pam_folder_path
 from ..ksm import KSMCommand
 from ... import utils, vault_extensions
 from ... import vault
@@ -331,7 +332,6 @@ class GatewayContext:
             # PAM config application folder (often NSF) may not appear in app shares listing.
             app_folder_uid = self.default_shared_folder_uid
             if app_folder_uid and not any(f.get('uid') == app_folder_uid for f in self._shared_folders):
-                from ..pam.vault_target import pam_folder_exists, get_pam_folder_path
                 if pam_folder_exists(params, app_folder_uid):
                     nsf = getattr(params, 'nested_share_folders', {}).get(app_folder_uid)
                     name = (nsf.get('name') if nsf else None) or get_pam_folder_path(params, app_folder_uid) or app_folder_uid

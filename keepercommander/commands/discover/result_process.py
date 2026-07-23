@@ -8,6 +8,10 @@ from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
                                  router_configure_resource)
+from ..pam.vault_target import records_in_folder, is_nested_share_folder
+from ...nested_share_folder.record_api import create_record_data_v3, record_add_v3
+from ...nested_share_folder.common import get_folder_key
+from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...display import bcolors
 from ...proto import router_pb2, record_pb2, pam_pb2
@@ -245,30 +249,24 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         seen_uids = {getattr(r, 'record_uid', None) for r in records}
         # Include NSF PAM records that may not appear in find_records edge cases
         for record_uid in getattr(params, 'nested_share_records', {}) or {}:
-            if record_uid in seen_uids:
-                continue
-            rec = vault.TypedRecord.load(params, record_uid)
-            if rec is not None:
-                records.append(rec)
-                seen_uids.add(record_uid)
+            if record_uid not in seen_uids:
+                rec = vault.TypedRecord.load(params, record_uid)
+                if rec is not None:
+                    records.append(rec)
+                    seen_uids.add(record_uid)
         for record in records:
-            # If the record type is not part of the cache, skip the record
-            if record.record_type not in cache:
-                continue
+            if record.record_type in cache:
+                # Load the full record
+                record = vault.TypedRecord.load(params, record.record_uid)  # type: Optional[TypedRecord]
 
-            # Load the full record
-            record = vault.TypedRecord.load(params, record.record_uid)  # type: Optional[TypedRecord]
-
-            cache_keys = self.get_keys_by_record(
-                params=params,
-                gateway_context=gateway_context,
-                record=record
-            )
-            if len(cache_keys) == 0:
-                continue
-
-            for cache_key in cache_keys:
-                cache[record.record_type][cache_key] = record.record_uid
+                cache_keys = self.get_keys_by_record(
+                    params=params,
+                    gateway_context=gateway_context,
+                    record=record
+                )
+                if cache_keys:
+                    for cache_key in cache_keys:
+                        cache[record.record_type][cache_key] = record.record_uid
 
         return cache
 
@@ -635,7 +633,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         # Make a list of all records in the shared folders / Nested Share Folders.
         # We will use this to check if a selected user is in the shared folders.
-        from ..pam.vault_target import records_in_folder, is_nested_share_folder
 
         shared_record_uids = []
         for shared_folder in gateway_context.get_shared_folders(params):
@@ -1131,11 +1128,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         gateway_context = context.get("gateway_context")
 
         build_process_results = BulkProcessResults()
-
-        from ..pam.vault_target import is_nested_share_folder
-        from ...nested_share_folder.record_api import create_record_data_v3, record_add_v3
-        from ...nested_share_folder.common import get_folder_key
-        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 
         nsf_bulk = [r for r in bulk_add_records
                     if r.shared_folder_uid and is_nested_share_folder(params, r.shared_folder_uid)]
