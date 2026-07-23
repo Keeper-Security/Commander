@@ -34,6 +34,7 @@ from .helpers import (
     check_record_share_permission,
     collect_records_in_folder,
     ensure_nested_share_folder, ensure_nested_share_record,
+    raise_if_record_share_target_is_owner,
 )
 from .parsers import (
     nested_share_record_share_parser,
@@ -102,6 +103,9 @@ class NestedShareRecordShareCommand(Command):
         with command_error_handler('nsf-share-record'):
             for email in emails:
                 for record_uid in record_uids:
+                    raise_if_record_share_target_is_owner(
+                        params, record_uid, email, 'nsf-share-record',
+                        is_ownership_transfer=(action == 'owner'))
                     result, effective_action = self._dispatch(
                         params, action, record_uid, email, access_role_type, expiration,
                         rotate_on_expiration)

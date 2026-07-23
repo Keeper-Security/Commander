@@ -68,6 +68,65 @@ class TestRegister(TestCase):
         cmd.execute(params, email=['user2@keepersecurity.com'], action='revoke', record=record_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
+    def _shared_with_owner_side_effect(self, owner_username=None, extra_users=None):
+        """Build a get_record_shares side_effect that marks *owner_username* as owner.
+
+        Defaults to the session user. *extra_users* is an optional list of
+        non-owner emails included in user_permissions.
+        """
+        extras = list(extra_users or [])
+
+        def shared_with_owner(params_, record_uids, is_share_admin):
+            owner = owner_username if owner_username is not None else params_.user
+            for uid in record_uids:
+                if uid not in params_.record_cache:
+                    continue
+                perms = [{'username': owner, 'owner': True}]
+                for email in extras:
+                    perms.append({
+                        'username': email, 'owner': False,
+                        'shareable': False, 'editable': False,
+                    })
+                params_.record_cache[uid]['shares'] = {'user_permissions': perms}
+
+        return shared_with_owner
+
+    def test_share_record_rejects_grant_to_owner(self):
+        """Granting share permissions to the record owner must fail client-side."""
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        cmd = register.ShareRecordCommand()
+
+        self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
+        self.record_share_mock.side_effect = self._shared_with_owner_side_effect(
+            extra_users=['user2@keepersecurity.com'])
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.prep_request(params, dict(
+                email=[params.user],
+                action='grant',
+                record=record_uid,
+            ))
+        self.assertIn('is the owner', str(ctx.exception))
+        self.assertIn('already has full access', str(ctx.exception))
+
+    def test_share_record_rejects_owner_transfer_to_self(self):
+        """Ownership transfer to the current owner is a no-op and must be rejected."""
+        params = get_synced_params()
+        record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
+        cmd = register.ShareRecordCommand()
+
+        self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
+        self.record_share_mock.side_effect = self._shared_with_owner_side_effect()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.prep_request(params, dict(
+                email=[params.user],
+                action='owner',
+                record=record_uid,
+            ))
+        self.assertIn('already owns', str(ctx.exception))
+
     @contextmanager
     def _make_record_rotation_eligible(self, params, target_uid):
         """Present the record as a pamUser with rotation configured (ROE-eligible)."""
@@ -307,6 +366,30 @@ class TestRegister(TestCase):
         TestRegister.expected_commands.extend(['shared_folder_update_v3'])
         cmd.execute(params, action='remove', user=['user2@keepersecurity.com'], folder=shared_folder_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
+
+    def test_share_folder_rejects_grant_to_owner(self):
+        """Granting folder permissions to the folder owner must fail client-side."""
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache.keys()))
+        owner = params.user
+        curr_sf = dict(params.shared_folder_cache[shared_folder_uid])
+        curr_sf['owner_username'] = owner
+        curr_sf['users'] = [
+            {'username': owner, 'manage_records': True, 'manage_users': True},
+            {'username': 'user2@keepersecurity.com', 'manage_records': True, 'manage_users': True},
+        ]
+
+        with self.assertRaises(CommandError) as ctx:
+            register.ShareFolderCommand.prepare_request(
+                params,
+                kwargs={'action': 'grant', 'manage_records': 'on', 'manage_users': 'off'},
+                curr_sf=curr_sf,
+                users=[owner],
+                teams=[],
+                rec_uids=[],
+            )
+        self.assertIn('is the owner', str(ctx.exception))
+        self.assertIn('shared folder', str(ctx.exception))
 
     def test_share_folder_prepare_request_sets_rotate_on_expiration(self):
         """Folder-wide expiration/ROE applies to user/team protos, not record protos."""
