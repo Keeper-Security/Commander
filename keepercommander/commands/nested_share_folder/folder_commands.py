@@ -30,6 +30,7 @@ from .helpers import (
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
     ensure_nested_share_folder, is_nested_share_folder,
+    is_nested_share_folder_owner_email, owner_share_target_message,
 )
 from .parsers import (
     nested_share_folder_mkdir_parser,
@@ -465,6 +466,11 @@ class NestedShareFolderShareCommand(Command):
                     elif accessor.get('access_type') == 'AT_USER':
                         username = accessor.get('username')
                         if username and username != params.user:
+                            if is_nested_share_folder_owner_email(params, folder_uid, username):
+                                logging.info(
+                                    "nsf-share-folder: skipping owner '%s' for "
+                                    "folder '%s'", username, folder_arg)
+                                continue
                             result.append(('user', username))
         except Exception as exc:
             logging.debug(
@@ -479,6 +485,11 @@ class NestedShareFolderShareCommand(Command):
                 if access_type == at_user:
                     username = a.get('username')
                     if username and username != params.user:
+                        if is_nested_share_folder_owner_email(params, folder_uid, username):
+                            logging.info(
+                                "nsf-share-folder: skipping owner '%s' for "
+                                "folder '%s'", username, folder_arg)
+                            continue
                         result.append(('user', username))
                 elif access_type == at_team:
                     team_uid = a.get('access_type_uid')
@@ -493,6 +504,10 @@ class NestedShareFolderShareCommand(Command):
     @classmethod
     def _apply(cls, params, action, folder_uid, recipient, role, expiration,
                 as_team=False, rotate_on_expiration=False):
+        if not as_team and is_nested_share_folder_owner_email(params, folder_uid, recipient):
+            raise CommandError(
+                'nsf-share-folder',
+                owner_share_target_message(recipient, entity='folder'))
         api_name, verb = cls._ACTIONS[action]
         api_func = getattr(_nsf, api_name)
         kw = dict(params=params, folder_uid=folder_uid, user_uid=recipient,
