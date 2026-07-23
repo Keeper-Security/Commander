@@ -89,7 +89,7 @@ class NestedShareRecordShareCommand(Command):
                 for record_uid in record_uids:
                     raise_if_record_share_target_is_owner(
                         params, record_uid, email, 'nsf-share-record',
-                        allow_owner_transfer=(action == 'owner'))
+                        is_ownership_transfer=(action == 'owner'))
                     result, effective_action = self._dispatch(
                         params, action, record_uid, email, access_role_type, expiration)
                     self._log_results(result, effective_action, email)

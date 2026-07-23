@@ -439,6 +439,9 @@ class NestedShareFolderShareCommand(Command):
                         username = accessor.get('username')
                         if username and username != params.user:
                             if is_nested_share_folder_owner_email(params, folder_uid, username):
+                                logging.info(
+                                    "nsf-share-folder: skipping owner '%s' for "
+                                    "folder '%s'", username, folder_arg)
                                 continue
                             result.append(('user', username))
         except Exception as exc:
@@ -455,6 +458,9 @@ class NestedShareFolderShareCommand(Command):
                     username = a.get('username')
                     if username and username != params.user:
                         if is_nested_share_folder_owner_email(params, folder_uid, username):
+                            logging.info(
+                                "nsf-share-folder: skipping owner '%s' for "
+                                "folder '%s'", username, folder_arg)
                             continue
                         result.append(('user', username))
                 elif access_type == at_team:

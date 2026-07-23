@@ -184,11 +184,13 @@ def is_nested_share_folder_owner_email(params, folder_uid, email):
     return bool(owner_username) and owner_username.casefold() == email.casefold()
 
 
-def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *, allow_owner_transfer=False):
+def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *,
+                                          is_ownership_transfer=False):
     """Raise CommandError when *email* is the owner of *record_uid*.
 
-    Ownership transfer (``-a owner``) is allowed unless the target already owns
-    the record (``allow_owner_transfer=True`` then raises a no-op-style error).
+    When *is_ownership_transfer* is True (``-a owner``), raising means the
+    target already owns the record so the transfer would be a no-op. When False,
+    grant/revoke/update against the owner is rejected.
 
     If owner lookup via ``get_record_accesses_v3`` fails, we log a warning and
     return without raising. Blocking the share on a transient access-API error
@@ -204,10 +206,10 @@ def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *
             "Could not resolve owner for record '%s'; proceeding without "
             "client-side owner check: %s", record_uid, exc)
         return
-    owner = find_record_owner_username(access_result, record_uid)
-    if not owner or owner.casefold() != email.casefold():
+    owner_username = find_record_owner_username(access_result, record_uid)
+    if not owner_username or owner_username.casefold() != email.casefold():
         return
-    if allow_owner_transfer:
+    if is_ownership_transfer:
         raise CommandError(
             cmd_name,
             f"'{email}' already owns this record. Ownership transfer is a no-op.")
