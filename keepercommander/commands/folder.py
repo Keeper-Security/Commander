@@ -81,12 +81,16 @@ cd_parser.error = raise_parse_exception
 cd_parser.exit = suppress_exit
 
 
-tree_parser = argparse.ArgumentParser(prog='tree', description='Display the folder structure.')
+tree_parser = argparse.ArgumentParser(prog='tree', description='Display the folder structure.',
+                                      parents=[base.json_output_parser])
 tree_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
-tree_parser.add_argument('-r', '--records', action='store_true', help='show records within each folder')
-show_shares_help = 'show share permissions info (shown in parentheses) for each shared folder'
-tree_parser.add_argument('-s', '--shares', action='store_true', help=show_shares_help)
-perms_key_help = 'hide share permissions key (valid only when used with --shares flag, which shows key by default)'
+tree_parser.add_argument('-r', '--records', action='store_true',
+                         help='show records within each folder (includes record type)')
+tree_parser.add_argument('-s', '--shares', action='store_true',
+                         help='show classic shared-folder permissions; with -r also classic record shares')
+tree_parser.add_argument('-ns', '--nsf-shares', dest='nsf_shares', action='store_true',
+                         help='show NSF folder permissions (ACL API); with -r also NSF record shares')
+perms_key_help = 'hide share permissions key (valid with --shares / --nsf-shares)'
 tree_parser.add_argument('-hk', '--hide-shares-key', action='store_true', help=perms_key_help)
 tree_parser.add_argument('-t', '--title', action='store', help='show optional title for folder structure')
 tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
@@ -422,18 +426,40 @@ class FolderTreeCommand(Command):
         verbose = kwargs.get('verbose', False)
         records = kwargs.get('records')
         shares = kwargs.get('shares')
-        hide_key = kwargs.get('hide_shares_key', not shares)
+        nsf_shares = kwargs.get('nsf_shares')
+        fmt = kwargs.get('format') or 'table'
+        show_key = bool(shares or nsf_shares)
+        hide_key = kwargs.get('hide_shares_key', not show_key)
         title = kwargs.get('title')
+        trees = []
         if folder_name in params.folder_cache:
             folder = params.folder_cache.get(folder_name)
-            formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares, hide_shares_key=hide_key, title=title)
+            trees.append(formatted_tree(
+                params, folder, verbose=verbose, show_records=records, shares=shares,
+                nsf_shares=nsf_shares, hide_shares_key=hide_key, title=title, fmt=fmt))
         else:
             folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
             if not pattern:
                 for idx, folder in enumerate(folders):
-                    formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares, hide_shares_key=hide_key or idx > 0, title=title)
+                    trees.append(formatted_tree(
+                        params, folder, verbose=verbose, show_records=records, shares=shares,
+                        nsf_shares=nsf_shares, hide_shares_key=hide_key or idx > 0, title=title,
+                        fmt=fmt))
             else:
                 raise CommandError('tree', f'Folder {folder_name} not found')
+        if fmt == 'json':
+            payload = trees[0] if len(trees) == 1 else {'trees': [t for t in trees if t]}
+            text = _tree_json_dumps(payload)
+            output = kwargs.get('output')
+            if output:
+                _, ext = os.path.splitext(output)
+                path = output if ext else output + '.json'
+                with open(path, 'w', encoding='utf-8') as fd:
+                    fd.write(text)
+                    fd.write('\n')
+                logging.info('Report path: %s', os.path.abspath(path))
+                return None
+            return text
 
 
 class FolderRenameCommand(Command):
@@ -1779,65 +1805,727 @@ class FolderTransformCommand(Command, RecordMixin):
         api.sync_down(params)
 
 
-def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
-    def print_share_permissions_key():
-        perms_key = 'Share Permissions Key:\n' \
-                    '======================\n' \
-                    'RO = Read-Only\n' \
-                    'MU = Can Manage Users\n' \
-                    'MR = Can Manage Records\n' \
-                    'CE = Can Edit\n' \
-                    'CS = Can Share\n' \
-                    '======================\n'
-        print(perms_key)
-
-    def get_share_info(node):
-        MU_KEY = 'manage_users'
-        MR_KEY = 'manage_records'
-        DMR_KEY = 'default_manage_records'
-        DMU_KEY = 'default_manage_user'
-        DCE_KEY = 'default_can_edit'
-        DCS_KEY = 'default_can_share'
-        perm_abbrev_lookup = {MU_KEY: 'MU', MR_KEY: 'MR', DMR_KEY: 'MU', DMU_KEY: 'MU', DCE_KEY: 'CE', DCS_KEY: 'CS'}
-
-        def get_users_info(users):
-            info = []
-            for u in users:
-                email = u.get('username')
-                if email == params.user:
-                    continue
-                privs = [v for k, v in perm_abbrev_lookup.items() if u.get(k)] or ['RO']
-                info.append(f'[{email}:{",".join(privs)}]')
-            return 'users:' + ','.join(info) if info else ''
-
-        def get_teams_info(teams):
-            info = []
-            for t in teams:
+def _resolve_tree_team_name(params, team_uid):
+    if not team_uid:
+        return ''
+    team = (getattr(params, 'team_cache', None) or {}).get(team_uid) or {}
+    name = team.get('name') if isinstance(team, dict) else getattr(team, 'name', None)
+    if name:
+        return name
+    if params.enterprise:
+        for t in params.enterprise.get('teams') or []:
+            if t.get('team_uid') == team_uid:
                 name = t.get('name')
-                privs = [v for k, v in perm_abbrev_lookup.items() if t.get(k)] or ['RO']
-                info.append(f'[{name}:{",".join(privs)}]')
-            return 'teams:' + ','.join(info) if info else ''
+                if name:
+                    return name
+    return team_uid
 
-        result = ''
-        if isinstance(node, SharedFolderNode):
-            sf = params.shared_folder_cache.get(node.uid)
-            teams_info = get_teams_info(sf.get('teams', []))
-            users_info = get_users_info(sf.get('users', []))
-            default_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
-            default_perms = 'default:' + ','.join(default_perms)
-            user_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
-            user_perms = 'user:' + ','.join(user_perms)
-            perms = [default_perms, user_perms, teams_info, users_info]
-            perms = [p for p in perms if p]
-            result = f' ({"; ".join(perms)})' if shares else ''
 
-        return result
+def _resolve_sf_member_email(params, user_entry):
+    """Resolve a shared-folder user row to an email (never a raw account UID)."""
+    email = (user_entry.get('username') or '').strip()
+    if email and '@' in email:
+        return email
+    account_uid = user_entry.get('account_uid') or ''
+    if account_uid:
+        cached = (getattr(params, 'user_cache', None) or {}).get(account_uid)
+        if cached and '@' in str(cached):
+            return str(cached)
+        if params.enterprise:
+            for u in params.enterprise.get('users') or []:
+                if u.get('user_account_uid') == account_uid and u.get('username'):
+                    return u.get('username')
+    return email if email and '@' in email else ''
 
-    def tree_node(node):
+
+def _is_compact_share_entry(obj):
+    """True for leaf share objects like {email, permissions} / {name, uid, permissions}."""
+    if not isinstance(obj, dict) or not obj:
+        return False
+    allowed = {'email', 'name', 'uid', 'permissions'}
+    if set(obj.keys()) - allowed:
+        return False
+    for k, v in obj.items():
+        if k == 'permissions':
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                return False
+        elif not isinstance(v, str):
+            return False
+    return True
+
+
+def _dump_compact_share_entry(obj):
+    """Dump a share entry on one line; keep field order name/email, uid, permissions."""
+    parts = []
+    for key in ('name', 'email', 'uid', 'permissions'):
+        if key not in obj:
+            continue
+        val = obj[key]
+        if key == 'permissions':
+            inner = ', '.join(json.dumps(x) for x in val)
+            parts.append(f'"{key}": [{inner}]')
+        else:
+            parts.append(f'"{key}": {json.dumps(val)}')
+    return '{ ' + ', '.join(parts) + ' }'
+
+
+def _tree_json_dumps(obj, level=0, indent=2):
+    """Pretty JSON with share entries / permission arrays kept on one line."""
+    sp = ' ' * (indent * level)
+    sp1 = ' ' * (indent * (level + 1))
+    if isinstance(obj, dict):
+        if not obj:
+            return '{}'
+        if _is_compact_share_entry(obj):
+            return _dump_compact_share_entry(obj)
+        lines = ['{']
+        items = list(obj.items())
+        for i, (k, v) in enumerate(items):
+            comma = ',' if i < len(items) - 1 else ''
+            dumped = _tree_json_dumps(v, level + 1, indent)
+            lines.append(f'{sp1}{json.dumps(k)}: {dumped}{comma}')
+        lines.append(sp + '}')
+        return '\n'.join(lines)
+    if isinstance(obj, list):
+        if not obj:
+            return '[]'
+        if all(isinstance(x, str) for x in obj):
+            return '[' + ', '.join(json.dumps(x) for x in obj) + ']'
+        if all(_is_compact_share_entry(x) for x in obj):
+            lines = ['[']
+            for i, x in enumerate(obj):
+                comma = ',' if i < len(obj) - 1 else ''
+                lines.append(f'{sp1}{_dump_compact_share_entry(x)}{comma}')
+            lines.append(sp + ']')
+            return '\n'.join(lines)
+        lines = ['[']
+        for i, x in enumerate(obj):
+            comma = ',' if i < len(obj) - 1 else ''
+            dumped = _tree_json_dumps(x, level + 1, indent)
+            lines.append(f'{sp1}{dumped}{comma}')
+        lines.append(sp + ']')
+        return '\n'.join(lines)
+    return json.dumps(obj)
+
+
+_NSF_ROLE_ABBREV = {
+    'viewer': 'VW',
+    'contributor': 'CT',
+    'share-manager': 'SM',
+    'content-manager': 'CM',
+    'content-share-manager': 'CSM',
+    'full-manager': 'FM',
+    'unresolved': 'UN',
+    'owner': 'OW',
+}
+
+
+def _nsf_role_label(accessor):
+    from .nested_share_folder.helpers import format_role_display, get_access_role_label
+    role = accessor.get('role')
+    if role:
+        return format_role_display(role)
+    return get_access_role_label(accessor) or 'viewer'
+
+
+def _nsf_role_abbrev(accessor):
+    label = _nsf_role_label(accessor)
+    return _NSF_ROLE_ABBREV.get(label, (label[:2].upper() if label else 'VW'))
+
+
+def _looks_like_uid(value):
+    if not value or not isinstance(value, str) or '@' in value:
+        return False
+    # Keeper UIDs are typically 22-char base64url
+    return bool(re.fullmatch(r'[A-Za-z0-9_-]{16,28}', value))
+
+
+def _resolve_nsf_user_email(params, accessor):
+    """Resolve AT_USER accessor to an email; never return a raw UID as email."""
+    email = (accessor.get('username') or '').strip()
+    if email and not _looks_like_uid(email):
+        return email
+    auid = accessor.get('accessor_uid') or ''
+    if not auid:
+        return email if email and not _looks_like_uid(email) else ''
+    cached = getattr(params, 'user_cache', {}).get(auid) if hasattr(params, 'user_cache') else None
+    if cached:
+        return cached
+    if params.enterprise:
+        for u in params.enterprise.get('users') or []:
+            if u.get('user_account_uid') == auid and u.get('username'):
+                return u.get('username')
+    try:
+        from ..nested_share_folder.folder_api import _resolve_uid_to_username
+        resolved = _resolve_uid_to_username(params, auid)
+        if resolved:
+            if not hasattr(params, 'user_cache') or params.user_cache is None:
+                params.user_cache = {}
+            params.user_cache[auid] = resolved
+            return resolved
+    except Exception as exc:
+        logging.debug('NSF user resolve failed for %s: %s', auid, exc)
+    return ''
+
+
+def _resolve_nsf_app_name(params, app_uid):
+    if not app_uid:
+        return ''
+    try:
+        from .ksm import KSMCommand
+        rec = KSMCommand.get_app_record(params, app_uid)
+        if rec:
+            data = rec.get('data_unencrypted')
+            if data:
+                if isinstance(data, (bytes, bytearray)):
+                    data = data.decode('utf-8')
+                title = json.loads(data).get('title')
+                if title:
+                    return title
+    except Exception as exc:
+        logging.debug('NSF app resolve via KSM failed for %s: %s', app_uid, exc)
+    if app_uid in (params.record_cache or {}):
+        try:
+            r = api.get_record(params, app_uid)
+            if r and getattr(r, 'title', None):
+                return r.title
+        except Exception as exc:
+            logging.debug('NSF app resolve via record cache failed for %s: %s', app_uid, exc)
+    return ''
+
+
+def _nsf_folder_share_data(params, folder_uid, *, include_uids=False):
+    """Return structured NSF folder share perms and a compact text suffix.
+
+    Owner is listed under ``users`` with permission ``OW`` (not a separate label).
+    Applications are listed separately (never as fake user emails / UIDs).
+    """
+    from .. import nested_share_folder as _nsf
+    accessors = _nsf.get_nsf_folder_share_accessors(params, folder_uid)
+    folder_info = (getattr(params, 'nested_share_folders', {}) or {}).get(folder_uid) or {}
+    owner = (folder_info.get('owner_username') or '').strip()
+    if owner and _looks_like_uid(owner):
+        owner = ''
+    users = []
+    teams = []
+    applications = []
+    user_parts = []
+    team_parts = []
+    app_parts = []
+    seen_users = set()
+
+    if owner:
+        users.append({'email': owner, 'permissions': ['OW']})
+        user_parts.append(f'[{owner}:OW]')
+        seen_users.add(owner.lower())
+
+    for a in accessors:
+        at = a.get('access_type') or ''
+        abbrev = _nsf_role_abbrev(a)
+        auid = a.get('accessor_uid') or ''
+
+        if at == 'AT_OWNER':
+            if not owner:
+                email = _resolve_nsf_user_email(params, a)
+                if email and email.lower() not in seen_users:
+                    users.append({'email': email, 'permissions': ['OW']})
+                    user_parts.append(f'[{email}:OW]')
+                    seen_users.add(email.lower())
+            continue
+
+        if at == 'AT_TEAM':
+            name = _resolve_tree_team_name(params, auid)
+            entry = {'name': name, 'permissions': [abbrev]}
+            if include_uids and auid:
+                entry['uid'] = auid
+            teams.append(entry)
+            team_parts.append(f'[{name}:{abbrev}]')
+            continue
+
+        if at == 'AT_APPLICATION':
+            app_name = _resolve_nsf_app_name(params, auid) or (auid if include_uids else 'application')
+            entry = {'name': app_name, 'permissions': [abbrev]}
+            if include_uids and auid:
+                entry['uid'] = auid
+            applications.append(entry)
+            app_parts.append(f'[{app_name}:{abbrev}]')
+            continue
+
+        if at in ('AT_USER', 'AT_UNKNOWN', ''):
+            email = _resolve_nsf_user_email(params, a)
+            if not email:
+                # Unresolved user: only expose UID when -v, never as email.
+                if include_uids and auid:
+                    entry = {'uid': auid, 'permissions': [abbrev]}
+                    users.append(entry)
+                    user_parts.append(f'[{auid}:{abbrev}]')
+                continue
+            if email.lower() in seen_users or email == params.user:
+                continue
+            users.append({'email': email, 'permissions': [abbrev]})
+            user_parts.append(f'[{email}:{abbrev}]')
+            seen_users.add(email.lower())
+
+    data = {}
+    if users:
+        data['users'] = users
+    if teams:
+        data['teams'] = teams
+    if applications:
+        data['applications'] = applications
+    if not data:
+        state = (getattr(params, 'nested_share_folder_sharing_states', {}) or {}).get(folder_uid) or {}
+        if state.get('shared') or state.get('count', 0) > 0:
+            data['shared'] = True
+            data['count'] = state.get('count', 0)
+
+    parts = []
+    if user_parts:
+        parts.append('users:' + ','.join(user_parts))
+    if team_parts:
+        parts.append('teams:' + ','.join(team_parts))
+    if app_parts:
+        parts.append('applications:' + ','.join(app_parts))
+    if not parts and data.get('shared'):
+        parts.append(f'shared:count={data.get("count", 0)}')
+    text = f' ({"; ".join(parts)})' if parts else ''
+    return data or None, text
+
+
+def _classic_folder_share_data(params, sf, *, include_uids=False):
+    """Return structured classic SF share perms and compact text suffix.
+
+    Tree text uses a single ``default:`` blob (all default flags).
+    JSON splits folder-user defaults vs default record rights:
+      - user_permissions: MU / MR (default manage users / manage records)
+      - record_permissions: CE / CS (default can-edit / can-share on records)
+    Named people/teams remain under ``users`` / ``teams``.
+    """
+    DEFAULT_USER_PERM_KEYS = {
+        'default_manage_users': 'MU',
+        'default_manage_user': 'MU',  # legacy alias if present
+        'default_manage_records': 'MR',
+    }
+    RECORD_PERM_KEYS = {
+        'default_can_edit': 'CE',
+        'default_can_share': 'CS',
+    }
+    MEMBER_PERM_KEYS = {
+        'manage_users': 'MU',
+        'manage_records': 'MR',
+    }
+
+    sf = sf or {}
+    user_permissions = [abbr for key, abbr in DEFAULT_USER_PERM_KEYS.items() if sf.get(key)]
+    user_permissions = [a for a in ('MU', 'MR') if a in user_permissions]
+    record_permissions = [abbr for key, abbr in RECORD_PERM_KEYS.items() if sf.get(key)]
+    record_permissions = [a for a in ('CE', 'CS') if a in record_permissions]
+
+    default_perms = user_permissions + record_permissions
+    if not default_perms:
+        default_perms = ['RO']
+
+    users = []
+    user_parts = []
+    seen_emails = set()
+    for u in sf.get('users') or []:
+        email = _resolve_sf_member_email(params, u)
+        account_uid = u.get('account_uid') or ''
+        privs = [abbr for key_name, abbr in MEMBER_PERM_KEYS.items() if u.get(key_name)]
+        privs = [a for a in ('MU', 'MR') if a in privs] or ['RO']
+        if not email:
+            # Sync often has account_uid only until user_cache fills; still emit membership.
+            if account_uid:
+                entry = {'uid': account_uid, 'permissions': privs}
+                users.append(entry)
+                user_parts.append(f'[{account_uid}:{",".join(privs)}]')
+            continue
+        key = email.lower()
+        if key in seen_emails:
+            continue
+        seen_emails.add(key)
+        entry = {'email': email, 'permissions': privs}
+        if include_uids and account_uid:
+            entry['uid'] = account_uid
+        users.append(entry)
+        user_parts.append(f'[{email}:{",".join(privs)}]')
+
+    teams = []
+    team_parts = []
+    seen_teams = set()
+    for t in sf.get('teams') or []:
+        team_uid = t.get('team_uid') or ''
+        if team_uid and team_uid in seen_teams:
+            continue
+        if team_uid:
+            seen_teams.add(team_uid)
+        name = (t.get('name') or '').strip()
+        if not name or _looks_like_uid(name):
+            name = _resolve_tree_team_name(params, team_uid) if team_uid else name
+        if not name:
+            if not team_uid:
+                continue
+            name = team_uid
+        privs = [abbr for key_name, abbr in MEMBER_PERM_KEYS.items() if t.get(key_name)]
+        privs = [a for a in ('MU', 'MR') if a in privs] or ['RO']
+        entry = {'name': name, 'permissions': privs}
+        if include_uids and team_uid:
+            entry['uid'] = team_uid
+        teams.append(entry)
+        team_parts.append(f'[{name}:{",".join(privs)}]')
+
+    data = {
+        'user_permissions': user_permissions,
+        'record_permissions': record_permissions,
+    }
+    if not user_permissions and not record_permissions:
+        data['record_permissions'] = ['RO']
+    if users:
+        data['users'] = users
+    if teams:
+        data['teams'] = teams
+
+    parts = ['default:' + ','.join(default_perms)]
+    if team_parts:
+        parts.append('teams:' + ','.join(team_parts))
+    if user_parts:
+        parts.append('users:' + ','.join(user_parts))
+    return data, f' ({"; ".join(parts)})'
+
+
+def _classic_record_share_data(params, record_uid, *, include_uids=False):
+    """Classic record share perms → structured data + compact text.
+
+    Only direct user shares are listed. Shared-folder inheritance is omitted:
+    the tree already places the record under its parent shared folder(s).
+    """
+    rec = (params.record_cache or {}).get(record_uid) or {}
+    shares_data = rec.get('shares') or {}
+    users = []
+    user_parts = []
+    for up in shares_data.get('user_permissions') or []:
+        email = up.get('username') or ''
+        if not email:
+            continue
+        if up.get('owner'):
+            users.append({'email': email, 'permissions': ['OW']})
+            user_parts.append(f'[{email}:OW]')
+            continue
+        if email == params.user:
+            continue
+        privs = []
+        if up.get('editable'):
+            privs.append('CE')
+        if up.get('shareable'):
+            privs.append('CS')
+        if not privs:
+            privs = ['RO']
+        users.append({'email': email, 'permissions': privs})
+        user_parts.append(f'[{email}:{",".join(privs)}]')
+    if not users:
+        return None, ''
+    data = {'users': users}
+    text = f' (users:{",".join(user_parts)})'
+    return data, text
+
+
+def _nsf_record_share_data(params, record_uid, *, include_uids=False):
+    """NSF record share perms → structured data + compact text.
+
+    Uses warmed ``nested_share_record_share_cache``. Direct (non-inherited)
+    accessors win over folder-inherited rows for the same identity. When the
+    record ACL cache is empty, falls back to the parent NSF folder ACL.
+    """
+    from .. import nested_share_folder as _nsf
+    accessors = list(_nsf.get_nsf_record_share_accessors(params, record_uid) or [])
+    if not accessors:
+        try:
+            parent_uids = _nsf.find_nested_share_folders_for_record(params, record_uid) or []
+        except Exception as exc:
+            logging.debug('NSF parent folder lookup failed for %s: %s', record_uid, exc)
+            parent_uids = []
+        for fuid in parent_uids:
+            data, text = _nsf_folder_share_data(params, fuid, include_uids=include_uids)
+            if data:
+                return data, text
+        return None, ''
+
+    # Direct shares first so inherited folder rows do not hide them.
+    accessors.sort(key=lambda a: 1 if a.get('inherited') else 0)
+
+    users = []
+    teams = []
+    applications = []
+    user_parts = []
+    team_parts = []
+    app_parts = []
+    seen_users = set()
+    seen_teams = set()
+    seen_apps = set()
+
+    for a in accessors:
+        at = a.get('access_type') or ''
+        abbrev = _nsf_role_abbrev(a)
+        auid = a.get('access_type_uid') or a.get('accessor_uid') or ''
+
+        if a.get('owner') or at == 'AT_OWNER':
+            email = (a.get('accessor_name') or '').strip()
+            if email and _looks_like_uid(email):
+                email = ''
+            if not email:
+                email = _resolve_nsf_user_email(params, {
+                    'username': a.get('accessor_name') or a.get('username'),
+                    'accessor_uid': auid,
+                })
+            if email and email.lower() not in seen_users:
+                users.append({'email': email, 'permissions': ['OW']})
+                user_parts.append(f'[{email}:OW]')
+                seen_users.add(email.lower())
+            elif not email and include_uids and auid and auid not in seen_users:
+                users.append({'uid': auid, 'permissions': ['OW']})
+                user_parts.append(f'[{auid}:OW]')
+                seen_users.add(auid)
+            continue
+
+        if at == 'AT_TEAM':
+            if auid and auid in seen_teams:
+                continue
+            name = _resolve_tree_team_name(params, auid)
+            entry = {'name': name, 'permissions': [abbrev]}
+            if include_uids and auid:
+                entry['uid'] = auid
+            teams.append(entry)
+            team_parts.append(f'[{name}:{abbrev}]')
+            if auid:
+                seen_teams.add(auid)
+            continue
+
+        if at == 'AT_APPLICATION':
+            if auid and auid in seen_apps:
+                continue
+            app_name = _resolve_nsf_app_name(params, auid) or (auid if include_uids else 'application')
+            entry = {'name': app_name, 'permissions': [abbrev]}
+            if include_uids and auid:
+                entry['uid'] = auid
+            applications.append(entry)
+            app_parts.append(f'[{app_name}:{abbrev}]')
+            if auid:
+                seen_apps.add(auid)
+            continue
+
+        email = (a.get('accessor_name') or '').strip()
+        if email and _looks_like_uid(email):
+            email = ''
+        if not email:
+            email = _resolve_nsf_user_email(params, {
+                'username': a.get('accessor_name') or a.get('username'),
+                'accessor_uid': auid,
+            })
+        if not email:
+            if include_uids and auid and auid not in seen_users:
+                users.append({'uid': auid, 'permissions': [abbrev]})
+                user_parts.append(f'[{auid}:{abbrev}]')
+                seen_users.add(auid)
+            continue
+        if email.lower() in seen_users or email == params.user:
+            continue
+        users.append({'email': email, 'permissions': [abbrev]})
+        user_parts.append(f'[{email}:{abbrev}]')
+        seen_users.add(email.lower())
+
+    data = {}
+    if users:
+        data['users'] = users
+    if teams:
+        data['teams'] = teams
+    if applications:
+        data['applications'] = applications
+    if not data:
+        try:
+            parent_uids = _nsf.find_nested_share_folders_for_record(params, record_uid) or []
+        except Exception as exc:
+            logging.debug('NSF parent folder lookup failed for %s: %s', record_uid, exc)
+            parent_uids = []
+        for fuid in parent_uids:
+            folder_data, folder_text = _nsf_folder_share_data(
+                params, fuid, include_uids=include_uids)
+            if folder_data:
+                return folder_data, folder_text
+        return None, ''
+
+    parts = []
+    if user_parts:
+        parts.append('users:' + ','.join(user_parts))
+    if team_parts:
+        parts.append('teams:' + ','.join(team_parts))
+    if app_parts:
+        parts.append('applications:' + ','.join(app_parts))
+    text = f' ({"; ".join(parts)})' if parts else ''
+    return data, text
+
+
+def _join_tree_path(parent_path, name):
+    name = name or ''
+    if not parent_path or parent_path == '/':
+        return '/' + name if name else '/'
+    return parent_path.rstrip('/') + '/' + name
+
+
+def _collect_tree_share_targets(params, folder, show_records):
+    """Collect NSF folder UIDs and record UIDs under *folder* for ACL warming."""
+    nsf_folder_uids = set()
+    classic_record_uids = set()
+    nsf_record_uids = set()
+    nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+    nsf_records = getattr(params, 'nested_share_records', {}) or {}
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', {}) or {}
+    visited = set()
+
+    def walk(node):
+        if isinstance(node, Record):
+            ruid = node.record_uid
+            if ruid in nsf_records:
+                nsf_record_uids.add(ruid)
+            else:
+                classic_record_uids.add(ruid)
+            return
+
+        node_uid = node.uid if hasattr(node, 'uid') else ''
+        walk_key = node_uid or id(node)
+        if walk_key in visited:
+            return
+        visited.add(walk_key)
+
+        is_nsf = (
+            (hasattr(node, 'type') and node.type == 'nested_share_folder')
+            or (node_uid and node_uid in nsf_folders)
+        )
+        if is_nsf and node_uid:
+            nsf_folder_uids.add(node_uid)
+
+        dir_nodes = []
+        if hasattr(node, 'subfolders'):
+            dir_nodes = [params.folder_cache.get(fuid) for fuid in node.subfolders if params.folder_cache.get(fuid)]
+
+        is_root = (isinstance(node, BaseFolderNode) and (node.type == '/' or node_uid == '')) or (
+            hasattr(node, 'type') and node.type == 'nested_share_folder' and not node_uid)
+
+        if is_root and nsf_folders:
+            for nsf_uid, nsf_folder in nsf_folders.items():
+                parent_uid = nsf_folder.get('parent_uid')
+                is_root_folder = (
+                    parent_uid is None or parent_uid == '' or parent_uid == 'root'
+                    or parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA'
+                    or (parent_uid and parent_uid not in nsf_folders)
+                )
+                if not is_root_folder:
+                    continue
+                nsf_folder_uids.add(nsf_uid)
+                if nsf_uid in params.folder_cache:
+                    dir_nodes.append(params.folder_cache.get(nsf_uid))
+                else:
+                    dir_nodes.append(type('FolderNode', (), {
+                        'uid': nsf_uid, 'name': nsf_folder.get('name', ''),
+                        'type': 'nested_share_folder', 'subfolders': []
+                    })())
+        elif node_uid and nsf_folders:
+            for child_uid, child_folder in nsf_folders.items():
+                if child_folder.get('parent_uid', '') == node_uid:
+                    nsf_folder_uids.add(child_uid)
+                    if child_uid in params.folder_cache:
+                        dir_nodes.append(params.folder_cache.get(child_uid))
+                    else:
+                        dir_nodes.append(type('FolderNode', (), {
+                            'uid': child_uid, 'name': child_folder.get('name', ''),
+                            'type': 'nested_share_folder', 'subfolders': []
+                        })())
+
+        if show_records and isinstance(node, BaseFolderNode):
+            node_uid_for_recs = '' if node.type == '/' else node.uid
+            rec_uids = {rec for recs in get_contained_record_uids(params, node_uid_for_recs).values() for rec in recs}
+            for ruid in rec_uids:
+                if ruid in nsf_records:
+                    nsf_record_uids.add(ruid)
+                else:
+                    classic_record_uids.add(ruid)
+            if is_root:
+                shown = set(rec_uids)
+                for folder_uid, nsf_rec_uids in nsf_folder_records.items():
+                    if folder_uid not in nsf_folders:
+                        for ruid in nsf_rec_uids:
+                            if ruid not in shown:
+                                nsf_record_uids.add(ruid)
+                                shown.add(ruid)
+                all_filed = set()
+                for uids in nsf_folder_records.values():
+                    all_filed.update(uids)
+                for ruid in nsf_records:
+                    if ruid not in all_filed and ruid not in shown:
+                        nsf_record_uids.add(ruid)
+            elif node_uid_for_recs in nsf_folder_records:
+                for ruid in nsf_folder_records[node_uid_for_recs]:
+                    nsf_record_uids.add(ruid)
+        elif show_records and is_nsf and node_uid and node_uid in nsf_folder_records:
+            # Temp NSF nodes are not BaseFolderNode; still warm their records.
+            for ruid in nsf_folder_records[node_uid]:
+                nsf_record_uids.add(ruid)
+
+        for child in dir_nodes:
+            if child:
+                walk(child)
+
+    walk(folder)
+    return nsf_folder_uids, classic_record_uids, nsf_record_uids
+
+
+def formatted_tree(params, folder, verbose=False, show_records=False, shares=False,
+                   nsf_shares=False, hide_shares_key=False, title=None, fmt='table'):
+    as_json = (fmt == 'json')
+    need_nsf_folders = bool(nsf_shares)
+    need_nsf_records = bool(nsf_shares and show_records)
+    need_classic_records = bool(shares and show_records)
+    if need_nsf_folders or need_nsf_records or need_classic_records:
+        nsf_folder_uids, classic_record_uids, nsf_record_uids = _collect_tree_share_targets(
+            params, folder, show_records)
+        from .. import nested_share_folder as _nsf
+        _nsf.warm_for_tree(
+            params,
+            nsf_folder_uids=nsf_folder_uids if need_nsf_folders else None,
+            classic_record_uids=classic_record_uids if need_classic_records else None,
+            nsf_record_uids=nsf_record_uids if need_nsf_records else None,
+        )
+
+    def print_share_permissions_key():
+        lines = [
+            'Share Permissions Key:',
+            '======================',
+        ]
+        if shares:
+            lines.extend([
+                'RO = Read-Only',
+                'MU = Can Manage Users',
+                'MR = Can Manage Records',
+                'CE = Can Edit',
+                'CS = Can Share',
+                'OW = Owner',
+            ])
+        if nsf_shares:
+            lines.extend([
+                'OW = NSF Owner',
+                'VW = NSF Viewer',
+                'CT = NSF Contributor',
+                'SM = NSF Share Manager',
+                'CM = NSF Content Manager',
+                'CSM = NSF Content + Share Manager',
+                'FM = NSF Full Manager',
+            ])
+        lines.append('======================')
+        print('\n'.join(lines) + '\n')
+
+    def tree_node(node, parent_path=''):
         node_uid = node.record_uid if isinstance(node, Record) else (node.uid if hasattr(node, 'uid') else '')
         node_name = node.title if isinstance(node, Record) else (node.name if hasattr(node, 'name') else 'Unknown')
-        
-        # Check if it's a Nested Share Folder item and get proper name
+
         is_nested_share = False
         if isinstance(node, Record):
             is_nested_share = hasattr(params, 'nested_share_records') and node.record_uid in params.nested_share_records
@@ -1845,59 +2533,78 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             is_nested_share = True
         elif isinstance(node, BaseFolderNode) and not isinstance(node, Record):
             is_nested_share = hasattr(params, 'nested_share_folders') and node_uid in params.nested_share_folders
-            # Get folder name from nested_share_folders if available
             if is_nested_share and node_uid in params.nested_share_folders:
                 nsf_folder_name = params.nested_share_folders[node_uid].get('name', node_name)
                 if nsf_folder_name:
                     node_name = nsf_folder_name
-        
-        node_name = f'{node_name} ({node_uid})' if verbose else node_name
-        share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
-        
-        # Format node name based on type
+
+        base_name = node_name
+        if is_nested_share and not isinstance(node, Record) and node_uid in getattr(params, 'nested_share_folders', {}):
+            base_name = params.nested_share_folders[node_uid].get('name') or base_name
+
+        is_vault_root = isinstance(node, BaseFolderNode) and (getattr(node, 'type', None) == '/' or not node_uid)
+        if is_vault_root and not isinstance(node, Record):
+            node_path = '/'
+        else:
+            node_path = _join_tree_path(parent_path, base_name)
+
+        display_name = f'{node_name} ({node_uid})' if verbose else node_name
+        share_text = ''
+        share_data = None
+        kind = 'folder'
+        record_type = None
+
         if isinstance(node, Record):
+            kind = 'nested_record' if is_nested_share else 'record'
+            record_type = getattr(node, 'record_type', None) or ''
+            type_label = f' [{record_type}]' if record_type else ''
             nsf_label = ' [Nested Record]' if is_nested_share else ' [Record]'
-            node_name = f'{Style.DIM}{node_name}{nsf_label}{Style.NORMAL}'
+            if is_nested_share and nsf_shares:
+                share_data, share_text = _nsf_record_share_data(
+                    params, node_uid, include_uids=verbose)
+            elif (not is_nested_share) and shares:
+                share_data, share_text = _classic_record_share_data(
+                    params, node_uid, include_uids=verbose)
+            display_name = f'{Style.DIM}{display_name}{type_label}{nsf_label}{share_text}{Style.NORMAL}'
         elif isinstance(node, SharedFolderNode):
-            node_name = f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}'
+            kind = 'shared_folder'
+            if shares:
+                share_data, share_text = _classic_folder_share_data(
+                    params, params.shared_folder_cache.get(node.uid), include_uids=verbose)
+            display_name = f'{display_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_text}'
         elif is_nested_share:
-            node_name = f'{node_name}{Style.BRIGHT} [Nested Share Folder]{Style.NORMAL}'
+            kind = 'nested_share_folder'
+            if nsf_shares and node_uid:
+                share_data, share_text = _nsf_folder_share_data(
+                    params, node_uid, include_uids=verbose)
+            display_name = f'{display_name}{Style.BRIGHT} [Nested Share Folder]{Style.NORMAL}{share_text}'
 
         dir_nodes = []
         if not isinstance(node, Record):
-            # Get regular subfolders from folder_cache
             if hasattr(node, 'subfolders'):
                 dir_nodes = [params.folder_cache.get(fuid) for fuid in node.subfolders if params.folder_cache.get(fuid)]
-        
-        # Check if this is root folder and add Nested Share Folder root-level folders
+
         is_root = (isinstance(node, BaseFolderNode) and (node.type == '/' or node_uid == '')) or \
                   (hasattr(node, 'type') and node.type == 'nested_share_folder' and not node_uid)
-        
+
         if is_root and hasattr(params, 'nested_share_folders') and params.nested_share_folders:
-            # Add all Nested Share Folders that are at root level
             for nsf_uid, nsf_folder in params.nested_share_folders.items():
                 parent_uid = nsf_folder.get('parent_uid')
-                # Check if this folder is at root:
-                # - parent_uid is None, empty string, 'root', or the special root UID
-                # - Also check if parent doesn't exist in nested_share_folders (orphan = root level)
                 is_root_folder = (
-                    parent_uid is None or 
-                    parent_uid == '' or 
-                    parent_uid == 'root' or 
+                    parent_uid is None or
+                    parent_uid == '' or
+                    parent_uid == 'root' or
                     parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA' or
                     (parent_uid and parent_uid not in params.nested_share_folders)
                 )
                 if is_root_folder:
-                    # Check if already in dir_nodes
                     already_added = any(hasattr(n, 'uid') and n.uid == nsf_uid for n in dir_nodes if n)
                     if not already_added:
-                        # Check if in folder_cache first
                         if nsf_uid in params.folder_cache:
                             nsf_node = params.folder_cache.get(nsf_uid)
                             if nsf_node:
                                 dir_nodes.append(nsf_node)
                         else:
-                            # Create a temporary folder node for Nested Share Folders not in folder_cache
                             temp_node = type('FolderNode', (), {
                                 'uid': nsf_uid,
                                 'name': nsf_folder.get('name', 'Unnamed'),
@@ -1905,14 +2612,11 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                                 'subfolders': []
                             })()
                             dir_nodes.append(temp_node)
-        
-        # Add Nested Share Folder subfolders if this is a Nested Share Folder
+
         elif not isinstance(node, Record) and hasattr(params, 'nested_share_folders') and node_uid:
-            # Find child folders for this Nested Share Folder
             for child_uid, child_folder in params.nested_share_folders.items():
                 parent_uid = child_folder.get('parent_uid', '')
                 if parent_uid == node_uid:
-                    # Check if already in dir_nodes
                     already_added = any(hasattr(n, 'uid') and n.uid == child_uid for n in dir_nodes if n)
                     if not already_added:
                         if child_uid in params.folder_cache:
@@ -1920,7 +2624,6 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                             if child_node:
                                 dir_nodes.append(child_node)
                         else:
-                            # Create a temporary folder node
                             temp_node = type('FolderNode', (), {
                                 'uid': child_uid,
                                 'name': child_folder.get('name', 'Unnamed'),
@@ -1928,25 +2631,19 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                                 'subfolders': []
                             })()
                             dir_nodes.append(temp_node)
-        
+
         rec_nodes = []
         if show_records and isinstance(node, BaseFolderNode):
             node_uid_for_recs = '' if node.type == '/' else node.uid
-            
-            # Get legacy records
             rec_uids = {rec for recs in get_contained_record_uids(params, node_uid_for_recs).values() for rec in recs}
             records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
             records = [r for r in records if isinstance(r, Record)]
             rec_nodes.extend(records)
-            
-            # Add Nested Share Records for this folder
+
             if hasattr(params, 'nested_share_folder_records'):
-                # For root folder, collect Nested Share Folder records that are not inside any known NSF sub-folder
                 if is_root:
                     nsf_folders = getattr(params, 'nested_share_folders', {})
                     shown_rec_uids = set(rec_uids)
-                    # Records associated with container UIDs that are NOT real NSF sub-folders
-                    # (includes the NSF root UID and any other non-folder containers)
                     for folder_uid, nsf_rec_uids in params.nested_share_folder_records.items():
                         if folder_uid not in nsf_folders:
                             for rec_uid in nsf_rec_uids:
@@ -1955,7 +2652,6 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                                     if isinstance(rec, Record):
                                         rec_nodes.append(rec)
                                         shown_rec_uids.add(rec_uid)
-                    # Also show Nested Share Folder records that have NO folder association at all
                     if hasattr(params, 'nested_share_records'):
                         all_filed = set()
                         for uids in params.nested_share_folder_records.values():
@@ -1966,7 +2662,6 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                                 if isinstance(rec, Record):
                                     rec_nodes.append(rec)
                                     shown_rec_uids.add(rec_uid)
-                # For specific folders
                 elif node_uid_for_recs in params.nested_share_folder_records:
                     nsf_rec_uids = params.nested_share_folder_records[node_uid_for_recs]
                     for rec_uid in nsf_rec_uids:
@@ -1979,17 +2674,52 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
         child_nodes = dir_nodes + rec_nodes
 
-        tns = [tree_node(n) for n in child_nodes]
-        return node_name, OrderedDict(tns)
+        child_path = '' if is_vault_root else node_path
+        child_results = [tree_node(n, child_path) for n in child_nodes]
+        ascii_children = OrderedDict((disp, br) for disp, br, _ in child_results)
 
-    root, branches = tree_node(folder)
-    tree = {root: branches}
+        # Nested JSON node (omit empty children; uid only with -v)
+        item = {'name': base_name, 'path': node_path}
+        if verbose and node_uid:
+            item['uid'] = node_uid
+        item['kind'] = kind
+        if record_type:
+            item['record_type'] = record_type
+        if share_data:
+            item['share_permissions'] = share_data
+        json_children = [jr for _, _, jr in child_results if jr]
+        if json_children:
+            item['children'] = json_children
+        return display_name, ascii_children, item
+
+    root_name, branches, json_root = tree_node(folder, '')
+    payload = {'tree': json_root}
+    if title:
+        payload['title'] = title
+    if (shares or nsf_shares) and not hide_shares_key:
+        key = {}
+        if shares:
+            key['classic'] = {
+                'RO': 'Read-Only', 'MU': 'Can Manage Users', 'MR': 'Can Manage Records',
+                'CE': 'Can Edit', 'CS': 'Can Share', 'OW': 'Owner',
+            }
+        if nsf_shares:
+            key['nsf'] = {
+                'OW': 'Owner', 'VW': 'Viewer', 'CT': 'Contributor', 'SM': 'Share Manager',
+                'CM': 'Content Manager', 'CSM': 'Content + Share Manager', 'FM': 'Full Manager',
+            }
+        payload['share_permissions_key'] = key
+
+    if as_json:
+        return payload
+
     tr = LeftAligned(draw=BoxStyle(gfx=drawing.BOX_LIGHT))
-    if shares and not hide_shares_key:
+    if (shares or nsf_shares) and not hide_shares_key:
         print_share_permissions_key()
     if title:
         print(title)
-    tree_txt = tr(tree)
+    tree_txt = tr({root_name: branches})
     tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
     print(tree_txt)
     print('')
+    return None

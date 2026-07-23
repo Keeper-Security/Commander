@@ -259,6 +259,9 @@ class KeeperParams:
         self.nested_share_record_sharing_states = {}    # record_uid -> sharing state dict
         self.nested_share_record_links = {}             # record_uid -> list of record link dicts
         self.nested_share_raw_dag_data = []             # list of raw DAG entry dicts
+        # Full NSF ACL lists after warm (separate from sync self-rows above)
+        self.nested_share_folder_share_cache = {}       # folder_uid -> list of accessors
+        self.nested_share_record_share_cache = {}       # record_uid -> list of accessors
         self.__proxy = None
         self.ssh_agent = None
         self.unmask_all = False
@@ -345,6 +348,8 @@ class KeeperParams:
         self.nested_share_record_sharing_states = {}
         self.nested_share_record_links = {}
         self.nested_share_raw_dag_data = []
+        self.nested_share_folder_share_cache = {}
+        self.nested_share_record_share_cache = {}
         self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()
