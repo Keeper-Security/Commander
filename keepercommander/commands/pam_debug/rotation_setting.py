@@ -2,7 +2,6 @@ from __future__ import annotations
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase
 from ...display import bcolors
-from ... import vault
 from . import load_pam_record
 from ...proto import router_pb2
 from ...sync_down import sync_down
@@ -12,7 +11,7 @@ from ...discovery_common.record_link import RecordLink
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...discovery_common.types import UserAcl, UserAclRotationSettings
 import re
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...vault import TypedRecord
@@ -50,7 +49,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
 
-        user_record = load_pam_record(params, user_record_uid)  # type: Optional[TypedRecord]
+        user_record = load_pam_record(params, user_record_uid)  # type: TypedRecord | None
         if user_record is None:
             print(f"{bcolors.FAIL}The PAM user record does not exists.{bcolors.ENDC}")
             return
@@ -70,7 +69,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                 return
 
             configuration_record = load_pam_record(params,
-                                                           configuration_record_uid)  # type: Optional[TypedRecord]
+                                                           configuration_record_uid)  # type: TypedRecord | None
             if configuration_record is None:
                 print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
                 return
@@ -96,7 +95,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
             if resource_record_uid is not None:
 
                 resource_record = load_pam_record(params,
-                                                          resource_record_uid)  # type: Optional[TypedRecord]
+                                                          resource_record_uid)  # type: TypedRecord | None
                 if resource_record is None:
                     print(f"{bcolors.FAIL}The resource record does not exists.{bcolors.ENDC}")
                     return
@@ -144,7 +143,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
         print(f"{bcolors.BOLD}Configuration Record UID{bcolors.ENDC}: {configuration_record_uid}")
 
         configuration_record = load_pam_record(params,
-                                                       configuration_record_uid)  # type: Optional[TypedRecord]
+                                                       configuration_record_uid)  # type: TypedRecord | None
         if configuration_record is None:
             print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
             return
@@ -155,7 +154,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.BOLD}Resource Record UID{bcolors.ENDC}: {resource_record_uid}")
 
             resource_record = load_pam_record(params,
-                                                      resource_record_uid)  # type: Optional[TypedRecord]
+                                                      resource_record_uid)  # type: TypedRecord | None
             if resource_record is None:
                 print(f"{bcolors.FAIL}The resource record does not exists.{bcolors.ENDC}")
                 return

@@ -5,7 +5,7 @@ import datetime
 import json
 import logging
 import pathlib
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from ..base import Command, FolderMixin
 from ...subfolder import get_folder_uids
@@ -76,7 +76,7 @@ class PAMDebugDumpCommand(Command):
 
         # 2. Collect records with folder context
         # record_uid → (folder_uid, folder_parent_uid)
-        record_folder_map: Dict[str, Tuple[str, str]] = {}
+        record_folder_map: dict[str, tuple[str, str]] = {}
 
         def _folder_parent_uid(f_uid: str) -> str:
             if not f_uid:
@@ -128,9 +128,9 @@ class PAMDebugDumpCommand(Command):
         # 3. Filter by version, then group valid records by config_uid.
         # Supported versions: 3 (typed), 5 (KSM App/Gateway), 6 (PAM Configuration).
         # Versions 1–2/4 are legacy/attachment records; skip with a warning.
-        config_to_records: Dict[str, List[str]] = {}
-        record_config_map: Dict[str, Optional[str]] = {}
-        valid_uids: List[str] = []  # passed version filter, in discovery order
+        config_to_records: dict[str, list[str]] = {}
+        record_config_map: dict[str, str | None] = {}
+        valid_uids: list[str] = []  # passed version filter, in discovery order
 
         for rec_uid in record_folder_map:
             rec = get_record_from_cache(params, rec_uid)
@@ -192,7 +192,7 @@ class PAMDebugDumpCommand(Command):
 
         # 4. Load all 5 DAGs once per config_uid
         # keyed by (config_uid, graph_id)
-        dag_cache: Dict[Tuple[str, int], Optional['DAGType']] = {}
+        dag_cache: dict[tuple[str, int], 'DAGType' | None] = {}
         conn = get_connection(params)
 
         for config_uid in config_to_records:
@@ -274,7 +274,7 @@ class PAMDebugDumpCommand(Command):
             #   "vertex_active": bool  - present when the record UID is a vertex in that graph
             #   "edges": [...]         - present only when there are active, non-deleted edges
             # Config/graph keys are omitted when the record has no presence there.
-            graph_sync: Dict[str, Dict[str, dict]] = {}
+            graph_sync: dict[str, dict[str, dict]] = {}
             for (c_uid, graph_id), dag in dag_cache.items():
                 if dag is None:
                     continue
@@ -323,7 +323,7 @@ def _collect_graph_entry(dag: 'DAGType', record_uid: str, params: 'KeeperParams'
 
 
 def _collect_edges_for_record(dag: 'DAGType', record_uid: str, params: 'KeeperParams',
-                               config_uid: str) -> List[dict]:
+                               config_uid: str) -> list[dict]:
     """Return all non-deleted edges that reference record_uid as head or tail.
 
     Inactive edges (active=False) are included - they may represent settings

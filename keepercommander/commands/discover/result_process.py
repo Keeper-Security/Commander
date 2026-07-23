@@ -27,7 +27,7 @@ from ...discovery_common.types import (
 from ...discovery_common.constants import PAM_USER
 from ...discovery_common.constants import VERTICES_SORT_MAP
 from pydantic import BaseModel
-from typing import Optional, List, Any, Tuple, Dict, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from ...api import get_records_add_request
 
 if TYPE_CHECKING:
@@ -105,7 +105,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 record_type == "pamAzureConfiguration")
 
     @staticmethod
-    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> Optional[str]:
+    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> str | None:
         while True:
             shared_folders = gateway_context.get_shared_folders(params)
             index = 0
@@ -119,7 +119,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 print(f"{pad}{_f('Input was not a number.')}")
 
     @staticmethod
-    def get_field_values(record: TypedRecord, field_type: str) -> Optional[List[Any]]:
+    def get_field_values(record: TypedRecord, field_type: str) -> list[Any] | None:
         return next(
             (f.value
              for f in record.fields
@@ -128,7 +128,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         )
 
     def get_keys_by_record(self, params: KeeperParams, gateway_context: GatewayContext,
-                           record: TypedRecord) -> List[str]:
+                           record: TypedRecord) -> list[str]:
         """
         For the record, get the values of fields that are key for this record type.
 
@@ -141,7 +141,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         key_field = Process.get_key_field(record.record_type)
         keys = []
         if key_field == "host_port":
-            values = self.get_field_values(record, "pamHostname")  # type: List[dict]
+            values = self.get_field_values(record, "pamHostname")  # type: list[dict]
             if len(values) == 0:
                 return []
 
@@ -186,8 +186,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     @staticmethod
     def _record_lookup(record_uid: str,
-                       context: Optional[Any] = None,
-                       allow_sm: bool = False) -> Optional[NormalizedRecord]:
+                       context: Any | None = None,
+                       allow_sm: bool = False) -> NormalizedRecord | None:
 
         """
         Get the record from the Vault, normalize it, and return it.
@@ -196,7 +196,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         """
 
         params = context.get("params")
-        record = vault.TypedRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+        record = vault.TypedRecord.load(params, record_uid)  # type: TypedRecord | None
         if record is None:
             return None
 
@@ -257,7 +257,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         for record in records:
             if record.record_type in cache:
                 # Load the full record
-                record = vault.TypedRecord.load(params, record.record_uid)  # type: Optional[TypedRecord]
+                record = vault.TypedRecord.load(params, record.record_uid)  # type: TypedRecord | None
 
                 cache_keys = self.get_keys_by_record(
                     params=params,
@@ -270,7 +270,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         return cache
 
-    def _edit_record(self, content: DiscoveryObject, pad: str, editable: List[str]) -> bool:
+    def _edit_record(self, content: DiscoveryObject, pad: str, editable: list[str]) -> bool:
 
         edit_label = input(f"{pad}Enter 'title' or the name of the {_ok('Label')} to edit, RETURN to cancel> ")
 
@@ -362,7 +362,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     @staticmethod
     def _add_all_preprocess(vertex: DAGVertex, content: DiscoveryObject, parent_vertex: DAGVertex,
-                            acl: Optional[UserAcl] = None) -> Optional[PromptResult]:
+                            acl: UserAcl | None = None) -> PromptResult | None:
         """
         This is client side check if we should skip prompting the user.
 
@@ -385,7 +385,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     return PromptResult(action=PromptActionEnum.SKIP)
         return None
 
-    def _prompt_display_fields(self, content: DiscoveryObject, pad: str) -> List[str]:
+    def _prompt_display_fields(self, content: DiscoveryObject, pad: str) -> list[str]:
 
         editable = []
         for section in ["fields", "custom"]:
@@ -462,13 +462,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 content: DiscoveryObject,
                 acl: UserAcl,
                 parent_vertex: DAGVertex,
-                vertex: Optional[DAGVertex] = None,
+                vertex: DAGVertex | None = None,
                 resource_has_admin: bool = True,
                 item_count: int = 0,
                 items_left: int = 0,
                 indent: int = 0,
                 block_auto_add: bool = False,
-                context: Optional[Any] = None) -> PromptResult:
+                context: Any | None = None) -> PromptResult:
 
         if context is None:
             raise Exception("Context not set for processing the discovery results")
@@ -622,8 +622,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
     def _find_user_record(self,
                           params: KeeperParams,
-                          bulk_convert_records: List[BulkRecordConvert],
-                          context: Optional[Any] = None) -> Tuple[Optional[TypedRecord], bool]:
+                          bulk_convert_records: list[BulkRecordConvert],
+                          context: Any | None = None) -> tuple[TypedRecord | None, bool]:
 
         gateway_context = context.get("gateway_context")  # type: GatewayContext
         record_link = context.get("record_link")  # type: RecordLink
@@ -668,7 +668,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 return None, False
 
             # Find usable admin records.
-            admin_search_results = []  # type: List[AdminSearchResult]
+            admin_search_results = []  # type: list[AdminSearchResult]
             for record in user_record:
 
                 user_record = vault.KeeperRecord.load(params, record.record_uid)
@@ -704,7 +704,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     is_directory_user = False
                     if record_vertex is not None:
                         parent_record_uid = record_link.get_parent_record_uid(user_record.record_uid)
-                        parent_record = vault.TypedRecord.load(params, parent_record_uid)  # type: Optional[TypedRecord]
+                        parent_record = vault.TypedRecord.load(params, parent_record_uid)  # type: TypedRecord | None
                         if parent_record is not None:
                             is_directory_user = self._is_directory_user(parent_record.record_type)
                             if not is_directory_user:
@@ -813,7 +813,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     @staticmethod
     def _handle_admin_record_from_record(record: TypedRecord,
                                          content: DiscoveryObject,
-                                         context: Optional[Any] = None) -> Optional[PromptResult]:
+                                         context: Any | None = None) -> PromptResult | None:
 
         params = context.get("param")  # type: KeeperParams
         gateway_context = context.get("gateway_context")  # type: GatewayContext
@@ -904,9 +904,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                       parent_vertex: DAGVertex,
                       content: DiscoveryObject,
                       acl: UserAcl,
-                      bulk_convert_records: List[BulkRecordConvert],
+                      bulk_convert_records: list[BulkRecordConvert],
                       indent: int = 0,
-                      context: Optional[Any] = None) -> Optional[PromptResult]:
+                      context: Any | None = None) -> PromptResult | None:
 
         if content is None:
             raise Exception("The admin content was not passed in to prompt the user.")
@@ -973,7 +973,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print("")
 
     @staticmethod
-    def _display_auto_add_results(bulk_add_records: List[BulkRecordAdd]):
+    def _display_auto_add_results(bulk_add_records: list[BulkRecordAdd]):
 
         """
         Display the number of record created from rule engine ADD results and smart add function.
@@ -986,7 +986,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                   f"record{'' if add_count == 1 else 's'} to be added.{bcolors.ENDC}")
 
     @staticmethod
-    def _prompt_confirm_add(bulk_add_records: List[BulkRecordAdd]):
+    def _prompt_confirm_add(bulk_add_records: list[BulkRecordAdd]):
 
         """
         If we quit, we want to ask the user if they want to add record for discovery objects that they selected
@@ -1012,7 +1012,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print(f"{bcolors.FAIL}Did not get 'Y' or 'N'{bcolors.ENDC}")
 
     @staticmethod
-    def _prepare_record(content: DiscoveryObject, context: Optional[Any] = None) -> Tuple[Any, str]:
+    def _prepare_record(content: DiscoveryObject, context: Any | None = None) -> tuple[Any, str]:
 
         """
         Prepare the Vault record side.
@@ -1071,7 +1071,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             return record, record.record_uid
 
         folder = params.folder_cache.get(content.shared_folder_uid)
-        folder_key = None  # type: Optional[bytes]
+        folder_key = None  # type: bytes | None
         if isinstance(folder, subfolder.SharedFolderFolderNode):
             shared_folder_uid = folder.shared_folder_uid
         elif isinstance(folder, subfolder.SharedFolderNode):
@@ -1112,7 +1112,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return record_add_protobuf, record.record_uid
 
     @classmethod
-    def _create_records(cls, bulk_add_records: List[BulkRecordAdd], context: Optional[Any] = None) -> (
+    def _create_records(cls, bulk_add_records: list[BulkRecordAdd], context: Any | None = None) -> (
             BulkProcessResults):
 
         """
@@ -1139,7 +1139,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         # STEP 1 - Batch add new records
 
         records_per_request = 999
-        add_results = []  # type: List[record_pb2.RecordModifyResult]
+        add_results = []  # type: list[record_pb2.RecordModifyResult]
         created_nsf = False
         skipped_uids = set()
 
@@ -1196,7 +1196,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         # Legacy path: vault/records_add
         if legacy_bulk:
-            record_add_list = [r.record for r in legacy_bulk]  # type: List[record_pb2.RecordAdd]
+            record_add_list = [r.record for r in legacy_bulk]  # type: list[record_pb2.RecordAdd]
             logging.debug("adding record in batches")
             print("batch record create: ", end="")
             sys.stdout.flush()
@@ -1332,7 +1332,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return build_process_results
 
     @classmethod
-    def _convert_records(cls, bulk_convert_records: List[BulkRecordConvert], context: Optional[Any] = None):
+    def _convert_records(cls, bulk_convert_records: list[BulkRecordConvert], context: Any | None = None):
 
         params = context.get("params")
         gateway_context = context.get("gateway_context")
@@ -1372,7 +1372,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     @staticmethod
     def _get_directory_info(domain: str,
                             skip_users: bool = False,
-                            context: Optional[Any] = None) -> Optional[DirectoryInfo]:
+                            context: Any | None = None) -> DirectoryInfo | None:
         """
         Get information about this record from the vault records.
 
@@ -1386,7 +1386,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         # Find the all directory records, in for this gateway, that have a domain that matches what we are looking for.
         for directory_record in vault_extensions.find_records(params, record_type="pamDirectory"):
             directory_record = vault.TypedRecord.load(params,
-                                                      directory_record.record_uid)  # type: Optional[TypedRecord]
+                                                      directory_record.record_uid)  # type: TypedRecord | None
 
             info = params.record_rotation_cache.get(directory_record.record_uid)
             if info is None:
@@ -1472,7 +1472,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 "pamDirectory": "Directories",
                 "pamMachine": "Machines",
                 "pamDatabase": "Databases"
-            }  # type: Dict[str, Optional[str]]
+            }  # type: dict[str, str | None]
 
             for rv in record_type_to_vertices_map[rt]:  # type: DAGVertex
                 if not rv.active or not rv.has_data:

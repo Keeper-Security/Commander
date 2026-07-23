@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 import os
 import json
 import requests
-from typing import Optional, List, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -23,7 +23,7 @@ class GatewayActionSaasConfigCommandInputs:
                  configuration_uid: str,
                  plugin_code: str,
                  gateway_context: GatewayContext,
-                 languages: Optional[List[str]] = None,
+                 languages: list[str] | None = None,
                  ):
 
         if languages is None:
@@ -142,7 +142,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
     @staticmethod
     def _resolve_target_folder(params: KeeperParams, gateway_context: GatewayContext,
-                               shared_folder_uid: Optional[str]) -> Optional[str]:
+                               shared_folder_uid: str | None) -> str | None:
         from ..pam.vault_target import resolve_pam_folder_uid, pam_folder_exists
 
         shared_folders = gateway_context.get_shared_folders(params)
@@ -178,7 +178,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
     def _create_config(params: KeeperParams,
                        plugin: SaasCatalog,
                        shared_folder_uid: str,
-                       plugin_code_bytes: Optional[bytes] = None):
+                       plugin_code_bytes: bytes | None = None):
         from ..pam.vault_target import (
             create_record_in_folder, update_pam_record, is_nested_share_folder,
         )
@@ -286,9 +286,9 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         do_update = kwargs.get("do_update", False)  # type: bool
         shared_folder_uid = kwargs.get("shared_folder_uid")  # type: str
 
-        use_plugin = kwargs.get("plugin")  # type: Optional[str]
+        use_plugin = kwargs.get("plugin")  # type: str | None
         gateway = kwargs.get("gateway")  # type: str
-        configuration_uid = kwargs.get('configuration_uid')  # type Optional[str]
+        configuration_uid = kwargs.get('configuration_uid')  # type: str | None
 
         try:
             gateway_context = GatewayContext.from_gateway(params=params,

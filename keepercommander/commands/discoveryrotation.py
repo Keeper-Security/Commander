@@ -18,7 +18,7 @@ import re
 import time
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-from typing import Optional, List
+from typing import Any
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -105,6 +105,7 @@ from .universalsecretsync import (
     PAMUniversalSyncRunCommand
 )
 from ..discovery_common.types import UserAcl, UserAclRotationSettings
+from ..vault import TypedRecord
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -170,7 +171,7 @@ def parse_schedule_data(kwargs):
     schedule_json_data = kwargs.get('schedule_json_data')
     schedule_cron_data = kwargs.get('schedule_cron_data')
     schedule_on_demand = kwargs.get('on_demand') is True
-    schedule_data = None  # type: Optional[List]
+    schedule_data = None  # type: list | None
     if isinstance(schedule_json_data, str):
         schedule_json_data = [schedule_json_data]
     if isinstance(schedule_json_data, list):
@@ -221,7 +222,7 @@ def resolve_record_rotation_revision(params, record_uid):
 
 
 def schedule_from_pam_config(record_pam_config):
-    # type: (Optional[vault.TypedRecord]) -> Optional[List]
+    # type: (TypedRecord | None) -> list | None
     """Return rotation schedule list from a PAM configuration defaultRotationSchedule field."""
     if not record_pam_config:
         return None
@@ -233,7 +234,7 @@ def schedule_from_pam_config(record_pam_config):
 
 
 def resolve_record_schedule_data(schedule_data, current_record_rotation, schedule_config, record_pam_config):
-    # type: (Optional[List], Optional[dict], bool, Optional[vault.TypedRecord]) -> Optional[List]
+    # type: (list | None, dict | None, bool, TypedRecord | None) -> list | None
     """Resolve rotation schedule for pam rotation edit (Web Vault use-default-schedule parity)."""
     if schedule_data is not None:
         return schedule_data
@@ -612,7 +613,7 @@ class PAMCreateRecordRotationCommand(Command):
 
         def config_saas_user(_dag, target_record, saas_config_uid: str):
 
-            saas_config_record = vault.KeeperRecord.load(params, saas_config_uid)  # type: Optional[TypedRecord]
+            saas_config_record = vault.KeeperRecord.load(params, saas_config_uid)  # type: TypedRecord | None
             if saas_config_record is None:
                 raise CommandError('', 'The SaaS configuration record does not exists.')
 
@@ -1418,7 +1419,7 @@ class PAMCreateRecordRotationCommand(Command):
             r_requests.append(rq)
 
         # Main execute() logic starts here
-        record_uids = set()  # type: Set[str]
+        record_uids = set()  # type: set[str]
 
         folder_uids = set()
         record_pattern = ''
@@ -1475,7 +1476,7 @@ class PAMCreateRecordRotationCommand(Command):
                                     continue
                                 record_uids.add(record_uid)
 
-        pam_records = []  # type: List[vault.TypedRecord]
+        pam_records = []  # type: list[vault.TypedRecord]
         valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
         for record_uid in record_uids:
             record = vault.KeeperRecord.load(params, record_uid)
@@ -1502,7 +1503,7 @@ class PAMCreateRecordRotationCommand(Command):
         if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_type in PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES:
             config_uid = cfg_rec.record_uid
 
-        pam_config = None  # type: Optional[vault.TypedRecord]
+        pam_config = None  # type: vault.TypedRecord | None
         if config_uid:
             if config_uid in pam_configurations:
                 pam_config = pam_configurations[config_uid]
@@ -1519,7 +1520,7 @@ class PAMCreateRecordRotationCommand(Command):
         schedule_data = parse_schedule_data(kwargs)
 
         pwd_complexity = kwargs.get("pwd_complexity")
-        pwd_complexity_rule_list = None  # type: Optional[dict]
+        pwd_complexity_rule_list = None  # type: dict | None
         if pwd_complexity is not None:
             if pwd_complexity:
                 pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
@@ -1560,7 +1561,7 @@ class PAMCreateRecordRotationCommand(Command):
                         'complexity']
         valid_records = []
 
-        r_requests = []  # type: List[router_pb2.RouterRecordRotationRequest]
+        r_requests = []  # type: list[router_pb2.RouterRecordRotationRequest]
 
         # Note: --folder, -fd FOLDER_NAME sets up General rotation
         # use --schedule-only, -so to preserve individual setups (General, IAM, NOOP)
@@ -1618,7 +1619,7 @@ class PAMCreateRecordRotationCommand(Command):
                         config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
                     elif rotation_profile == 'saas':
 
-                        saas_config_uid = kwargs.get("saas_config_uid")  # type: Optional[str]
+                        saas_config_uid = kwargs.get("saas_config_uid")  # type: str | None
                         if saas_config_uid is None:
                             raise CommandError('', 'SaaS rotation profile requires '
                                                    '--saas-config-uid to be specified.')
@@ -2248,7 +2249,7 @@ class PAMConfigurationListCommand(Command):
 
     @staticmethod
     def _domain_administrative_credential_uid(configuration):
-        # type: (vault.KeeperRecord) -> Optional[str]
+        # type: (vault.KeeperRecord) -> str | None
         if not isinstance(configuration, vault.TypedRecord) or \
                 configuration.record_type != 'pamDomainConfiguration':
             return None
@@ -2532,7 +2533,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
         return PamConfigurationEditMixin.pam_record_types
 
     def parse_pam_configuration(self, params, record, **kwargs):
-        # type: (KeeperParams, vault.TypedRecord, Dict[str, Any]) -> None
+        # type: (KeeperParams, vault.TypedRecord, dict[str, Any]) -> None
         field = record.get_typed_field('pamResources')
         if not field:
             value = {}
@@ -2543,8 +2544,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             field.value.append({})
         value = field.value[0]
 
-        gateway_uid = None  # type: Optional[str]
-        gateway = kwargs.get('gateway_uid')  # type: Optional[str]
+        gateway_uid = None  # type: str | None
+        gateway = kwargs.get('gateway_uid')  # type: str | None
         if gateway:
             gateways = gateway_helper.get_all_gateways(params)
             gateway_uid = next((utils.base64_url_encode(x.controllerUid) for x in gateways
@@ -2561,8 +2562,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
         # if len(shares) == 0:
         #     raise Exception(f'Gateway %s has no shared folders', gateway.controllerName)
 
-        shared_folder_uid = None  # type: Optional[str]
-        folder_name = kwargs.get('shared_folder_uid')  # type: Optional[str]
+        shared_folder_uid = None  # type: str | None
+        folder_name = kwargs.get('shared_folder_uid')  # type: str | None
         if folder_name:
             shared_folder_uid = resolve_pam_folder_uid(params, folder_name)
             if not shared_folder_uid:
@@ -2621,7 +2622,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
     @staticmethod
     def resolve_single_record(params, record_name,
-                              rec_type=''):  # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
+                              rec_type=''):  # type: (KeeperParams, str, str) -> vault.KeeperRecord | None
         return resolve_pam_record(params, record_name, rec_type=rec_type or None)
 
     @staticmethod
@@ -3119,7 +3120,7 @@ class PAMConfigurationRemoveCommand(Command):
 
     @classmethod
     def _resolve_pam_config_uid(cls, params, identifier):
-        # type: (KeeperParams, str) -> Optional[str]
+        # type: (KeeperParams, str) -> str | None
         if identifier in params.record_cache:
             rec = vault.KeeperRecord.load(params, identifier)
             if isinstance(rec, vault.TypedRecord) and rec.version == 6:
@@ -3467,7 +3468,7 @@ class PAMScriptEditCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')  # type: Optional[str]
+        script_name = kwargs.get('script')  # type: str | None
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -3552,7 +3553,7 @@ class PAMScriptDeleteCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')  # type: Optional[str]
+        script_name = kwargs.get('script')  # type: str | None
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 

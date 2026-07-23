@@ -3,7 +3,6 @@ import logging
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
-from ...vault import TypedRecord
 from . import load_pam_record
 from ...discovery_common.verify import Verify
 import sys

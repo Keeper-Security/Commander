@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 import argparse
-import os
 import ipaddress
 import logging
 import re
@@ -21,7 +20,7 @@ import sys
 import time
 
 from colorama import Fore, Style
-from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
@@ -91,7 +90,7 @@ def _pam_connection_clipboard_bool(v: Any) -> bool:
     return b is True
 
 
-def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
+def _pam_connection_font_size_int(raw: Any) -> int | None:
     """Parse pamSettings.connection.fontSize to int, or None if unset or not parseable as an integer size."""
     if raw is None:
         return None
@@ -115,7 +114,7 @@ def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
         return None
 
 
-def _parse_host_port(value: str) -> Tuple[str, int]:
+def _parse_host_port(value: str) -> tuple[str, int]:
     """
     Parse a 'host:port' or '[ipv6]:port' string into (host, port).
 
@@ -177,7 +176,7 @@ def _iter_record_fields(record: Any):
         yield field
 
 
-def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int]]:
+def _get_host_port_from_record(record: Any) -> tuple[str | None, int | None]:
     """
     Extract (hostName, port) from a record's pamHostname or host typed fields.
 
@@ -223,7 +222,7 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
     return candidates[0]
 
 
-def _record_has_credentials(record: Any, params: Optional['KeeperParams'] = None) -> bool:
+def _record_has_credentials(record: Any, params: 'KeeperParams' | None = None) -> bool:
     """
     Return True if the record has exactly one non-empty login field and at least one of:
     - exactly one non-empty password field (fields[] and custom[]), or
@@ -283,11 +282,11 @@ EXIT_CODE_ADMIN_TERMINATED = 41
 
 
 def _print_close_reason_notice(
-    reason: Optional[str],
+    reason: str | None,
     *,
-    pending_exit_code: Optional[int],
+    pending_exit_code: int | None,
     session_established: bool = False,
-) -> Optional[int]:
+) -> int | None:
     """Show a user-facing notice for an involuntary remote close.
 
     Stays silent for ``normal`` / ``client`` (user-initiated). Called from the
@@ -502,7 +501,7 @@ class PAMLaunchCommand(Command):
             logging.debug(f"Error checking record type for {record_uid}: {e}")
             return False
 
-    def find_record(self, params: KeeperParams, record_token: str) -> Optional[str]:
+    def find_record(self, params: KeeperParams, record_token: str) -> str | None:
         """
         Find a record by UID, path, or title (classic + Nested Share Folder records).
 
@@ -546,7 +545,7 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_path(self, params: KeeperParams, path: str) -> Optional[str]:
+    def _find_by_path(self, params: KeeperParams, path: str) -> str | None:
         """
         Find record by path resolution (classic folders + Nested Share Folders).
 
@@ -619,7 +618,7 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_title(self, params: KeeperParams, title: str) -> Optional[str]:
+    def _find_by_title(self, params: KeeperParams, title: str) -> str | None:
         """
         Find record by exact title match (classic + Nested Share Folder records).
 
@@ -676,7 +675,7 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_substring(self, params: KeeperParams, token: str) -> Optional[str]:
+    def _find_by_substring(self, params: KeeperParams, token: str) -> str | None:
         """Substring fallback for ``find_record`` — case-insensitive contains
         match across PAM record titles and any ``host`` / ``pamHostname`` field.
 
@@ -733,7 +732,7 @@ class PAMLaunchCommand(Command):
         return self._pick_candidate(candidates, token)
 
     @staticmethod
-    def _pick_candidate(candidates: list, token: str) -> Optional[str]:
+    def _pick_candidate(candidates: list, token: str) -> str | None:
         """Render a numbered list of candidates and prompt for selection.
 
         On non-TTY stdin, prints the list once and returns None — caller
@@ -781,8 +780,8 @@ class PAMLaunchCommand(Command):
         self,
         params: KeeperParams,
         record_uid: str,
-        tdag: Optional[Any] = None,
-    ) -> Optional[Dict]:
+        tdag: Any | None = None,
+    ) -> dict | None:
         """
         Find the gateway associated with a PAM record.
 
@@ -1049,7 +1048,7 @@ class PAMLaunchCommand(Command):
             # the cache contract.
             _cache_entry = launch_cache.get(record_uid)
             _launch_tdag = None  # populated only on cache miss
-            _cached_gateway_info: Optional[Dict[str, Any]] = None
+            _cached_gateway_info: dict[str, Any] | None = None
 
             if _cache_entry is not None:
                 # CACHE HIT: skip DAG build + find_gateway + online probe
@@ -1454,7 +1453,7 @@ class PAMLaunchCommand(Command):
             _debug_connect_ui = bool(getattr(params, 'debug', False)) or logging.getLogger().isEnabledFor(
                 logging.DEBUG
             )
-            pre_connect_spinner: Optional[PamLaunchSpinner] = None
+            pre_connect_spinner: PamLaunchSpinner | None = None
             _banner_name_connect = (getattr(record, 'title', None) or record_token or record_uid or '').strip() or 'PAM resource'
             if not _debug_connect_ui:
                 print(f'Launching connection to {_banner_name_connect}...', flush=True)
@@ -1545,17 +1544,17 @@ class PAMLaunchCommand(Command):
 
     def _start_cli_session(
         self,
-        tunnel_result: Dict[str, Any],
+        tunnel_result: dict[str, Any],
         params: KeeperParams,
-        launch_credential_uid: Optional[str] = None,
+        launch_credential_uid: str | None = None,
         use_stdin: bool = False,
-        cli_scale: Optional[int] = None,
-        connect_banner_title: Optional[str] = None,
-        pre_connect_spinner: Optional[PamLaunchSpinner] = None,
+        cli_scale: int | None = None,
+        connect_banner_title: str | None = None,
+        pre_connect_spinner: PamLaunchSpinner | None = None,
         preserve_crlf: bool = True,
-        pam_total_tc: Optional[PamConnectTiming] = None,
+        pam_total_tc: PamConnectTiming | None = None,
         workflow_expires_on_ms: int = 0,
-        workflow_flow_uid: Optional[bytes] = None,
+        workflow_flow_uid: bytes | None = None,
         workflow_started_by_launch: bool = False,
     ):
         """
@@ -1616,7 +1615,7 @@ class PAMLaunchCommand(Command):
         # Latest close reason from the rust webrtc layer (snake_case name from
         # PyCloseConnectionReason). Set asynchronously by _on_session_disconnect
         # below; consumed in the inner finally to print a user-facing notice.
-        closure_reason: Optional[str] = None
+        closure_reason: str | None = None
         # Whether the guac session was live (≥1 sync) at the moment of remote
         # close. Captured in _on_session_disconnect; lets the notice treat a
         # guacd_error after an established session as a normal logout.
@@ -1624,7 +1623,7 @@ class PAMLaunchCommand(Command):
         # Distinct exit code for involuntary terminations (KeeperAI, admin).
         # Raised as SystemExit at the end of the method so the inner/outer
         # finally cleanup blocks run first.
-        pending_exit_code: Optional[int] = None
+        pending_exit_code: int | None = None
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1726,7 +1725,7 @@ class PAMLaunchCommand(Command):
             _debug_connect_ui = bool(getattr(params, 'debug', False)) or logging.getLogger().isEnabledFor(
                 logging.DEBUG
             )
-            _connect_spinner: Optional[PamLaunchSpinner] = pre_connect_spinner
+            _connect_spinner: PamLaunchSpinner | None = pre_connect_spinner
             if _connect_spinner is None and not _debug_connect_ui:
                 _banner_name = (connect_banner_title or '').strip() or 'PAM resource'
                 print(f'Launching connection to {_banner_name}...', flush=True)
@@ -2001,7 +2000,7 @@ class PAMLaunchCommand(Command):
                 )
 
             # No PasteOrchestrator when PAM disables paste — only Guacamole key chords (no pyperclip).
-            paste_orch: Optional[PasteOrchestrator] = None
+            paste_orch: PasteOrchestrator | None = None
             if not disable_paste:
                 paste_orch = PasteOrchestrator(
                     send_clipboard_fn=python_handler.send_clipboard_stream,
