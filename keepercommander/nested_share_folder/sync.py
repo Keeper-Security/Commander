@@ -37,6 +37,10 @@ def _ensure_nested_share_folder_attrs(params):
         params.nested_share_record_links = {}
     if not hasattr(params, 'nested_share_raw_dag_data'):
         params.nested_share_raw_dag_data = []
+    if not hasattr(params, 'nested_share_folder_share_cache'):
+        params.nested_share_folder_share_cache = {}
+    if not hasattr(params, 'nested_share_record_share_cache'):
+        params.nested_share_record_share_cache = {}
 
 
 def create_accumulator():
@@ -78,6 +82,10 @@ def clear_caches(params):
     params.nested_share_record_sharing_states.clear()
     params.nested_share_record_links.clear()
     params.nested_share_raw_dag_data.clear()
+    if hasattr(params, 'nested_share_folder_share_cache'):
+        params.nested_share_folder_share_cache.clear()
+    if hasattr(params, 'nested_share_record_share_cache'):
+        params.nested_share_record_share_cache.clear()
     # nested_share_folder_trashed_folders is intentionally NOT cleared here.
     # The server keeps sending trashed folders in every sync_down response
     # (including full/CLEAR syncs), so the trashed-UID filter must survive
