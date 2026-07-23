@@ -241,26 +241,24 @@ class KeeperResponseParser:
     @staticmethod
     def _parse_tree_share_permissions(name: str) -> Optional[Dict[str, Any]]:
         """
-        Parse shared-folder permission suffix from a tree line into structured fields.
+        Parse shared-folder permission suffix from ASCII tree (service ``tree``).
 
-        CLI format (from folder.formatted_tree): (default:...; user:...; teams:...; users:...)
+        Emits ``{"default": "...", "teams"?: ..., "users"?: ...}`` — no ``user``
+        field. ``tree --format=json`` uses ``_parse_json_format_command`` instead.
         """
-        # Ordered segments from folder.py: default, user, optional teams, optional users
         m = re.search(
-            r'\(default:([^;]+); user:([^;]+)(?:; teams:([^;]+))?(?:; users:([^)]+))?\)',
+            r'\(default:([^;]+)(?:; user:([^;]+))?(?:; teams:([^;]+))?(?:; users:([^)]+))?\)',
             name,
         )
         if not m:
             return None
 
         default_val = m.group(1).strip()
-        user_val = m.group(2).strip()
         teams_seg = (m.group(3) or "").strip()
         users_seg = (m.group(4) or "").strip()
 
         share_permissions: Dict[str, Any] = {
             "default": default_val,
-            "user": user_val,
         }
         if teams_seg:
             share_permissions["teams"] = KeeperResponseParser._parse_share_bracket_list(
@@ -273,8 +271,25 @@ class KeeperResponseParser:
         return share_permissions
 
     @staticmethod
+    def _extract_tree_uid(name: str) -> Optional[str]:
+        """Return verbose-mode UID paren; ignore share-permission suffixes."""
+        share_prefixes = (
+            'default:', 'user:', 'users:', 'teams:', 'folders:',
+            'applications:', 'shared:',
+        )
+        for m in re.finditer(r'\(([^)]+)\)', name):
+            inner = m.group(1).strip()
+            if any(inner.startswith(p) for p in share_prefixes):
+                continue
+            return inner
+        return None
+
+    @staticmethod
     def _parse_tree_command(response: str) -> Dict[str, Any]:
-        """Parse 'tree' command output into structured format."""
+        """Parse ASCII ``tree`` into the legacy service-mode flat structure.
+
+        Distinct from ``tree --format=json`` (``_parse_json_format_command``).
+        """
         result = {
             "status": "success",
             "command": "tree",
@@ -349,27 +364,32 @@ class KeeperResponseParser:
             if not name:
                 continue
                 
-            is_record = "[Record]" in name
-            is_shared = "[SHARED]" in name
+            is_record = '[Record]' in name or '[Nested Record]' in name
+            is_shared = '[SHARED]' in name
             
-            # Extract UID if present (for -v flag)
-            uid = None
-            uid_match = re.search(r'\(([^)]+)\)', name)
-            if uid_match and not any(x in uid_match.group(1) for x in ["default:", "user:"]):
-                uid = uid_match.group(1)
+            uid = KeeperResponseParser._extract_tree_uid(name)
             
             # Extract share permissions if present (for -s flag)
             share_permissions = (
                 KeeperResponseParser._parse_tree_share_permissions(name) if is_shared else None
             )
             
-            # Clean the name from all indicators
+            # Clean the name from indicators / share suffixes / record type tags
             clean_name = name
-            clean_name = re.sub(r' \([^)]*\) \[SHARED\] \([^)]*\)', '', clean_name)  # Remove UID + SHARED + permissions
-            clean_name = re.sub(r' \([^)]*\) \[Record\]', '', clean_name)  # Remove UID + Record
-            clean_name = re.sub(r' \([^)]*\) \[SHARED\]', '', clean_name)  # Remove UID + SHARED
-            clean_name = re.sub(r' \([^)]*\)', '', clean_name)  # Remove just UID
-            clean_name = clean_name.replace(" [Record]", "").replace(" [SHARED]", "")
+            clean_name = re.sub(
+                r' \((?:default|user|users|teams|folders|applications|shared):[^)]*\)',
+                '',
+                clean_name,
+            )
+            clean_name = re.sub(r' \([^)]*\) \[SHARED\]', '', clean_name)
+            clean_name = re.sub(r' \([^)]*\)(?= \[)', '', clean_name)  # UID before [tag]
+            clean_name = re.sub(r' \([^)]+\)$', '', clean_name)  # trailing UID
+            for tag in (
+                ' [Nested Share Folder]', ' [Nested Record]', ' [Record]', ' [SHARED]',
+            ):
+                clean_name = clean_name.replace(tag, '')
+            clean_name = re.sub(r' \[[A-Za-z0-9_]+\]', '', clean_name)  # [login], etc.
+            clean_name = clean_name.strip()
             
             # Determine type
             item_type = "record" if is_record else "folder"
@@ -1232,6 +1252,7 @@ class KeeperResponseParser:
 
 
 def ensure_record_add_json_format(command: str) -> str:
+    """Append ``--format=json`` for record-add when missing. Not applied to tree."""
     if not command.strip().startswith('record-add'):
         return command
     if '--format=json' in command or '--format json' in command:

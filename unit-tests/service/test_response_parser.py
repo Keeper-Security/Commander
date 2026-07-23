@@ -62,14 +62,14 @@ Folder2"""
         self.assertEqual(result['data']['tree'][1]['path'], 'Folder1')
 
     def test_parse_tree_command_share_permissions_structured(self):
-        """tree -s -v: share_permissions splits default/user vs per-user list"""
+        """tree -s -v: share_permissions uses default only (all abbrevs), plus users list"""
         sample_output = """Share Permissions Key:
 ======================
 RO = Read-Only
 MU = Can Manage Users
 ======================
 My Vault
- └── Shared Folder (abc123) [SHARED] (default:CE; user:CE; users:[a@x.com:RO],[b@y.com:MU,MR])
+ └── Shared Folder (abc123) [SHARED] (default:CE; users:[a@x.com:RO],[b@y.com:MU,MR])
 """
         result = KeeperResponseParser._parse_tree_command(sample_output)
         self.assertEqual(result['data']['share_permissions_key'][:2], ['RO = Read-Only', 'MU = Can Manage Users'])
@@ -77,12 +77,55 @@ My Vault
         self.assertTrue(entry['shared'])
         sp = entry['share_permissions']
         self.assertEqual(sp['default'], 'CE')
-        self.assertEqual(sp['user'], 'CE')
+        self.assertNotIn('user', sp)
         self.assertEqual(len(sp['users']), 2)
         self.assertEqual(sp['users'][0]['username'], 'a@x.com')
         self.assertEqual(sp['users'][0]['permissions'], 'RO')
         self.assertEqual(sp['users'][1]['username'], 'b@y.com')
         self.assertEqual(sp['users'][1]['permissions'], 'MU,MR')
+
+    def test_parse_tree_share_permissions_ignores_legacy_user_segment(self):
+        """Legacy user: segment is ignored; only default is kept."""
+        line = 'Shared Folder [SHARED] (default:MU,CE; user:MU,CE; users:[a@x.com:RO])'
+        sp = KeeperResponseParser._parse_tree_share_permissions(line)
+        self.assertEqual(sp['default'], 'MU,CE')
+        self.assertNotIn('user', sp)
+        self.assertEqual(sp['users'][0]['username'], 'a@x.com')
+
+    def test_parse_tree_does_not_treat_share_suffix_as_uid(self):
+        sample = (
+            'My Vault\n'
+            ' └── Folder (abcUID12345678901234) [SHARED] '
+            '(default:RO; users:[a@x.com:RO])\n'
+            ' └── Rec [login] [Nested Record] (users:[me@x.com:OW])\n'
+        )
+        result = KeeperResponseParser._parse_tree_command(sample)
+        folder = result['data']['tree'][0]
+        self.assertEqual(folder['name'], 'Folder')
+        self.assertEqual(folder['uid'], 'abcUID12345678901234')
+        self.assertEqual(folder['share_permissions']['default'], 'RO')
+        rec = result['data']['tree'][1]
+        self.assertEqual(rec['name'], 'Rec')
+        self.assertEqual(rec['type'], 'record')
+        self.assertNotIn('uid', rec)
+
+    def test_tree_format_json_uses_native_json_parser(self):
+        """tree --format=json must not use the ASCII tree parser."""
+        self.assertEqual(
+            KeeperResponseParser._find_parser_method('tree --format=json'),
+            '_parse_json_format_command',
+        )
+        self.assertEqual(
+            KeeperResponseParser._find_parser_method('tree'),
+            '_parse_tree_command',
+        )
+        native = '{"tree": {"name": "My Vault", "kind": "folder", "children": []}}'
+        result = KeeperResponseParser._parse_json_format_command(
+            'tree --format=json', native
+        )
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['data']['tree']['kind'], 'folder')
+        self.assertNotIn('level', result['data']['tree'])
 
     def test_parse_mkdir_command(self):
         """Test parsing of 'mkdir' command output"""
