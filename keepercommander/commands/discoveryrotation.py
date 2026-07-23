@@ -18,7 +18,7 @@ import re
 import time
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-from typing import Optional, List
+from typing import Any
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -29,7 +29,7 @@ from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.vault_target import (
-    format_pam_folder_display, resolve_pam_folder_uid,
+    format_pam_folder_display, resolve_pam_folder_uid, is_nested_share_folder,
     resolve_pam_record, record_exists_in_vault, collect_pam_folder_uids,
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
@@ -105,6 +105,7 @@ from .universalsecretsync import (
     PAMUniversalSyncRunCommand
 )
 from ..discovery_common.types import UserAcl, UserAclRotationSettings
+from ..vault import TypedRecord
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -170,7 +171,7 @@ def parse_schedule_data(kwargs):
     schedule_json_data = kwargs.get('schedule_json_data')
     schedule_cron_data = kwargs.get('schedule_cron_data')
     schedule_on_demand = kwargs.get('on_demand') is True
-    schedule_data = None  # type: Optional[List]
+    schedule_data = None  # type: list | None
     if isinstance(schedule_json_data, str):
         schedule_json_data = [schedule_json_data]
     if isinstance(schedule_json_data, list):
@@ -221,7 +222,7 @@ def resolve_record_rotation_revision(params, record_uid):
 
 
 def schedule_from_pam_config(record_pam_config):
-    # type: (Optional[vault.TypedRecord]) -> Optional[List]
+    # type: (TypedRecord | None) -> list | None
     """Return rotation schedule list from a PAM configuration defaultRotationSchedule field."""
     if not record_pam_config:
         return None
@@ -233,7 +234,7 @@ def schedule_from_pam_config(record_pam_config):
 
 
 def resolve_record_schedule_data(schedule_data, current_record_rotation, schedule_config, record_pam_config):
-    # type: (Optional[List], Optional[dict], bool, Optional[vault.TypedRecord]) -> Optional[List]
+    # type: (list | None, dict | None, bool, TypedRecord | None) -> list | None
     """Resolve rotation schedule for pam rotation edit (Web Vault use-default-schedule parity)."""
     if schedule_data is not None:
         return schedule_data
@@ -612,7 +613,7 @@ class PAMCreateRecordRotationCommand(Command):
 
         def config_saas_user(_dag, target_record, saas_config_uid: str):
 
-            saas_config_record = vault.KeeperRecord.load(params, saas_config_uid)  # type: Optional[TypedRecord]
+            saas_config_record = vault.KeeperRecord.load(params, saas_config_uid)  # type: TypedRecord | None
             if saas_config_record is None:
                 raise CommandError('', 'The SaaS configuration record does not exists.')
 
@@ -1418,7 +1419,7 @@ class PAMCreateRecordRotationCommand(Command):
             r_requests.append(rq)
 
         # Main execute() logic starts here
-        record_uids = set()  # type: Set[str]
+        record_uids = set()  # type: set[str]
 
         folder_uids = set()
         record_pattern = ''
@@ -1475,7 +1476,7 @@ class PAMCreateRecordRotationCommand(Command):
                                     continue
                                 record_uids.add(record_uid)
 
-        pam_records = []  # type: List[vault.TypedRecord]
+        pam_records = []  # type: list[vault.TypedRecord]
         valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
         for record_uid in record_uids:
             record = vault.KeeperRecord.load(params, record_uid)
@@ -1502,7 +1503,7 @@ class PAMCreateRecordRotationCommand(Command):
         if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_type in PamConfigurationEditMixin.PAM_CONFIG_RECORD_TYPES:
             config_uid = cfg_rec.record_uid
 
-        pam_config = None  # type: Optional[vault.TypedRecord]
+        pam_config = None  # type: vault.TypedRecord | None
         if config_uid:
             if config_uid in pam_configurations:
                 pam_config = pam_configurations[config_uid]
@@ -1519,7 +1520,7 @@ class PAMCreateRecordRotationCommand(Command):
         schedule_data = parse_schedule_data(kwargs)
 
         pwd_complexity = kwargs.get("pwd_complexity")
-        pwd_complexity_rule_list = None  # type: Optional[dict]
+        pwd_complexity_rule_list = None  # type: dict | None
         if pwd_complexity is not None:
             if pwd_complexity:
                 pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
@@ -1560,7 +1561,7 @@ class PAMCreateRecordRotationCommand(Command):
                         'complexity']
         valid_records = []
 
-        r_requests = []  # type: List[router_pb2.RouterRecordRotationRequest]
+        r_requests = []  # type: list[router_pb2.RouterRecordRotationRequest]
 
         # Note: --folder, -fd FOLDER_NAME sets up General rotation
         # use --schedule-only, -so to preserve individual setups (General, IAM, NOOP)
@@ -1618,7 +1619,7 @@ class PAMCreateRecordRotationCommand(Command):
                         config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
                     elif rotation_profile == 'saas':
 
-                        saas_config_uid = kwargs.get("saas_config_uid")  # type: Optional[str]
+                        saas_config_uid = kwargs.get("saas_config_uid")  # type: str | None
                         if saas_config_uid is None:
                             raise CommandError('', 'SaaS rotation profile requires '
                                                    '--saas-config-uid to be specified.')
@@ -2248,7 +2249,7 @@ class PAMConfigurationListCommand(Command):
 
     @staticmethod
     def _domain_administrative_credential_uid(configuration):
-        # type: (vault.KeeperRecord) -> Optional[str]
+        # type: (vault.KeeperRecord) -> str | None
         if not isinstance(configuration, vault.TypedRecord) or \
                 configuration.record_type != 'pamDomainConfiguration':
             return None
@@ -2532,7 +2533,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
         return PamConfigurationEditMixin.pam_record_types
 
     def parse_pam_configuration(self, params, record, **kwargs):
-        # type: (KeeperParams, vault.TypedRecord, Dict[str, Any]) -> None
+        # type: (KeeperParams, vault.TypedRecord, dict[str, Any]) -> None
         field = record.get_typed_field('pamResources')
         if not field:
             value = {}
@@ -2543,8 +2544,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             field.value.append({})
         value = field.value[0]
 
-        gateway_uid = None  # type: Optional[str]
-        gateway = kwargs.get('gateway_uid')  # type: Optional[str]
+        gateway_uid = None  # type: str | None
+        gateway = kwargs.get('gateway_uid')  # type: str | None
         if gateway:
             gateways = gateway_helper.get_all_gateways(params)
             gateway_uid = next((utils.base64_url_encode(x.controllerUid) for x in gateways
@@ -2561,8 +2562,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
         # if len(shares) == 0:
         #     raise Exception(f'Gateway %s has no shared folders', gateway.controllerName)
 
-        shared_folder_uid = None  # type: Optional[str]
-        folder_name = kwargs.get('shared_folder_uid')  # type: Optional[str]
+        shared_folder_uid = None  # type: str | None
+        folder_name = kwargs.get('shared_folder_uid')  # type: str | None
         if folder_name:
             shared_folder_uid = resolve_pam_folder_uid(params, folder_name)
             if not shared_folder_uid:
@@ -2621,7 +2622,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
     @staticmethod
     def resolve_single_record(params, record_name,
-                              rec_type=''):  # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
+                              rec_type=''):  # type: (KeeperParams, str, str) -> vault.KeeperRecord | None
         return resolve_pam_record(params, record_name, rec_type=rec_type or None)
 
     @staticmethod
@@ -3125,7 +3126,7 @@ class PAMConfigurationRemoveCommand(Command):
 
     @classmethod
     def _resolve_pam_config_uid(cls, params, identifier):
-        # type: (KeeperParams, str) -> Optional[str]
+        # type: (KeeperParams, str) -> str | None
         if identifier in params.record_cache:
             rec = vault.KeeperRecord.load(params, identifier)
             if isinstance(rec, vault.TypedRecord) and rec.version == 6:
@@ -3473,7 +3474,7 @@ class PAMScriptEditCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')  # type: Optional[str]
+        script_name = kwargs.get('script')  # type: str | None
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -3558,7 +3559,7 @@ class PAMScriptDeleteCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')  # type: Optional[str]
+        script_name = kwargs.get('script')  # type: str | None
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -3696,9 +3697,10 @@ def _is_rotation_allowed_by_enforcement(params):
 
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
-    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
+    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store',
+                        help='Record UID, path, or title to rotate (includes Nested Share Records)')
     parser.add_argument('--folder', '-f', dest='folder', action='store',
-                        help='Shared folder UID or title pattern to rotate')
+                        help='Shared folder / Nested Share Folder UID or title pattern to rotate')
     # parser.add_argument('--recursive', '-a', dest='recursive', default=False, action='store', help='Enable recursion to rotate sub-folders too')
     # parser.add_argument('--record-pattern', '-p', dest='pattern', action='store', help='Record title match pattern')
     parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
@@ -3715,6 +3717,12 @@ class PAMGatewayActionRotateCommand(Command):
                         help='Email address to send credentials after rotation')
     parser.add_argument('--email-message', dest='email_message', action='store',
                         help='Custom message to include in email')
+
+    _ROTATABLE_FOLDER_TYPES = (
+        BaseFolderNode.SharedFolderType,
+        BaseFolderNode.SharedFolderFolderType,
+        BaseFolderNode.NestedShareFolderType,
+    )
 
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
@@ -3768,39 +3776,55 @@ class PAMGatewayActionRotateCommand(Command):
                 f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
             return
 
-        # single record UID - ignore all folder options
+        # single record - ignore all folder options (NSF-aware UID/path/title resolution)
         if not folder:
-            self.record_rotate(params, record_uid)
+            rec = resolve_pam_record(params, record_uid)
+            self.record_rotate(params, rec.record_uid if rec else record_uid)
             return
 
         # folder UID or pattern (ignore --record-uid/-r option)
         folders = []  # root folders matching UID or title pattern
         records = []  # record UIDs of all v3/pamUser records
+        rotatable_types = PAMGatewayActionRotateCommand._ROTATABLE_FOLDER_TYPES
 
-        # 1. find all shared_folder/shared_folder_folder matching --folder=UID/pattern
+        # 1. find shared_folder / shared_folder_folder / nested_share_folder matching --folder
         if folder in params.folder_cache:  # folder UID
             fldr = params.folder_cache.get(folder)
-            # only shared_folder can be shared to KSM App/Gateway for rotation
-            # but its children shared_folder_folder can contain rotation records too
-            if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+            # shared_folder (and NSF) can be shared to KSM App/Gateway for rotation;
+            # children shared_folder_folder / NSF subfolders can contain rotation records too
+            if fldr.type in rotatable_types or is_nested_share_folder(params, folder):
                 folders.append(folder)
             else:
-                logging.debug(f'Folder skipped (not a shared folder/subfolder) - {folder} {fldr.name}')
+                logging.debug(f'Folder skipped (not a shared folder/subfolder/NSF) - {folder} {fldr.name}')
+        elif is_nested_share_folder(params, folder):
+            folders.append(folder)
         else:
-            rx_name = self.str_to_regex(folder)
-            for fuid in params.folder_cache:
-                fldr = params.folder_cache.get(fuid)
-                # requirement - shared folder only (not for user_folder containing shf w/ recursion)
-                if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
-                    if fldr.name and rx_name.search(fldr.name):
-                        folders.append(fldr.uid)
+            resolved = resolve_pam_folder_uid(params, folder)
+            if resolved:
+                folders.append(resolved)
+            else:
+                rx_name = self.str_to_regex(folder)
+                for fuid in params.folder_cache:
+                    fldr = params.folder_cache.get(fuid)
+                    # shared folder / NSF only (not user_folder containing shf w/ recursion)
+                    if fldr.type in rotatable_types or is_nested_share_folder(params, fuid):
+                        if fldr.name and rx_name.search(fldr.name):
+                            folders.append(fldr.uid)
+                for fuid, nsf in getattr(params, 'nested_share_folders', {}).items():
+                    if fuid in folders:
+                        continue
+                    name = nsf.get('name', '') if isinstance(nsf, dict) else ''
+                    if name and rx_name.search(name):
+                        folders.append(fuid)
 
         folders = list(set(folders))  # Remove duplicate UIDs
         # 2. pattern could match both parent and child - drop all children (w/ a matching parent)
         if recursive and len(folders) > 1:
-            roots: dict[str, list] = {}  # group by shared_folder_uid
+            roots: dict[str, list] = {}  # group by shared_folder_uid (or NSF root)
             for fuid in folders:  # no shf inside shf yet
-                roots.setdefault(params.folder_cache.get(fuid).shared_folder_uid, []).append(fuid)
+                fobj = params.folder_cache.get(fuid)
+                root_uid = getattr(fobj, 'shared_folder_uid', None) or fuid
+                roots.setdefault(root_uid, []).append(fuid)
             uniq = []
             for fuid in roots:
                 fldrs = list(set(roots[fuid]))
@@ -3813,9 +3837,12 @@ class PAMGatewayActionRotateCommand(Command):
                     for fldr in fldrs:
                         path = []
                         child = fldr
-                        while params.folder_cache[child].uid != fuid:
+                        while child in params.folder_cache and params.folder_cache[child].uid != fuid:
                             path.append(child)
-                            child = params.folder_cache[child].parent_uid
+                            parent = params.folder_cache[child].parent_uid
+                            if not parent:
+                                break
+                            child = parent
                         path.append(child)  # add root shf
                         path = path[1:] if path else []  # skip child uid
                         if not set(path) & fldrset:  # no intersect
@@ -3827,12 +3854,13 @@ class PAMGatewayActionRotateCommand(Command):
             if recursive:
                 logging.warning('--recursive/-a option not implemented (ignored)')
                 # params.folder_cache: type=shared_folder_folder, uid=shffUID, shared_folder_uid ='shfUID'
-                # params.subfolder_cache/subfolder_record_cache
+                # params.subfolder_cache/subfolder_record_cache / nested_share_folder_records
 
-            if fldr not in params.subfolder_record_cache:
-                logging.debug(f"folder {fldr} empty - not in subfolder_record_cache (skipped)")
+            folder_records = records_in_folder(params, fldr)
+            if not folder_records:
+                logging.debug(f"folder {fldr} empty - no records in folder caches (skipped)")
                 continue
-            for ruid in params.subfolder_record_cache[fldr]:
+            for ruid in folder_records:
                 if ruid in params.record_cache:
                     if params.record_cache[ruid].get('version') == 3:
                         data = params.record_cache[ruid].get('data_unencrypted', '')
@@ -3849,9 +3877,13 @@ class PAMGatewayActionRotateCommand(Command):
             for fldr in folders:
                 fobj = params.folder_cache.get(fldr, None)
                 title = fobj.name if isinstance(fobj, BaseFolderNode) else ''
+                if not title:
+                    nsf = getattr(params, 'nested_share_folders', {}).get(fldr)
+                    if isinstance(nsf, dict):
+                        title = nsf.get('name', '')
                 logging.debug(f'Rotation Folder UID: {fldr} {title}')
             for rec in records:
-                title = json.loads(params.record_cache.get(rec, {}).get('data_unencrypted', '')).get('title', '')
+                title, _ = get_vault_record_title_type(params, rec)
                 logging.debug(f'Rotation Record UID: {rec} {title}')
 
         # 6. exit if --dry-run

@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 import argparse
-import os
 import ipaddress
 import logging
 import re
@@ -21,7 +20,7 @@ import sys
 import time
 
 from colorama import Fore, Style
-from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
@@ -72,7 +71,7 @@ from .rust_log_filter import (
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_get_connected_gateways
 from ..ssh_agent import try_extract_private_key
-from ... import api, vault
+from ... import vault
 from ...subfolder import try_resolve_path
 from ...error import CommandError
 from ...utils import value_to_boolean
@@ -91,7 +90,7 @@ def _pam_connection_clipboard_bool(v: Any) -> bool:
     return b is True
 
 
-def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
+def _pam_connection_font_size_int(raw: Any) -> int | None:
     """Parse pamSettings.connection.fontSize to int, or None if unset or not parseable as an integer size."""
     if raw is None:
         return None
@@ -115,7 +114,7 @@ def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
         return None
 
 
-def _parse_host_port(value: str) -> Tuple[str, int]:
+def _parse_host_port(value: str) -> tuple[str, int]:
     """
     Parse a 'host:port' or '[ipv6]:port' string into (host, port).
 
@@ -177,7 +176,7 @@ def _iter_record_fields(record: Any):
         yield field
 
 
-def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int]]:
+def _get_host_port_from_record(record: Any) -> tuple[str | None, int | None]:
     """
     Extract (hostName, port) from a record's pamHostname or host typed fields.
 
@@ -223,7 +222,7 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
     return candidates[0]
 
 
-def _record_has_credentials(record: Any, params: Optional['KeeperParams'] = None) -> bool:
+def _record_has_credentials(record: Any, params: 'KeeperParams' | None = None) -> bool:
     """
     Return True if the record has exactly one non-empty login field and at least one of:
     - exactly one non-empty password field (fields[] and custom[]), or
@@ -283,11 +282,11 @@ EXIT_CODE_ADMIN_TERMINATED = 41
 
 
 def _print_close_reason_notice(
-    reason: Optional[str],
+    reason: str | None,
     *,
-    pending_exit_code: Optional[int],
+    pending_exit_code: int | None,
     session_established: bool = False,
-) -> Optional[int]:
+) -> int | None:
     """Show a user-facing notice for an involuntary remote close.
 
     Stays silent for ``normal`` / ``client`` (user-initiated). Called from the
@@ -490,18 +489,21 @@ class PAMLaunchCommand(Command):
         """
         try:
             record = vault.KeeperRecord.load(params, record_uid)
-            if not isinstance(record, vault.TypedRecord):
-                return False
-            if record.version != 3:
-                return False
-            return record.record_type in self.VALID_PAM_RECORD_TYPES
+            if isinstance(record, vault.TypedRecord):
+                if record.version != 3:
+                    return False
+                return record.record_type in self.VALID_PAM_RECORD_TYPES
+            # NSF fallback when the typed record is not in record_cache
+            from ..pam.vault_target import get_vault_record_title_type
+            _, rec_type = get_vault_record_title_type(params, record_uid)
+            return rec_type in self.VALID_PAM_RECORD_TYPES
         except Exception as e:
             logging.debug(f"Error checking record type for {record_uid}: {e}")
             return False
 
-    def find_record(self, params: KeeperParams, record_token: str) -> Optional[str]:
+    def find_record(self, params: KeeperParams, record_token: str) -> str | None:
         """
-        Find a record by UID, path, or title.
+        Find a record by UID, path, or title (classic + Nested Share Folder records).
 
         Args:
             params: KeeperParams instance
@@ -515,10 +517,12 @@ class PAMLaunchCommand(Command):
 
         record_token = record_token.strip()
 
-        # Step 1: Try UID lookup
+        from ..pam.vault_target import record_exists_in_vault
+
+        # Step 1: Try UID lookup (classic + Nested Share Folder)
         uid_pattern = re.compile(r'^[A-Za-z0-9_-]{22}$')
         if uid_pattern.match(record_token):
-            if record_token in params.record_cache:
+            if record_exists_in_vault(params, record_token):
                 logging.debug(f"Found record by UID: {record_token}")
                 return record_token
 
@@ -541,9 +545,9 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_path(self, params: KeeperParams, path: str) -> Optional[str]:
+    def _find_by_path(self, params: KeeperParams, path: str) -> str | None:
         """
-        Find record by path resolution.
+        Find record by path resolution (classic folders + Nested Share Folders).
 
         If exactly one record matches (any type), returns its UID. If two or more
         match, filters to PAM types only: returns the single PAM UID if one,
@@ -552,24 +556,44 @@ class PAMLaunchCommand(Command):
         Returns:
             Record UID if found, None otherwise
         """
+        from ..pam.vault_target import records_in_folder, resolve_pam_folder_uid
+
+        folder_uid = None
+        name = None
+
         rs = try_resolve_path(params, path)
-        if rs is None:
+        if rs is not None:
+            folder, name = rs
+            if folder is not None and name is not None:
+                folder_uid = folder.uid or ''
+
+        # NSF / unresolved path fallback: "FolderName/RecordTitle" or nested path
+        if (not folder_uid or name is None or name == '') and '/' in path.strip('/'):
+            parent, _, title = path.rstrip('/').rpartition('/')
+            if parent and title:
+                resolved_folder = resolve_pam_folder_uid(params, parent, allow_legacy_user=True)
+                if resolved_folder:
+                    folder_uid = resolved_folder
+                    name = title
+
+        if not folder_uid or name is None or name == '':
             return None
 
-        folder, name = rs
-        if folder is None or name is None:
-            return None
-
-        folder_uid = folder.uid or ''
-        if folder_uid not in params.subfolder_record_cache:
+        folder_records = records_in_folder(params, folder_uid)
+        if not folder_records:
             return None
 
         # All records in folder with matching title (any type)
         all_matched = []
-        for uid in params.subfolder_record_cache[folder_uid]:
-            r = api.get_record(params, uid)
-            if r and r.title and r.title.lower() == name.lower():
+        for uid in folder_records:
+            record = vault.KeeperRecord.load(params, uid)
+            if record and record.title and record.title.lower() == name.lower():
                 all_matched.append(uid)
+            elif not record:
+                from ..pam.vault_target import get_vault_record_title_type
+                title, _ = get_vault_record_title_type(params, uid)
+                if title and title.lower() == name.lower() and title != '[record inaccessible]':
+                    all_matched.append(uid)
 
         if len(all_matched) == 1:
             logging.debug(f"Found record by path: {path} -> {all_matched[0]}")
@@ -594,9 +618,9 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_title(self, params: KeeperParams, title: str) -> Optional[str]:
+    def _find_by_title(self, params: KeeperParams, title: str) -> str | None:
         """
-        Find record by exact title match.
+        Find record by exact title match (classic + Nested Share Folder records).
 
         If exactly one record matches (any type), returns its UID. If two or more
         match, filters to PAM types only: returns the single PAM UID if one,
@@ -606,10 +630,27 @@ class PAMLaunchCommand(Command):
             Record UID if found, None otherwise
         """
         all_matched = []
+        seen = set()
+        title_lower = title.lower()
+
         for record_uid in params.record_cache:
             record = vault.KeeperRecord.load(params, record_uid)
-            if record and record.title and record.title.lower() == title.lower():
+            if record and record.title and record.title.lower() == title_lower:
                 all_matched.append(record_uid)
+                seen.add(record_uid)
+
+        # NSF titles that may only be present in nested_share_record_data
+        nsf_data = getattr(params, 'nested_share_record_data', {}) or {}
+        for record_uid, rd in nsf_data.items():
+            if record_uid in seen:
+                continue
+            data_json = rd.get('data_json', {}) if isinstance(rd, dict) else {}
+            if not isinstance(data_json, dict):
+                continue
+            nsf_title = data_json.get('title') or ''
+            if isinstance(nsf_title, str) and nsf_title.lower() == title_lower:
+                all_matched.append(record_uid)
+                seen.add(record_uid)
 
         if len(all_matched) == 1:
             logging.debug(f"Found record by title: {title} -> {all_matched[0]}")
@@ -634,7 +675,7 @@ class PAMLaunchCommand(Command):
 
         return None
 
-    def _find_by_substring(self, params: KeeperParams, token: str) -> Optional[str]:
+    def _find_by_substring(self, params: KeeperParams, token: str) -> str | None:
         """Substring fallback for ``find_record`` — case-insensitive contains
         match across PAM record titles and any ``host`` / ``pamHostname`` field.
 
@@ -650,7 +691,12 @@ class PAMLaunchCommand(Command):
         token_lower = token.lower()
         # candidate tuple: (uid, title, [(hostName, port), ...])
         candidates: list = []
-        for record_uid in params.record_cache:
+        seen = set()
+        for record_uid in list(getattr(params, 'record_cache', {})) + list(
+                getattr(params, 'nested_share_records', {}) or {}):
+            if record_uid in seen:
+                continue
+            seen.add(record_uid)
             try:
                 record = vault.KeeperRecord.load(params, record_uid)
             except Exception:
@@ -686,7 +732,7 @@ class PAMLaunchCommand(Command):
         return self._pick_candidate(candidates, token)
 
     @staticmethod
-    def _pick_candidate(candidates: list, token: str) -> Optional[str]:
+    def _pick_candidate(candidates: list, token: str) -> str | None:
         """Render a numbered list of candidates and prompt for selection.
 
         On non-TTY stdin, prints the list once and returns None — caller
@@ -734,8 +780,8 @@ class PAMLaunchCommand(Command):
         self,
         params: KeeperParams,
         record_uid: str,
-        tdag: Optional[Any] = None,
-    ) -> Optional[Dict]:
+        tdag: Any | None = None,
+    ) -> dict | None:
         """
         Find the gateway associated with a PAM record.
 
@@ -1002,7 +1048,7 @@ class PAMLaunchCommand(Command):
             # the cache contract.
             _cache_entry = launch_cache.get(record_uid)
             _launch_tdag = None  # populated only on cache miss
-            _cached_gateway_info: Optional[Dict[str, Any]] = None
+            _cached_gateway_info: dict[str, Any] | None = None
 
             if _cache_entry is not None:
                 # CACHE HIT: skip DAG build + find_gateway + online probe
@@ -1407,7 +1453,7 @@ class PAMLaunchCommand(Command):
             _debug_connect_ui = bool(getattr(params, 'debug', False)) or logging.getLogger().isEnabledFor(
                 logging.DEBUG
             )
-            pre_connect_spinner: Optional[PamLaunchSpinner] = None
+            pre_connect_spinner: PamLaunchSpinner | None = None
             _banner_name_connect = (getattr(record, 'title', None) or record_token or record_uid or '').strip() or 'PAM resource'
             if not _debug_connect_ui:
                 print(f'Launching connection to {_banner_name_connect}...', flush=True)
@@ -1498,17 +1544,17 @@ class PAMLaunchCommand(Command):
 
     def _start_cli_session(
         self,
-        tunnel_result: Dict[str, Any],
+        tunnel_result: dict[str, Any],
         params: KeeperParams,
-        launch_credential_uid: Optional[str] = None,
+        launch_credential_uid: str | None = None,
         use_stdin: bool = False,
-        cli_scale: Optional[int] = None,
-        connect_banner_title: Optional[str] = None,
-        pre_connect_spinner: Optional[PamLaunchSpinner] = None,
+        cli_scale: int | None = None,
+        connect_banner_title: str | None = None,
+        pre_connect_spinner: PamLaunchSpinner | None = None,
         preserve_crlf: bool = True,
-        pam_total_tc: Optional[PamConnectTiming] = None,
+        pam_total_tc: PamConnectTiming | None = None,
         workflow_expires_on_ms: int = 0,
-        workflow_flow_uid: Optional[bytes] = None,
+        workflow_flow_uid: bytes | None = None,
         workflow_started_by_launch: bool = False,
     ):
         """
@@ -1569,7 +1615,7 @@ class PAMLaunchCommand(Command):
         # Latest close reason from the rust webrtc layer (snake_case name from
         # PyCloseConnectionReason). Set asynchronously by _on_session_disconnect
         # below; consumed in the inner finally to print a user-facing notice.
-        closure_reason: Optional[str] = None
+        closure_reason: str | None = None
         # Whether the guac session was live (≥1 sync) at the moment of remote
         # close. Captured in _on_session_disconnect; lets the notice treat a
         # guacd_error after an established session as a normal logout.
@@ -1577,7 +1623,7 @@ class PAMLaunchCommand(Command):
         # Distinct exit code for involuntary terminations (KeeperAI, admin).
         # Raised as SystemExit at the end of the method so the inner/outer
         # finally cleanup blocks run first.
-        pending_exit_code: Optional[int] = None
+        pending_exit_code: int | None = None
 
         def signal_handler_fn(signum, frame):
             nonlocal shutdown_requested
@@ -1679,7 +1725,7 @@ class PAMLaunchCommand(Command):
             _debug_connect_ui = bool(getattr(params, 'debug', False)) or logging.getLogger().isEnabledFor(
                 logging.DEBUG
             )
-            _connect_spinner: Optional[PamLaunchSpinner] = pre_connect_spinner
+            _connect_spinner: PamLaunchSpinner | None = pre_connect_spinner
             if _connect_spinner is None and not _debug_connect_ui:
                 _banner_name = (connect_banner_title or '').strip() or 'PAM resource'
                 print(f'Launching connection to {_banner_name}...', flush=True)
@@ -1954,7 +2000,7 @@ class PAMLaunchCommand(Command):
                 )
 
             # No PasteOrchestrator when PAM disables paste — only Guacamole key chords (no pyperclip).
-            paste_orch: Optional[PasteOrchestrator] = None
+            paste_orch: PasteOrchestrator | None = None
             if not disable_paste:
                 paste_orch = PasteOrchestrator(
                     send_clipboard_fn=python_handler.send_clipboard_stream,
