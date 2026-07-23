@@ -247,6 +247,42 @@ class TestTreeShareFormatting(TestCase):
         self.assertEqual(data['user_permissions'], [])
         self.assertEqual(data['record_permissions'], ['RO'])
 
+    def test_classic_folder_share_resolves_users_and_teams(self):
+        """SF cache often has account_uid-only users; must still emit users/teams."""
+        from keepercommander.commands.folder import _classic_folder_share_data
+        self.params.user_cache = {'AU1': 'alice@x.com', 'AU2': 'me@example.com'}
+        self.params.team_cache = {'T1': {'name': 'Engineering'}}
+        sf = {
+            'shared_folder_uid': 'SF1',
+            'default_manage_users': True,
+            'default_manage_records': False,
+            'default_can_edit': False,
+            'default_can_share': True,
+            'users': [
+                {'account_uid': 'AU1', 'username': '', 'manage_users': False, 'manage_records': True},
+                {'account_uid': 'AU2', 'username': '', 'manage_users': True, 'manage_records': True},
+                {'account_uid': 'AU3', 'username': '', 'manage_users': False, 'manage_records': False},
+            ],
+            'teams': [
+                {'team_uid': 'T1', 'name': '', 'manage_users': False, 'manage_records': True},
+                {'team_uid': 'T2', 'name': '', 'manage_users': False, 'manage_records': False},
+            ],
+        }
+        data, text = _classic_folder_share_data(self.params, sf, include_uids=True)
+        self.assertEqual(data['user_permissions'], ['MU'])
+        self.assertEqual(data['record_permissions'], ['CS'])
+        emails = {u.get('email') or u.get('uid') for u in data['users']}
+        self.assertEqual(emails, {'alice@x.com', 'me@example.com', 'AU3'})
+        self.assertEqual(
+            next(u['permissions'] for u in data['users'] if u.get('email') == 'alice@x.com'),
+            ['MR'])
+        team_names = {t['name'] for t in data['teams']}
+        self.assertEqual(team_names, {'Engineering', 'T2'})
+        self.assertIn('users:', text)
+        self.assertIn('teams:', text)
+        self.assertIn('alice@x.com:MR', text)
+        self.assertIn('Engineering:MR', text)
+
     def test_format_classic_record_share_info(self):
         from keepercommander.commands.folder import _classic_record_share_data
         data, text = _classic_record_share_data(self.params, 'R1')

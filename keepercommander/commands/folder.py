@@ -1806,6 +1806,12 @@ class FolderTransformCommand(Command, RecordMixin):
 
 
 def _resolve_tree_team_name(params, team_uid):
+    if not team_uid:
+        return ''
+    team = (getattr(params, 'team_cache', None) or {}).get(team_uid) or {}
+    name = team.get('name') if isinstance(team, dict) else getattr(team, 'name', None)
+    if name:
+        return name
     if params.enterprise:
         for t in params.enterprise.get('teams') or []:
             if t.get('team_uid') == team_uid:
@@ -1813,6 +1819,23 @@ def _resolve_tree_team_name(params, team_uid):
                 if name:
                     return name
     return team_uid
+
+
+def _resolve_sf_member_email(params, user_entry):
+    """Resolve a shared-folder user row to an email (never a raw account UID)."""
+    email = (user_entry.get('username') or '').strip()
+    if email and '@' in email:
+        return email
+    account_uid = user_entry.get('account_uid') or ''
+    if account_uid:
+        cached = (getattr(params, 'user_cache', None) or {}).get(account_uid)
+        if cached and '@' in str(cached):
+            return str(cached)
+        if params.enterprise:
+            for u in params.enterprise.get('users') or []:
+                if u.get('user_account_uid') == account_uid and u.get('username'):
+                    return u.get('username')
+    return email if email and '@' in email else ''
 
 
 def _is_compact_share_entry(obj):
@@ -2074,13 +2097,11 @@ def _classic_folder_share_data(params, sf, *, include_uids=False):
 
     Tree text uses a single ``default:`` blob (all default flags).
     JSON splits folder-user defaults vs default record rights:
-      - user_permissions: MU / MR (manage users / manage records on the folder)
+      - user_permissions: MU / MR (default manage users / manage records)
       - record_permissions: CE / CS (default can-edit / can-share on records)
     Named people/teams remain under ``users`` / ``teams``.
     """
-    USER_PERM_KEYS = {
-        'manage_users': 'MU',
-        'manage_records': 'MR',
+    DEFAULT_USER_PERM_KEYS = {
         'default_manage_users': 'MU',
         'default_manage_user': 'MU',  # legacy alias if present
         'default_manage_records': 'MR',
@@ -2089,15 +2110,13 @@ def _classic_folder_share_data(params, sf, *, include_uids=False):
         'default_can_edit': 'CE',
         'default_can_share': 'CS',
     }
-    # Per-user / per-team folder ACL on the shared folder
     MEMBER_PERM_KEYS = {
         'manage_users': 'MU',
         'manage_records': 'MR',
     }
 
     sf = sf or {}
-    user_permissions = [abbr for key, abbr in USER_PERM_KEYS.items() if sf.get(key)]
-    # Preserve stable order MU then MR
+    user_permissions = [abbr for key, abbr in DEFAULT_USER_PERM_KEYS.items() if sf.get(key)]
     user_permissions = [a for a in ('MU', 'MR') if a in user_permissions]
     record_permissions = [abbr for key, abbr in RECORD_PERM_KEYS.items() if sf.get(key)]
     record_permissions = [a for a in ('CE', 'CS') if a in record_permissions]
@@ -2108,22 +2127,48 @@ def _classic_folder_share_data(params, sf, *, include_uids=False):
 
     users = []
     user_parts = []
+    seen_emails = set()
     for u in sf.get('users') or []:
-        email = u.get('username')
-        if not email or email == params.user:
-            continue
-        privs = [abbr for key, abbr in MEMBER_PERM_KEYS.items() if u.get(key)] or ['RO']
+        email = _resolve_sf_member_email(params, u)
+        account_uid = u.get('account_uid') or ''
+        privs = [abbr for key_name, abbr in MEMBER_PERM_KEYS.items() if u.get(key_name)]
         privs = [a for a in ('MU', 'MR') if a in privs] or ['RO']
-        users.append({'email': email, 'permissions': privs})
+        if not email:
+            # Sync often has account_uid only until user_cache fills; still emit membership.
+            if account_uid:
+                entry = {'uid': account_uid, 'permissions': privs}
+                users.append(entry)
+                user_parts.append(f'[{account_uid}:{",".join(privs)}]')
+            continue
+        key = email.lower()
+        if key in seen_emails:
+            continue
+        seen_emails.add(key)
+        entry = {'email': email, 'permissions': privs}
+        if include_uids and account_uid:
+            entry['uid'] = account_uid
+        users.append(entry)
         user_parts.append(f'[{email}:{",".join(privs)}]')
+
     teams = []
     team_parts = []
+    seen_teams = set()
     for t in sf.get('teams') or []:
-        name = t.get('name')
-        privs = [abbr for key, abbr in MEMBER_PERM_KEYS.items() if t.get(key)] or ['RO']
+        team_uid = t.get('team_uid') or ''
+        if team_uid and team_uid in seen_teams:
+            continue
+        if team_uid:
+            seen_teams.add(team_uid)
+        name = (t.get('name') or '').strip()
+        if not name or _looks_like_uid(name):
+            name = _resolve_tree_team_name(params, team_uid) if team_uid else name
+        if not name:
+            if not team_uid:
+                continue
+            name = team_uid
+        privs = [abbr for key_name, abbr in MEMBER_PERM_KEYS.items() if t.get(key_name)]
         privs = [a for a in ('MU', 'MR') if a in privs] or ['RO']
         entry = {'name': name, 'permissions': privs}
-        team_uid = t.get('team_uid') or ''
         if include_uids and team_uid:
             entry['uid'] = team_uid
         teams.append(entry)
@@ -2133,7 +2178,6 @@ def _classic_folder_share_data(params, sf, *, include_uids=False):
         'user_permissions': user_permissions,
         'record_permissions': record_permissions,
     }
-    # Match tree text default:RO when no folder/record default flags are set
     if not user_permissions and not record_permissions:
         data['record_permissions'] = ['RO']
     if users:
@@ -2141,7 +2185,6 @@ def _classic_folder_share_data(params, sf, *, include_uids=False):
     if teams:
         data['teams'] = teams
 
-    # Tree: single default segment (no duplicate "user:")
     parts = ['default:' + ','.join(default_perms)]
     if team_parts:
         parts.append('teams:' + ','.join(team_parts))
