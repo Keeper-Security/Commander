@@ -14,14 +14,11 @@ from ...discovery_common.types import (DiscoveryObject, DiscoveryUser, Discovery
                                        DiscoveryDatabase, JobContent, ServiceAcl)
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...keeper_dag import DAG
-from ...keeper_dag.connection.commander import Connection as CommanderConnection
-from ...keeper_dag.connection.local import Connection as LocalConnection
 from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamEndpoints
 from ...keeper_dag.vertex import DAGVertex
 from ...keeper_dag.edge import EdgeType
 from typing import TYPE_CHECKING
 
-Connection = CommanderConnection | LocalConnection
 if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import TypedRecord
