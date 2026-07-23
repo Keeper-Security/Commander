@@ -380,6 +380,17 @@ def find_direct_user_share_access(access_result, record_uid, email):
     return None
 
 
+def find_record_owner_username(access_result, record_uid):
+    """Return the owner username for *record_uid* from a get_record_accesses_v3 result."""
+    return next(
+        (
+            access.get('accessor_name') or ''
+            for access in access_result.get('record_accesses', [])
+            if access.get('record_uid') == record_uid and access.get('owner')
+        ),
+        '',
+    )
+
 _SHARE_EXPIRATION_NOOP_TOLERANCE_MS = 60_000
 
 

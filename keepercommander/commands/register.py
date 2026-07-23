@@ -302,6 +302,65 @@ def _folder_user_lookup(shared_folder, email):
     return None
 
 
+def _owner_share_target_message(email, entity='record'):
+    # type: (str, str) -> str
+    """User-facing message when a share command targets the owner."""
+    return (
+        f"'{email}' is the owner of this {entity} and already has full access. "
+        f"Share permissions cannot be granted, changed, or revoked for the owner."
+    )
+
+
+def _is_shared_folder_owner_email(shared_folder, email, params=None):
+    # type: (dict, str, Optional[KeeperParams]) -> bool
+    """True when *email* matches the classic shared folder owner from sync-down.
+
+    Resolution order:
+      1. ``owner_username`` from sync-down (primary; present for most folders)
+      2. ``users[].owner`` flag when sync includes it on the user row
+      3. ``owner_account_uid`` matched to the current session user — only used
+         when username/flag are absent. If sync omits ``owner_account_uid`` or
+         the session has no ``account_uid_bytes``, this path is skipped and we
+         return False rather than guessing.
+    """
+    if not shared_folder or not email:
+        return False
+    email_cf = email.casefold()
+    owner_username = shared_folder.get('owner_username') or ''
+    if owner_username and owner_username.casefold() == email_cf:
+        return True
+    # Some sync payloads also put an owner flag on the user row.
+    users = shared_folder.get('users', [])
+    if any(
+        user.get('owner') is True
+        and (user.get('username') or '').casefold() == email_cf
+        for user in users
+    ):
+        return True
+    # Last resort: only when the target is the logged-in user and sync exposes
+    # owner_account_uid. Skipped when either field is missing.
+    owner_uid = shared_folder.get('owner_account_uid')
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None) if params else None
+    if (params and owner_uid and account_uid_bytes
+            and params.user and params.user.casefold() == email_cf):
+        if owner_uid == utils.base64_url_encode(account_uid_bytes):
+            return True
+    return False
+
+
+def _find_record_owner_username(existing_shares, params=None, record_uid=None):
+    # type: (dict, Optional[KeeperParams], Optional[str]) -> Optional[str]
+    """Return the record owner username from share rows or local owner cache."""
+    for username, perm in (existing_shares or {}).items():
+        if perm and perm.get('owner'):
+            return username
+    if params is not None and record_uid and params.user:
+        owner_info = getattr(params, 'record_owner_cache', {}).get(record_uid)
+        if owner_info and owner_info.owner:
+            return params.user
+    return None
+
+
 def format_share_expiration_ms(expiration_ms):
     # type: (int) -> str
     """Format a share expiration timestamp (milliseconds) for log output."""
@@ -545,7 +604,18 @@ class ShareFolderCommand(Command):
                 if all_users or all_records:
                     if all_users:
                         if 'users' in sh_fol:
-                            sf_users.update((x['username'] for x in sh_fol['users'] if x['username'] != params.user))
+                            for x in sh_fol['users']:
+                                username = x.get('username')
+                                if not username or username == params.user:
+                                    continue
+                                if _is_shared_folder_owner_email(
+                                        sh_fol, username, params=params):
+                                    logging.debug(
+                                        "share-folder: skipping owner '%s' in "
+                                        "bulk user update for folder '%s'",
+                                        username, sf_uid)
+                                    continue
+                                sf_users.add(username)
                         if 'teams' in sh_fol:
                             sf_teams.update((x['team_uid'] for x in sh_fol['teams']))
                     if all_records:
@@ -691,6 +761,13 @@ class ShareFolderCommand(Command):
                 current_user = _folder_user_lookup(curr_sf, email)
                 if current_user:
                     email = current_user['username']
+                if _is_shared_folder_owner_email(curr_sf, email, params=params):
+                    # Allow the existing owner self-removal / succession flow in
+                    # _confirm_folder_user_removals; reject grant/update of owner perms.
+                    if action == 'grant':
+                        raise CommandError(
+                            'share-folder',
+                            _owner_share_target_message(email, entity='shared folder'))
                 uo = folder_pb2.SharedFolderUpdateUser()
                 uo.username = email
                 apply_share_expiration(uo)
@@ -1104,7 +1181,24 @@ class ShareRecordCommand(Command):
                     pass
 
             record_path = api.resolve_record_share_path(params, record_uid)
+            owner_username = _find_record_owner_username(
+                existing_shares, params=params, record_uid=record_uid)
             for email in all_users:
+                # Precedence: owner rejection runs before existing-share add/update
+                # logic below. Granting/revoking the owner is never valid, even when
+                # they also appear in existing_shares; "already shared" handling only
+                # applies to non-owners.
+                if owner_username and email.casefold() == owner_username.casefold():
+                    # Ownership transfer (-a owner) is allowed only when the target
+                    # is not already the owner. Grant/revoke must never target owner.
+                    if action == 'owner':
+                        raise CommandError(
+                            'share-record',
+                            f"'{email}' already owns this record. Ownership transfer is a no-op.")
+                    raise CommandError(
+                        'share-record',
+                        _owner_share_target_message(email, entity='record'))
+
                 ro = record_pb2.SharedRecord()
                 ro.toUsername = email
                 ro.recordUid = utils.base64_url_decode(record_uid)

@@ -881,7 +881,7 @@ class TestNestedShareFolderSharingCommands(TestCase):
         cmd = NestedShareRecordShareCommand()
         with mock.patch('builtins.print'):
             cmd.execute(_make_params(nested_share_records={ruid: robj}),
-                        record=ruid, email='user@example.com',
+                        record=ruid, email=['user@example.com'],
                         action='grant', role='viewer')
 
     @patch('keepercommander.nested_share_folder.record_api.unshare_record_v3')
@@ -895,8 +895,44 @@ class TestNestedShareFolderSharingCommands(TestCase):
         cmd = NestedShareRecordShareCommand()
         with mock.patch('builtins.print'):
             cmd.execute(_make_params(nested_share_records={ruid: robj}),
-                        record=ruid, email='user@example.com',
+                        record=ruid, email=['user@example.com'],
                         action='revoke')
+
+    @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
+    @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
+    def test_share_record_rejects_grant_to_owner(self, mock_share, mock_accesses):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+        ruid, robj = _make_record()
+        owner = 'owner@example.com'
+        mock_accesses.return_value = {
+            'record_accesses': [{
+                'record_uid': ruid,
+                'accessor_name': owner,
+                'owner': True,
+                'access_type': 'AT_USER',
+            }],
+            'forbidden_records': [],
+        }
+        cmd = NestedShareRecordShareCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(_make_params(nested_share_records={ruid: robj}),
+                        record=ruid, email=[owner],
+                        action='grant', role='viewer')
+        self.assertIn('is the owner', str(ctx.exception))
+        mock_share.assert_not_called()
+
+    @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_v3')
+    def test_share_folder_rejects_grant_to_owner(self, mock_grant):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderShareCommand
+        fuid, fobj = _make_folder()
+        owner = 'owner@example.com'
+        fobj['owner_username'] = owner
+        cmd = NestedShareFolderShareCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(_make_params(nested_share_folders={fuid: fobj}),
+                        folder=[fuid], user=[owner], action='grant', role='viewer')
+        self.assertIn('is the owner', str(ctx.exception))
+        mock_grant.assert_not_called()
 
     @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_v3')
     def test_share_folder_invite_message_uses_command_prefix(self, mock_grant):
