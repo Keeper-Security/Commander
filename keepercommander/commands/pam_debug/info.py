@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
-from ... import vault, vault_extensions
+from . import load_pam_record
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
 from ...discovery_common.types import UserAcl, DiscoveryObject
@@ -11,7 +11,7 @@ from ...keeper_dag import EdgeType
 import time
 import re
 import json
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...vault import TypedRecord
@@ -38,7 +38,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
     def execute(self, params: KeeperParams, **kwargs):
 
         record_uid = kwargs.get("record_uid")
-        record = vault.KeeperRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+        record = load_pam_record(params, record_uid)  # type: TypedRecord | None
         if record is None:
             print(f"{bcolors.FAIL}Record does not exists.{bcolors.ENDC}")
             return
@@ -85,7 +85,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
             resource_uid = record_rotation.get("resource_uid")
 
-        configuration_record = vault.KeeperRecord.load(params, controller_uid)  # type: Optional[TypedRecord]
+        configuration_record = load_pam_record(params, controller_uid)  # type: TypedRecord | None
         if configuration_record is None:
             print(f"{bcolors.FAIL}The configuration record {controller_uid} does not exist.{bcolors.ENDC}")
             return
@@ -170,8 +170,8 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             if len(record_parent_vertices) > 0:
                 for record_parent_vertex in record_parent_vertices:
 
-                    parent_record = vault.KeeperRecord.load(params,
-                                                            record_parent_vertex.uid)  # type: Optional[TypedRecord]
+                    parent_record = load_pam_record(params,
+                                                            record_parent_vertex.uid)  # type: TypedRecord | None
                     if parent_record is None:
                         print(f"{bcolors.FAIL}   * Parent record {record_parent_vertex.uid} "
                               f"does not exists.{bcolors.ENDC}")
@@ -214,9 +214,9 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                             if len(acl_content.rotation_settings.saas_record_uid_list) > 0:
                                 if acl_content.rotation_settings.noop:
                                     saas_config_uid = acl_content.rotation_settings.saas_record_uid_list[0]
-                                    saas_config = vault.KeeperRecord.load(
+                                    saas_config = load_pam_record(
                                         params,
-                                        saas_config_uid)  # type: Optional[TypedRecord]
+                                        saas_config_uid)  # type: TypedRecord | None
 
                                     print(f"      . SaaS configuration record is {saas_config.title}")
                                 else:
@@ -239,8 +239,8 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._b("  Child Records"))
             if len(record_child_vertices) > 0:
                 for record_child_vertex in record_child_vertices:
-                    child_record = vault.KeeperRecord.load(params,
-                                                           record_child_vertex.uid)  # type: Optional[TypedRecord]
+                    child_record = load_pam_record(params,
+                                                           record_child_vertex.uid)  # type: TypedRecord | None
 
                     if child_record is None:
                         print(f"{bcolors.FAIL}    * Child record {record_child_vertex.uid} "
@@ -297,8 +297,8 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                                 and acl.controls_services):
 
                             # Get the resource record
-                            machine_record = vault.KeeperRecord.load(params,
-                                                                     machine_vertex.uid)  # type: Optional[TypedRecord]
+                            machine_record = load_pam_record(params,
+                                                                     machine_vertex.uid)  # type: TypedRecord | None
 
                             # If the resource record does not exist.
                             if machine_record is None:
@@ -333,7 +333,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
                     # Get the users that are used for tasks/services on this machine.
                     for user_vertex in record_vertex.has_vertices():
-                        user_record = vault.KeeperRecord.load(params, user_vertex.uid)  # type: Optional[TypedRecord]
+                        user_record = load_pam_record(params, user_vertex.uid)  # type: TypedRecord | None
                         acl = record_link.get_acl(record_vertex.uid, user_vertex.uid)
                         if acl is not None and acl.controls_services:
                             # If the user record does not exist.

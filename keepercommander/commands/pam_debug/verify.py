@@ -3,7 +3,7 @@ import logging
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
-from ...vault import TypedRecord
+from . import load_pam_record
 from ...discovery_common.verify import Verify
 import sys
 from typing import TYPE_CHECKING
@@ -53,7 +53,7 @@ class PAMDebugVerifyCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         def _record_lookup(record_uid: str) -> KeeperRecord:
-            return TypedRecord.load(params, record_uid)
+            return load_pam_record(params, record_uid)
 
         colors = {
             Verify.OK: bcolors.OKGREEN,
