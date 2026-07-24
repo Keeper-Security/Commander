@@ -284,18 +284,15 @@ class KeepassExporter(BaseExporter, XmlUtils):
         else:
             return XmlUtils.sanitize_xml_text(keeper_value)
 
-    def do_export(self, filename, records, file_password=None, **kwargs):
-        master_password = file_password
-        confirmed = True
-        while not master_password or not confirmed:
-            print('Choose password for your Keepass file')
-            master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
-            print('\nRe-enter password for your Keepass file')
-            confirmation = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
-            confirmed = master_password == confirmation
-            retry_msg = 'The passwords you entered do not match.\nPlease try again.\n'
-            fail_msg = bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + retry_msg + bcolors.ENDC
-            not confirmed and print(fail_msg)
+    def do_export(self, filename, records, file_password=None, kbdx_key_file=None, **kwargs):
+        password = file_password or getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
+        if not kbdx_key_file:
+            print('Press Enter if your Keepass file is not protected with a key file')
+        keyfile = kbdx_key_file or input('...' + 'Path to Key file'.rjust(20) + ': ') or None
+        if keyfile:
+            keyfile = os.path.expanduser(keyfile.strip("\"'"))
+        else:
+            keyfile = None
 
         sfs = []  # type: list[SharedFolder]
         rs = []   # type: list[Record]
@@ -308,7 +305,8 @@ class KeepassExporter(BaseExporter, XmlUtils):
         template_file = os.path.join(os.path.dirname(__file__), 'template.kdbx')
 
         with PyKeePass(template_file, password='111111') as kdb:
-            kdb.password = master_password
+            kdb.password = password
+            kdb.keyfile = keyfile
             root = kdb.root_group
 
             for r in rs:
