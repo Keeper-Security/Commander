@@ -431,6 +431,8 @@ def export(params, file_format, filename, **kwargs):
     file_password = kwargs.get('file_password')
     if file_password:
         args['file_password'] = file_password
+    if kwargs.get('kbdx_key_file'):
+        args['kbdx_key_file'] = kwargs.get('kbdx_key_file')
     zip_archive = kwargs.get('zip_archive') is True
     if zip_archive:
         args['zip_archive'] = zip_archive
