@@ -97,6 +97,8 @@ export_parser.add_argument('--max-size', dest='max_size',
                            help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
 export_parser.add_argument('-kp', '--keepass-file-password', dest='file_password', action='store',
                            help='Password for the exported file')
+export_parser.add_argument('-kkf', '--keepass-key-file', dest='kbdx_key_file', action='store',
+                           help='Keepass key file for the exported file')
 export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
 export_parser.add_argument('--save-in-vault', dest='save_in_vault', action='store_true',
