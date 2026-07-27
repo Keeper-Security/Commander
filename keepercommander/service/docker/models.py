@@ -123,3 +123,9 @@ class TeamsConfig:
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
 
+
+@dataclass
+class SailPointConfig:
+    entitlement_scope: str = 'both'  # folders | records | both
+    poll_interval_seconds: int = 60
+

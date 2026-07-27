@@ -20,8 +20,8 @@ This module provides reusable components for Docker-based integrations:
 """
 
 from .models import (
-    DockerSetupConstants, SetupResult, ServiceConfig, SlackConfig, TeamsConfig, SetupStep,
-    ApproverTeam, ApprovalsConfig,
+    DockerSetupConstants, SetupResult, ServiceConfig, SlackConfig, TeamsConfig, SailPointConfig,
+    SetupStep, ApproverTeam, ApprovalsConfig,
 )
 from .printer import DockerSetupPrinter
 from .setup_base import DockerSetupBase
@@ -33,6 +33,7 @@ __all__ = [
     'ServiceConfig',
     'SlackConfig',
     'TeamsConfig',
+    'SailPointConfig',
     'ApproverTeam',
     'ApprovalsConfig',
     'SetupStep',

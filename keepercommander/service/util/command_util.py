@@ -160,6 +160,14 @@ class CommandExecutor:
                 params.service_mode = True
 
             command = ensure_record_add_json_format(html.unescape(command))
+
+            from ..commands.integrations.sailpoint.service import SailPointService
+            sailpoint_response = SailPointService.handle_command(params, command)
+            if sailpoint_response is not None:
+                response, status_code = sailpoint_response
+                response = CommandExecutor.encrypt_response(response)
+                return response, status_code
+
             return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
@@ -172,8 +180,34 @@ class CommandExecutor:
             
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
-            response, status_code = cls._finalize_parsed_response(response)
             
+            if isinstance(response, dict):
+                # Extract status_code and remove it from response body
+                if 'status_code' in response:
+                    status_code = response.pop('status_code')
+                elif response.get("status") == "error":
+                    status_code = 400
+                elif response.get("status") == "warning":
+                    status_code = 400
+                else:
+                    status_code = 200
+            else:
+                status_code = 200
+
+            if status_code == 200:
+                try:
+                    SailPointService.after_command(params, command, success=True)
+                except Exception as e:
+                    logger.error(f'SailPoint post-process failed: {e}')
+                    err = {
+                        'status': 'error',
+                        'error': (
+                            'Command succeeded but SailPoint pending entitlement '
+                            f'queue failed: {e}'
+                        ),
+                    }
+                    return CommandExecutor.encrypt_response(err), 500
+
             response = CommandExecutor.encrypt_response(response)
             logger.debug(f"Command executed successfully")
             return response, status_code
