@@ -44,6 +44,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from keepercommander.commands.pam_import.nsf_helpers import get_folder_record_uids
+from keepercommander.commands.pam_import.record_loader import load_pam_record
+
 
 # ---------------------------------------------------------------------------
 # Notes marker
@@ -203,15 +206,9 @@ def build_existing_index(params, folder_uids) -> ExistingRecordIndex:
     # are populated by ``api.sync_down``, but a fresh session without a
     # sync will have them as ``None`` or empty dicts. Bail early so the
     # importer falls back to always-create mode instead of crashing.
-    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
     folder_cache = getattr(params, "folder_cache", None) or {}
     if not folder_cache and not getattr(params, "nested_share_folders", None):
         return index
-
-    try:
-        from keepercommander.commands.pam_import.nsf_helpers import get_folder_record_uids
-    except ImportError:  # pragma: no cover
-        get_folder_record_uids = None
 
     # Recursively collect record UIDs from every subfolder.
     stack = list(folder_uids)
@@ -223,10 +220,7 @@ def build_existing_index(params, folder_uids) -> ExistingRecordIndex:
             continue
         visited.add(fuid)
         index.scanned_folder_uids.add(fuid)
-        if get_folder_record_uids is not None:
-            record_uids = get_folder_record_uids(params, fuid)
-        else:
-            record_uids = subfolder_record_cache.get(fuid) or set()
+        record_uids = get_folder_record_uids(params, fuid)
         for ruid in record_uids:
             all_record_uids.add(ruid)
             index.folder_by_record[ruid] = fuid
@@ -238,11 +232,7 @@ def build_existing_index(params, folder_uids) -> ExistingRecordIndex:
                 stack.append(child_uid)
 
     for ruid in all_record_uids:
-        try:
-            from keepercommander.commands.pam_import.record_loader import load_pam_record
-            rec = load_pam_record(params, ruid) or vault.KeeperRecord.load(params, ruid)
-        except ImportError:  # pragma: no cover
-            rec = vault.KeeperRecord.load(params, ruid)
+        rec = load_pam_record(params, ruid) or vault.KeeperRecord.load(params, ruid)
         if rec is None:
             continue
         rtype = getattr(rec, "record_type", "") or ""

@@ -395,6 +395,65 @@ def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
     return folder_uid
 
 
+_NSF_FOLDER_BATCH_LIMIT = 100
+
+
+def create_nsf_folders_batch(params, folder_specs: List[dict], *,
+                             sync: bool = True,
+                             command: str = 'pam') -> List[dict]:
+    """Create NSF folders via ``vault/folders/v3/add`` in chunks of 100.
+
+    Each *folder_specs* entry is ``{'name': str, 'parent_uid': str|None}``.
+    Returns the batch API result list (same order as *folder_specs*).
+    Seeds local NSF caches after each successful create; optionally syncs once
+    at the end so callers avoid one round-trip per folder.
+    """
+    from ...nested_share_folder.folder_api import create_folders_batch_v3
+
+    if not folder_specs:
+        return []
+
+    results: List[dict] = []
+    for start in range(0, len(folder_specs), _NSF_FOLDER_BATCH_LIMIT):
+        chunk = folder_specs[start:start + _NSF_FOLDER_BATCH_LIMIT]
+        try:
+            chunk_results = create_folders_batch_v3(params, chunk)
+        except Exception as exc:
+            raise CommandError(command, f'NSF folder batch create failed: {exc}') from exc
+
+        if len(chunk_results) != len(chunk):
+            raise CommandError(
+                command,
+                f'NSF folder batch returned {len(chunk_results)} results for {len(chunk)} folders',
+            )
+
+        for spec, result in zip(chunk, chunk_results):
+            if not result.get('success'):
+                name = spec.get('name') or '?'
+                raise CommandError(
+                    command,
+                    result.get('message') or f'Failed to create Nested Share Folder: {name}',
+                )
+            folder_uid = result.get('folder_uid')
+            if not folder_uid:
+                raise CommandError(
+                    command,
+                    f"Nested Share Folder creation did not return UID: {spec.get('name')}",
+                )
+            seed_nsf_folder_cache(
+                params,
+                folder_uid,
+                spec.get('name') or '',
+                spec.get('parent_uid') or None,
+                result.get('folder_key_unencrypted'),
+            )
+            results.append(result)
+
+    if sync:
+        sync_down_preserving_nsf_keys(params)
+    return results
+
+
 def extend_create_record(params, obj, folder_uid: str) -> Optional[str]:
     """Create a PAM import record in a classic or NSF folder."""
     return obj.create_record(params, folder_uid)

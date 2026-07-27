@@ -445,10 +445,22 @@ class PAMProjectImportCommand(Command):
         # record. Cannot live in any safe folder, or the safe's members
         # would gain access to the central config record.
         config_folder_name = f"""{res["project_folder"]} - Config"""
+
+        # Verify principals once (avoids one round-trip per safe).
+        if all_user_perms:
+            self.verify_users_and_teams(params, all_user_perms)
+
+        if use_nsf:
+            self._create_safe_folders_nsf_batch(
+                params, project_folder_uid, res, safe_folder_records,
+                config_folder_name, safe_folder_map,
+            )
+            return
+
         config_uid = self.create_subfolder(
             params, folder_name=config_folder_name,
             parent_uid=project_folder_uid, permissions=dict(default_fperm),
-            use_nsf=use_nsf,
+            use_nsf=False,
         )
         res["resources_folder"] = config_folder_name
         res["users_folder"] = config_folder_name
@@ -456,10 +468,6 @@ class PAMProjectImportCommand(Command):
         res["users_folder_uid"] = config_uid
         res["config_folder_uid"] = config_uid
         res["config_folder"] = config_folder_name
-
-        # Verify principals once (avoids one round-trip per safe).
-        if all_user_perms:
-            self.verify_users_and_teams(params, all_user_perms)
 
         # Create one shared folder per safe under the project wrapper and
         # apply its specific permission set. Inside each safe folder,
@@ -477,7 +485,7 @@ class PAMProjectImportCommand(Command):
             folder_uid = self.create_subfolder(
                 params, folder_name=record["name"],
                 parent_uid=project_folder_uid, permissions=record["fperm"],
-                use_nsf=use_nsf,
+                use_nsf=False,
             )
             # Top-level lookup key (no slash) maps to the safe folder
             # itself for callers that still emit ``folder_path = "<safe>"``
@@ -488,11 +496,11 @@ class PAMProjectImportCommand(Command):
             usr_sub_name = f"{record['name']} - Users"
             res_sub_uid = self.create_subfolder(
                 params, folder_name=res_sub_name, parent_uid=folder_uid,
-                use_nsf=use_nsf,
+                use_nsf=False,
             )
             usr_sub_uid = self.create_subfolder(
                 params, folder_name=usr_sub_name, parent_uid=folder_uid,
-                use_nsf=use_nsf,
+                use_nsf=False,
             )
             safe_folder_map[f"{record['name']}/{res_sub_name}"] = res_sub_uid
             safe_folder_map[f"{record['name']}/{usr_sub_name}"] = usr_sub_uid
@@ -505,6 +513,101 @@ class PAMProjectImportCommand(Command):
                 "resources_subfolder_uid": res_sub_uid,
                 "users_subfolder": usr_sub_name,
                 "users_subfolder_uid": usr_sub_uid,
+            })
+            if record["uperm"]:
+                self.add_folder_permissions(params, folder_uid, record["uperm"])
+
+        res["safe_folder_map"] = safe_folder_map
+
+    def _create_safe_folders_nsf_batch(self, params, project_folder_uid: str,
+                                      res: dict, safe_folder_records: list,
+                                      config_folder_name: str,
+                                      safe_folder_map: dict) -> None:
+        """Create Config + per-safe NSF folders via batched folder_add_v3.
+
+        Two layers (parents must exist before children):
+          1. Config folder + each safe folder under the project
+          2. ``{safe} - Resources`` / ``{safe} - Users`` under each safe
+        """
+        from .nsf_helpers import create_nsf_folders_batch
+
+        # Layer 1: config + safe wrappers (same parent)
+        layer1_specs = [
+            {"name": config_folder_name, "parent_uid": project_folder_uid},
+        ]
+        for record in safe_folder_records:
+            layer1_specs.append({
+                "name": record["name"],
+                "parent_uid": project_folder_uid,
+            })
+
+        layer1 = create_nsf_folders_batch(
+            params, layer1_specs, sync=False, command='pam-project-import',
+        )
+        config_uid = layer1[0]["folder_uid"]
+        res["resources_folder"] = config_folder_name
+        res["users_folder"] = config_folder_name
+        res["resources_folder_uid"] = config_uid
+        res["users_folder_uid"] = config_uid
+        res["config_folder_uid"] = config_uid
+        res["config_folder"] = config_folder_name
+
+        safe_uids: list = []
+        for i, record in enumerate(safe_folder_records):
+            folder_uid = layer1[i + 1]["folder_uid"]
+            safe_uids.append(folder_uid)
+            safe_folder_map[record["name"]] = folder_uid
+
+        # Layer 2: Resources / Users children under each safe
+        layer2_specs: list = []
+        layer2_meta: list = []  # (safe_index, kind, sub_name)
+        for i, record in enumerate(safe_folder_records):
+            res_sub_name = f"{record['name']} - Resources"
+            usr_sub_name = f"{record['name']} - Users"
+            parent_uid = safe_uids[i]
+            layer2_specs.append({"name": res_sub_name, "parent_uid": parent_uid})
+            layer2_meta.append((i, "resources", res_sub_name))
+            layer2_specs.append({"name": usr_sub_name, "parent_uid": parent_uid})
+            layer2_meta.append((i, "users", usr_sub_name))
+
+        layer2 = []
+        if layer2_specs:
+            layer2 = create_nsf_folders_batch(
+                params, layer2_specs, sync=True, command='pam-project-import',
+            )
+        else:
+            # Config-only project: still need one sync after layer 1.
+            from .nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
+
+        # Assemble maps / safe_folders entries
+        by_safe: dict = {
+            i: {"resources_uid": None, "users_uid": None,
+                "resources_name": None, "users_name": None}
+            for i in range(len(safe_folder_records))
+        }
+        for result, (safe_i, kind, sub_name) in zip(layer2, layer2_meta):
+            uid = result["folder_uid"]
+            parent_name = safe_folder_records[safe_i]["name"]
+            safe_folder_map[f"{parent_name}/{sub_name}"] = uid
+            if kind == "resources":
+                by_safe[safe_i]["resources_uid"] = uid
+                by_safe[safe_i]["resources_name"] = sub_name
+            else:
+                by_safe[safe_i]["users_uid"] = uid
+                by_safe[safe_i]["users_name"] = sub_name
+
+        for i, record in enumerate(safe_folder_records):
+            folder_uid = safe_uids[i]
+            info = by_safe[i]
+            res["safe_folders"].append({
+                "name": record["name"],
+                "safe_name": record["safe_name"],
+                "uid": folder_uid,
+                "resources_subfolder": info["resources_name"],
+                "resources_subfolder_uid": info["resources_uid"],
+                "users_subfolder": info["users_name"],
+                "users_subfolder_uid": info["users_uid"],
             })
             if record["uperm"]:
                 self.add_folder_permissions(params, folder_uid, record["uperm"])
@@ -1039,17 +1142,14 @@ class PAMProjectImportCommand(Command):
 
         name = str(folder_name or "").strip()
         if use_nsf or is_nested_share_folder(params, parent_uid):
-            from .nsf_helpers import seed_nsf_folder_cache, sync_down_preserving_nsf_keys
-            from ...nested_share_folder.folder_api import create_folder_v3
-            result = create_folder_v3(params, name, parent_uid=parent_uid or None)
-            if isinstance(result, dict) and result.get('success') is False:
-                raise CommandError("pam", result.get('message') or 'Failed to create Nested Share Folder')
-            folder_uid = result.get('folder_uid') if isinstance(result, dict) else None
-            if not folder_uid:
-                raise CommandError("pam", f'Nested Share Folder creation did not return UID: {name}')
-            folder_key = result.get('folder_key_unencrypted') if isinstance(result, dict) else None
-            seed_nsf_folder_cache(params, folder_uid, name, parent_uid or None, folder_key)
-            sync_down_preserving_nsf_keys(params)
+            from .nsf_helpers import create_nsf_folders_batch
+            results = create_nsf_folders_batch(
+                params,
+                [{"name": name, "parent_uid": parent_uid or None}],
+                sync=True,
+                command='pam',
+            )
+            folder_uid = results[0]["folder_uid"]
             params.environment_variables[LAST_FOLDER_UID] = folder_uid
             return folder_uid
 
@@ -1536,6 +1636,9 @@ class PAMProjectImportCommand(Command):
             logging.warning(f"Processing external users: {len(users)}")
             for n, user in enumerate(users):  # standalone users
                 user.create_record(params, _resolve_folder_uid(user, shfusr))
+                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
+                    from .nsf_helpers import sync_down_preserving_nsf_keys
+                    sync_down_preserving_nsf_keys(params)
                 if n % pdelta == 0: print(f"{n}/{len(users)}")
             print(f"{len(users)}/{len(users)}\n")
 
@@ -1549,6 +1652,11 @@ class PAMProjectImportCommand(Command):
             admin_uid = get_admin_credential(mach, True)
             mach_folder_uid = _resolve_folder_uid(mach, shfres)
             mach.create_record(params, mach_folder_uid)
+            # NSF creates with sync_after=False; pam tunnel edit resolves from
+            # record_cache, so sync once when the new UID is not loaded yet.
+            if mach.uid and mach.uid not in (getattr(params, 'record_cache', None) or {}):
+                from .nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
             tdag.link_resource_to_config(mach.uid)
             if isinstance(mach, PamRemoteBrowserObject): # RBI
                 args = parse_command_options(mach, True)
@@ -1621,6 +1729,9 @@ class PAMProjectImportCommand(Command):
                 # to every record originating from that CyberArk safe.
                 user_folder_uid = _resolve_folder_uid(user, mach_folder_uid)
                 user.create_record(params, user_folder_uid)
+                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
+                    from .nsf_helpers import sync_down_preserving_nsf_keys
+                    sync_down_preserving_nsf_keys(params)
                 if isinstance(user, PamUserObject):  # rotation setup
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
                     if user.rotation_settings:
@@ -1711,5 +1822,11 @@ class PAMProjectImportCommand(Command):
                             logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")
             else:
                 logging.debug(f"Unable to resolve domain admin '{pce.dom_administrative_credential}' for PAM Domain configuration.")
+
+        # One sync after bulk NSF record creates (create_record uses sync_after=False).
+        use_nsf = project["options"].get("use_nsf", False) is True
+        if use_nsf or is_nested_share_folder(params, shfres) or is_nested_share_folder(params, shfusr):
+            from .nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
 
         logging.debug("Done processing project data.")

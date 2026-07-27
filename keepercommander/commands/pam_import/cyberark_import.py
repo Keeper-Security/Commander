@@ -30,6 +30,8 @@ from typing import Any, Optional
 from prompt_toolkit import HTML, print_formatted_text
 
 from ..base import Command
+from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record
+from ... import api, vault, vault_extensions
 from ...display import bcolors
 from ...error import CommandError
 from ...importer.cyberark.cyberark_pam import (
@@ -76,6 +78,18 @@ from ...importer.cyberark.pam.idempotency import (
     strip_id_marker,
     summarize,
 )
+from .nsf_helpers import find_pam_configuration, get_folder_record_uids
+from .record_loader import iter_accessible_record_uids, load_pam_record
+
+
+def is_matching_title(title: str, base: str) -> bool:
+    """True when *title* equals *base* or is ``{base} #N`` (case-insensitive)."""
+    title = title.casefold()
+    if title == base:
+        return True
+    if not title.startswith(base):
+        return False
+    return bool(re.fullmatch(r" #\d+", title[len(base):]))
 
 
 class SecureTempFileStore:
@@ -1148,7 +1162,7 @@ class CyberArkImportOrchestrator:
         # wrapper folder(s).  Records live inside these (and inside
         # their Resources / Users subfolders for the safe-per-folder
         # layout).
-        shared_folder_uids: List[str] = []
+        shared_folder_uids: list[str] = []
         seen: set = set()
         for wrapper_uid in wrapper_uids:
             for child_uid, _name in CyberArkPAMCleanupCommand._iter_project_child_folders(
@@ -2215,18 +2229,13 @@ Examples:
         Handles #N suffix deduplication from PAMProjectImportCommand.
         Searches classic vault records and Nested Share Folder caches.
         """
-        from ... import api, vault_extensions
-        from .nsf_helpers import find_pam_configuration
-        from .record_loader import iter_accessible_record_uids, load_pam_record
-
         api.sync_down(params)
         config_base = f"{project_name} Configuration".casefold()
         candidates = []
 
         # Classic path (keeps existing unit-test mocks working)
         for c in vault_extensions.find_records(params, record_version=6):
-            t = c.title.casefold()
-            if t == config_base or (t.startswith(config_base) and re.match(r' #\d+$', t[len(config_base):])):
+            if is_matching_title(getattr(c, "title", "") or "", config_base):
                 candidates.append(c)
 
         # NSF / full-access path — pick up configs that live only in NSF caches
@@ -2235,13 +2244,10 @@ Examples:
             if uid in seen_uids:
                 continue
             rec = load_pam_record(params, uid)
-            if not rec or getattr(rec, "version", None) != 6:
-                continue
-            title = getattr(rec, "title", "") or ""
-            t = title.casefold()
-            if t == config_base or (t.startswith(config_base) and re.match(r' #\d+$', t[len(config_base):])):
-                candidates.append(rec)
-                seen_uids.add(uid)
+            if rec and getattr(rec, "version", None) == 6:
+                if is_matching_title(getattr(rec, "title", "") or "", config_base):
+                    candidates.append(rec)
+                    seen_uids.add(uid)
 
         if not candidates:
             exact = find_pam_configuration(params, f"{project_name} Configuration")
@@ -2398,14 +2404,9 @@ Examples:
             raise CommandError("pam project cyberark-cleanup",
                                "Either --name or --config is required")
 
-        from ... import api, vault, vault_extensions
-
         api.sync_down(params)
 
         # Find PAM config by name or UID (classic + NSF)
-        from .nsf_helpers import find_pam_configuration
-        from .record_loader import iter_accessible_record_uids, load_pam_record
-
         if config_uid:
             config_rec = vault.KeeperRecord.load(params, config_uid)
             if not config_rec:
@@ -2418,20 +2419,18 @@ Examples:
             config_base = f"{project_name} Configuration".casefold()
             config_rec = None
             for c in vault_extensions.find_records(params, record_version=6):
-                if c.title.casefold().startswith(config_base):
+                if is_matching_title(getattr(c, "title", "") or "", config_base):
                     config_rec = c
                     config_uid = c.record_uid
                     break
             if not config_rec:
                 for uid in iter_accessible_record_uids(params):
                     rec = load_pam_record(params, uid)
-                    if not rec or getattr(rec, "version", None) != 6:
-                        continue
-                    title = getattr(rec, "title", "") or ""
-                    if title.casefold().startswith(config_base):
-                        config_rec = rec
-                        config_uid = uid
-                        break
+                    if rec and getattr(rec, "version", None) == 6:
+                        if is_matching_title(getattr(rec, "title", "") or "", config_base):
+                            config_rec = rec
+                            config_uid = uid
+                            break
             if not config_rec:
                 exact = find_pam_configuration(params, f"{project_name} Configuration")
                 if exact:
@@ -2451,9 +2450,6 @@ Examples:
         # wrapper under PAM Environments so cleanup handles
         # both classic shared folders and Nested Share Folders
         # (and any subset thereof) without hardcoding names.
-        from .nsf_helpers import get_folder_record_uids
-        from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record
-
         sf_uids = []
         record_count = 0
         sf_names: list = []
@@ -2602,7 +2598,6 @@ Examples:
     @classmethod
     def _is_project_content_folder(cls, params, folder_uid: str, folder=None) -> bool:
         """True for classic shared folders or Nested Share Folders under a project."""
-        from ..pam.vault_target import is_nested_share_folder
         from ...subfolder import BaseFolderNode
 
         if is_nested_share_folder(params, folder_uid):
@@ -2659,7 +2654,6 @@ Examples:
         correct in the rare case where two projects share a name
         (PAMProjectImportCommand allows duplicates via the ``#N`` suffix).
         """
-        from ..pam.vault_target import is_nested_share_folder
         from ...subfolder import BaseFolderNode
 
         wrapper_uids: list = []
