@@ -10,9 +10,16 @@
 
 import json
 import os
-import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from keepercommander.commands.pam_import.cyberark_import import (
+    CyberArkPAMCleanupCommand,
+    CyberArkPAMImportCommand,
+    _temp_store,
+)
 from keepercommander.importer.cyberark.cyberark_pam import (
     AccountMapper,
     AdaptiveThrottler,
@@ -33,7 +40,12 @@ from keepercommander.importer.cyberark.cyberark_pam import (
     strip_credentials,
     DEFAULT_PLATFORM_MAP,
 )
-from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+from keepercommander.subfolder import BaseFolderNode, NestedShareFolderNode
+
+
+PAM_ROOT_FOLDER_NAME = "PAM Environments"
+DEFAULT_PROJECT_NAME = "CyberArk Migration"
+SAFE_FOLDER_NAME = "Win_Local"
 
 
 # ── AccountMapper Tests ──────────────────────────────────────
@@ -1088,8 +1100,8 @@ class TestFindConfigUid:
         record.record_uid = uid
         return record
 
-    @patch('keepercommander.vault_extensions')
-    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.cyberark_import.vault_extensions')
+    @patch('keepercommander.commands.pam_import.cyberark_import.api.sync_down')
     def test_exact_match(self, mock_sync, mock_ve):
         mock_ve.find_records.return_value = [
             self._make_mock_record("MyProject Configuration", "uid-001"),
@@ -1098,8 +1110,8 @@ class TestFindConfigUid:
         result = cmd._find_config_uid(MagicMock(), "MyProject")
         assert result == "uid-001"
 
-    @patch('keepercommander.vault_extensions')
-    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.cyberark_import.vault_extensions')
+    @patch('keepercommander.commands.pam_import.cyberark_import.api.sync_down')
     def test_suffix_picks_highest_numerically(self, mock_sync, mock_ve):
         """#10 should sort after #9 (numeric, not lexicographic)."""
         mock_ve.find_records.return_value = [
@@ -1111,8 +1123,8 @@ class TestFindConfigUid:
         result = cmd._find_config_uid(MagicMock(), "MyProject")
         assert result == "uid-010"
 
-    @patch('keepercommander.vault_extensions')
-    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.cyberark_import.vault_extensions')
+    @patch('keepercommander.commands.pam_import.cyberark_import.api.sync_down')
     def test_no_match_returns_empty(self, mock_sync, mock_ve):
         mock_ve.find_records.return_value = [
             self._make_mock_record("OtherProject Configuration", "uid-999"),
@@ -1121,8 +1133,8 @@ class TestFindConfigUid:
         result = cmd._find_config_uid(MagicMock(), "MyProject")
         assert result == ""
 
-    @patch('keepercommander.vault_extensions')
-    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.cyberark_import.vault_extensions')
+    @patch('keepercommander.commands.pam_import.cyberark_import.api.sync_down')
     def test_rejects_partial_match(self, mock_sync, mock_ve):
         mock_ve.find_records.return_value = [
             self._make_mock_record("MyProject Configuration Extra", "uid-bad"),
@@ -3860,14 +3872,12 @@ class TestCleanupCommand:
     """Tests for CyberArkPAMCleanupCommand."""
 
     def test_missing_args_raises(self):
-        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
         from keepercommander.error import CommandError
         cmd = CyberArkPAMCleanupCommand()
         with pytest.raises(CommandError):
             cmd.execute(MagicMock(), project_name="", config_uid="")
 
     def test_parser_has_flags(self):
-        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
         cmd = CyberArkPAMCleanupCommand()
         args = cmd.parser.parse_args(["--name", "Test", "--dry-run", "--yes"])
         assert args.project_name == "Test"
@@ -3875,7 +3885,6 @@ class TestCleanupCommand:
         assert args.auto_confirm is True
 
     def test_parser_config_flag(self):
-        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
         cmd = CyberArkPAMCleanupCommand()
         args = cmd.parser.parse_args(["--config", "uid123"])
         assert args.config_uid == "uid123"
@@ -3885,9 +3894,6 @@ class TestCyberArkImportNsfSupport:
     """NSF (--nsf) wiring for cyberark-import / cleanup / discovery."""
 
     def test_single_batch_passes_use_nsf_to_import(self):
-        from keepercommander.commands.pam_import.cyberark_import import (
-            CyberArkPAMImportCommand, _temp_store,
-        )
         cmd = CyberArkPAMImportCommand()
         params = MagicMock()
         import_data = {"pam_data": {"resources": [], "users": []}}
@@ -3907,9 +3913,6 @@ class TestCyberArkImportNsfSupport:
         assert kwargs.get("project_name") == "Proj"
 
     def test_single_batch_extend_ignores_use_nsf_flag(self):
-        from keepercommander.commands.pam_import.cyberark_import import (
-            CyberArkPAMImportCommand, _temp_store,
-        )
         cmd = CyberArkPAMImportCommand()
         params = MagicMock()
         import_data = {"pam_data": {"resources": [], "users": []}}
@@ -3928,25 +3931,21 @@ class TestCyberArkImportNsfSupport:
         assert kwargs.get("config") == "existing-cfg"
 
     def test_find_nsf_project_wrapper_uids(self):
-        from types import SimpleNamespace
-        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
-        from keepercommander.subfolder import NestedShareFolderNode
-
         root = NestedShareFolderNode()
         root.uid = "nsf-root"
-        root.name = "PAM Environments"
+        root.name = PAM_ROOT_FOLDER_NAME
         root.parent_uid = None
         root.subfolders = ["nsf-proj"]
 
         proj = NestedShareFolderNode()
         proj.uid = "nsf-proj"
-        proj.name = "CyberArk Migration"
+        proj.name = DEFAULT_PROJECT_NAME
         proj.parent_uid = "nsf-root"
         proj.subfolders = ["nsf-safe"]
 
         safe = NestedShareFolderNode()
         safe.uid = "nsf-safe"
-        safe.name = "Win_Local"
+        safe.name = SAFE_FOLDER_NAME
         safe.parent_uid = "nsf-proj"
         safe.subfolders = []
 
@@ -3957,9 +3956,9 @@ class TestCyberArkImportNsfSupport:
                 "nsf-safe": safe,
             },
             nested_share_folders={
-                "nsf-root": {"name": "PAM Environments", "parent_uid": None},
-                "nsf-proj": {"name": "CyberArk Migration", "parent_uid": "nsf-root"},
-                "nsf-safe": {"name": "Win_Local", "parent_uid": "nsf-proj"},
+                "nsf-root": {"name": PAM_ROOT_FOLDER_NAME, "parent_uid": None},
+                "nsf-proj": {"name": DEFAULT_PROJECT_NAME, "parent_uid": "nsf-root"},
+                "nsf-safe": {"name": SAFE_FOLDER_NAME, "parent_uid": "nsf-proj"},
             },
             shared_folder_cache={},
             subfolder_record_cache={},
@@ -3967,22 +3966,18 @@ class TestCyberArkImportNsfSupport:
         )
 
         wrappers = CyberArkPAMCleanupCommand._find_project_wrapper_folder_uids(
-            params, "CyberArk Migration",
+            params, DEFAULT_PROJECT_NAME,
         )
         assert wrappers == ["nsf-proj"]
 
         children = list(CyberArkPAMCleanupCommand._iter_project_child_folders(
             params, "nsf-proj",
         ))
-        assert children == [("nsf-safe", "Win_Local")]
+        assert children == [("nsf-safe", SAFE_FOLDER_NAME)]
 
     def test_find_classic_wrapper_still_works(self):
-        from types import SimpleNamespace
-        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMCleanupCommand
-        from keepercommander.subfolder import BaseFolderNode
-
         root = SimpleNamespace(
-            uid="uf-root", name="PAM Environments", parent_uid=None,
+            uid="uf-root", name=PAM_ROOT_FOLDER_NAME, parent_uid=None,
             type=BaseFolderNode.UserFolderType, subfolders=["uf-proj"],
         )
         proj = SimpleNamespace(
