@@ -108,6 +108,7 @@ class KeepassImporter(BaseFileImporter):
                             totp_issuer = ''
                             totp_period = 0
                             totp_digits = 0
+                            totp_algo = None
                             record = Record()
                             fol = Folder()
                             fol.path = folder
@@ -145,25 +146,36 @@ class KeepassImporter(BaseFileImporter):
                                 else:
                                     field_type = ''
                                     field_label = key
-                                if field_label in ('TOTPSecret', 'TOTPPeriod', 'TOTPDigits', 'TOTPIssuer', 'ModifyTOTPSettings', 'ViewTOTPSettings'):
+                                if field_label in (
+                                    'TimeOtp-Secret-Base32', 'TOTPSecret', 
+                                    'TimeOtp-Period', 'TOTPPeriod', 
+                                    'TimeOtp-Length', 'TOTPDigits', 
+                                    'TimeOtp-Algorithm',
+                                    'TOTPIssuer', 
+                                    'ModifyTOTPSettings', 'ViewTOTPSettings'
+                                    ):
                                     # Ignore TOTP custom fields (set via previous Keeper -> KDBX export implementation)
                                     # if the entry's "otp" field contains the corresponding URI
                                     if entry.otp:
                                         continue
-                                    if field_label == 'TOTPSecret':
+                                    if field_label in ('TimeOtp-Secret-Base32','TOTPSecret'):
                                         totp_secret = value
                                     elif field_label == 'TOTPIssuer':
                                         totp_issuer = value
-                                    elif field_label == 'TOTPPeriod':
+                                    elif field_label in ('TimeOtp-Period','TOTPPeriod'):
                                         try:
                                             totp_period = int(value)
                                         except:
                                             pass
-                                    elif field_label == 'TOTPDigits':
+                                    elif field_label in ('TimeOtp-Length','TOTPDigits'):
                                         try:
                                             totp_digits = int(value)
                                         except:
                                             pass
+                                    elif field_label == 'TimeOtp-Algorithm':
+                                        parsed_algo = value.replace('-','')[4:]
+                                        if parsed_algo in ('SHA1','SHA256','SHA512'):
+                                            totp_algo = parsed_algo
                                 else:
                                     field = RecordField()
                                     field.type = field_type
@@ -178,6 +190,8 @@ class KeepassImporter(BaseFileImporter):
                                     value += f'&period={totp_period}'
                                 if totp_digits > 0:
                                     value += f'&digits={totp_digits}'
+                                if totp_algo:
+                                    value += f'&algorithm={totp_algo}'
                                 field = RecordField()
                                 field.type = 'oneTimeCode'
                                 field.value = KeepassImporter.import_field(field_type, value)
