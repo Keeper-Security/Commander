@@ -368,11 +368,25 @@ class KeepassExporter(BaseExporter, XmlUtils):
                                 entry.otp = otp_value
                                 # Set custom fields for Pleasant Password TOTP compatibility
                                 totp_props = parse_totp_uri(otp_value)
-                                for key in ['secret', 'period', 'issuer', 'digits']:
-                                    val = totp_props.get(key)
-                                    val and entry.set_custom_property(
-                                        f'TOTP{key.capitalize()}',
-                                        self.to_keepass_value(val)
+                                totp_props.get('secret') and entry.set_custom_property(
+                                        'TimeOtp-Secret-Base32',
+                                        self.to_keepass_value(totp_props['secret'])
+                                    )
+                                totp_props.get('issuer') and entry.set_custom_property(
+                                        'TOTPIssuer',
+                                        self.to_keepass_value(totp_props['issuer'])
+                                    )
+                                totp_props.get('digits') and entry.set_custom_property(
+                                        'TimeOtp-Length',
+                                        self.to_keepass_value(totp_props['digits'])
+                                    )
+                                totp_props.get('period') and entry.set_custom_property(
+                                        'TimeOtp-Period',
+                                        self.to_keepass_value(totp_props['period'])
+                                    )
+                                totp_props.get('algorithm') and entry.set_custom_property(
+                                        'TimeOtp-Algorithm',
+                                        f'HMAC-SHA-{totp_props["algorithm"][3:]}'
                                     )
 
                                 continue
