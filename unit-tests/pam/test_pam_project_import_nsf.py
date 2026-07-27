@@ -95,7 +95,10 @@ def test_import_record_objects_use_nsf_aware_record_add_helper():
     assert uid == 'record_uid'
     add_record.assert_called_once()
     assert add_record.call_args.args[2] == 'root_nsf'
-    assert add_record.call_args.kwargs == {'command': 'pam-project-import'}
+    assert add_record.call_args.kwargs == {
+        'command': 'pam-project-import',
+        'sync_after': False,
+    }
 
 
 ROOT_NAME = PAMProjectImportCommand.PAM_ROOT_FOLDER_NAME
@@ -244,22 +247,21 @@ def test_process_folders_uses_existing_nsf_root_and_creates_nsf_children():
     }
     created = []
 
-    def create_folder(params_arg, folder_name, parent_uid=None):
-        uid = f'nsf_{len(created) + 1}'
-        created.append((folder_name, parent_uid, uid))
-        params_arg.nested_share_folders[uid] = {
-            'name': folder_name,
-            'parent_uid': parent_uid,
-            'folder_key_unencrypted': b'k' * 32,
-        }
-        return {
-            'success': True,
-            'folder_uid': uid,
-            'folder_key_unencrypted': b'k' * 32,
-        }
+    def create_folders_batch(_params, folder_specs):
+        results = []
+        for spec in folder_specs:
+            uid = f'nsf_{len(created) + 1}'
+            created.append((spec['name'], spec.get('parent_uid'), uid))
+            results.append({
+                'success': True,
+                'folder_uid': uid,
+                'folder_key_unencrypted': b'k' * 32,
+                'name': spec['name'],
+            })
+        return results
 
-    with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
-               side_effect=create_folder) as create_folder_v3, \
+    with patch('keepercommander.nested_share_folder.folder_api.create_folders_batch_v3',
+               side_effect=create_folders_batch) as create_batch, \
             patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
             patch('keepercommander.commands.pam_import.edit.api.sync_down'):
         result = PAMProjectImportCommand().process_folders(params, project)
@@ -268,7 +270,7 @@ def test_process_folders_uses_existing_nsf_root_and_creates_nsf_children():
     assert result['project_folder_uid'] == 'nsf_1'
     assert result['resources_folder_uid'] == 'nsf_2'
     assert result['users_folder_uid'] == 'nsf_3'
-    assert create_folder_v3.call_count == 3
+    assert create_batch.call_count == 3
     assert created == [
         ('Project 1', 'root_nsf', 'nsf_1'),
         ('Project 1 - Resources', 'nsf_1', 'nsf_2'),
@@ -298,22 +300,21 @@ def test_process_folders_with_nsf_flag_ignores_legacy_root_folder():
     }
     created = []
 
-    def create_folder(params_arg, folder_name, parent_uid=None):
-        uid = f'nsf_{len(created) + 1}'
-        created.append((folder_name, parent_uid, uid))
-        params_arg.nested_share_folders[uid] = {
-            'name': folder_name,
-            'parent_uid': parent_uid,
-            'folder_key_unencrypted': b'k' * 32,
-        }
-        return {
-            'success': True,
-            'folder_uid': uid,
-            'folder_key_unencrypted': b'k' * 32,
-        }
+    def create_folders_batch(_params, folder_specs):
+        results = []
+        for spec in folder_specs:
+            uid = f'nsf_{len(created) + 1}'
+            created.append((spec['name'], spec.get('parent_uid'), uid))
+            results.append({
+                'success': True,
+                'folder_uid': uid,
+                'folder_key_unencrypted': b'k' * 32,
+                'name': spec['name'],
+            })
+        return results
 
-    with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
-               side_effect=create_folder), \
+    with patch('keepercommander.nested_share_folder.folder_api.create_folders_batch_v3',
+               side_effect=create_folders_batch), \
             patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
             patch('keepercommander.commands.pam_import.edit.api.sync_down'):
         result = PAMProjectImportCommand().process_folders(params, project)
@@ -354,18 +355,19 @@ def test_create_subfolder_seeds_folder_key_and_survives_sync_wipe():
     params = _params()
     folder_key = b'f' * 32
 
-    def create_folder(_params, folder_name, parent_uid=None):
-        return {
+    def create_folders_batch(_params, folder_specs):
+        return [{
             'success': True,
             'folder_uid': 'new_nsf',
             'folder_key_unencrypted': folder_key,
-        }
+            'name': folder_specs[0]['name'],
+        }]
 
     def wipe_nsf(_params):
         _params.nested_share_folders.clear()
 
-    with patch('keepercommander.nested_share_folder.folder_api.create_folder_v3',
-               side_effect=create_folder), \
+    with patch('keepercommander.nested_share_folder.folder_api.create_folders_batch_v3',
+               side_effect=create_folders_batch), \
             patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down',
                   side_effect=wipe_nsf):
         uid = PAMProjectImportCommand().create_subfolder(
