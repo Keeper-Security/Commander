@@ -1387,6 +1387,91 @@ class TestNestedShareFolderRecordApi(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    def test_update_record_v3_preserves_login_fields_from_record_cache(self, mock_update):
+        """nested_share_records has no data_unencrypted; login fields must come from record_cache."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        existing = {
+            'type': 'login',
+            'title': 'Prod Login',
+            'fields': [
+                {'type': 'login', 'value': ['alice']},
+                {'type': 'password', 'value': ['OldPass123']},
+                {'type': 'url', 'value': ['https://example.com']},
+            ],
+        }
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 1,
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+                'data_unencrypted': json.dumps(existing).encode('utf-8'),
+            }},
+        )
+        mock_rs = Mock()
+        mock_rec = Mock()
+        mock_rec.status = record_pb2.RS_SUCCESS
+        mock_rec.message = ''
+        mock_rs.records = [mock_rec]
+        mock_rs.revision = 2
+        mock_update.return_value = mock_rs
+
+        result = update_record_v3(params, ruid, fields={'password': 'NewPass456'})
+        self.assertTrue(result['success'])
+
+        ru = mock_update.call_args[0][1][0]
+        decrypted = json.loads(
+            crypto.decrypt_aes_v2(ru.data, robj['record_key_unencrypted']).decode('utf-8').rstrip('\x00')
+        )
+        by_type = {f['type']: f['value'] for f in decrypted['fields']}
+        self.assertEqual(decrypted['type'], 'login')
+        self.assertEqual(decrypted['title'], 'Prod Login')
+        self.assertEqual(by_type['login'], ['alice'])
+        self.assertEqual(by_type['password'], ['NewPass456'])
+        self.assertEqual(by_type['url'], ['https://example.com'])
+
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    def test_update_record_v3_preserves_login_fields_from_nsf_record_data(self, mock_update):
+        """Fallback to nested_share_record_data when record_cache has no decrypted JSON."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        existing = {
+            'type': 'login',
+            'title': 'NSF Login',
+            'fields': [
+                {'type': 'login', 'value': ['bob']},
+                {'type': 'password', 'value': ['KeepMe']},
+            ],
+        }
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            nested_share_record_data={ruid: {'data_json': existing}},
+        )
+        mock_rs = Mock()
+        mock_rec = Mock()
+        mock_rec.status = record_pb2.RS_SUCCESS
+        mock_rec.message = ''
+        mock_rs.records = [mock_rec]
+        mock_rs.revision = 2
+        mock_update.return_value = mock_rs
+
+        result = update_record_v3(params, ruid, fields={'login': 'bob2'})
+        self.assertTrue(result['success'])
+
+        ru = mock_update.call_args[0][1][0]
+        decrypted = json.loads(
+            crypto.decrypt_aes_v2(ru.data, robj['record_key_unencrypted']).decode('utf-8').rstrip('\x00')
+        )
+        by_type = {f['type']: f['value'] for f in decrypted['fields']}
+        self.assertEqual(decrypted['title'], 'NSF Login')
+        self.assertEqual(by_type['login'], ['bob2'])
+        self.assertEqual(by_type['password'], ['KeepMe'])
+
     @patch('keepercommander.nested_share_folder.record_api.api.communicate_rest')
     @patch('keepercommander.nested_share_folder.record_api.encrypt_for_recipient')
     @patch('keepercommander.nested_share_folder.record_api.get_user_public_key')
