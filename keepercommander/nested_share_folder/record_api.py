@@ -151,6 +151,28 @@ def create_record_v3(params, record_type='', title='', fields=None,
     raise KeeperApiError('no_results', 'No results from record creation')
 
 
+def _load_existing_record_data(params, record_uid, rec=None):
+    """Load decrypted record JSON for update"""
+    candidates = []
+    if rec is not None:
+        candidates.append(rec.get('data_unencrypted'))
+    cache_rec = getattr(params, 'record_cache', {}).get(record_uid) or {}
+    candidates.append(cache_rec.get('data_unencrypted'))
+    nsf_data = getattr(params, 'nested_share_record_data', {}).get(record_uid) or {}
+    candidates.append(nsf_data.get('data_json'))
+
+    for raw in candidates:
+        if raw is None:
+            continue
+        if isinstance(raw, bytes):
+            return json.loads(raw.decode('utf-8'))
+        if isinstance(raw, str):
+            return json.loads(raw)
+        if isinstance(raw, dict):
+            return raw.copy()
+    return None
+
+
 def update_record_v3(params, record_uid, data=None, title=None,
                      record_type=None, fields=None, notes=None,
                      non_shared_data=None, revision=None):
@@ -165,13 +187,7 @@ def update_record_v3(params, record_uid, data=None, title=None,
     rk = rec.get('record_key_unencrypted') or get_record_key(params, record_uid)
 
     if data is None:
-        existing = None
-        if 'data_unencrypted' in rec:
-            raw = rec['data_unencrypted']
-            if isinstance(raw, bytes):
-                existing = json.loads(raw.decode('utf-8'))
-            elif isinstance(raw, str):
-                existing = json.loads(raw)
+        existing = _load_existing_record_data(params, record_uid, rec)
         data = existing.copy() if existing else {'fields': []}
         if title is not None:
             data['title'] = title
