@@ -13,8 +13,6 @@
 
 from __future__ import annotations
 
-from typing import List
-
 from .constants import SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS
 
 
@@ -26,19 +24,14 @@ class SailPointCommandPolicy:
         """Keep only SailPoint-allowed commands; always drop banned secret-bearing ones."""
         allowed = {c.strip().lower() for c in SAILPOINT_ALLOWED_COMMANDS}
         banned = {c.lower() for c in SAILPOINT_BANNED_COMMANDS}
-        parts: List[str] = []
-        seen = set()
-        for raw in (commands or '').split(','):
-            cmd = raw.strip()
-            if not cmd:
-                continue
-            key = cmd.lower()
-            if key in banned or key not in allowed:
-                continue
-            if key in seen:
-                continue
-            seen.add(key)
-            parts.append(cmd)
+        filtered = [
+            cmd for raw in (commands or '').split(',')
+            if (cmd := raw.strip())
+            and (key := cmd.lower()) not in banned
+            and key in allowed
+        ]
+        # Preserve first-seen casing while deduping by lower-case key
+        parts = list({cmd.lower(): cmd for cmd in filtered}.values())
         if not parts:
             return ','.join(SAILPOINT_ALLOWED_COMMANDS)
         return ','.join(parts)

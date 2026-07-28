@@ -10,6 +10,7 @@
 #
 
 import argparse
+import os
 from typing import Any, Dict, Optional
 from ..config.service_config import ServiceConfig
 from ..config.config_validation import ValidationError
@@ -101,8 +102,9 @@ class CreateService(Command):
             args = StreamlineArgs(**filtered_kwargs)
 
             # Optional SailPoint: enable when SAILPOINT_RECORD points at a marked config record
-            from .integrations.sailpoint.service import SailPointService
-            SailPointService.maybe_enable(params, args)
+            if (os.environ.get('SAILPOINT_RECORD') or '').strip():
+                from .integrations.sailpoint.service import SailPointService
+                SailPointService.maybe_enable(params, args)
 
             from .integrations.vault_metadata import get_existing_api_key, write_service_metadata
             existing_api_key = (

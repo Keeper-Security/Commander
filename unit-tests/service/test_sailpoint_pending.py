@@ -69,9 +69,35 @@ class SailPointParseTest(unittest.TestCase):
         parsed = SailPointCommandParser.parse_share('share-record -e user@co.com -w RECORD_UID')
         self.assertIsNotNone(parsed)
         self.assertTrue(parsed.is_record)
+        self.assertTrue(parsed.is_grant)
         self.assertTrue(parsed.can_edit)
         self.assertEqual(parsed.target, 'RECORD_UID')
         self.assertEqual(parsed.targets, ['RECORD_UID'])
+
+    def test_parse_share_record_revoke_is_not_grant(self):
+        parsed = SailPointCommandParser.parse_share(
+            'share-record -a revoke -e user@co.com RECORD_UID'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.action, 'revoke')
+        self.assertFalse(parsed.is_grant)
+
+    def test_parse_share_folder_remove_is_not_grant(self):
+        parsed = SailPointCommandParser.parse_share(
+            'share-folder -a remove -e user@co.com FOLDER_UID'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.action, 'remove')
+        self.assertFalse(parsed.is_grant)
+
+    def test_parse_nsf_share_folder_remove_is_not_grant(self):
+        parsed = SailPointCommandParser.parse_share(
+            'nsf-share-folder -a remove -e user@co.com -r viewer NSF_UID'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertTrue(parsed.is_nsf)
+        self.assertEqual(parsed.action, 'remove')
+        self.assertFalse(parsed.is_grant)
 
     def test_parse_share_folder_multi_target(self):
         parsed = SailPointCommandParser.parse_share(
@@ -89,6 +115,7 @@ class SailPointParseTest(unittest.TestCase):
         self.assertIsNotNone(parsed)
         self.assertTrue(parsed.is_nsf)
         self.assertTrue(parsed.is_folder)
+        self.assertTrue(parsed.is_grant)
         self.assertEqual(parsed.nsf_role, 'content-manager')
         self.assertEqual(parsed.targets, ['NSF_UID'])
 

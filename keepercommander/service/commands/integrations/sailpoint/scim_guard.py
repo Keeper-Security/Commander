@@ -42,15 +42,13 @@ class SailPointScimGuard:
     @staticmethod
     def _node_ancestors(params: KeeperParams, node_id: int) -> Iterable[int]:
         by_id = {int(n['node_id']): n for n in params.enterprise.get('nodes') or []}
-        current = node_id
+        current: Optional[int] = node_id
         seen = set()
         while current and current not in seen:
             yield current
             seen.add(current)
             parent = by_id.get(current, {}).get('parent_id')
-            if not parent or int(parent) == current:
-                break
-            current = int(parent)
+            current = int(parent) if parent and int(parent) != current else None
 
     @classmethod
     def is_scim_managed_node(cls, params: KeeperParams, node_id: Optional[int]) -> bool:
@@ -68,10 +66,13 @@ class SailPointScimGuard:
         if not params.enterprise:
             return None
         target = email.strip().lower()
-        for user in params.enterprise.get('users') or []:
-            if (user.get('username') or '').lower() == target:
-                return user
-        return None
+        return next(
+            (
+                user for user in params.enterprise.get('users') or []
+                if (user.get('username') or '').lower() == target
+            ),
+            None,
+        )
 
     @classmethod
     def is_scim_managed_user(cls, params: KeeperParams, email: str) -> bool:

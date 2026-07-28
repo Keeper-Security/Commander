@@ -36,16 +36,20 @@ def read_scope_and_interval(params: KeeperParams, record_uid: str) -> Tuple[str,
     if not isinstance(record, vault.TypedRecord) or not record.custom:
         return scope, interval
 
-    for field in record.custom:
-        if field.label == ENTITLEMENT_SCOPE_FIELD:
-            value = (field.get_default_value() or SCOPE_BOTH).strip().lower()
-            if value in _VALID_SCOPES:
-                scope = value
-        elif field.label == POLL_INTERVAL_FIELD:
-            try:
-                interval = max(_MIN_POLL_INTERVAL, int(field.get_default_value() or interval))
-            except (TypeError, ValueError):
-                pass
+    by_label = {field.label: field for field in record.custom if field.label}
+
+    scope_field = by_label.get(ENTITLEMENT_SCOPE_FIELD)
+    if scope_field:
+        value = (scope_field.get_default_value() or SCOPE_BOTH).strip().lower()
+        if value in _VALID_SCOPES:
+            scope = value
+
+    interval_field = by_label.get(POLL_INTERVAL_FIELD)
+    if interval_field:
+        try:
+            interval = max(_MIN_POLL_INTERVAL, int(interval_field.get_default_value() or interval))
+        except (TypeError, ValueError):
+            pass
     return scope, interval
 
 

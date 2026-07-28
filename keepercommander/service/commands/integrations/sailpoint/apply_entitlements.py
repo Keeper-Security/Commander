@@ -29,18 +29,19 @@ class SailPointEntitlementApplier:
 
     @staticmethod
     def _role_exists(params: KeeperParams, role_name: str) -> bool:
-        for role in params.enterprise.get('roles') or []:
-            display = (role.get('data') or {}).get('displayname') or ''
-            if str(role.get('role_id')) == role_name or display.lower() == role_name.lower():
-                return True
-        return False
+        return any(
+            str(role.get('role_id')) == role_name
+            or ((role.get('data') or {}).get('displayname') or '').lower() == role_name.lower()
+            for role in params.enterprise.get('roles') or []
+        )
 
     @staticmethod
     def _team_exists(params: KeeperParams, team_name: str) -> bool:
-        for team in params.enterprise.get('teams') or []:
-            if team.get('team_uid') == team_name or (team.get('name') or '').lower() == team_name.lower():
-                return True
-        return False
+        return any(
+            team.get('team_uid') == team_name
+            or (team.get('name') or '').lower() == team_name.lower()
+            for team in params.enterprise.get('teams') or []
+        )
 
     @staticmethod
     def _run(params: KeeperParams, command: str) -> None:

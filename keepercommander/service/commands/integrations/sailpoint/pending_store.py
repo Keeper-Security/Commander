@@ -50,19 +50,21 @@ class SailPointPendingStore:
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord) or not record.custom:
             return {}
-        for field in record.custom:
-            if field.label != PENDING_ENTITLEMENTS_FIELD:
-                continue
-            raw = field.get_default_value()
-            if not raw:
-                return {}
-            try:
-                data = json.loads(raw) if isinstance(raw, str) else raw
-            except (TypeError, json.JSONDecodeError):
-                logger.warning(f'Invalid pending_entitlements JSON on record {record_uid}')
-                return {}
-            return data if isinstance(data, dict) else {}
-        return {}
+        field = next(
+            (f for f in record.custom if f.label == PENDING_ENTITLEMENTS_FIELD),
+            None,
+        )
+        if not field:
+            return {}
+        raw = field.get_default_value()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, json.JSONDecodeError):
+            logger.warning(f'Invalid pending_entitlements JSON on record {record_uid}')
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @classmethod
     def _write(cls, params: KeeperParams, record_uid: str, pending: Dict[str, Any]) -> None:
@@ -110,8 +112,9 @@ class SailPointPendingStore:
                 return next_state
             except Exception as e:
                 last_error = e
-                if not any(h in str(e).lower() for h in _STALE_HINTS) or attempt == _MAX_ATTEMPTS:
-                    break
+                stale = any(h in str(e).lower() for h in _STALE_HINTS)
+                if not stale or attempt == _MAX_ATTEMPTS:
+                    raise RuntimeError(f'Failed to save pending entitlements: {last_error}') from e
                 logger.warning(
                     f'Stale revision updating pending entitlements; retrying ({attempt}/{_MAX_ATTEMPTS})'
                 )
@@ -123,11 +126,8 @@ class SailPointPendingStore:
         existing: List[Dict[str, Any]], items: List[Dict[str, Any]], uid_key: str
     ) -> List[Dict[str, Any]]:
         by_uid = {str(x.get(uid_key)): dict(x) for x in existing if x.get(uid_key)}
-        for item in items:
-            uid = item.get(uid_key)
-            if not uid:
-                continue
-            key = str(uid)
+        for item in (x for x in items if x.get(uid_key)):
+            key = str(item[uid_key])
             if key in by_uid:
                 by_uid[key].update(item)
             else:

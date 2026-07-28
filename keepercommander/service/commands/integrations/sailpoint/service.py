@@ -37,15 +37,17 @@ class SailPointService:
 
     @classmethod
     def record_has_marker(cls, params: KeeperParams, record_uid: str) -> bool:
+        if not record_uid:
+            return False
         from ..... import vault
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord) or not record.custom:
             return False
-        for field in record.custom:
-            if field.label == SAILPOINT_MARKER_FIELD:
-                value = str(field.get_default_value() or '').strip().lower()
-                return value in ('true', '1', 'yes', 'y')
-        return False
+        return any(
+            str(field.get_default_value() or '').strip().lower() in ('true', '1', 'yes', 'y')
+            for field in record.custom
+            if field.label == SAILPOINT_MARKER_FIELD
+        )
 
     @classmethod
     def record_uid(cls, params: Optional[KeeperParams] = None) -> Optional[str]:
@@ -66,12 +68,12 @@ class SailPointService:
     @classmethod
     def maybe_enable(cls, params: KeeperParams, args) -> None:
         """
-        If ``SAILPOINT_RECORD`` is set and the record has the SailPoint marker,
-        bind params and sanitize the Service Mode command allowlist.
+        Bind params and sanitize the Service Mode command allowlist when the
+        SailPoint config record has the integration marker.
+
+        Callers must gate on ``SAILPOINT_RECORD`` before invoking this.
         """
-        uid = (os.environ.get(SAILPOINT_RECORD_ENV) or '').strip()
-        if not uid:
-            return
+        uid = cls.record_uid(params)
         try:
             if not cls.record_has_marker(params, uid):
                 logger.warning(
@@ -95,14 +97,17 @@ class SailPointService:
 
     @classmethod
     def start_background_services(cls) -> None:
+        """
+        Start the entitlement poller when SailPoint is enabled.
+
+        Callers must gate on ``SAILPOINT_RECORD`` before invoking this.
+        """
         from ....core.globals import get_current_params
         params = get_current_params()
-        uid = cls.record_uid(params)
-        if not uid:
-            return
         if not params:
             logger.warning('SailPoint poller not started: Keeper params not loaded')
             return
+        uid = cls.record_uid(params)
         try:
             if not cls.record_has_marker(params, uid):
                 logger.warning(
@@ -121,18 +126,18 @@ class SailPointService:
 
     @classmethod
     def handle_command(cls, params: KeeperParams, command: str) -> Optional[Tuple[Any, int]]:
+        """Callers must gate on ``SAILPOINT_RECORD`` before invoking this."""
         cls.bind_params(params)
         uid = cls.record_uid(params)
-        if not uid:
-            return None
         if not cls.record_has_marker(params, uid):
             return None
         return SailPointCommandHook(uid).before_command(params, command)
 
     @classmethod
     def after_command(cls, params: KeeperParams, command: str, success: bool = True) -> None:
+        """Callers must gate on ``SAILPOINT_RECORD`` before invoking this."""
         cls.bind_params(params)
         uid = cls.record_uid(params)
-        if not uid or not cls.record_has_marker(params, uid):
+        if not cls.record_has_marker(params, uid):
             return
         SailPointCommandHook(uid).after_command(params, command, success)

@@ -40,6 +40,7 @@ class ParsedShare:
     command: str
     emails: List[str] = field(default_factory=list)
     targets: List[str] = field(default_factory=list)
+    action: str = 'grant'
     can_edit: bool = False
     can_share: bool = False
     manage_records: Optional[str] = None
@@ -52,6 +53,11 @@ class ParsedShare:
     @property
     def target(self) -> Optional[str]:
         return self.targets[-1] if self.targets else None
+
+    @property
+    def is_grant(self) -> bool:
+        """Only grant (default) is deferred for Invited users; revoke/remove run natively."""
+        return (self.action or 'grant').lower() == 'grant'
 
 
 @dataclass
@@ -158,6 +164,9 @@ class SailPointCommandParser:
             t = tokens[i]
             if t in ('-e', '--email') and i + 1 < len(tokens):
                 parsed.emails.append(tokens[i + 1])
+                i += 2
+            elif t in ('-a', '--action') and i + 1 < len(tokens):
+                parsed.action = tokens[i + 1].strip().lower() or 'grant'
                 i += 2
             elif t in ('-w', '--write'):
                 parsed.can_edit = True

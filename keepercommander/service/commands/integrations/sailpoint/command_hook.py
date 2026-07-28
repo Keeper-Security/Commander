@@ -41,10 +41,15 @@ class SailPointCommandHook:
 
         mutation = SailPointCommandParser.parse_identity_mutation(command)
         if mutation:
-            for email in mutation.emails:
-                err = SailPointScimGuard.identity_change_error(params, email)
-                if err:
-                    return {'status': 'error', 'error': err}, 403
+            err = next(
+                (
+                    e for email in mutation.emails
+                    if (e := SailPointScimGuard.identity_change_error(params, email))
+                ),
+                None,
+            )
+            if err:
+                return {'status': 'error', 'error': err}, 403
         return None
 
     def after_command(self, params: KeeperParams, command: str, success: bool) -> None:
@@ -58,20 +63,21 @@ class SailPointCommandHook:
         teams = list(invite.teams) if invite.teams else None
         queued: List[str] = []
 
+        def _can_queue(email: str) -> bool:
+            return not (
+                SailPointScimGuard.find_user(params, email)
+                and SailPointScimGuard.identity_change_error(params, email)
+            )
+
         def updater(pending: Dict[str, Any]) -> Dict[str, Any]:
             nonlocal queued
-            queued = []
+            eligible = [email for email in invite.emails if _can_queue(email)]
+            queued = list(eligible)
             result = pending
-            for email in invite.emails:
-                if (
-                    SailPointScimGuard.find_user(params, email)
-                    and SailPointScimGuard.identity_change_error(params, email)
-                ):
-                    continue
+            for email in eligible:
                 result = SailPointPendingStore.merge_entry(
                     result, email, roles=roles, teams=teams
                 )
-                queued.append(email)
             return result
 
         SailPointPendingStore.update(params, self.record_uid, updater)
@@ -84,12 +90,18 @@ class SailPointCommandHook:
     def _before_invite(self, params: KeeperParams, invite) -> Optional[Tuple[Any, int]]:
         roles = list(invite.roles)
         teams = list(invite.teams)
-        for email in invite.emails:
-            existing = SailPointScimGuard.find_user(params, email)
-            if existing and (roles or teams):
-                err = SailPointScimGuard.identity_change_error(params, email)
-                if err:
-                    return {'status': 'error', 'error': err}, 403
+        if not (roles or teams):
+            return None
+        err = next(
+            (
+                e for email in invite.emails
+                if SailPointScimGuard.find_user(params, email)
+                and (e := SailPointScimGuard.identity_change_error(params, email))
+            ),
+            None,
+        )
+        if err:
+            return {'status': 'error', 'error': err}, 403
         return None
 
     def _user_status(self, params: KeeperParams, email: str) -> Optional[str]:
@@ -121,6 +133,11 @@ class SailPointCommandHook:
         return item
 
     def _before_share(self, params: KeeperParams, share: ParsedShare) -> Optional[Tuple[Any, int]]:
+        # Revoke/remove/owner must run through Commander so Service Mode returns the
+        # native error (e.g. User Not Found for Invited users). Only grant is deferred.
+        if not share.is_grant:
+            return None
+
         scope = read_entitlement_scope(params, self.record_uid)
         if share.is_folder and scope == 'records':
             return {
