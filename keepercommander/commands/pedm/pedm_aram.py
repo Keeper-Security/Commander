@@ -656,21 +656,74 @@ class PedmEventSummaryReportCommand(base.ArgparseCommand):
         events = rs.get('audit_event_summary_report_rows')
         assert isinstance(events, list)
 
+        hash_group_cols = [col for col in (group_by or [])
+                           if AuditMixin.field_info.get(col) and AuditMixin.field_info[col].protection == 'hash']
+        hash_value_lookup: Dict[str, str] = {}
+        if hash_group_cols and events:
+            tree_key = context.enterprise['unencrypted_tree_key']
+            ecc_key_data = utils.base64_url_decode(context.enterprise['keys']['ecc_encrypted_private_key'])
+            ec_private_key = crypto.load_ec_private_key(crypto.decrypt_aes_v2(ecc_key_data, tree_key))
+
+            uid_set: Set[str] = set()
+            for event in events:
+                for col in hash_group_cols:
+                    v = event.get(col)
+                    if isinstance(v, str):
+                        try:
+                            if len(utils.base64_url_decode(v)) == 16:
+                                uid_set.add(v)
+                        except Exception:
+                            pass
+
+            uid_list = [utils.base64_url_decode(x) for x in uid_set]
+            while uid_list:
+                chunk, uid_list = uid_list[:1000], uid_list[1000:]
+                coll_rq = pedm_pb2.AuditCollectionRequest()
+                coll_rq.valueUid.extend(chunk)
+                coll_rs = api.execute_router(
+                    context, 'pedm/get_audit_collections', coll_rq, rs_type=pedm_pb2.AuditCollectionResponse)
+                if coll_rs:
+                    for cv in coll_rs.values:
+                        try:
+                            uid_str = utils.base64_url_encode(cv.valueUid)
+                            decrypted = crypto.decrypt_ec(cv.encryptedData, ec_private_key).decode('utf-8')
+                            hash_value_lookup[uid_str] = decrypted
+                        except Exception:
+                            pass
+
         if kwargs.get('format') == 'json':
+            if hash_value_lookup:
+                for event in events:
+                    for col in hash_group_cols:
+                        v = event.get(col)
+                        if isinstance(v, str) and v in hash_value_lookup:
+                            event[f'{col}_value'] = hash_value_lookup[v]
             return json.dumps(events, indent=2)
 
         if not events:
             return
 
-        headers = []
+        headers: List[str] = []
         if report_type != 'span':
             headers.append('event_time')
         headers.extend(aggregate)
         if group_by:
-            headers.extend(group_by)
+            for col in group_by:
+                headers.append(col)
+                if col in hash_group_cols:
+                    headers.append(f'{col}_value')
+
+        virtual_col_set: Set[str] = {f'{col}_value' for col in hash_group_cols}
         rows: List[List[Any]] = []
         for event in events:
-            rows.append([AuditMixin.get_field_value(x, event.get(x), report_type=report_type) for x in headers])
+            row: List[Any] = []
+            for h in headers:
+                if h in virtual_col_set:
+                    uid = event.get(h[:-6])  # strip '_value' suffix
+                    row.append(hash_value_lookup.get(uid, '') if isinstance(uid, str) else '')
+                else:
+                    row.append(AuditMixin.get_field_value(h, event.get(h), report_type=report_type))
+            rows.append(row)
 
         headers = [report_utils.field_to_title(x) for x in headers]
         return report_utils.dump_report_data(
