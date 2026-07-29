@@ -194,7 +194,7 @@ enterprise_role_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_role_parser.add_argument('--copy', dest='copy', action='store_true', help='copy role with enforcements')
 enterprise_role_parser.add_argument('--clone', dest='clone', action='store_true', help='copy role with users and enforcements')
 #enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
-enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='assign this role to new users. \'add\' only')
+enterprise_role_parser.add_argument('--default', dest='default', action='store', choices=['on', 'off'], help='Set this role as default for nodes and subnodes')
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
 enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
 enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
@@ -2323,7 +2323,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     "node_id": node_id,
                     "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
-                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False,
+                    "new_user_inherit": (kwargs.get('default') == 'on') or False,
                     "role_name": role_name
                 }
                 request_batch.append(rq)
@@ -2898,7 +2898,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             }
                             request_batch.append(rq)
 
-            elif node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name'):
+            elif node_id or kwargs.get('visible_below') or kwargs.get('default') or kwargs.get('name'):
                 if kwargs.get('name') and len(matched_roles) > 1:
                     logging.warning('Cannot assign the same name to %s roles', len(matched_roles))
                     kwargs['name'] = None
@@ -2906,7 +2906,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 if kwargs.get('name') and not is_valid_name_length(kwargs.get('name'), 'Role name', 'enterprise-role'):
                     kwargs['name'] = None
 
-                if not (node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name')):
+                if not (node_id or kwargs.get('visible_below') or kwargs.get('default') or kwargs.get('name')):
                     return
 
                 for role in matched_roles:
@@ -2924,8 +2924,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     }
                     if kwargs.get('visible_below'):
                         rq['visible_below'] = kwargs.get('visible_below') == 'on'
-                    if kwargs.get('new_user'):
-                        rq['new_user_inherit'] = kwargs['new_user'] == 'on'
+                    if kwargs.get('default'):
+                        rq['new_user_inherit'] = kwargs['default'] == 'on'
                     request_batch.append(rq)
 
         if request_batch:
