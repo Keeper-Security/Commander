@@ -346,6 +346,25 @@ class UserAclRotationSettings(BaseModel):
         return json.loads(self.schedule)
 
 
+class UserAclServiceNamesItem(BaseModel):
+    name: str
+
+    # If this was added via Discovery, this will be True
+    via_discovery: bool = False
+
+
+class ServiceEnum(BaseEnum):
+    service = "service"
+    task = "task"
+    iis_pool = "iis_pool"
+    dcom = "dcom"
+
+
+class UserAclServiceNames(BaseModel):
+    type: ServiceEnum
+    items: List[UserAclServiceNamesItem] = []
+
+
 class UserAcl(BaseModel):
     # Vault team may add attributes without telling others :(
     model_config = ConfigDict(extra='allow')
@@ -368,6 +387,10 @@ class UserAcl(BaseModel):
     # Do we need to rotate service passwords on this machine when this password is rotated?
     controls_services: bool = False
 
+    # For the relationship between the user and machine, these are services the user controls.
+    # The value is encrypted.
+    service_names: Optional[str] = ""
+
     rotation_settings: Optional[UserAclRotationSettings] = None
 
     @staticmethod
@@ -378,6 +401,58 @@ class UserAcl(BaseModel):
         return UserAcl(
             rotation_settings=UserAclRotationSettings()
         )
+
+    def md5(self, record_key_bytes: bytes) -> str:
+        """
+        Make an MD5 signature of this ACL.
+
+        Dictionary keys and list items are sorted so the signature is repeatable
+        regardless of the order items appear in an array. The encrypted service_names
+        is replaced with its decrypted content; encryption is not deterministic, so
+        hashing the ciphertext would change the signature even when the content did not.
+        """
+
+        def _normalize(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {k: _normalize(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return sorted(
+                    (_normalize(item) for item in value),
+                    key=lambda item: json.dumps(item, sort_keys=True)
+                )
+            return value
+
+        data = self.model_dump(mode="json")
+        data["service_names"] = [
+            service_names.model_dump(mode="json")
+            for service_names in self.get_service_names(record_key_bytes)
+        ]
+        data = _normalize(data)
+        return hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+    def set_service_names(self,
+                          service_names: Union[List[UserAclServiceNames], list, str, bytes],
+                          record_key_bytes: bytes):
+        if isinstance(service_names, list):
+            service_names = json.dumps([
+                item.model_dump(mode="json") if isinstance(item, UserAclServiceNames) else item
+                for item in service_names
+            ])
+        if isinstance(service_names, str):
+            service_names = service_names.encode()
+
+        if not isinstance(service_names, bytes):
+            raise ValueError("The service_names is not a list, string or is bytes.")
+
+        self.service_names = base64.b64encode(CryptoUtils.encrypt_aes(service_names, record_key_bytes)).decode()
+
+    def get_service_names(self, record_key_bytes: bytes) -> List[UserAclServiceNames]:
+        if self.service_names is None or self.service_names == "":
+            return []
+        enc_bytes = base64.b64decode(self.service_names.encode())
+        service_names_bytes = CryptoUtils.decrypt_aes(enc_bytes, record_key_bytes)
+        list_of_service_names = json.loads(service_names_bytes)
+        return [UserAclServiceNames.model_validate(item) for item in list_of_service_names]
 
 
 # -------------
@@ -475,6 +550,7 @@ class Facts(BaseModel):
     services: List[FactsNameUser] = []
     tasks: List[FactsNameUser] = []
     iis_pools: List[FactsNameUser] = []
+    dcoms: List[FactsNameUser] = []
 
     @property
     def has_services(self):
@@ -489,8 +565,12 @@ class Facts(BaseModel):
         return self.iis_pools is not None and len(self.iis_pools) > 0
 
     @property
+    def has_dcoms(self):
+        return self.dcoms is not None and len(self.dcoms) > 0
+
+    @property
     def has_service_items(self):
-        return self.has_services or self.has_tasks or self.has_iis_pools
+        return self.has_services or self.has_tasks or self.has_iis_pools or self.has_dcoms
 
 
 class DiscoveryMachine(DiscoveryItem):
@@ -657,6 +737,7 @@ class NormalizedRecord(BaseModel):
     """
     record_uid: str
     record_type: str
+    record_key_bytes: Optional[bytes] = None
     title: str
     fields: List[RecordField] = []
     note: Optional[str] = None

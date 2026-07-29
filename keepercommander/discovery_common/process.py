@@ -68,9 +68,17 @@ class Process:
     # Hard limit for bulk record lists (safety mechanism)
     BULK_LIST_MAX_SIZE = 50000
 
-    def __init__(self, record: Any, job_id: str, logger: Optional[Any] = None, debug_level: int = 0, **kwargs):
+    def __init__(self,
+                 record: Any,
+                 job_id: str,
+                 record_lookup_func: Callable,
+                 logger: Optional[Any] = None,
+                 debug_level: int = 0,
+                 **kwargs):
+
         self.job_id = job_id
         self.record = record
+        self.record_lookup_func = record_lookup_func
 
         env_debug_level = os.environ.get("PROCESS_GS_DEBUG_LEVEL")
         if env_debug_level is not None:
@@ -92,6 +100,7 @@ class Process:
                                         logger=logger,
                                         debug_level=debug_level,
                                         record_linking=self.record_link,
+                                        record_lookup_func=record_lookup_func,
                                         **kwargs)
 
         # This is the root UID for all graphs; get it from one of them.
@@ -421,7 +430,6 @@ class Process:
 
     def _find_directory_user(self,
                              results: DirectoryResult,
-                             record_lookup_func: Callable,
                              context: Any,
                              find_user: Optional[str] = None,
                              find_dn: Optional[str] = None) -> Optional[DirectoryUserResult]:
@@ -431,7 +439,7 @@ class Process:
             self.logger.debug("search for directory user from vault records")
             self.logger.debug(f"have {len(results.directory_user_record_uids)} users")
             for user_record_id in results.directory_user_record_uids:
-                record = record_lookup_func(record_uid=user_record_id, context=context)  # type: NormalizedRecord
+                record = self.record_lookup_func(user_record_id, context=context)  # type: NormalizedRecord
                 if record is not None:
                     found = None
                     self.logger.debug(f"find user {find_user}, dn {find_dn}")
@@ -551,7 +559,6 @@ class Process:
                                    domain: str,
                                    admin_acl: UserAcl,
                                    directory_info_func: Callable,
-                                   record_lookup_func: Callable,
                                    context: Any,
                                    user: Optional[str] = None,
                                    dn: Optional[str] = None) -> Optional[str]:
@@ -564,7 +571,6 @@ class Process:
         if results is not None:
             # Find the user (clean of domain) or DN in the found directories.
             directory_user = self._find_directory_user(results=results,
-                                                       record_lookup_func=record_lookup_func,
                                                        context=context,
                                                        find_user=user,
                                                        find_dn=dn)
@@ -603,7 +609,6 @@ class Process:
                                 current_vertex: DAGVertex,
                                 bulk_add_records: List[BulkRecordAdd],
                                 bulk_convert_records: List[BulkRecordConvert],
-                                record_lookup_func: Callable,
                                 record_prepare_func: Callable,
                                 directory_info_func: Callable,
                                 record_cache: dict,
@@ -617,7 +622,6 @@ class Process:
         :param current_vertex: The current/parent discovery vertex.
         :param bulk_add_records: List of records to be added.
         :param bulk_convert_records: List of existing records to be covert to this gateway.
-        :params record_lookup_func: A function to lookup records to see if they exist.
         :param record_prepare_func: Function to convert content into an unsaved record.
         :param directory_info_func: Function to lookup directories.
         :param record_cache:
@@ -672,7 +676,7 @@ class Process:
                 #  not created a record for yet, however it might have been assigned a record UID from a prior prompt.
 
                 existing_record = child_content.record_exists
-                if record_lookup_func is not None:
+                if self.record_lookup_func is not None:
                     check_the_vault = True
                     for item in bulk_add_records:
                         if item.record_uid == child_content.record_uid:
@@ -680,8 +684,8 @@ class Process:
                             check_the_vault = False
                             break
                     if check_the_vault:
-                        existing_record = record_lookup_func(record_uid=child_content.record_uid,
-                                                             context=context) is not None
+                        existing_record = self.record_lookup_func(child_content.record_uid,
+                                                                  context=context) is not None
                         self.logger.debug(f"    record exists in the vault: {existing_record}")
                 else:
                     self.logger.debug(f"    record lookup function not defined, record existing: {existing_record}")
@@ -706,12 +710,12 @@ class Process:
                     # If the rules have set the admin_uid then connect the user to the resource.
                     if (child_content.admin_uid is not None
                             and child_content.record_type != PAM_USER
-                            and record_lookup_func is not None):
+                            and self.record_lookup_func is not None):
 
                         self.logger.debug("the admin UID has been set for this resource")
 
-                        admin_record = record_lookup_func(record_uid=child_content.admin_uid,
-                                                          context=context)  # type: NormalizedRecord
+                        admin_record = self.record_lookup_func(child_content.admin_uid,
+                                                               context=context)  # type: NormalizedRecord
                         if admin_record is not None and admin_record.record_type == PAM_USER:
                             self.logger.debug("was able to find the admin record, connect to resource")
                             admin_uid = child_content.admin_uid
@@ -745,7 +749,6 @@ class Process:
                         current_vertex=vertex,
                         bulk_add_records=bulk_add_records,
                         bulk_convert_records=bulk_convert_records,
-                        record_lookup_func=record_lookup_func,
                         record_prepare_func=record_prepare_func,
                         directory_info_func=directory_info_func,
                         record_cache=record_cache,
@@ -769,7 +772,6 @@ class Process:
                        current_vertex: DAGVertex,
                        bulk_add_records: List[BulkRecordAdd],
                        bulk_convert_records: List[BulkRecordConvert],
-                       record_lookup_func: Callable,
                        prompt_func: Callable,
                        prompt_admin_func: Callable,
                        record_prepare_func: Callable,
@@ -837,7 +839,7 @@ class Process:
                 #  not created a record for yet, however it might have been assigned a record UID from a prior prompt.
 
                 existing_record = child_content.record_exists
-                if record_lookup_func is not None:
+                if self.record_lookup_func is not None:
                     check_the_vault = True
                     for item in bulk_add_records:
                         if item.record_uid == child_content.record_uid:
@@ -845,8 +847,8 @@ class Process:
                             check_the_vault = False
                             break
                     if check_the_vault:
-                        existing_record = record_lookup_func(record_uid=child_content.record_uid,
-                                                             context=context) is not None
+                        existing_record = self.record_lookup_func(child_content.record_uid,
+                                                                  context=context) is not None
                         self.logger.debug(f"    record exists in the vault: {existing_record}")
                 else:
                     self.logger.debug(f"    record lookup function not defined, record existing: {existing_record}")
@@ -965,12 +967,12 @@ class Process:
                             self.logger.debug("checking if can add admin")
 
                             # If the rule engine sets the admin UID
-                            if child_content.admin_uid is not None and record_lookup_func is not None:
+                            if child_content.admin_uid is not None and self.record_lookup_func is not None:
 
                                 self.logger.debug(f"the resource rule set the admin uid to {add_content.admin_uid}")
 
-                                admin_record = record_lookup_func(record_uid=add_content.admin_uid,
-                                                                  context=context)  # type: NormalizedRecord
+                                admin_record = self.record_lookup_func(add_content.admin_uid,
+                                                                       context=context)  # type: NormalizedRecord
                                 if admin_record is not None and admin_record.record_type == PAM_USER:
                                     self.logger.debug("was able to find the admin record, connect to resource")
 
@@ -1015,7 +1017,6 @@ class Process:
                                             domain=source,
                                             admin_acl=acl,
                                             directory_info_func=directory_info_func,
-                                            record_lookup_func=record_lookup_func,
                                             context=context,
                                             user=add_content.access_user.user,
                                             dn=add_content.access_user.dn
@@ -1040,7 +1041,6 @@ class Process:
                                     resource_content=add_content,
                                     bulk_add_records=bulk_add_records,
                                     bulk_convert_records=bulk_convert_records,
-                                    record_lookup_func=record_lookup_func,
                                     directory_info_func=directory_info_func,
                                     prompt_admin_func=prompt_admin_func,
                                     record_prepare_func=record_prepare_func,
@@ -1069,7 +1069,6 @@ class Process:
                         current_vertex=vertex,
                         bulk_add_records=bulk_add_records,
                         bulk_convert_records=bulk_convert_records,
-                        record_lookup_func=record_lookup_func,
                         prompt_func=prompt_func,
                         prompt_admin_func=prompt_admin_func,
                         record_prepare_func=record_prepare_func,
@@ -1088,7 +1087,6 @@ class Process:
                             resource_content: DiscoveryObject,
                             bulk_add_records: List[BulkRecordAdd],
                             bulk_convert_records: List[BulkRecordConvert],
-                            record_lookup_func: Callable,
                             directory_info_func: Callable,
                             prompt_admin_func: Callable,
                             record_prepare_func: Callable,
@@ -1199,7 +1197,6 @@ class Process:
                             domain=ad_domain,
                             admin_acl=admin_acl,
                             directory_info_func=directory_info_func,
-                            record_lookup_func=record_lookup_func,
                             context=context,
                             user=admin_content.item.user,
                             dn=admin_content.item.dn
@@ -1366,7 +1363,6 @@ class Process:
             prompt_func: Callable,
             record_prepare_func: Callable,
             smart_add: bool = False,
-            record_lookup_func: Optional[Callable] = None,
             record_create_func: Optional[Callable] = None,
             record_convert_func: Optional[Callable] = None,
             prompt_confirm_add_func: Optional[Callable] = None,
@@ -1383,7 +1379,6 @@ class Process:
         :param record_cache: A dictionary of record types to keys to record UID.
         :param prompt_func: Function to call when the user needs to make a decision about an object.
         :param smart_add: If we have resource cred, add the resource and the users. DEPRECATED
-        :param record_lookup_func: Function to look up a record by UID.
         :param record_prepare_func: Function to call to prepare a record to be created.
         :param record_create_func: Function to call to save the prepared records.
         :param record_convert_func: Function to convert record to use this gateway.
@@ -1459,7 +1454,6 @@ class Process:
                 current_vertex=configuration,
                 bulk_add_records=bulk_add_records,
                 bulk_convert_records=bulk_convert_records,
-                record_lookup_func=record_lookup_func,
                 record_prepare_func=record_prepare_func,
                 directory_info_func=directory_info_func,
                 record_cache=record_cache,
@@ -1482,7 +1476,6 @@ class Process:
                 current_vertex=configuration,
                 bulk_add_records=bulk_add_records,
                 bulk_convert_records=bulk_convert_records,
-                record_lookup_func=record_lookup_func,
                 prompt_func=prompt_func,
                 prompt_admin_func=prompt_admin_func,
                 record_prepare_func=record_prepare_func,
