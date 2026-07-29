@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import TypedRecord, KeeperRecord
     from ...keeper_dag.vertex import DAGVertex
-    from ...discovery_common.record_link import RecordLink
 
 
 def _h(value: str) -> str:
@@ -1662,6 +1661,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             process = Process(
                 record=configuration_record,
                 job_id=job_item.job_id,
+                record_lookup_func=self._record_lookup,
                 params=params,
                 logger=logging,
                 debug_level=debug_level,
@@ -1673,9 +1673,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
             try:
                 results = process.run(
-
-                    # This method can get a record using the record UID
-                    record_lookup_func=self._record_lookup,
 
                     # Prompt user the about adding records
                     prompt_func=self._prompt,
