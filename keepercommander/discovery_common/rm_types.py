@@ -84,6 +84,105 @@ class RmGroup(BaseModel):
     users: List[RmUser] = []
 
 
+class RmPermission(BaseModel):
+    """
+    A permission granted by a role, reduced to its action strings.
+
+    :param id: Provider identifier for the permission source (policy ARN, role-definition id, etc.).
+    :param name: Human-readable name of the permission source.
+    :param source: Where the permission comes from, e.g. "managed-policy", "inline-policy",
+                   "role-definition".
+    :param actions: The granted action strings (e.g. "s3:GetObject", "Microsoft.Compute/*").
+    """
+    id: Optional[str] = None
+    name: Optional[str] = None
+    source: Optional[str] = None
+    actions: List[str] = []
+
+
+class RmMappedUser(BaseModel):
+    """
+    A user in the standing-permissions map, with the roles it holds.
+
+    :param id: Provider identifier for the user.
+    :param name: Human-readable user name.
+    :param role_ids: Ids of the roles this user holds (references RmMappedRole.id).
+    """
+    id: str
+    name: Optional[str] = None
+    role_ids: List[str] = []
+
+
+class RmMappedGroup(BaseModel):
+    """
+    A group in the standing-permissions map, with its members and the roles it holds.
+
+    :param id: Provider identifier for the group.
+    :param name: Human-readable group name.
+    :param user_ids: Ids of the users that are members of this group (references RmMappedUser.id).
+    :param role_ids: Ids of the roles this group holds (references RmMappedRole.id).
+                     Empty for providers with no group-role concept (e.g. AWS IAM).
+    """
+    id: str
+    name: Optional[str] = None
+    user_ids: List[str] = []
+    role_ids: List[str] = []
+
+
+class RmMappedServiceAccount(BaseModel):
+    """
+    A service account in the standing-permissions map, with the roles it holds.
+
+    A service account is a non-human principal: an Azure service principal or managed identity,
+    a GCP service account, etc.
+
+    :param id: Provider identifier for the service account.
+    :param name: Human-readable service account name.
+    :param role_ids: Ids of the roles this service account holds (references RmMappedRole.id).
+    """
+    id: str
+    name: Optional[str] = None
+    role_ids: List[str] = []
+
+
+class RmMappedRole(BaseModel):
+    """
+    A role in the standing-permissions map, with the permissions it grants.
+
+    :param id: Provider identifier for the role.
+    :param name: Human-readable role name.
+    :param permissions: The permissions granted by this role.
+    """
+    id: str
+    name: Optional[str] = None
+    permissions: List[RmPermission] = []
+
+
+class RmStandingPermissions(BaseModel):
+    """
+    The standing-permissions map for one identity provider.
+
+    Relationships are normalized: roles are listed once with their permissions, while users and
+    groups reference roles by id. Group membership is carried as user ids on each group.
+
+    :param provider: The identity provider the map was built for, e.g. "aws", "azure".
+    :param configuration_uid: The PAM configuration record UID the map was built from.
+    :param supported: False when the provider does not support standing-permission mapping
+                      (e.g. GCP, Okta); the principal/role lists are then empty.
+    :param users: Users and the roles they hold.
+    :param groups: Groups, their members, and the roles they hold.
+    :param service_accounts: Service accounts (non-human principals) and the roles they hold.
+    :param roles: Roles and the permissions they grant.
+    """
+    provider: str
+    configuration_uid: Optional[str] = None
+    supported: bool = True
+    users: List[RmMappedUser] = []
+    groups: List[RmMappedGroup] = []
+    service_accounts: List[RmMappedServiceAccount] = []
+    roles: List[RmMappedRole] = []
+
+
 class RmMetaBase(BaseModel):
     pass
 
@@ -159,6 +258,10 @@ class RmOktaUserAddMeta(RmMetaBase):
     password_reset_required: Optional[bool] = False
     password_reset_required_with_mfa: Optional[bool] = False
     groups: List[str] = []
+    # Okta app-instance ids ("0oa...") to assign the user to directly at creation, in addition to
+    # group-based access. Used for launch-URL flows (the pamCloudResource "Account Identifier") so
+    # an ephemeral user can reach the specific app the session launches into.
+    app_ids: List[str] = []
 
 
 class RmOktaGroupAddMeta(RmMetaBase):
@@ -503,6 +606,10 @@ class RmMachineUserAddMeta(RmMetaBase):
     use_private_key_type: Optional[str] = "ecdsa_sha2_nistp521"
     private_key: Optional[str] = None
     private_key_passphrase: Optional[str] = None
+    private_key_format: Optional[str] = None
+    public_key_format: Optional[str] = None
+    private_key_encoding: Optional[str] = None
+    public_key_encoding: Optional[str] = None
     authorized_keys: List[str] = []
 
     # SSH certificate

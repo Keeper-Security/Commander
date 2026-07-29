@@ -1,13 +1,14 @@
 from __future__ import annotations
 import argparse
 import logging
+from . import record_lookup
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.user_service import UserService
 from ...discovery_common.record_link import RecordLink
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE
-from ...discovery_common.types import UserAcl
+from ...discovery_common.types import UserAcl, ServiceEnum
 from ...keeper_dag.types import RefType, EdgeType
 from ... import __version__
 from typing import Optional, TYPE_CHECKING
@@ -30,6 +31,11 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the Windows Machine record')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
+    parser.add_argument('--type', '-t', required=True, dest='service_type', action='store',
+                        choices=["service", "task", "iis_pool"],
+                        help='Type of service.')
+    parser.add_argument('--name', '-n', required=True, dest='name', action='store',
+                        help='Name label for reporting.')
 
     def get_parser(self):
         return PAMActionServiceAddCommand.parser
@@ -39,6 +45,8 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway", "not_set")
         machine_uid = kwargs.get("machine_uid", "not_set")
         user_uid = kwargs.get("user_uid", "not_set")
+        service_type = kwargs.get("service_type", "unknown")
+        name = kwargs.get("name", "Unknown")
 
         print("")
 
@@ -63,6 +71,7 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
                                  agent=f"Cmdr/{__version__}",
                                  use_per_graph_endpoints=False)
         user_service = UserService(record=gateway_context.configuration,
+                                   record_lookup_func=record_lookup,
                                    record_linking=record_link,
                                    params=params,
                                    fail_on_corrupt=False,
@@ -165,18 +174,24 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         if acl is None:
             acl = UserAcl.default()
 
-        if not hasattr(acl, "controls_services") or not acl.controls_services:
-            acl.controls_services = True
+        orig_md5 = acl.md5(user_record.record_key)
 
-            # Make sure the machine has a LINK connection to the configuration.
-            if not root_vertex.has(machine_vertex):
-                machine_vertex.belongs_to_root(edge_type=EdgeType.LINK)
+        # Make sure the machine has a LINK connection to the configuration.
+        if not root_vertex.has(machine_vertex):
+            machine_vertex.belongs_to_root(edge_type=EdgeType.LINK)
 
-            # Add our new ACL edge between the machine and the user.
-            user_service.set_acl(resource_uid=machine_vertex.uid,
-                                 user_uid=user_vertex.uid,
-                                 acl=acl)
+        user_service.add_service_name(acl=acl,
+                                      service_type=ServiceEnum.find_enum(service_type),
+                                      service_name=name,
+                                      record_key_bytes=user_record.record_key)
 
+        # Add our new ACL edge between the machine and the user.
+        user_service.set_acl(resource_uid=machine_vertex.uid,
+                             user_uid=user_vertex.uid,
+                             acl=acl)
+
+        # Only save if the ACL changed.
+        if orig_md5 != acl.md5(user_record.record_key):
             record_link.save()
         else:
             logging.debug("user already set to control services on this machine.")
