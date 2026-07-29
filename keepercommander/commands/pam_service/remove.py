@@ -1,10 +1,12 @@
 from __future__ import annotations
 import argparse
+from . import record_lookup
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ... import vault
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE
 from ...discovery_common.user_service import UserService
 from ...discovery_common.record_link import RecordLink
+from ...discovery_common.types import ServiceEnum
 from ...display import bcolors
 from ... import __version__
 from typing import Optional, TYPE_CHECKING
@@ -28,6 +30,15 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
 
+    parser.add_argument('--type', '-t', required=True, dest='service_type', action='store',
+                        choices=["service", "task", "iis_pool", "all"],
+                        help='Type of service. "all" will clear all')
+    parser.add_argument('--name', '-n', required=False, dest='name', action='store',
+                        help='Name label for reporting. Exclude will remove all service types.')
+
+    parser.add_argument('--force', required=False, dest='do_force', action='store_true',
+                        help='Force')
+
     def get_parser(self):
         return PAMActionServiceRemoveCommand.parser
 
@@ -36,6 +47,9 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway", "not_set")
         machine_uid = kwargs.get("machine_uid", "not_set")
         user_uid = kwargs.get("user_uid", "not_set")
+        service_type = kwargs.get("service_type", "unknown")
+        name = kwargs.get("name", None)
+        do_force = kwargs.get("do_force", False)
 
         print("")
 
@@ -60,6 +74,7 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                                  agent=f"Cmdr/{__version__}",
                                  use_per_graph_endpoints=False)
         user_service = UserService(record=gateway_context.configuration,
+                                   record_lookup_func=record_lookup,
                                    record_linking=record_link,
                                    params=params,
                                    fail_on_corrupt=False,
@@ -100,12 +115,22 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         if not hasattr(acl, "controls_services") or acl.controls_services:
-            acl.controls_services = False
 
-            user_service.set_acl(resource_uid=machine_vertex.uid,
-                                 user_uid=user_vertex.uid,
-                                 acl=acl)
-            record_link.save()
+            if (service_type == "all" or name is None) and not do_force:
+                print(f"{bcolors.WARNING}Require --force parameter to make changes.{bcolors.ENDC}")
+                return
+
+            orig_md5 = acl.md5(user_record.record_key)
+            user_service.remove_service_name(acl=acl,
+                                             record_key_bytes=user_record.record_key,
+                                             service_type=ServiceEnum.find_enum(service_type),
+                                             service_name=name)
+
+            if orig_md5 != acl.md5(user_record.record_key):
+                user_service.set_acl(resource_uid=machine_vertex.uid,
+                                     user_uid=user_vertex.uid,
+                                     acl=acl)
+                record_link.save()
 
         print(
             self._gr(
