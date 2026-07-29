@@ -49,6 +49,10 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def get_integration_name(self) -> str:
         """e.g. 'Slack', 'Teams' -- drives all naming conventions."""
 
+    def get_integration_display_name(self) -> str:
+        """User-facing product name. Defaults to get_integration_name()."""
+        return self.get_integration_name()
+
     @abstractmethod
     def collect_integration_config(self, params) -> Any:
         """Prompt user for config values, return a config dataclass."""
@@ -127,13 +131,14 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def _build_parser(self) -> argparse.ArgumentParser:
         name = self.get_integration_name()
+        display_name = self.get_integration_display_name()
         name_lower = name.lower()
         default_folder = self.get_default_folder_name()
         default_record = self.get_default_record_name()
 
         parser = argparse.ArgumentParser(
             prog=f'{name_lower}-app-setup',
-            description=f'Automate {name} App integration setup with Commander Service Mode',
+            description=f'Automate {display_name} App integration setup with Commander Service Mode',
             formatter_class=argparse.RawDescriptionHelpFormatter
         )
         parser.add_argument(
@@ -152,7 +157,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         parser.add_argument(
             f'--{name_lower}-record-name', dest='integration_record_name', type=str,
             default=default_record,
-            help=f'Name for the {name} config record (default: "{default_record}")'
+            help=f'Name for the {display_name} config record (default: "{default_record}")'
         )
         parser.add_argument(
             '--config-path', dest='config_path', type=str,
@@ -190,12 +195,13 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def execute(self, params, **kwargs):
         name = self.get_integration_name()
+        display_name = self.get_integration_display_name()
 
         if kwargs.get('sync_down'):
             if self.get_approvals_profile() is None:
                 raise CommandError(
                     self.get_command_name(),
-                    f'{name} does not support multi-channel approver sync yet',
+                    f'{display_name} does not support multi-channel approver sync yet',
                 )
             record_uid = kwargs.get('integration_record_uid')
             sync_vault = True
@@ -223,7 +229,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
 
         # Phase 2 -- Integration-specific setup
-        print(f"\n{bcolors.BOLD}Phase 2: {name} App Integration Setup{bcolors.ENDC}")
+        print(f"\n{bcolors.BOLD}Phase 2: {display_name} App Integration Setup{bcolors.ENDC}")
         record_name = kwargs.get('integration_record_name', self.get_default_record_name())
         record_uid, config = self._run_integration_setup(
             params, setup_result, service_config, record_name
@@ -306,16 +312,16 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _run_integration_setup(self, params, setup_result: SetupResult,
                                service_config: ServiceConfig,
                                record_name: str) -> Tuple[str, Any]:
-        name = self.get_integration_name()
+        display_name = self.get_integration_display_name()
 
-        DockerSetupPrinter.print_header(f"{name} App Configuration")
+        DockerSetupPrinter.print_header(f"{display_name} App Configuration")
         config = self.collect_integration_config(params)
 
-        DockerSetupPrinter.print_step(1, 2, f"Creating {name} config record '{record_name}'...")
+        DockerSetupPrinter.print_step(1, 2, f"Creating {display_name} config record '{record_name}'...")
         custom_fields = self.build_record_custom_fields(config)
         record_uid = self._create_integration_record(params, record_name, setup_result.folder_uid, custom_fields)
 
-        DockerSetupPrinter.print_step(2, 2, f"Updating docker-compose.yml with {name} App service...")
+        DockerSetupPrinter.print_step(2, 2, f"Updating docker-compose.yml with {display_name} App service...")
         self._update_docker_compose(setup_result, service_config, record_uid, config)
 
         return record_uid, config
@@ -333,8 +339,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
         self._update_record_custom_fields(params, record_uid, custom_fields)
 
-        name = self.get_integration_name()
-        DockerSetupPrinter.print_success(f"{name} config record ready (UID: {record_uid})")
+        display_name = self.get_integration_display_name()
+        DockerSetupPrinter.print_success(f"{display_name} config record ready (UID: {record_uid})")
         return record_uid
 
     def _find_record_in_folder(self, params, folder_uid: str, record_name: str):
@@ -418,8 +424,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return record_uid
 
     def _execute_sync_down(self, params, record_uid: str, sync_vault: bool = True) -> None:
-        name = self.get_integration_name()
-        print(f"\n{bcolors.BOLD}{name} App Config Sync{bcolors.ENDC}")
+        display_name = self.get_integration_display_name()
+        print(f"\n{bcolors.BOLD}{display_name} App Config Sync{bcolors.ENDC}")
         print(f"  Reconciling approver teams, shared folders, and records with the vault")
         print(f"  Config record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
 
@@ -477,26 +483,26 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def _print_success_message(self, setup_result: SetupResult,
                                service_config: ServiceConfig,
                                record_uid: str, config, config_path: str) -> None:
-        name = self.get_integration_name()
+        display_name = self.get_integration_display_name()
 
-        print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ {name} App Integration Setup Complete!{bcolors.ENDC}\n")
+        print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ {display_name} App Integration Setup Complete!{bcolors.ENDC}\n")
 
         print(f"{bcolors.BOLD}Resources Created:{bcolors.ENDC}")
         print(f"  {bcolors.BOLD}Phase 1 - Commander Service:{bcolors.ENDC}")
         DockerSetupPrinter.print_phase1_resources(setup_result, indent="    ")
-        print(f"  {bcolors.BOLD}Phase 2 - {name} App:{bcolors.ENDC}")
+        print(f"  {bcolors.BOLD}Phase 2 - {display_name} App:{bcolors.ENDC}")
         self._print_integration_resources(record_uid, config)
 
         DockerSetupPrinter.print_common_deployment_steps(str(service_config.port), config_path)
 
         container = self.get_docker_container_name()
-        print(f"  {bcolors.OKGREEN}docker logs {container}{bcolors.ENDC} - View {name} App logs")
+        print(f"  {bcolors.OKGREEN}docker logs {container}{bcolors.ENDC} - View {display_name} App logs")
 
         self.print_integration_commands()
 
     def _print_integration_resources(self, record_uid: str, config) -> None:
-        name = self.get_integration_name()
-        print(f"    • {name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
+        display_name = self.get_integration_display_name()
+        print(f"    • {display_name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
         self.print_integration_specific_resources(config)
         print(f"    • EPM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
         print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}")
@@ -514,9 +520,9 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return enabled, interval
 
     def _collect_device_approval_config(self) -> Tuple[bool, int]:
-        name = self.get_integration_name()
+        display_name = self.get_integration_display_name()
         print(f"\n{bcolors.BOLD}SSO Cloud Device Approval Integration (optional):{bcolors.ENDC}")
-        print(f"  Approve SSO Cloud device registrations via {name}")
+        print(f"  Approve SSO Cloud device registrations via {display_name}")
         enabled = self._prompt_yes_no('Enable Device Approval?', default=False)
         interval = 120
         if enabled:

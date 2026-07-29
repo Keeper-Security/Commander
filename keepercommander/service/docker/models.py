@@ -123,3 +123,18 @@ class TeamsConfig:
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
 
+
+@dataclass
+class GChatConfig:
+    google_service_account_json: str
+    google_project_id: str
+    google_subscription_id: str
+    google_topic_id: str
+    chat_approvals_space_id: str
+    chat_command_request_record_id: str = '1'
+    chat_command_request_folder_id: str = '2'
+    chat_command_one_time_share_id: str = '3'
+    pedm_enabled: bool = False
+    pedm_polling_interval: int = 120
+    device_approval_enabled: bool = False
+    device_approval_polling_interval: int = 120
