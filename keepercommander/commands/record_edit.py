@@ -50,7 +50,7 @@ record_add_parser.add_argument('-n', '--notes', dest='notes', action='store', he
 record_add_parser.add_argument('--folder', dest='folder', action='store',
                                help='folder name or UID to store record')
 record_add_parser.add_argument('--self-destruct', dest='self_destruct', action='store',
-                               metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                               metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears]',
                                help='Time period record share URL is valid. The record will be deleted in your vault in 5 minutes since open')
 record_add_parser.add_argument('--pam-config', dest='pam_config', action='store',
                                help='PAM configuration UID or name to sync password to cloud provider (Azure AD, AWS IAM)')
