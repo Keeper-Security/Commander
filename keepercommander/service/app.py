@@ -11,6 +11,7 @@
 
 from flask import Flask, jsonify
 import logging
+import os
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_limiter.errors import RateLimitExceeded
 from .decorators.security import limiter, is_behind_proxy
@@ -45,6 +46,10 @@ def create_app():
 
         logger.debug("Initializing API routes")
         init_routes(app)
+
+        if (os.environ.get('SAILPOINT_RECORD') or '').strip():
+            from .commands.integrations.sailpoint.service import SailPointService
+            SailPointService.start_background_services()
 
         print("Keeper Commander Service initialization complete")
         return app
