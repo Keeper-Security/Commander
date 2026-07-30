@@ -61,7 +61,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
     def collect_integration_config(self, params):
         print(f"\n{bcolors.BOLD}GOOGLE_SERVICE_ACCOUNT_JSON:{bcolors.ENDC}")
-        print(f"  Path to the Google Cloud service account JSON key, or paste the JSON")
+        print(f"  Path to the Google Cloud service account JSON key file")
         print(f"  (used for Pub/Sub pull and Google Chat API)")
         google_service_account_json, project_from_json = self._prompt_service_account_json()
 
@@ -209,10 +209,10 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
     def _prompt_service_account_json(self) -> Tuple[str, str]:
         while True:
-            value = input(
-                f"{bcolors.OKBLUE}Path to service account JSON file (or paste JSON):{bcolors.ENDC} "
+            path = input(
+                f"{bcolors.OKBLUE}Path to service account JSON file:{bcolors.ENDC} "
             ).strip()
-            parsed, error = self._load_service_account_json(value)
+            parsed, error = self._load_service_account_json(path)
             if parsed is not None:
                 return json.dumps(parsed, separators=(',', ':')), parsed.get('project_id', '')
             print(f"{bcolors.FAIL}Error: {error}{bcolors.ENDC}")
@@ -238,20 +238,13 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             )
 
     @classmethod
-    def _load_service_account_json(cls, value: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        if not value:
-            return None, 'Service account JSON path or JSON content is required'
+    def _load_service_account_json(cls, path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if not path:
+            return None, 'Service account JSON path is required'
 
-        if value.lstrip().startswith('{'):
-            try:
-                data = json.loads(value)
-            except json.JSONDecodeError as exc:
-                return None, f'Invalid service account JSON: {exc}'
-            return cls._validate_service_account_dict(data)
-
-        expanded = os.path.expanduser(value)
+        expanded = os.path.expanduser(path)
         if not os.path.isfile(expanded):
-            return None, f'Service account JSON file not found: {value}'
+            return None, f'Service account JSON file not found: {path}'
 
         try:
             with open(expanded, 'r', encoding='utf-8') as handle:

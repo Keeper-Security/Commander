@@ -34,13 +34,18 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         )
         self.assertEqual(self.cmd.get_parser().prog, 'gchat-app-setup')
 
-    def test_load_service_account_requires_value(self):
+    def test_load_service_account_requires_path(self):
         data, error = self.cmd._load_service_account_json('')
         self.assertIsNone(data)
         self.assertIn('required', error.lower())
 
     def test_load_service_account_file_not_found(self):
         data, error = self.cmd._load_service_account_json('/tmp/does-not-exist-gchat.json')
+        self.assertIsNone(data)
+        self.assertIn('not found', error.lower())
+
+    def test_load_service_account_rejects_inline_json(self):
+        data, error = self.cmd._load_service_account_json(json.dumps(_valid_service_account()))
         self.assertIsNone(data)
         self.assertIn('not found', error.lower())
 
@@ -77,13 +82,14 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(data['project_id'], 'my-gcp-project')
 
-    def test_load_service_account_from_inline_json(self):
-        data, error = self.cmd._load_service_account_json(json.dumps(_valid_service_account()))
-        self.assertIsNone(error)
-        self.assertEqual(data['client_email'], 'bot@my-gcp-project.iam.gserviceaccount.com')
-
-    def test_load_service_account_invalid_inline_json(self):
-        data, error = self.cmd._load_service_account_json('{not-json')
+    def test_load_service_account_invalid_json_file(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as handle:
+            handle.write('{not-json')
+            path = handle.name
+        try:
+            data, error = self.cmd._load_service_account_json(path)
+        finally:
+            os.unlink(path)
         self.assertIsNone(data)
         self.assertIn('invalid service account json', error.lower())
 
