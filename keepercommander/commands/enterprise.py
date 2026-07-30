@@ -194,7 +194,7 @@ enterprise_role_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_role_parser.add_argument('--copy', dest='copy', action='store_true', help='copy role with enforcements')
 enterprise_role_parser.add_argument('--clone', dest='clone', action='store_true', help='copy role with users and enforcements')
 #enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
-enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='assign this role to new users. \'add\' only')
+enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='set as default for node and subnodes')
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
 enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
 enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
