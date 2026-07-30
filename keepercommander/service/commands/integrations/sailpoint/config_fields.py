@@ -13,46 +13,77 @@
 
 from __future__ import annotations
 
-from typing import Tuple
+from dataclasses import dataclass
 
 from .....params import KeeperParams
 from .constants import (
+    ALLOW_FOLDERS_FIELD,
+    ALLOW_RECORDS_FIELD,
+    ALLOW_ROLES_FIELD,
+    ALLOW_TEAMS_FIELD,
     DEFAULT_POLL_INTERVAL_SECONDS,
-    ENTITLEMENT_SCOPE_FIELD,
+    MIN_POLL_INTERVAL_SECONDS,
     POLL_INTERVAL_FIELD,
-    SCOPE_BOTH,
 )
 
-_VALID_SCOPES = frozenset({'folders', 'records', 'both'})
-_MIN_POLL_INTERVAL = 15
+_TRUE_VALUES = frozenset({'true', '1', 'yes', 'y', 'on'})
+_FALSE_VALUES = frozenset({'false', '0', 'no', 'n', 'off'})
 
 
-def read_scope_and_interval(params: KeeperParams, record_uid: str) -> Tuple[str, int]:
+@dataclass(frozen=True)
+class SailPointCapabilities:
+    """Share and identity entitlement gates (nodes are never gated)."""
+
+    allow_folders: bool = True
+    allow_records: bool = True
+    allow_roles: bool = True
+    allow_teams: bool = True
+    poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS
+
+
+def parse_bool(raw, default: bool = True) -> bool:
+    """Parse common truthy/falsey config strings; empty/unknown → default."""
+    if raw is None:
+        return default
+    text = str(raw).strip().lower()
+    if not text:
+        return default
+    if text in _TRUE_VALUES:
+        return True
+    if text in _FALSE_VALUES:
+        return False
+    return default
+
+
+def read_capabilities(params: KeeperParams, record_uid: str) -> SailPointCapabilities:
     from ..... import vault
 
-    scope = SCOPE_BOTH
-    interval = DEFAULT_POLL_INTERVAL_SECONDS
+    caps = SailPointCapabilities()
     record = vault.KeeperRecord.load(params, record_uid)
     if not isinstance(record, vault.TypedRecord) or not record.custom:
-        return scope, interval
+        return caps
 
     by_label = {field.label: field for field in record.custom if field.label}
 
-    scope_field = by_label.get(ENTITLEMENT_SCOPE_FIELD)
-    if scope_field:
-        value = (scope_field.get_default_value() or SCOPE_BOTH).strip().lower()
-        if value in _VALID_SCOPES:
-            scope = value
+    def _bool_field(label: str) -> bool:
+        field = by_label.get(label)
+        return parse_bool(field.get_default_value() if field else None, default=True)
 
+    interval = DEFAULT_POLL_INTERVAL_SECONDS
     interval_field = by_label.get(POLL_INTERVAL_FIELD)
     if interval_field:
         try:
-            interval = max(_MIN_POLL_INTERVAL, int(interval_field.get_default_value() or interval))
+            interval = max(
+                MIN_POLL_INTERVAL_SECONDS,
+                int(interval_field.get_default_value() or interval),
+            )
         except (TypeError, ValueError):
             pass
-    return scope, interval
 
-
-def read_entitlement_scope(params: KeeperParams, record_uid: str) -> str:
-    scope, _ = read_scope_and_interval(params, record_uid)
-    return scope
+    return SailPointCapabilities(
+        allow_folders=_bool_field(ALLOW_FOLDERS_FIELD),
+        allow_records=_bool_field(ALLOW_RECORDS_FIELD),
+        allow_roles=_bool_field(ALLOW_ROLES_FIELD),
+        allow_teams=_bool_field(ALLOW_TEAMS_FIELD),
+        poll_interval_seconds=interval,
+    )

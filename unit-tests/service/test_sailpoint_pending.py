@@ -27,6 +27,10 @@ from keepercommander.service.commands.integrations.sailpoint.pending_store impor
 from keepercommander.service.commands.integrations.sailpoint.scim_guard import (
     SailPointScimGuard,
 )
+from keepercommander.service.commands.integrations.sailpoint.share_targets import (
+    validate_share_targets,
+)
+from keepercommander.service.util.verified_command import Verifycommand
 
 
 class SailPointParseTest(unittest.TestCase):
@@ -40,6 +44,40 @@ class SailPointParseTest(unittest.TestCase):
         self.assertEqual(parsed.node, 'Sales')
         self.assertEqual(parsed.roles, ['Admin'])
         self.assertEqual(parsed.teams, ['AWS'])
+
+    def test_parse_invite_multiple_roles_and_teams(self):
+        parsed = SailPointCommandParser.parse_invite(
+            'enterprise-user user@co.com --invite '
+            '--add-role R1 --add-role R2 --add-team T1 --add-team T2'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.roles, ['R1', 'R2'])
+        self.assertEqual(parsed.teams, ['T1', 'T2'])
+
+    def test_parse_invite_equals_form_single_value(self):
+        parsed = SailPointCommandParser.parse_invite(
+            'eu user@co.com --invite --add-role=R1 --add-team=T1'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.roles, ['R1'])
+        self.assertEqual(parsed.teams, ['T1'])
+
+    def test_parse_invite_multi_value_after_one_flag_matches_commander(self):
+        # Commander rejects "--add-role R1 R2"; R2 is left as a positional (not a role).
+        parsed = SailPointCommandParser.parse_invite(
+            'enterprise-user user@co.com --invite --add-role R1 R2 --add-team T1 T2'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.roles, ['R1'])
+        self.assertEqual(parsed.teams, ['T1'])
+
+    def test_parse_invite_comma_is_literal_role_name(self):
+        # Commander treats this as one role named "R1,R2", not two roles.
+        parsed = SailPointCommandParser.parse_invite(
+            'eu user@co.com --invite --add-role=R1,R2'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.roles, ['R1,R2'])
 
     def test_parse_invite_alias(self):
         parsed = SailPointCommandParser.parse_invite('eu someone@x.com --add')
@@ -57,6 +95,18 @@ class SailPointParseTest(unittest.TestCase):
         )
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed.emails, ['user@co.com'])
+        self.assertTrue(parsed.has_role_change)
+        self.assertFalse(parsed.has_team_change)
+        self.assertFalse(parsed.has_node_change)
+
+    def test_parse_identity_mutation_team_and_node(self):
+        parsed = SailPointCommandParser.parse_identity_mutation(
+            'eu user@co.com --add-team T1 --node Sales'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertTrue(parsed.has_team_change)
+        self.assertTrue(parsed.has_node_change)
+        self.assertFalse(parsed.has_role_change)
 
     def test_parse_identity_mutation_ignores_non_mutating(self):
         self.assertIsNone(
@@ -128,6 +178,28 @@ class SailPointParseTest(unittest.TestCase):
         self.assertTrue(parsed.is_record)
         self.assertEqual(parsed.nsf_role, 'viewer')
 
+    def test_parse_share_equals_forms(self):
+        parsed = SailPointCommandParser.parse_share(
+            'share-record --email=user@co.com --action=revoke RECORD_UID'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.emails, ['user@co.com'])
+        self.assertEqual(parsed.action, 'revoke')
+        self.assertFalse(parsed.is_grant)
+
+        folder = SailPointCommandParser.parse_share(
+            'share-folder --email=user@co.com --manage-records=on FOLDER_UID'
+        )
+        self.assertIsNotNone(folder)
+        self.assertEqual(folder.manage_records, 'on')
+        self.assertEqual(folder.targets, ['FOLDER_UID'])
+
+        nsf = SailPointCommandParser.parse_share(
+            'nsf-share-folder --email=user@co.com --role=content-manager NSF_UID'
+        )
+        self.assertIsNotNone(nsf)
+        self.assertEqual(nsf.nsf_role, 'content-manager')
+
 
 class SailPointPolicyTest(unittest.TestCase):
     def test_sanitize_strips_get(self):
@@ -137,12 +209,53 @@ class SailPointPolicyTest(unittest.TestCase):
         self.assertIn('enterprise-user', cleaned.split(','))
         self.assertIn('share-record', cleaned.split(','))
 
+    def test_sanitize_adds_enterprise_role_when_missing(self):
+        cleaned = SailPointCommandPolicy.sanitize(
+            'whoami,sync-down,get,enterprise-info,enterprise-user,enterprise-down,'
+            'share-folder,share-record,nsf-share-folder,nsf-share-record,tree'
+        )
+        parts = cleaned.split(',')
+        self.assertNotIn('get', parts)
+        self.assertIn('enterprise-role', parts)
+        self.assertIn('er', parts)
+
     def test_default_allowlist_matches_integration_list(self):
         expected = [
-            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user', 'enterprise-down',
-            'share-folder', 'share-record', 'nsf-share-folder', 'nsf-share-record', 'tree',
+            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user', 'enterprise-role', 'er',
+            'enterprise-down', 'share-folder', 'share-record', 'nsf-share-folder', 'nsf-share-record',
+            'tree',
         ]
         self.assertEqual(SailPointCommandPolicy.default_allowlist().split(','), expected)
+
+    def test_enterprise_role_blocks_add_delete_add_user(self):
+        for cmd in (
+            "enterprise-role --add 'New Role'",
+            "er 'QA Role' --delete",
+            "er 'QA Role' --add-user user@co.com",
+            "enterprise-role 'QA Role' --copy",
+            "er 'QA Role' --name 'Renamed'",
+            "er 'QA Role' --enforcement restrict_sharing:true",
+        ):
+            err = SailPointCommandPolicy.validate_enterprise_role(cmd)
+            self.assertIsNotNone(err, cmd)
+            self.assertIn('does not allow enterprise-role', err)
+
+    def test_enterprise_role_allows_admin_and_privilege(self):
+        for cmd in (
+            "er 'QA Role'",
+            "enterprise-role 'QA Role' -aa 'Metron Security' --cascade on",
+            "er 'QA Role' --node 'Metron Security' -ap MANAGE_USER -ap MANAGE_NODES",
+            "er -f 'QA Role' -ra 'Metron Security'",
+            "er 'QA Role' --node 'Metron Security' -rp MANAGE_TEAMS",
+        ):
+            self.assertIsNone(SailPointCommandPolicy.validate_enterprise_role(cmd), cmd)
+
+    def test_enterprise_role_gate_ignores_other_commands(self):
+        self.assertIsNone(
+            SailPointCommandPolicy.validate_enterprise_role(
+                'enterprise-user user@co.com --add-role Admin'
+            )
+        )
 
 
 class SailPointPendingMergeTest(unittest.TestCase):
@@ -207,7 +320,7 @@ class SailPointApplierTest(unittest.TestCase):
 
         with mock.patch.object(SailPointEntitlementApplier, '_run', side_effect=lambda p, c: runs.append(c)):
             remaining, dropped = SailPointEntitlementApplier.apply_for_user(
-                params, 'user@co.com', entry, entitlement_scope='both'
+                params, 'user@co.com', entry
             )
 
         self.assertEqual(remaining, {})
@@ -239,7 +352,7 @@ class SailPointApplierTest(unittest.TestCase):
             side_effect=RuntimeError('invalid permission combination'),
         ):
             remaining, dropped = SailPointEntitlementApplier.apply_for_user(
-                params, 'user@co.com', entry, entitlement_scope='both'
+                params, 'user@co.com', entry
             )
 
         self.assertEqual(dropped, [])
@@ -286,6 +399,343 @@ class SailPointRecordResolutionTest(unittest.TestCase):
         self.assertEqual(cmd.get_default_record_name(), 'Commander Service Mode SailPoint Config')
         self.assertEqual(cmd.get_record_env_key(), 'SAILPOINT_RECORD')
         self.assertEqual(cmd.get_default_folder_name(), 'Commander Service Mode - SailPoint')
+
+
+class SailPointShareTargetValidationTest(unittest.TestCase):
+    def _params(self):
+        params = mock.Mock()
+        params.nested_share_folders = {'NSF_FOLDER': {}}
+        params.nested_share_records = {'NSF_RECORD': {}}
+        params.shared_folder_cache = {'CLASSIC_SF': {}}
+        params.record_cache = {'CLASSIC_REC': {}, 'NSF_RECORD': {}}
+        params.folder_cache = {}
+        return params
+
+    def test_share_folder_rejects_nsf_folder(self):
+        share = SailPointCommandParser.parse_share(
+            'share-folder -e user@co.com NSF_FOLDER'
+        )
+        err = validate_share_targets(self._params(), share)
+        self.assertIsNotNone(err)
+        self.assertIn('nsf-share-folder', err)
+
+    def test_nsf_share_folder_rejects_classic_folder(self):
+        share = SailPointCommandParser.parse_share(
+            'nsf-share-folder -e user@co.com -r viewer CLASSIC_SF'
+        )
+        err = validate_share_targets(self._params(), share)
+        self.assertIsNotNone(err)
+        self.assertIn('share-folder', err)
+
+    def test_share_record_rejects_nsf_folder_and_nsf_record(self):
+        params = self._params()
+        share_folder = SailPointCommandParser.parse_share(
+            'share-record -e user@co.com NSF_FOLDER'
+        )
+        err = validate_share_targets(params, share_folder)
+        self.assertIsNotNone(err)
+        self.assertIn('folder', err.lower())
+
+        share_rec = SailPointCommandParser.parse_share(
+            'share-record -e user@co.com NSF_RECORD'
+        )
+        err = validate_share_targets(params, share_rec)
+        self.assertIsNotNone(err)
+        self.assertIn('nsf-share-record', err)
+
+    def test_nsf_share_record_rejects_classic_record(self):
+        share = SailPointCommandParser.parse_share(
+            'nsf-share-record -e user@co.com -r viewer CLASSIC_REC'
+        )
+        err = validate_share_targets(self._params(), share)
+        self.assertIsNotNone(err)
+        self.assertIn('share-record', err)
+
+    def test_matching_targets_ok(self):
+        params = self._params()
+        cases = [
+            'share-folder -e user@co.com CLASSIC_SF',
+            'nsf-share-folder -e user@co.com -r viewer NSF_FOLDER',
+            'share-record -e user@co.com CLASSIC_REC',
+            'nsf-share-record -e user@co.com -r viewer NSF_RECORD',
+        ]
+        for cmd in cases:
+            share = SailPointCommandParser.parse_share(cmd)
+            self.assertIsNone(validate_share_targets(params, share), cmd)
+
+
+class EnterpriseUserForceValidationTest(unittest.TestCase):
+    def test_admin_role_requires_force(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Commander RTI'}}],
+            'managed_nodes': [{'role_id': 10, 'managed_node_id': 1}],
+        }
+        err = Verifycommand.validate_enterprise_user_add_role_force(
+            ['enterprise-user', 'user@co.com', '--add-role', 'Commander RTI'],
+            params,
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('-f/--force', err)
+
+    def test_admin_role_with_force_ok(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Commander RTI'}}],
+            'managed_nodes': [{'role_id': 10, 'managed_node_id': 1}],
+        }
+        err = Verifycommand.validate_enterprise_user_add_role_force(
+            ['eu', '-f', 'user@co.com', '--add-role', 'Commander RTI'],
+            params,
+        )
+        self.assertIsNone(err)
+
+    def test_non_admin_role_ok_without_force(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'roles': [{'role_id': 11, 'data': {'displayname': 'QA Role'}}],
+            'managed_nodes': [{'role_id': 10, 'managed_node_id': 1}],
+        }
+        err = Verifycommand.validate_enterprise_user_add_role_force(
+            ['enterprise-user', 'user@co.com', '--add-role', 'QA Role'],
+            params,
+        )
+        self.assertIsNone(err)
+
+    def test_invite_skips_force_check(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Commander RTI'}}],
+            'managed_nodes': [{'role_id': 10, 'managed_node_id': 1}],
+        }
+        err = Verifycommand.validate_enterprise_user_add_role_force(
+            [
+                'enterprise-user', 'user@co.com', '--invite',
+                '--add-role', 'Commander RTI',
+            ],
+            params,
+        )
+        self.assertIsNone(err)
+
+    def test_apply_role_uses_force_flag(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'node_id': 1, 'status': 'active'}],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Admin'}}],
+            'teams': [],
+        }
+        runs = []
+        with mock.patch.object(
+            SailPointEntitlementApplier, '_run', side_effect=lambda p, c: runs.append(c)
+        ):
+            SailPointEntitlementApplier.apply_for_user(
+                params,
+                'user@co.com',
+                {'roles': ['Admin'], 'teams': [], 'folders': [], 'records': []},
+            )
+        self.assertTrue(runs)
+        self.assertIn(' -f ', f' {runs[0]} ')
+        self.assertIn('--add-role', runs[0])
+
+
+class SailPointCapabilityGateTest(unittest.TestCase):
+    def test_roles_off_blocks_invite_add_role_and_er(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        caps = SailPointCapabilities(allow_roles=False, allow_teams=True)
+        err = SailPointCommandHook._check_capability_gates(
+            "eu user@co.com --invite --node N --add-role R", caps
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('allow_roles', err)
+
+        err = SailPointCommandHook._check_capability_gates(
+            "er 'Demo Role' -aa 'Node'", caps
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('enterprise-role', err)
+
+    def test_teams_off_blocks_add_team_allows_node(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=False)
+        err = SailPointCommandHook._check_capability_gates(
+            'eu user@co.com --add-team Slack', caps
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('allow_teams', err)
+
+        err = SailPointCommandHook._check_capability_gates(
+            "eu user@co.com --invite --node 'Service Account Node'", caps
+        )
+        self.assertIsNone(err)
+
+        err = SailPointCommandHook._check_capability_gates(
+            'eu user@co.com --node Other', caps
+        )
+        self.assertIsNone(err)
+
+    def test_apply_skips_folders_and_records_when_disallowed(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'node_id': 1, 'status': 'active'}],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+            'roles': [],
+            'teams': [],
+        }
+        runs = []
+        with mock.patch.object(
+            SailPointEntitlementApplier, '_run', side_effect=lambda p, c: runs.append(c)
+        ):
+            remaining, dropped = SailPointEntitlementApplier.apply_for_user(
+                params,
+                'user@co.com',
+                {
+                    'roles': [],
+                    'teams': [],
+                    'folders': [{'uid': 'FOLDER1', 'kind': 'classic'}],
+                    'records': [{'uid': 'REC1'}],
+                },
+                allow_folders=False,
+                allow_records=False,
+            )
+        self.assertEqual(runs, [])
+        self.assertEqual(remaining, {})
+        self.assertTrue(any('allow_folders' in m for m in dropped))
+        self.assertTrue(any('allow_records' in m for m in dropped))
+
+    def test_mixed_active_and_invited_share_rejected(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [
+                {'username': 'active@co.com', 'node_id': 1, 'status': 'active'},
+                {'username': 'invited@co.com', 'node_id': 1, 'status': 'invited'},
+            ],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+        }
+        share = SailPointCommandParser.parse_share(
+            'share-record -e active@co.com -e invited@co.com RECORD_UID'
+        )
+        hook = SailPointCommandHook('cfg-uid')
+        response, status = hook._before_share(
+            params, share, SailPointCapabilities()
+        )
+        self.assertEqual(status, 400)
+        self.assertIn('mix Active and non-Active', response['error'])
+
+    def test_after_command_skips_missing_user(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [],
+            'nodes': [],
+            'scims': [],
+        }
+        hook = SailPointCommandHook('cfg-uid')
+        with mock.patch.object(SailPointPendingStore, 'update') as update_mock:
+            hook.after_command(
+                params,
+                'eu missing@co.com --invite --add-role Admin',
+                success=True,
+            )
+            update_mock.assert_not_called()
+
+    def test_poller_applies_outside_store_update(self):
+        from keepercommander.service.commands.integrations.sailpoint.poller import (
+            SailPointEntitlementPoller,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'node_id': 1, 'status': 'active'}],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Admin'}}],
+            'teams': [],
+        }
+        pending = {
+            'user@co.com': {
+                'roles': ['Admin'],
+                'teams': [],
+                'folders': [],
+                'records': [],
+            }
+        }
+        apply_calls = []
+        update_calls = []
+
+        def fake_update(p, uid, updater):
+            update_calls.append(updater(dict(pending)))
+            return update_calls[-1]
+
+        poller = SailPointEntitlementPoller('cfg-uid')
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.poller.read_capabilities',
+            return_value=mock.Mock(
+                allow_roles=True, allow_teams=True, allow_folders=True, allow_records=True
+            ),
+        ), mock.patch.object(SailPointPendingStore, 'load', return_value=pending), mock.patch.object(
+            SailPointPendingStore, 'update', side_effect=fake_update
+        ), mock.patch.object(
+            SailPointEntitlementApplier,
+            'apply_for_user',
+            side_effect=lambda *a, **k: (apply_calls.append(1) or ({}, [])),
+        ), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.poller.api.query_enterprise'
+        ):
+            poller.reconcile(params)
+
+        self.assertEqual(len(apply_calls), 1)
+        self.assertEqual(len(update_calls), 1)
+        self.assertNotIn('user@co.com', update_calls[0])
+
+    def test_apply_skips_roles_when_disallowed(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'node_id': 1, 'status': 'active'}],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+            'roles': [{'role_id': 10, 'data': {'displayname': 'Admin'}}],
+            'teams': [],
+        }
+        runs = []
+        with mock.patch.object(
+            SailPointEntitlementApplier, '_run', side_effect=lambda p, c: runs.append(c)
+        ):
+            remaining, dropped = SailPointEntitlementApplier.apply_for_user(
+                params,
+                'user@co.com',
+                {'roles': ['Admin'], 'teams': [], 'folders': [], 'records': []},
+                allow_roles=False,
+                allow_teams=True,
+            )
+        self.assertEqual(runs, [])
+        self.assertEqual(remaining, {})
+        self.assertTrue(any('allow_roles' in m for m in dropped))
 
 
 if __name__ == '__main__':

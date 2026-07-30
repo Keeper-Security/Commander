@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import shlex
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from .....params import KeeperParams
 from ....decorators.logging import logger
@@ -46,7 +46,6 @@ class SailPointEntitlementApplier:
     @staticmethod
     def _run(params: KeeperParams, command: str) -> None:
         from ..... import cli
-        logger.info(f'SailPoint apply: {command}')
         cli.do_command(params, command)
 
     @staticmethod
@@ -86,7 +85,7 @@ class SailPointEntitlementApplier:
             flags.append(f'--manage-records {manage_records}')
         if manage_users in ('on', 'off'):
             flags.append(f'--manage-users {manage_users}')
-        flag_str = (' ' + ' '.join(flags)) if flags else ''
+        flag_str = f" {' '.join(flags)}" if flags else ''
         cls._run(params, f'share-folder -a grant --email {email_q}{flag_str} {uid_q}')
 
     @classmethod
@@ -110,8 +109,38 @@ class SailPointEntitlementApplier:
             flags.append('--write')
         if record.get('can_share'):
             flags.append('--share')
-        flag_str = (' ' + ' '.join(flags)) if flags else ''
+        flag_str = f" {' '.join(flags)}" if flags else ''
         cls._run(params, f'share-record --email {email_q}{flag_str} {uid_q}')
+
+    @classmethod
+    def _apply_items(
+        cls,
+        params: KeeperParams,
+        email: str,
+        items: List[Dict[str, Any]],
+        *,
+        label: str,
+        apply_one: Callable[[KeeperParams, str, Dict[str, Any]], None],
+        remaining: Dict[str, Any],
+        dropped: List[str],
+    ) -> List[Dict[str, Any]]:
+        still: List[Dict[str, Any]] = []
+        for item in items:
+            uid = item.get('uid')
+            if not uid:
+                dropped.append(f'{label} entry missing uid, dropped')
+                continue
+            try:
+                apply_one(params, email, item)
+                logger.info(f'SailPoint: shared {label.lower()} {uid} with {email}')
+            except Exception as e:
+                if cls._is_missing_target(e):
+                    dropped.append(f'{label} not found, dropped: {uid}')
+                else:
+                    logger.warning(f'Failed to share {label.lower()} {uid} with {email}: {e}')
+                    still.append(item)
+                    remaining['last_error'] = str(e)
+        return still
 
     @classmethod
     def apply_for_user(
@@ -120,7 +149,10 @@ class SailPointEntitlementApplier:
         email: str,
         entry: Dict[str, Any],
         *,
-        entitlement_scope: str = 'both',
+        allow_roles: bool = True,
+        allow_teams: bool = True,
+        allow_folders: bool = True,
+        allow_records: bool = True,
     ) -> Tuple[Dict[str, Any], List[str]]:
         remaining = {
             'created_at': entry.get('created_at'),
@@ -133,6 +165,13 @@ class SailPointEntitlementApplier:
         dropped: List[str] = []
         scim_user = SailPointScimGuard.is_scim_managed_user(params, email)
         email_q = cls._shell_quote(email)
+
+        if not allow_roles and remaining['roles']:
+            dropped.append('Pending roles skipped by allow_roles=false')
+            remaining['roles'] = []
+        if not allow_teams and remaining['teams']:
+            dropped.append('Pending teams skipped by allow_teams=false')
+            remaining['teams'] = []
 
         if scim_user:
             if remaining['roles'] or remaining['teams']:
@@ -148,7 +187,11 @@ class SailPointEntitlementApplier:
                     dropped.append(f'Role not found, dropped: {role}')
                     continue
                 try:
-                    cls._run(params, f'enterprise-user {email_q} --add-role {cls._shell_quote(role)}')
+                    cls._run(
+                        params,
+                        f'enterprise-user -f {email_q} --add-role {cls._shell_quote(role)}',
+                    )
+                    logger.info(f"SailPoint: added role '{role}' to {email}")
                 except Exception as e:
                     logger.warning(f'Failed to add role {role} for {email}: {e}')
                     still_roles.append(role)
@@ -161,56 +204,43 @@ class SailPointEntitlementApplier:
                     dropped.append(f'Team not found, dropped: {team}')
                     continue
                 try:
-                    cls._run(params, f'enterprise-user {email_q} --add-team {cls._shell_quote(team)}')
+                    cls._run(
+                        params,
+                        f'enterprise-user {email_q} --add-team {cls._shell_quote(team)}',
+                    )
+                    logger.info(f"SailPoint: added team '{team}' to {email}")
                 except Exception as e:
                     logger.warning(f'Failed to add team {team} for {email}: {e}')
                     still_teams.append(team)
                     remaining['last_error'] = str(e)
             remaining['teams'] = still_teams
 
-        allow_folders = entitlement_scope in ('folders', 'both')
-        allow_records = entitlement_scope in ('records', 'both')
-
-        still_folders = []
         if allow_folders:
-            for folder in remaining['folders']:
-                uid = folder.get('uid')
-                if not uid:
-                    dropped.append('Folder entry missing uid, dropped')
-                    continue
-                try:
-                    cls._apply_folder(params, email, folder)
-                except Exception as e:
-                    if cls._is_missing_target(e):
-                        dropped.append(f'Folder not found, dropped: {uid}')
-                    else:
-                        logger.warning(f'Failed to share folder {uid} with {email}: {e}')
-                        still_folders.append(folder)
-                        remaining['last_error'] = str(e)
-            remaining['folders'] = still_folders
+            remaining['folders'] = cls._apply_items(
+                params,
+                email,
+                remaining['folders'],
+                label='Folder',
+                apply_one=cls._apply_folder,
+                remaining=remaining,
+                dropped=dropped,
+            )
         elif remaining['folders']:
-            dropped.append('Folder shares skipped by entitlement_scope')
+            dropped.append('Pending folders skipped by allow_folders=false')
             remaining['folders'] = []
 
-        still_records = []
         if allow_records:
-            for record in remaining['records']:
-                uid = record.get('uid')
-                if not uid:
-                    dropped.append('Record entry missing uid, dropped')
-                    continue
-                try:
-                    cls._apply_record(params, email, record)
-                except Exception as e:
-                    if cls._is_missing_target(e):
-                        dropped.append(f'Record not found, dropped: {uid}')
-                    else:
-                        logger.warning(f'Failed to share record {uid} with {email}: {e}')
-                        still_records.append(record)
-                        remaining['last_error'] = str(e)
-            remaining['records'] = still_records
+            remaining['records'] = cls._apply_items(
+                params,
+                email,
+                remaining['records'],
+                label='Record',
+                apply_one=cls._apply_record,
+                remaining=remaining,
+                dropped=dropped,
+            )
         elif remaining['records']:
-            dropped.append('Record shares skipped by entitlement_scope')
+            dropped.append('Pending records skipped by allow_records=false')
             remaining['records'] = []
 
         if SailPointPendingStore.entry_is_empty(remaining):

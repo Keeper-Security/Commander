@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import logging
+import shlex
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
@@ -24,6 +25,7 @@ from .throttle import (
     is_throttle_error,
     throttle_error_response,
 )
+from .verified_command import Verifycommand
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
@@ -161,6 +163,16 @@ class CommandExecutor:
                 params.service_mode = True
 
             command = ensure_record_add_json_format(html.unescape(command))
+
+            try:
+                command_tokens = shlex.split(command)
+            except ValueError:
+                command_tokens = command.split()
+            force_error = Verifycommand.validate_enterprise_user_add_role_force(
+                command_tokens, params
+            )
+            if force_error:
+                return {"status": "error", "error": force_error}, 400
 
             sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
             if sailpoint_enabled:

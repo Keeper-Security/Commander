@@ -20,6 +20,7 @@ from .....params import KeeperParams
 from ....decorators.logging import logger
 from .command_hook import SailPointCommandHook
 from .command_policy import SailPointCommandPolicy
+from .config_fields import parse_bool
 from .constants import PARAMS_ATTR, SAILPOINT_MARKER_FIELD, SAILPOINT_RECORD_ENV
 
 
@@ -44,9 +45,9 @@ class SailPointService:
         if not isinstance(record, vault.TypedRecord) or not record.custom:
             return False
         return any(
-            str(field.get_default_value() or '').strip().lower() in ('true', '1', 'yes', 'y')
+            field.label == SAILPOINT_MARKER_FIELD
+            and parse_bool(field.get_default_value(), default=False)
             for field in record.custom
-            if field.label == SAILPOINT_MARKER_FIELD
         )
 
     @classmethod

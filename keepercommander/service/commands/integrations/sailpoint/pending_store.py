@@ -172,3 +172,21 @@ class SailPointPendingStore:
             or entry.get('folders')
             or entry.get('records')
         )
+
+    @staticmethod
+    def summarize_entry(entry: Dict[str, Any]) -> str:
+        """Human-readable pending payload for INFO logs (counts only for shares)."""
+        parts: List[str] = []
+        roles = list(entry.get('roles') or [])
+        teams = list(entry.get('teams') or [])
+        folders = entry.get('folders') or []
+        records = entry.get('records') or []
+        if roles:
+            parts.append(f'roles={roles}')
+        if teams:
+            parts.append(f'teams={teams}')
+        if folders:
+            parts.append(f'folders={len(folders)}')
+        if records:
+            parts.append(f'records={len(records)}')
+        return ' '.join(parts)

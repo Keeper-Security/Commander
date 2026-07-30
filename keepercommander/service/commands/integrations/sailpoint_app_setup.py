@@ -22,16 +22,17 @@ from ...docker import DockerComposeBuilder, DockerSetupPrinter, SailPointConfig,
 from .integration_setup_base import IntegrationSetupCommand
 from .sailpoint.command_policy import SailPointCommandPolicy
 from .sailpoint.constants import (
+    ALLOW_FOLDERS_FIELD,
+    ALLOW_RECORDS_FIELD,
+    ALLOW_ROLES_FIELD,
+    ALLOW_TEAMS_FIELD,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOCKER_RECORD_ENV,
-    ENTITLEMENT_SCOPE_FIELD,
+    MIN_POLL_INTERVAL_SECONDS,
     PENDING_ENTITLEMENTS_FIELD,
     POLL_INTERVAL_FIELD,
     SAILPOINT_MARKER_FIELD,
     SAILPOINT_RECORD_ENV,
-    SCOPE_BOTH,
-    SCOPE_FOLDERS,
-    SCOPE_RECORDS,
 )
 from .sailpoint.pending_store import SailPointPendingStore
 
@@ -57,16 +58,15 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
         return SailPointCommandPolicy.default_allowlist()
 
     def collect_integration_config(self, params):
-        print(f"\n{bcolors.BOLD}ENTITLEMENT SCOPE:{bcolors.ENDC}")
+        print(f"\n{bcolors.BOLD}SHARE ENTITLEMENTS:{bcolors.ENDC}")
         print(f"  Control which share entitlements SailPoint may manage via Service Mode")
-        print(f"  Options: {SCOPE_FOLDERS}, {SCOPE_RECORDS}, {SCOPE_BOTH}")
-        while True:
-            scope = input(
-                f"{bcolors.OKBLUE}Scope [Press Enter for {SCOPE_BOTH}]:{bcolors.ENDC} "
-            ).strip().lower() or SCOPE_BOTH
-            if scope in (SCOPE_FOLDERS, SCOPE_RECORDS, SCOPE_BOTH):
-                break
-            print(f"{bcolors.FAIL}Error: Enter folders, records, or both{bcolors.ENDC}")
+        allow_folders = self._prompt_yes_no('Allow folder shares?', default=True)
+        allow_records = self._prompt_yes_no('Allow record shares?', default=True)
+
+        print(f"\n{bcolors.BOLD}IDENTITY ENTITLEMENTS:{bcolors.ENDC}")
+        print(f"  Control whether SailPoint may assign roles/teams via enterprise-user")
+        allow_roles = self._prompt_yes_no('Allow role assignment?', default=True)
+        allow_teams = self._prompt_yes_no('Allow team assignment?', default=True)
 
         print(f"\n{bcolors.BOLD}POLL INTERVAL:{bcolors.ENDC}")
         print(f"  How often (seconds) to check whether invited users have become Active")
@@ -79,21 +79,38 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
                 interval = DEFAULT_POLL_INTERVAL_SECONDS
                 break
             try:
-                interval = max(15, int(raw))
+                interval = max(MIN_POLL_INTERVAL_SECONDS, int(raw))
                 break
             except ValueError:
-                print(f"{bcolors.FAIL}Error: Enter a whole number of seconds (>= 15){bcolors.ENDC}")
+                print(
+                    f"{bcolors.FAIL}Error: Enter a whole number of seconds "
+                    f"(>= {MIN_POLL_INTERVAL_SECONDS}){bcolors.ENDC}"
+                )
 
         print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ SailPoint Configuration Complete!{bcolors.ENDC}")
         return SailPointConfig(
-            entitlement_scope=scope,
+            allow_folders=allow_folders,
+            allow_records=allow_records,
+            allow_roles=allow_roles,
+            allow_teams=allow_teams,
             poll_interval_seconds=interval,
         )
 
     def build_record_custom_fields(self, config):
         return [
             vault.TypedField.new_field('text', 'true', SAILPOINT_MARKER_FIELD),
-            vault.TypedField.new_field('text', config.entitlement_scope, ENTITLEMENT_SCOPE_FIELD),
+            vault.TypedField.new_field(
+                'text', 'true' if config.allow_folders else 'false', ALLOW_FOLDERS_FIELD
+            ),
+            vault.TypedField.new_field(
+                'text', 'true' if config.allow_records else 'false', ALLOW_RECORDS_FIELD
+            ),
+            vault.TypedField.new_field(
+                'text', 'true' if config.allow_roles else 'false', ALLOW_ROLES_FIELD
+            ),
+            vault.TypedField.new_field(
+                'text', 'true' if config.allow_teams else 'false', ALLOW_TEAMS_FIELD
+            ),
             vault.TypedField.new_field('text', str(config.poll_interval_seconds), POLL_INTERVAL_FIELD),
             vault.TypedField.new_field('text', json.dumps({}), PENDING_ENTITLEMENTS_FIELD),
         ]
@@ -157,7 +174,10 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
             raise CommandError(self.get_command_name(), f'Failed to update docker-compose.yml: {str(e)}')
 
     def print_integration_specific_resources(self, config):
-        print(f"    • Entitlement Scope: {bcolors.OKBLUE}{config.entitlement_scope}{bcolors.ENDC}")
+        print(f"    • Allow Folders: {bcolors.OKBLUE}{config.allow_folders}{bcolors.ENDC}")
+        print(f"    • Allow Records: {bcolors.OKBLUE}{config.allow_records}{bcolors.ENDC}")
+        print(f"    • Allow Roles: {bcolors.OKBLUE}{config.allow_roles}{bcolors.ENDC}")
+        print(f"    • Allow Teams: {bcolors.OKBLUE}{config.allow_teams}{bcolors.ENDC}")
         print(f"    • Poll Interval: {bcolors.OKBLUE}{config.poll_interval_seconds}s{bcolors.ENDC}")
         print(f"    • Pending JSON field: {bcolors.OKBLUE}{PENDING_ENTITLEMENTS_FIELD}{bcolors.ENDC}")
         print(f"    • Env key: {bcolors.OKBLUE}{self.get_record_env_key()}{bcolors.ENDC}")

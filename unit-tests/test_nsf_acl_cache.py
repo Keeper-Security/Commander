@@ -306,18 +306,18 @@ class TestTreeShareFormatting(TestCase):
         self.params.nested_share_record_share_cache['NR1'] = [
             {'owner': True, 'accessor_name': 'owner@x.com', 'access_type': 'AT_USER',
              'access_role_type': 6, 'inherited': False},
-            # Inherited folder role first in raw list — should lose to direct CT
+            # Inherited folder role first in raw list — should lose to direct requestor
             {'owner': False, 'accessor_name': 'carol@x.com', 'access_type': 'AT_USER',
              'access_role_type': 2, 'inherited': True},
             {'owner': False, 'accessor_name': 'carol@x.com', 'access_type': 'AT_USER',
-             'access_role_type': 1, 'inherited': False},  # contributor
+             'access_role_type': 1, 'inherited': False},  # requestor
         ]
         data, text = _nsf_record_share_data(self.params, 'NR1')
-        self.assertIn('carol@x.com:CT', text)
+        self.assertIn('carol@x.com:RE', text)
         self.assertNotIn('carol@x.com:VW', text)
         carol = [u for u in data['users'] if u.get('email') == 'carol@x.com']
         self.assertEqual(len(carol), 1)
-        self.assertEqual(carol[0]['permissions'], ['CT'])
+        self.assertEqual(carol[0]['permissions'], ['RE'])
 
     def test_nsf_record_falls_back_to_folder_acl(self):
         from keepercommander.commands.folder import _nsf_record_share_data

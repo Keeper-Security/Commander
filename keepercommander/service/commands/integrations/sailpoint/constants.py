@@ -22,20 +22,22 @@ SAILPOINT_RECORD_ENV = 'SAILPOINT_RECORD'
 
 SAILPOINT_MARKER_FIELD = 'sailpoint_integration'
 PENDING_ENTITLEMENTS_FIELD = 'pending_entitlements'
-ENTITLEMENT_SCOPE_FIELD = 'entitlement_scope'
+ALLOW_FOLDERS_FIELD = 'allow_folders'
+ALLOW_RECORDS_FIELD = 'allow_records'
+ALLOW_ROLES_FIELD = 'allow_roles'
+ALLOW_TEAMS_FIELD = 'allow_teams'
 POLL_INTERVAL_FIELD = 'poll_interval_seconds'
 
 DEFAULT_POLL_INTERVAL_SECONDS = 60
-
-SCOPE_FOLDERS = 'folders'
-SCOPE_RECORDS = 'records'
-SCOPE_BOTH = 'both'
+MIN_POLL_INTERVAL_SECONDS = 15
 
 SAILPOINT_ALLOWED_COMMANDS = (
     'whoami',
     'sync-down',
     'enterprise-info',
     'enterprise-user',
+    'enterprise-role',
+    'er',
     'enterprise-down',
     'share-folder',
     'share-record',

@@ -126,6 +126,10 @@ class TeamsConfig:
 
 @dataclass
 class SailPointConfig:
-    entitlement_scope: str = 'both'  # folders | records | both
+    allow_folders: bool = True
+    allow_records: bool = True
+    allow_roles: bool = True
+    allow_teams: bool = True
+    # Keep in sync with sailpoint.constants.DEFAULT_POLL_INTERVAL_SECONDS
     poll_interval_seconds: int = 60
 
