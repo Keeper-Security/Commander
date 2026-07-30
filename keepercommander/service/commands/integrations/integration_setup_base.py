@@ -498,8 +498,16 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         name = self.get_integration_name()
         print(f"    • {name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
         self.print_integration_specific_resources(config)
-        print(f"    • EPM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
-        print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}")
+        if hasattr(config, 'pedm_enabled'):
+            print(
+                f"    • EPM Integration: "
+                f"{bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}"
+            )
+        if hasattr(config, 'device_approval_enabled'):
+            print(
+                f"    • Device Approval: "
+                f"{bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}"
+            )
 
     # -- Optional feature collectors -----------------------------------
 

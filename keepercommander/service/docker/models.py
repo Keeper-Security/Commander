@@ -123,3 +123,13 @@ class TeamsConfig:
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
 
+
+@dataclass
+class SailPointConfig:
+    allow_folders: bool = True
+    allow_records: bool = True
+    allow_roles: bool = True
+    allow_teams: bool = True
+    # Keep in sync with sailpoint.constants.DEFAULT_POLL_INTERVAL_SECONDS
+    poll_interval_seconds: int = 60
+
