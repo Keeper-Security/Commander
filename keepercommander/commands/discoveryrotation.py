@@ -3722,7 +3722,7 @@ class PAMGatewayActionRotateCommand(Command):
 
     # Email and share link arguments
     parser.add_argument('--self-destruct', dest='self_destruct', action='store',
-                        metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                        metavar='<NUMBER>[(mi)inutes|(h)ours|(d)ays|(mo)nths|(y)ears]',
                         help='Create one-time share link that expires after duration')
     parser.add_argument('--email-config', dest='email_config', action='store',
                         help='Email configuration name to use for sending (required with --send-email)')

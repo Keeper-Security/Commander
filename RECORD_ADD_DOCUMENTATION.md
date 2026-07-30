@@ -403,13 +403,15 @@ The `--self-destruct` option creates temporary records that automatically delete
 ### Syntax
 
 ```bash
---self-destruct <NUMBER>[(m)inutes|(h)ours|(d)ays]
+--self-destruct <NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears]
 ```
 
 **Time Units:**
-- `m` or `minutes` - Minutes (default if no unit specified)
+- `mi` or `minutes` - Minutes (default if no unit specified)
 - `h` or `hours` - Hours  
 - `d` or `days` - Days
+- `mo` or `months` - Months
+- `y` or `years` - Years
 
 ### Examples
 
@@ -428,7 +430,7 @@ record-add -t "Temporary Server Access" -rt login \
 record-add -t "Guest WiFi Access" -rt wifiCredentials \
   text.ssid="Company-Guest" \
   password=TempPass123 \
-  --self-destruct 30m \
+  --self-destruct 30mi \
   --notes "Visitor access for meeting"
 ```
 
