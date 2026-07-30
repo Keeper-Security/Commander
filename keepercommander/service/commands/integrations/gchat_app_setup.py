@@ -11,10 +11,12 @@
 
 """Google Chat App integration setup command."""
 
+from __future__ import annotations
+
 import json
 import os
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from .... import vault
 from ....display import bcolors
@@ -207,7 +209,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
     # ── Validation helpers ────────────────────────────────────────
 
-    def _prompt_service_account_json(self) -> Tuple[str, str]:
+    def _prompt_service_account_json(self) -> tuple[str, str]:
         while True:
             path = input(
                 f"{bcolors.OKBLUE}Path to service account JSON file:{bcolors.ENDC} "
@@ -238,7 +240,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             )
 
     @classmethod
-    def _load_service_account_json(cls, path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def _load_service_account_json(cls, path: str) -> tuple[dict[str, Any] | None, str | None]:
         if not path:
             return None, 'Service account JSON path is required'
 
@@ -259,7 +261,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
     @staticmethod
     def _validate_service_account_dict(
         data: Any,
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    ) -> tuple[dict[str, Any] | None, str | None]:
         if not isinstance(data, dict):
             return None, 'Service account JSON must be a JSON object'
 
@@ -278,10 +280,10 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
     @staticmethod
     def _normalize_pubsub_id(
         value: str,
-        resource_pattern: re.Pattern,
+        resource_pattern: re.Pattern[str],
         label: str,
         resource_hint: str,
-    ) -> Tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         if not value:
             return None, f'{label} is required'
 
@@ -298,7 +300,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         )
 
     @classmethod
-    def _normalize_subscription_id(cls, value: str) -> Tuple[Optional[str], Optional[str]]:
+    def _normalize_subscription_id(cls, value: str) -> tuple[str | None, str | None]:
         return cls._normalize_pubsub_id(
             value,
             _SUBSCRIPTION_RESOURCE_PATTERN,
@@ -307,7 +309,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         )
 
     @classmethod
-    def _normalize_topic_id(cls, value: str) -> Tuple[Optional[str], Optional[str]]:
+    def _normalize_topic_id(cls, value: str) -> tuple[str | None, str | None]:
         return cls._normalize_pubsub_id(
             value,
             _TOPIC_RESOURCE_PATTERN,
