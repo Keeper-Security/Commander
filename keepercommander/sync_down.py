@@ -98,7 +98,7 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
     while not done:
         if token:
             request.continuationToken = token
-        response = api.communicate_rest(params, request, 'vault/sync_down', rs_type=SyncDown_pb2.SyncDownResponse,timeout=1000)
+        response = api.communicate_rest(params, request, 'vault/sync_down', rs_type=SyncDown_pb2.SyncDownResponse)
         done = not response.hasMore
         token = response.continuationToken
         if response.cacheStatus == SyncDown_pb2.CLEAR:
