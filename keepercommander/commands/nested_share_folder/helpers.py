@@ -464,7 +464,7 @@ def infer_role(access):
     Follows the official permission matrix::
 
         full-manager > content-share-manager > share-manager >
-        content-manager > viewer > contributor > requestor > navigator
+        content-manager > viewer > requestor > navigator
 
     The distinguishing trait between ``share-manager`` and
     ``content-share-manager`` is the ability to *edit* records: both roles
@@ -485,9 +485,7 @@ def infer_role(access):
         return 'content-manager'
     if get('can_view') and get('can_list_access'):
         return 'viewer'
-    if get('can_view'):
-        return 'contributor'
-    if get('can_view_title'):
+    if get('can_view') or get('can_view_title'):
         return 'requestor'
     return 'navigator'
 
@@ -507,8 +505,8 @@ def role_label(access_role_type):
 # Map backend AccessRoleType enum names to Nested Share Folder display labels.
 # Source of truth: folder_pb2.AccessRoleType (NAVIGATOR=0 ... MANAGER=6).
 _ACCESS_ROLE_DISPLAY_LABELS = {
-    'NAVIGATOR':             'contributor',
-    'REQUESTOR':             'contributor',
+    'NAVIGATOR':             'navigator',
+    'REQUESTOR':             'requestor',
     'VIEWER':                'viewer',
     'SHARED_MANAGER':        'share-manager',
     'CONTENT_MANAGER':       'content-manager',

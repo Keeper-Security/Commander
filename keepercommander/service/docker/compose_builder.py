@@ -16,11 +16,14 @@ from typing import Dict, Any, List
 class DockerComposeBuilder:
     """Builds docker-compose.yml for Commander + integration services."""
     
-    def __init__(self, setup_result, config: Dict[str, Any], commander_service_name: str = 'commander', commander_container_name: str = 'keeper-service'):
+    def __init__(self, setup_result, config: Dict[str, Any], commander_service_name: str = 'commander',
+                 commander_container_name: str = 'keeper-service',
+                 commander_environment: Dict[str, str] = None):
         self.setup_result = setup_result
         self.config = config
         self.commander_service_name = commander_service_name
         self.commander_container_name = commander_container_name
+        self.commander_environment = commander_environment or {}
         self._service_cmd_parts: List[str] = []
         self._volumes: List[str] = []
         self._services: Dict[str, Dict[str, Any]] = {}
@@ -59,6 +62,9 @@ class DockerComposeBuilder:
             'healthcheck': self._build_healthcheck(),
             'restart': 'unless-stopped'
         }
+
+        if self.commander_environment:
+            service['environment'] = dict(self.commander_environment)
         
         if self._volumes:
             service['volumes'] = self._volumes

@@ -10,6 +10,7 @@
 #
 
 import argparse
+import os
 from typing import Any, Dict, Optional
 from ..config.service_config import ServiceConfig
 from ..config.config_validation import ValidationError
@@ -92,8 +93,18 @@ class CreateService(Command):
             from ..core.globals import init_globals
             init_globals(params)
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption', 'encryption_key', 'token_expiration']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in [
+                'port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain',
+                'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat',
+                'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption',
+                'encryption_key', 'token_expiration',
+            ]}
             args = StreamlineArgs(**filtered_kwargs)
+
+            # Optional SailPoint: enable when SAILPOINT_RECORD points at a marked config record
+            if (os.environ.get('SAILPOINT_RECORD') or '').strip():
+                from .integrations.sailpoint.service import SailPointService
+                SailPointService.maybe_enable(params, args)
 
             from .integrations.vault_metadata import get_existing_api_key, write_service_metadata
             existing_api_key = (

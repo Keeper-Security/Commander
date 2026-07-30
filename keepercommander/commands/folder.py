@@ -1910,7 +1910,6 @@ def _tree_json_dumps(obj, level=0, indent=2):
 
 _NSF_ROLE_ABBREV = {
     'viewer': 'VW',
-    'contributor': 'CT',
     'share-manager': 'SM',
     'content-manager': 'CM',
     'content-share-manager': 'CSM',
@@ -2513,7 +2512,6 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             lines.extend([
                 'OW = NSF Owner',
                 'VW = NSF Viewer',
-                'CT = NSF Contributor',
                 'SM = NSF Share Manager',
                 'CM = NSF Content Manager',
                 'CSM = NSF Content + Share Manager',
@@ -2705,7 +2703,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             }
         if nsf_shares:
             key['nsf'] = {
-                'OW': 'Owner', 'VW': 'Viewer', 'CT': 'Contributor', 'SM': 'Share Manager',
+                'OW': 'Owner', 'VW': 'Viewer', 'SM': 'Share Manager',
                 'CM': 'Content Manager', 'CSM': 'Content + Share Manager', 'FM': 'Full Manager',
             }
         payload['share_permissions_key'] = key

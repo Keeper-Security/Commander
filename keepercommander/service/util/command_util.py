@@ -10,9 +10,11 @@
 #
 
 import io, html
+import os
 import sys
 import json
 import logging
+import shlex
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
@@ -23,6 +25,7 @@ from .throttle import (
     is_throttle_error,
     throttle_error_response,
 )
+from .verified_command import Verifycommand
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
@@ -160,6 +163,26 @@ class CommandExecutor:
                 params.service_mode = True
 
             command = ensure_record_add_json_format(html.unescape(command))
+
+            try:
+                command_tokens = shlex.split(command)
+            except ValueError:
+                command_tokens = command.split()
+            force_error = Verifycommand.validate_enterprise_user_add_role_force(
+                command_tokens, params
+            )
+            if force_error:
+                return {"status": "error", "error": force_error}, 400
+
+            sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
+            if sailpoint_enabled:
+                from ..commands.integrations.sailpoint.service import SailPointService
+                sailpoint_response = SailPointService.handle_command(params, command)
+                if sailpoint_response is not None:
+                    response, status_code = sailpoint_response
+                    response = CommandExecutor.encrypt_response(response)
+                    return response, status_code
+
             return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
@@ -173,7 +196,21 @@ class CommandExecutor:
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
             response, status_code = cls._finalize_parsed_response(response)
-            
+
+            if status_code == 200 and sailpoint_enabled:
+                try:
+                    SailPointService.after_command(params, command, success=True)
+                except Exception as e:
+                    logger.error(f'SailPoint post-process failed: {e}')
+                    err = {
+                        'status': 'error',
+                        'error': (
+                            'Command succeeded but SailPoint pending entitlement '
+                            f'queue failed: {e}'
+                        ),
+                    }
+                    return CommandExecutor.encrypt_response(err), 500
+
             response = CommandExecutor.encrypt_response(response)
             logger.debug(f"Command executed successfully")
             return response, status_code

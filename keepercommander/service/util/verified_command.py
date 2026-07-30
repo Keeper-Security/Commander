@@ -16,7 +16,7 @@ class Verifycommand:
                 has_notes = bool(notes_value.strip())
                 break
             elif arg == "--notes":
-                # Check if there's a value after --notes flag
+                # Check for a value after --notes flag
                 arg_index = command.index(arg)
                 if arg_index + 1 < len(command) and not command[arg_index + 1].startswith("-"):
                     notes_value = command[arg_index + 1]
@@ -86,3 +86,74 @@ class Verifycommand:
         if missing_params:
             return f"Missing required parameters: {' and '.join(missing_params)}"
         return None
+
+    @staticmethod
+    def _enterprise_user_add_roles(command):
+        """Collect --add-role values from an enterprise-user command token list."""
+        roles = []
+        i = 1
+        while i < len(command):
+            arg = command[i]
+            if arg == '--add-role' and i + 1 < len(command) and not command[i + 1].startswith('-'):
+                roles.append(command[i + 1])
+                i += 2
+                continue
+            if arg.startswith('--add-role='):
+                roles.append(arg.split('=', 1)[1])
+            i += 1
+        return roles
+
+    @staticmethod
+    def _is_managed_admin_role(params, role_name):
+        """True when the role has administrative (managed node) permissions."""
+        if not params or not getattr(params, 'enterprise', None):
+            return False
+        role_id = None
+        for role in params.enterprise.get('roles') or []:
+            display = ((role.get('data') or {}).get('displayname') or '').strip()
+            if str(role.get('role_id')) == str(role_name) or display.lower() == str(role_name).lower():
+                role_id = role.get('role_id')
+                break
+        if role_id is None:
+            return False
+        return any(
+            mn.get('role_id') == role_id
+            for mn in (params.enterprise.get('managed_nodes') or [])
+        )
+
+    @classmethod
+    def validate_enterprise_user_add_role_force(cls, command, params=None):
+        """
+        Admin roles prompt for confirmation on --add-role. Service Mode cannot
+        answer that prompt, so require -f/--force (same pattern as transform-folder).
+        Skips invite/--add flows (roles are deferred, not applied interactively).
+        """
+        if not command or command[0] not in ('enterprise-user', 'eu'):
+            return None
+
+        # Invite queues roles for later; no interactive admin-role prompt here.
+        if any(a in ('--invite', '--add') for a in command[1:]):
+            return None
+
+        roles = cls._enterprise_user_add_roles(command)
+        if not roles:
+            return None
+
+        has_force = any(a in ('-f', '--force') for a in command[1:])
+        if has_force:
+            return None
+
+        if params is not None:
+            try:
+                from ... import api
+                if not getattr(params, 'enterprise', None):
+                    api.query_enterprise(params)
+            except Exception:
+                pass
+            if not any(cls._is_managed_admin_role(params, role) for role in roles):
+                return None
+
+        return (
+            'Missing required parameters: -f/--force flag to bypass '
+            'interactive confirmation'
+        )
