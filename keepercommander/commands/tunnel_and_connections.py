@@ -1491,7 +1491,7 @@ class PAMTunnelDiagnoseCommand(Command):
             conn.request('GET', '/', headers={'User-Agent': 'keeper-pam-diagnose/1.0'})
             resp = conn.getresponse()
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 600, f'HTTP {resp.status}  (reachable)', ms
+            return 100 <= resp.status < 399, f'HTTP {resp.status}  (reachable)', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
@@ -1516,7 +1516,7 @@ class PAMTunnelDiagnoseCommand(Command):
             })
             resp = conn.getresponse()
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 600, f'HTTP {resp.status}', ms
+            return 100 <= resp.status < 399, f'HTTP {resp.status}', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
@@ -1670,7 +1670,7 @@ class PAMTunnelDiagnoseCommand(Command):
                                '--turn-test / --stun-only requires a record argument: '
                                'pam tunnel diagnose <pamMachine-or-pamDirectory-UID> --turn-test')
 
-        server = params.server  # e.g. "keepersecurity.com" or "https://qa.keepersecurity.com"
+        server = 'keepersecurity.us' if params.server == 'govcloud.keepersecurity.us' else params.server
         server_host = get_keeper_server_hostname(server)
         krelay_server = get_relay_host(params.server)
         connect_host = get_router_host(params.server)
@@ -1679,7 +1679,7 @@ class PAMTunnelDiagnoseCommand(Command):
         self._print_header()
         print()
         now = datetime.datetime.utcnow()
-        region_label = 'US' if server_host == 'keepersecurity.com' else server_host.split('.')[0].upper()
+        region_label = 'US' if server == 'keepersecurity.com' else 'GOVCLOUD' if server == 'keepersecurity.us' else server.split('.')[-1].upper()
         print(self._green(f'  Region  {region_label}  \u00b7  {server}'))
         print(self._green(f'  Date    {now.strftime("%Y-%m-%d  %H:%M")} UTC'))
         if record_name:
@@ -1764,7 +1764,7 @@ class PAMTunnelDiagnoseCommand(Command):
         print(row.rstrip())
 
         passed_ports = sum(1 for _, ok, _ in port_results if ok)
-        print(f'    {self._check()}  {self._green(str(passed_ports))}/{len(port_results)} sampled ports reachable')
+        print(f'    {self._check()}'+self._green(f'  {str(passed_ports)}/{len(port_results)} sampled ports reachable'))
         print()
 
         # ── section 4: WebRTC connectivity (Rust library) ─────────────────────
