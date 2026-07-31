@@ -461,9 +461,9 @@ class PedmEventReportCommand(base.ArgparseCommand):
                 status_info = None
                 if isinstance(status, int):
                     if status == NotificationCenter_pb2.NotificationApprovalStatus.NAS_APPROVED:
-                        status_info = '"Approved"'
+                        status_info = 'Approved'
                     elif status == NotificationCenter_pb2.NotificationApprovalStatus.NAS_DENIED:
-                        status_info = '"Denied"'
+                        status_info = 'Denied'
                 if status_info:
                     event['request_status'] = status_info
             if 'evaluation_status' in event:
@@ -471,13 +471,19 @@ class PedmEventReportCommand(base.ArgparseCommand):
                 status_info = None
                 if isinstance(status, int):
                     if status == 1:
-                        status_info = '"Allowed"'
+                        status_info = 'Allowed'
                     elif status == 2:
-                        status_info = '"Denied"'
+                        status_info = 'Denied'
                     elif status == 3:
-                        status_info = '"Denied - Failed MFA"'
+                        status_info = 'Denied - Failed MFA'
                     elif status == 4:
-                        status_info = '"Denied - Failed Justification"'
+                        status_info = 'Denied - Failed Justification'
+                    elif status == 5:
+                        status_info = 'Denied - Failed Approval'
+                    elif status ==64:
+                        status_info = 'Denied - Operator Approval'
+                    elif status == 4:
+                        status_info = 'Denied - Custom Controls'
                 if status_info:
                     event['evaluation_status'] = status_info
             if hash_fields:
