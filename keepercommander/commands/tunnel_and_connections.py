@@ -1463,7 +1463,7 @@ class PAMTunnelDiagnoseCommand(Command):
             conn.request('GET', '/', headers={'User-Agent': 'keeper-pam-diagnose/1.0'})
             resp = conn.getresponse()
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 399, f'HTTP {resp.status}  (reachable)', ms
+            return 100 <= resp.status < 400, f'HTTP {resp.status}  (reachable)', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
@@ -1488,7 +1488,7 @@ class PAMTunnelDiagnoseCommand(Command):
             })
             resp = conn.getresponse()
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 399, f'HTTP {resp.status}', ms
+            return 100 <= resp.status < 400, f'HTTP {resp.status}', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
@@ -1785,7 +1785,6 @@ class PAMTunnelDiagnoseCommand(Command):
                 )
                 if output_format == 'json':
                     print(json.dumps(rust_results, indent=2))
-                    return 0
 
                 # Fold Rust test results into the unified pass/fail accounting
                 for test in rust_results.get('test_results', []):
@@ -2619,8 +2618,6 @@ class PAMTunnelDiagnoseCommand(Command):
         print()
         print(f'  {self._dsep()}')
         print()
-
-        return 0 if passed_total == total_checks else 1
 
 
 class PAMConnectionEditCommand(Command):
