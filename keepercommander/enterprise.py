@@ -209,7 +209,10 @@ class _EnterpriseLoader(object):
             if not rs.hasMore:
                 break
         if proto.MANAGED_NODES in entities:
-            self.load_missing_role_keys(params)
+            try:
+                self.load_missing_role_keys(params)
+            except:
+                pass
         if not entities.isdisjoint([proto.MANAGED_NODES, proto.NODES, proto.ROLE_USERS]):
             if 'user_root_nodes' in params.enterprise:
                 del params.enterprise['user_root_nodes']
@@ -222,15 +225,34 @@ class _EnterpriseLoader(object):
         if 'managed_nodes' in params.enterprise:
             for mn in params.enterprise['managed_nodes']:
                 nodes.add(mn['role_id'])
+
+        enterprise_user_id = 0
         if len(nodes) > 0:
-            roles = set()
+            if 'users' in params.enterprise:
+                enterprise_user_id = next((x.get('enterprise_user_id') for x in params.enterprise['users'] if x.get('username') == params.user), 0)
+            if 'role_users' in params.enterprise:
+                role_users = {x.get('role_id') for x in params.enterprise['role_users'] if x.get('enterprise_user_id') == enterprise_user_id}
+                nodes.intersection_update(role_users)
+        if len(nodes) > 0:
+            if 'role_privileges' in params.enterprise:
+                user_node = next((x.get('enterprise_user_id') for x in params.enterprise['users'] if x.get('username') == params.user))
+                roles_privileges = set()
+                for rp in params.enterprise['role_privileges']:
+                    privilege = rp.get('privilege')
+                    if privilege == 'manage_roles':
+                        role_id = rp.get('role_id')
+                        if role_id in nodes:
+                            roles_privileges.add(role_id)
+                nodes.intersection_update(roles_privileges)
+        if len(nodes) > 0:
+            role_keys = set()
             if 'role_keys' in params.enterprise:
                 for rk in params.enterprise['role_keys']:
-                    roles.add(rk['role_id'])
+                    role_keys.add(rk['role_id'])
             if 'role_keys2' in params.enterprise:
                 for rk in params.enterprise['role_keys2']:
-                    roles.add(rk['role_id'])
-            nodes.difference_update(roles)
+                    role_keys.add(rk['role_id'])
+            nodes.difference_update(role_keys)
         if len(nodes) > 0:
             rq = proto.GetEnterpriseDataKeysRequest()
             rq.roleId.extend(nodes)
