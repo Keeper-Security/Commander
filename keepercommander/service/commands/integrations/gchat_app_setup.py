@@ -62,18 +62,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
         print(f"\n{bcolors.BOLD}GOOGLE_PROJECT_ID:{bcolors.ENDC}")
         print(f"  Google Cloud project ID for Pub/Sub and Chat")
-        default_hint = f' [Press Enter for {project_from_json}]' if project_from_json else ''
-        while True:
-            project_input = input(
-                f"{bcolors.OKBLUE}Project ID{default_hint}:{bcolors.ENDC} "
-            ).strip()
-            google_project_id = project_input or project_from_json
-            if google_project_id:
-                break
-            print(
-                f"{bcolors.FAIL}Error: Google Project ID is required "
-                f"(enter a value or provide a valid service account JSON){bcolors.ENDC}"
-            )
+        google_project_id = self._prompt_google_project_id(project_from_json)
 
         print(f"\n{bcolors.BOLD}GOOGLE_TOPIC_ID:{bcolors.ENDC}")
         print(f"  Pub/Sub topic that receives Google Chat events")
@@ -81,6 +70,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         google_topic_id = self._prompt_pubsub_id(
             'Topic ID:',
             self._normalize_topic_id,
+            google_project_id,
         )
 
         print(f"\n{bcolors.BOLD}GOOGLE_SUBSCRIPTION_ID:{bcolors.ENDC}")
@@ -89,6 +79,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         google_subscription_id = self._prompt_pubsub_id(
             'Subscription ID:',
             self._normalize_subscription_id,
+            google_project_id,
         )
 
         print(f"\n{bcolors.BOLD}CHAT_APPROVALS_SPACE_ID:{bcolors.ENDC}")
@@ -239,10 +230,37 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
                 return json.dumps(parsed, separators=(',', ':')), parsed.get('project_id', '')
             print(f"{bcolors.FAIL}Error: {error}{bcolors.ENDC}")
 
-    def _prompt_pubsub_id(self, prompt: str, normalizer) -> str:
+    def _prompt_google_project_id(self, project_from_json: str) -> str:
+        default_hint = f' [Press Enter for {project_from_json}]' if project_from_json else ''
+        while True:
+            project_input = input(
+                f"{bcolors.OKBLUE}Project ID{default_hint}:{bcolors.ENDC} "
+            ).strip()
+            google_project_id = project_input or project_from_json
+            if not google_project_id:
+                print(
+                    f"{bcolors.FAIL}Error: Google Project ID is required "
+                    f"(enter a value or provide a valid service account JSON){bcolors.ENDC}"
+                )
+                continue
+
+            if project_from_json and google_project_id != project_from_json:
+                print(
+                    f"{bcolors.WARNING}Warning: Project ID \"{google_project_id}\" differs from "
+                    f"service account project_id \"{project_from_json}\"{bcolors.ENDC}"
+                )
+                if not self._prompt_yes_no(
+                    'Continue with this Project ID anyway?',
+                    default=False,
+                ):
+                    continue
+
+            return google_project_id
+
+    def _prompt_pubsub_id(self, prompt: str, normalizer, google_project_id: str) -> str:
         while True:
             value = input(f"{bcolors.OKBLUE}{prompt}{bcolors.ENDC} ").strip()
-            normalized, error = normalizer(value)
+            normalized, error = normalizer(value, google_project_id)
             if normalized is not None:
                 return normalized
             print(f"{bcolors.FAIL}Error: {error}{bcolors.ENDC}")
@@ -306,12 +324,19 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         resource_pattern: re.Pattern[str],
         label: str,
         resource_hint: str,
+        google_project_id: str = '',
     ) -> tuple[str | None, str | None]:
         if not value:
             return None, f'{label} is required'
 
         resource_match = resource_pattern.match(value)
         if resource_match:
+            path_project = resource_match.group(1)
+            if google_project_id and path_project != google_project_id:
+                return None, (
+                    f'{label} project "{path_project}" does not match '
+                    f'GOOGLE_PROJECT_ID "{google_project_id}"'
+                )
             return resource_match.group(2), None
 
         if _PUBSUB_ID_PATTERN.match(value):
@@ -323,27 +348,28 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         )
 
     @classmethod
-    def _normalize_subscription_id(cls, value: str) -> tuple[str | None, str | None]:
+    def _normalize_subscription_id(
+        cls, value: str, google_project_id: str = ''
+    ) -> tuple[str | None, str | None]:
         return cls._normalize_pubsub_id(
             value,
             _SUBSCRIPTION_RESOURCE_PATTERN,
             'Pub/Sub Subscription ID',
             'projects/{project}/subscriptions/{id}',
+            google_project_id,
         )
 
     @classmethod
-    def _normalize_topic_id(cls, value: str) -> tuple[str | None, str | None]:
+    def _normalize_topic_id(
+        cls, value: str, google_project_id: str = ''
+    ) -> tuple[str | None, str | None]:
         return cls._normalize_pubsub_id(
             value,
             _TOPIC_RESOURCE_PATTERN,
             'Pub/Sub Topic ID',
             'projects/{project}/topics/{id}',
+            google_project_id,
         )
-
-    @staticmethod
-    def _is_valid_subscription_id(value: str) -> bool:
-        normalized, _ = GChatAppSetupCommand._normalize_subscription_id(value)
-        return normalized is not None
 
     @staticmethod
     def _is_valid_space_id(value: str) -> bool:

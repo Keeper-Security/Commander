@@ -94,36 +94,58 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertIn('invalid service account json', error.lower())
 
     def test_normalize_subscription_short_id(self):
-        value, error = self.cmd._normalize_subscription_id('keeper-chat-events')
+        value, error = self.cmd._normalize_subscription_id(
+            'keeper-chat-events', 'my-gcp-project'
+        )
         self.assertIsNone(error)
         self.assertEqual(value, 'keeper-chat-events')
 
     def test_normalize_subscription_full_resource_name(self):
         value, error = self.cmd._normalize_subscription_id(
-            'projects/my-gcp-project/subscriptions/keeper-chat-events'
+            'projects/my-gcp-project/subscriptions/keeper-chat-events',
+            'my-gcp-project',
         )
         self.assertIsNone(error)
         self.assertEqual(value, 'keeper-chat-events')
 
+    def test_normalize_subscription_rejects_project_mismatch(self):
+        value, error = self.cmd._normalize_subscription_id(
+            'projects/other-project/subscriptions/keeper-chat-events',
+            'my-gcp-project',
+        )
+        self.assertIsNone(value)
+        self.assertIn('does not match', error.lower())
+        self.assertIn('other-project', error)
+        self.assertIn('my-gcp-project', error)
+
     def test_normalize_subscription_missing(self):
-        value, error = self.cmd._normalize_subscription_id('')
+        value, error = self.cmd._normalize_subscription_id('', 'my-gcp-project')
         self.assertIsNone(value)
         self.assertIn('required', error.lower())
 
     def test_normalize_subscription_invalid(self):
-        value, error = self.cmd._normalize_subscription_id('ab')
+        value, error = self.cmd._normalize_subscription_id('ab', 'my-gcp-project')
         self.assertIsNone(value)
         self.assertIn('invalid', error.lower())
 
     def test_normalize_topic_full_resource_name(self):
         value, error = self.cmd._normalize_topic_id(
-            'projects/my-gcp-project/topics/keeper-chat-topic'
+            'projects/my-gcp-project/topics/keeper-chat-topic',
+            'my-gcp-project',
         )
         self.assertIsNone(error)
         self.assertEqual(value, 'keeper-chat-topic')
 
+    def test_normalize_topic_rejects_project_mismatch(self):
+        value, error = self.cmd._normalize_topic_id(
+            'projects/other-project/topics/keeper-chat-topic',
+            'my-gcp-project',
+        )
+        self.assertIsNone(value)
+        self.assertIn('does not match', error.lower())
+
     def test_normalize_topic_missing(self):
-        value, error = self.cmd._normalize_topic_id('')
+        value, error = self.cmd._normalize_topic_id('', 'my-gcp-project')
         self.assertIsNone(value)
         self.assertIn('required', error.lower())
 
