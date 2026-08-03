@@ -4,12 +4,12 @@ import tempfile
 import unittest
 
 from keepercommander.service.commands.integrations.gchat_app_setup import GChatAppSetupCommand
-from keepercommander.service.docker import GChatConfig
+from keepercommander.service.docker import GChatConfig, GChatConstants
 
 
 def _valid_service_account(**overrides):
     data = {
-        'type': 'service_account',
+        'type': GChatConstants.SERVICE_ACCOUNT_TYPE,
         'project_id': 'my-gcp-project',
         'private_key': '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n',
         'client_email': 'bot@my-gcp-project.iam.gserviceaccount.com',
@@ -23,14 +23,14 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.cmd = GChatAppSetupCommand()
 
     def test_command_naming(self):
-        self.assertEqual(self.cmd.get_integration_name(), 'GChat')
-        self.assertEqual(self.cmd.get_integration_display_name(), 'Google Chat')
+        self.assertEqual(self.cmd.get_integration_name(), GChatConstants.INTEGRATION_NAME)
+        self.assertEqual(self.cmd.get_integration_display_name(), GChatConstants.DISPLAY_NAME)
         self.assertEqual(self.cmd.get_command_name(), 'gchat-app-setup')
         self.assertEqual(self.cmd.get_record_env_key(), 'GCHAT_RECORD')
         self.assertEqual(self.cmd.get_docker_image(), 'keeper/gchat-app:latest')
         self.assertEqual(
             self.cmd.get_integration_config_marker_field(),
-            'google_service_account_json',
+            GChatConstants.FIELD_SERVICE_ACCOUNT_JSON,
         )
         self.assertEqual(self.cmd.get_parser().prog, 'gchat-app-setup')
 
@@ -152,17 +152,20 @@ class TestGChatAppSetupValidation(unittest.TestCase):
             field.label: field.get_default_value()
             for field in self.cmd.build_record_custom_fields(config)
         }
-        self.assertEqual(fields['google_service_account_json'], '{"type":"service_account"}')
-        self.assertEqual(fields['google_project_id'], 'my-gcp-project')
-        self.assertEqual(fields['google_subscription_id'], 'keeper-chat-events')
-        self.assertEqual(fields['google_topic_id'], 'keeper-chat-topic')
-        self.assertEqual(fields['chat_approvals_space_id'], 'spaces/AAAA')
-        self.assertEqual(fields['chat_command_request_record_id'], '1')
-        self.assertEqual(fields['chat_command_request_folder_id'], '2')
-        self.assertEqual(fields['chat_command_one_time_share_id'], '3')
-        self.assertEqual(fields['pedm_enabled'], 'true')
-        self.assertEqual(fields['pedm_polling_interval'], '60')
-        self.assertEqual(fields['device_approval_enabled'], 'false')
+        self.assertEqual(
+            fields[GChatConstants.FIELD_SERVICE_ACCOUNT_JSON],
+            '{"type":"service_account"}',
+        )
+        self.assertEqual(fields[GChatConstants.FIELD_PROJECT_ID], 'my-gcp-project')
+        self.assertEqual(fields[GChatConstants.FIELD_SUBSCRIPTION_ID], 'keeper-chat-events')
+        self.assertEqual(fields[GChatConstants.FIELD_TOPIC_ID], 'keeper-chat-topic')
+        self.assertEqual(fields[GChatConstants.FIELD_APPROVALS_SPACE_ID], 'spaces/AAAA')
+        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_RECORD_ID], '1')
+        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_FOLDER_ID], '2')
+        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_ONE_TIME_SHARE_ID], '3')
+        self.assertEqual(fields[GChatConstants.FIELD_PEDM_ENABLED], 'true')
+        self.assertEqual(fields[GChatConstants.FIELD_PEDM_POLLING_INTERVAL], '60')
+        self.assertEqual(fields[GChatConstants.FIELD_DEVICE_APPROVAL_ENABLED], 'false')
 
 
 if __name__ == '__main__':

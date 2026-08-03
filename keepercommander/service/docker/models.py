@@ -124,6 +124,40 @@ class TeamsConfig:
     device_approval_polling_interval: int = 120
 
 
+class GChatConstants:
+    """Defaults and field labels for Google Chat app setup."""
+    INTEGRATION_NAME = 'GChat'
+    DISPLAY_NAME = 'Google Chat'
+    DEFAULT_FOLDER_NAME = 'Commander Service Mode - Google Chat App'
+    DEFAULT_RECORD_NAME = 'Commander Service Mode Google Chat App Config'
+
+    FIELD_SERVICE_ACCOUNT_JSON = 'google_service_account_json'
+    FIELD_PROJECT_ID = 'google_project_id'
+    FIELD_SUBSCRIPTION_ID = 'google_subscription_id'
+    FIELD_TOPIC_ID = 'google_topic_id'
+    FIELD_APPROVALS_SPACE_ID = 'chat_approvals_space_id'
+    FIELD_COMMAND_REQUEST_RECORD_ID = 'chat_command_request_record_id'
+    FIELD_COMMAND_REQUEST_FOLDER_ID = 'chat_command_request_folder_id'
+    FIELD_COMMAND_ONE_TIME_SHARE_ID = 'chat_command_one_time_share_id'
+    FIELD_PEDM_ENABLED = 'pedm_enabled'
+    FIELD_PEDM_POLLING_INTERVAL = 'pedm_polling_interval'
+    FIELD_DEVICE_APPROVAL_ENABLED = 'device_approval_enabled'
+    FIELD_DEVICE_APPROVAL_POLLING_INTERVAL = 'device_approval_polling_interval'
+
+    DEFAULT_COMMAND_REQUEST_RECORD_ID = '1'
+    DEFAULT_COMMAND_REQUEST_FOLDER_ID = '2'
+    DEFAULT_COMMAND_ONE_TIME_SHARE_ID = '3'
+
+    SPACE_ID_PREFIX = 'spaces/'
+    SERVICE_ACCOUNT_TYPE = 'service_account'
+    SERVICE_ACCOUNT_REQUIRED_KEYS = (
+        'type',
+        'project_id',
+        'private_key',
+        'client_email',
+    )
+
+
 @dataclass
 class GChatConfig:
     google_service_account_json: str
@@ -131,9 +165,9 @@ class GChatConfig:
     google_subscription_id: str
     google_topic_id: str
     chat_approvals_space_id: str
-    chat_command_request_record_id: str = '1'
-    chat_command_request_folder_id: str = '2'
-    chat_command_one_time_share_id: str = '3'
+    chat_command_request_record_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
+    chat_command_request_folder_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
+    chat_command_one_time_share_id: str = GChatConstants.DEFAULT_COMMAND_ONE_TIME_SHARE_ID
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False

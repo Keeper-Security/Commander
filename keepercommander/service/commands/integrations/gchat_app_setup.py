@@ -16,19 +16,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any
 
 from .... import vault
 from ....display import bcolors
-from ...docker import GChatConfig
+from ...docker import GChatConfig, GChatConstants
 from .integration_setup_base import IntegrationSetupCommand
 
-_SERVICE_ACCOUNT_REQUIRED_KEYS = (
-    'type',
-    'project_id',
-    'private_key',
-    'client_email',
-)
 # Short Pub/Sub IDs, or full resource names:
 #   projects/{project}/subscriptions/{subscription}
 #   projects/{project}/topics/{topic}
@@ -45,19 +38,19 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
     """Google Chat App integration setup."""
 
     def get_integration_name(self):
-        return 'GChat'
+        return GChatConstants.INTEGRATION_NAME
 
     def get_integration_display_name(self) -> str:
-        return 'Google Chat'
+        return GChatConstants.DISPLAY_NAME
 
     def get_default_folder_name(self) -> str:
-        return 'Commander Service Mode - Google Chat App'
+        return GChatConstants.DEFAULT_FOLDER_NAME
 
     def get_default_record_name(self) -> str:
-        return 'Commander Service Mode Google Chat App Config'
+        return GChatConstants.DEFAULT_RECORD_NAME
 
     def get_integration_config_marker_field(self) -> str:
-        return 'google_service_account_json'
+        return GChatConstants.FIELD_SERVICE_ACCOUNT_JSON
 
     # ── Google Chat-specific configuration ────────────────────────
 
@@ -109,13 +102,16 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         print(f"\n{bcolors.BOLD}CHAT COMMAND IDs:{bcolors.ENDC}")
         print(f"  Slash command IDs configured for the Google Chat app")
         chat_command_request_record_id = self._prompt_command_id(
-            '/keeper-request-record', '1'
+            '/keeper-request-record',
+            GChatConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID,
         )
         chat_command_request_folder_id = self._prompt_command_id(
-            '/keeper-request-folder', '2'
+            '/keeper-request-folder',
+            GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID,
         )
         chat_command_one_time_share_id = self._prompt_command_id(
-            '/keeper-one-time-share', '3'
+            '/keeper-one-time-share',
+            GChatConstants.DEFAULT_COMMAND_ONE_TIME_SHARE_ID,
         )
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
@@ -141,34 +137,58 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
     def build_record_custom_fields(self, config):
         return [
             vault.TypedField.new_field(
-                'secret', config.google_service_account_json, 'google_service_account_json'
-            ),
-            vault.TypedField.new_field('text', config.google_project_id, 'google_project_id'),
-            vault.TypedField.new_field('text', config.google_subscription_id, 'google_subscription_id'),
-            vault.TypedField.new_field('text', config.google_topic_id, 'google_topic_id'),
-            vault.TypedField.new_field(
-                'text', config.chat_approvals_space_id, 'chat_approvals_space_id'
+                'secret',
+                config.google_service_account_json,
+                GChatConstants.FIELD_SERVICE_ACCOUNT_JSON,
             ),
             vault.TypedField.new_field(
-                'text', config.chat_command_request_record_id, 'chat_command_request_record_id'
+                'text', config.google_project_id, GChatConstants.FIELD_PROJECT_ID
             ),
             vault.TypedField.new_field(
-                'text', config.chat_command_request_folder_id, 'chat_command_request_folder_id'
+                'text', config.google_subscription_id, GChatConstants.FIELD_SUBSCRIPTION_ID
             ),
             vault.TypedField.new_field(
-                'text', config.chat_command_one_time_share_id, 'chat_command_one_time_share_id'
+                'text', config.google_topic_id, GChatConstants.FIELD_TOPIC_ID
             ),
-            vault.TypedField.new_field('text', 'true' if config.pedm_enabled else 'false', 'pedm_enabled'),
-            vault.TypedField.new_field('text', str(config.pedm_polling_interval), 'pedm_polling_interval'),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_approvals_space_id,
+                GChatConstants.FIELD_APPROVALS_SPACE_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_request_record_id,
+                GChatConstants.FIELD_COMMAND_REQUEST_RECORD_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_request_folder_id,
+                GChatConstants.FIELD_COMMAND_REQUEST_FOLDER_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_one_time_share_id,
+                GChatConstants.FIELD_COMMAND_ONE_TIME_SHARE_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                'true' if config.pedm_enabled else 'false',
+                GChatConstants.FIELD_PEDM_ENABLED,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                str(config.pedm_polling_interval),
+                GChatConstants.FIELD_PEDM_POLLING_INTERVAL,
+            ),
             vault.TypedField.new_field(
                 'text',
                 'true' if config.device_approval_enabled else 'false',
-                'device_approval_enabled',
+                GChatConstants.FIELD_DEVICE_APPROVAL_ENABLED,
             ),
             vault.TypedField.new_field(
                 'text',
                 str(config.device_approval_polling_interval),
-                'device_approval_polling_interval',
+                GChatConstants.FIELD_DEVICE_APPROVAL_POLLING_INTERVAL,
             ),
         ]
 
@@ -240,7 +260,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             )
 
     @classmethod
-    def _load_service_account_json(cls, path: str) -> tuple[dict[str, Any] | None, str | None]:
+    def _load_service_account_json(cls, path: str) -> tuple[dict | None, str | None]:
         if not path:
             return None, 'Service account JSON path is required'
 
@@ -259,21 +279,24 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         return cls._validate_service_account_dict(data)
 
     @staticmethod
-    def _validate_service_account_dict(
-        data: Any,
-    ) -> tuple[dict[str, Any] | None, str | None]:
+    def _validate_service_account_dict(data: any) -> tuple[dict | None, str | None]:
         if not isinstance(data, dict):
             return None, 'Service account JSON must be a JSON object'
 
-        missing = [key for key in _SERVICE_ACCOUNT_REQUIRED_KEYS if not data.get(key)]
+        missing = [
+            key for key in GChatConstants.SERVICE_ACCOUNT_REQUIRED_KEYS if not data.get(key)
+        ]
         if missing:
             return None, (
                 'Invalid service account JSON '
                 f'(missing required fields: {", ".join(missing)})'
             )
 
-        if data.get('type') != 'service_account':
-            return None, "Invalid service account JSON (type must be 'service_account')"
+        if data.get('type') != GChatConstants.SERVICE_ACCOUNT_TYPE:
+            return None, (
+                f"Invalid service account JSON "
+                f"(type must be '{GChatConstants.SERVICE_ACCOUNT_TYPE}')"
+            )
 
         return data, None
 
@@ -324,4 +347,5 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
     @staticmethod
     def _is_valid_space_id(value: str) -> bool:
-        return bool(value and value.startswith('spaces/') and len(value) > len('spaces/'))
+        prefix = GChatConstants.SPACE_ID_PREFIX
+        return bool(value and value.startswith(prefix) and len(value) > len(prefix))
