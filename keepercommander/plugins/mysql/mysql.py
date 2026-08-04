@@ -65,11 +65,13 @@ class Rotator:
                             is_old_version = vn < 5007006
                         except ValueError:
                             pass
+                escape_login = pymysql.converters.escape_string(self.login)
+                escape_user_host = pymysql.converters.escape_string(self.user_host)
                 escape_new_password = pymysql.converters.escape_string(new_password)
                 if is_old_version:
-                    sql = f"set password for '{self.login}'@'{self.user_host}' = password('{escape_new_password}')"
+                    sql = f"set password for '{escape_login}'@'{escape_user_host}' = password('{escape_new_password}')"
                 else:
-                    sql = f"alter user '{self.login}'@'{self.user_host}' identified by '{escape_new_password}'"
+                    sql = f"alter user '{escape_login}'@'{escape_user_host}' identified by '{escape_new_password}'"
                 cursor.execute(sql)
                 return True
         except pymysql.err.OperationalError as e:

@@ -72,7 +72,9 @@ class Rotator:
             connection = oracledb.connect(**kwargs)
             with connection.cursor() as cursor:
                 logging.debug(f'Connected to {dsn}')
-                sql = f'ALTER USER {user} IDENTIFIED BY "{new_password}" ACCOUNT UNLOCK'
+                quoted_user = '"' + user.replace('"', '""') + '"'
+                escaped_password = new_password.replace('"', '""')
+                sql = f'ALTER USER {quoted_user} IDENTIFIED BY "{escaped_password}" ACCOUNT UNLOCK'
                 cursor.execute(sql)
             result = True
         except Exception as e:
