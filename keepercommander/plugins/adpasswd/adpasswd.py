@@ -59,7 +59,10 @@ def rotate(record, new_password):   # type: (KeeperRecord, str) -> bool
     if not login and not user_dn:
         raise ValueError(f'Rotate AD password: User login or DN is not set.')
 
-    tls = ldap3.Tls(validate=ssl.CERT_NONE)
+    _tls_validate_map = {'none': ssl.CERT_NONE, 'optional': ssl.CERT_OPTIONAL, 'required': ssl.CERT_REQUIRED}
+    tls_validate_str = (RecordMixin.get_record_field(record, 'cmdr:tls_verify') or 'required').lower()
+    tls_validate = _tls_validate_map.get(tls_validate_str, ssl.CERT_REQUIRED)
+    tls = ldap3.Tls(validate=tls_validate)
     server = ldap3.Server(host=host, port=port, use_ssl=True, tls=tls, connect_timeout=5, get_info=ldap3.ALL)
     with ldap3.Connection(server) as c:
         c.open()
