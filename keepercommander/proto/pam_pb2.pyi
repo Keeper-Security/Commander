@@ -63,6 +63,17 @@ class PAMRecordingRiskLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PRR_HIGH: _ClassVar[PAMRecordingRiskLevel]
     PRR_CRITICAL: _ClassVar[PAMRecordingRiskLevel]
 
+class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    REPOSITORY: _ClassVar[Scope]
+    ORGANIZATION: _ClassVar[Scope]
+
+class OrganizationVisibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ALL: _ClassVar[OrganizationVisibility]
+    PRIVATE: _ClassVar[OrganizationVisibility]
+    SELECTED: _ClassVar[OrganizationVisibility]
+
 class NhiCategory(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     NHI_CATEGORY_UNKNOWN: _ClassVar[NhiCategory]
@@ -107,6 +118,11 @@ PRR_LOW: PAMRecordingRiskLevel
 PRR_MEDIUM: PAMRecordingRiskLevel
 PRR_HIGH: PAMRecordingRiskLevel
 PRR_CRITICAL: PAMRecordingRiskLevel
+REPOSITORY: Scope
+ORGANIZATION: Scope
+ALL: OrganizationVisibility
+PRIVATE: OrganizationVisibility
+SELECTED: OrganizationVisibility
 NHI_CATEGORY_UNKNOWN: NhiCategory
 PAM_USER: NhiCategory
 PAM_RESOURCE: NhiCategory
@@ -304,7 +320,7 @@ class PAMConfigurations(_message.Message):
     def __init__(self, configurations: _Optional[_Iterable[_Union[PAMConfiguration, _Mapping]]] = ...) -> None: ...
 
 class PAMController(_message.Message):
-    __slots__ = ("controllerUid", "controllerName", "deviceToken", "deviceName", "nodeId", "created", "lastModified", "applicationUid", "appClientType", "isInitialized")
+    __slots__ = ("controllerUid", "controllerName", "deviceToken", "deviceName", "nodeId", "created", "lastModified", "applicationUid", "appClientType", "isInitialized", "maxInstanceCount", "lastSeen")
     CONTROLLERUID_FIELD_NUMBER: _ClassVar[int]
     CONTROLLERNAME_FIELD_NUMBER: _ClassVar[int]
     DEVICETOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -315,6 +331,8 @@ class PAMController(_message.Message):
     APPLICATIONUID_FIELD_NUMBER: _ClassVar[int]
     APPCLIENTTYPE_FIELD_NUMBER: _ClassVar[int]
     ISINITIALIZED_FIELD_NUMBER: _ClassVar[int]
+    MAXINSTANCECOUNT_FIELD_NUMBER: _ClassVar[int]
+    LASTSEEN_FIELD_NUMBER: _ClassVar[int]
     controllerUid: bytes
     controllerName: str
     deviceToken: str
@@ -325,7 +343,9 @@ class PAMController(_message.Message):
     applicationUid: bytes
     appClientType: _enterprise_pb2.AppClientType
     isInitialized: bool
-    def __init__(self, controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., deviceToken: _Optional[str] = ..., deviceName: _Optional[str] = ..., nodeId: _Optional[int] = ..., created: _Optional[int] = ..., lastModified: _Optional[int] = ..., applicationUid: _Optional[bytes] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., isInitialized: bool = ...) -> None: ...
+    maxInstanceCount: int
+    lastSeen: int
+    def __init__(self, controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., deviceToken: _Optional[str] = ..., deviceName: _Optional[str] = ..., nodeId: _Optional[int] = ..., created: _Optional[int] = ..., lastModified: _Optional[int] = ..., applicationUid: _Optional[bytes] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., isInitialized: bool = ..., maxInstanceCount: _Optional[int] = ..., lastSeen: _Optional[int] = ...) -> None: ...
 
 class PAMSetMaxInstanceCountRequest(_message.Message):
     __slots__ = ("controllerUid", "maxInstanceCount")
@@ -373,6 +393,18 @@ class RelayAccessCreds(_message.Message):
     serverTime: int
     def __init__(self, username: _Optional[str] = ..., password: _Optional[str] = ..., serverTime: _Optional[int] = ...) -> None: ...
 
+class KturnAccessCreds(_message.Message):
+    __slots__ = ("url", "token", "cert_fingerprint", "expires_at")
+    URL_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    CERT_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    url: str
+    token: bytes
+    cert_fingerprint: str
+    expires_at: int
+    def __init__(self, url: _Optional[str] = ..., token: _Optional[bytes] = ..., cert_fingerprint: _Optional[str] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
 class PAMRecordingsRequest(_message.Message):
     __slots__ = ("recordUid", "maxCount", "rangeStart", "rangeEnd", "types", "risks", "protocols", "closeReasons")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
@@ -392,6 +424,26 @@ class PAMRecordingsRequest(_message.Message):
     protocols: _containers.RepeatedScalarFieldContainer[str]
     closeReasons: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, recordUid: _Optional[bytes] = ..., maxCount: _Optional[int] = ..., rangeStart: _Optional[int] = ..., rangeEnd: _Optional[int] = ..., types: _Optional[_Iterable[_Union[PAMRecordingType, str]]] = ..., risks: _Optional[_Iterable[_Union[PAMRecordingRiskLevel, str]]] = ..., protocols: _Optional[_Iterable[str]] = ..., closeReasons: _Optional[_Iterable[int]] = ...) -> None: ...
+
+class PAMRecordingsForUsersRequest(_message.Message):
+    __slots__ = ("usernames", "maxCount", "rangeStart", "rangeEnd", "types", "risks", "protocols", "closeReasons")
+    USERNAMES_FIELD_NUMBER: _ClassVar[int]
+    MAXCOUNT_FIELD_NUMBER: _ClassVar[int]
+    RANGESTART_FIELD_NUMBER: _ClassVar[int]
+    RANGEEND_FIELD_NUMBER: _ClassVar[int]
+    TYPES_FIELD_NUMBER: _ClassVar[int]
+    RISKS_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOLS_FIELD_NUMBER: _ClassVar[int]
+    CLOSEREASONS_FIELD_NUMBER: _ClassVar[int]
+    usernames: _containers.RepeatedScalarFieldContainer[str]
+    maxCount: int
+    rangeStart: int
+    rangeEnd: int
+    types: _containers.RepeatedScalarFieldContainer[PAMRecordingType]
+    risks: _containers.RepeatedScalarFieldContainer[PAMRecordingRiskLevel]
+    protocols: _containers.RepeatedScalarFieldContainer[str]
+    closeReasons: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, usernames: _Optional[_Iterable[str]] = ..., maxCount: _Optional[int] = ..., rangeStart: _Optional[int] = ..., rangeEnd: _Optional[int] = ..., types: _Optional[_Iterable[_Union[PAMRecordingType, str]]] = ..., risks: _Optional[_Iterable[_Union[PAMRecordingRiskLevel, str]]] = ..., protocols: _Optional[_Iterable[str]] = ..., closeReasons: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class PAMRecording(_message.Message):
     __slots__ = ("connectionUid", "recordingType", "recordUid", "userName", "startedOn", "length", "fileSize", "createdOn", "protocol", "closeReason", "recordingDuration", "aiOverallRiskLevel", "aiOverallSummary")
@@ -475,21 +527,35 @@ class PAMUniversalSyncFolder(_message.Message):
     uid: bytes
     def __init__(self, uid: _Optional[bytes] = ...) -> None: ...
 
+class GitHubRepository(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: bytes
+    def __init__(self, name: _Optional[bytes] = ...) -> None: ...
+
 class PAMUniversalSyncConfig(_message.Message):
-    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName")
+    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "scope", "owner", "organizationVisibility", "repos")
     NETWORKUID_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     DRYRUNENABLED_FIELD_NUMBER: _ClassVar[int]
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     SYNCIDENTITY_FIELD_NUMBER: _ClassVar[int]
     VAULTNAME_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    ORGANIZATIONVISIBILITY_FIELD_NUMBER: _ClassVar[int]
+    REPOS_FIELD_NUMBER: _ClassVar[int]
     networkUid: bytes
     enabled: bool
     dryRunEnabled: bool
     folders: _containers.RepeatedCompositeFieldContainer[PAMUniversalSyncFolder]
     syncIdentity: bytes
     vaultName: bytes
-    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: bool = ..., dryRunEnabled: bool = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ...) -> None: ...
+    scope: Scope
+    owner: bytes
+    organizationVisibility: OrganizationVisibility
+    repos: _containers.RepeatedCompositeFieldContainer[GitHubRepository]
+    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: bool = ..., dryRunEnabled: bool = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., scope: _Optional[_Union[Scope, str]] = ..., owner: _Optional[bytes] = ..., organizationVisibility: _Optional[_Union[OrganizationVisibility, str]] = ..., repos: _Optional[_Iterable[_Union[GitHubRepository, _Mapping]]] = ...) -> None: ...
 
 class NhiMetricsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")
@@ -564,14 +630,16 @@ class NhiBulkMetricsResponse(_message.Message):
     def __init__(self, responses: _Optional[_Iterable[_Union[NhiMetricsResponse, _Mapping]]] = ...) -> None: ...
 
 class NhiUidEntry(_message.Message):
-    __slots__ = ("uid", "category", "ksmNhi")
+    __slots__ = ("uid", "category", "ksmNhi", "appUid")
     UID_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
     KSMNHI_FIELD_NUMBER: _ClassVar[int]
+    APPUID_FIELD_NUMBER: _ClassVar[int]
     uid: str
     category: NhiCategory
     ksmNhi: bool
-    def __init__(self, uid: _Optional[str] = ..., category: _Optional[_Union[NhiCategory, str]] = ..., ksmNhi: bool = ...) -> None: ...
+    appUid: str
+    def __init__(self, uid: _Optional[str] = ..., category: _Optional[_Union[NhiCategory, str]] = ..., ksmNhi: bool = ..., appUid: _Optional[str] = ...) -> None: ...
 
 class GetNhiUidsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")
@@ -586,6 +654,20 @@ class GetNhiUidsResponse(_message.Message):
     UIDS_FIELD_NUMBER: _ClassVar[int]
     uids: _containers.RepeatedCompositeFieldContainer[NhiUidEntry]
     def __init__(self, uids: _Optional[_Iterable[_Union[NhiUidEntry, _Mapping]]] = ...) -> None: ...
+
+class SetNhiKsmEffectiveDateRequest(_message.Message):
+    __slots__ = ("effectiveDate",)
+    EFFECTIVEDATE_FIELD_NUMBER: _ClassVar[int]
+    effectiveDate: int
+    def __init__(self, effectiveDate: _Optional[int] = ...) -> None: ...
+
+class GetNhiKsmEffectiveDateResponse(_message.Message):
+    __slots__ = ("effectiveDate", "defaultDate")
+    EFFECTIVEDATE_FIELD_NUMBER: _ClassVar[int]
+    DEFAULTDATE_FIELD_NUMBER: _ClassVar[int]
+    effectiveDate: int
+    defaultDate: int
+    def __init__(self, effectiveDate: _Optional[int] = ..., defaultDate: _Optional[int] = ...) -> None: ...
 
 class PAMUniversalSyncPreCheckRequest(_message.Message):
     __slots__ = ("networkUid", "folderUids")
