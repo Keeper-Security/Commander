@@ -194,15 +194,12 @@ class BaseConnectCommand(Command, RecordMixin):
     @staticmethod
     def get_command_string(params, record, template, temp_files, **kwargs):
         # type: (KeeperParams, KeeperRecord, str, list, ...) -> str or None
-        command = template
-        while True:
-            m = endpoint_parameter_pattern.search(command)
-            if not m:
-                break
-            p = m.group(1)
-            pv = BaseConnectCommand.get_parameter_value(params, record, p, temp_files, **kwargs)
-            command = command[:m.start()] + (pv or '') + command[m.end():]
-        return command
+        # Single-pass substitution: re.sub never re-scans replacement text, so
+        # a field value containing ${…} cannot trigger a second expansion round.
+        def _replace(m):
+            pv = BaseConnectCommand.get_parameter_value(params, record, m.group(1), temp_files, **kwargs)
+            return pv or ''
+        return endpoint_parameter_pattern.sub(_replace, template)
 
 
 class ConnectSshCommand(BaseConnectCommand):

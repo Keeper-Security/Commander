@@ -54,6 +54,13 @@ _DANGEROUS_ENV_NAMES = frozenset({
 
 _DANGEROUS_ENV_PREFIXES = ('LD_', 'DYLD_')
 
+# SSH -o options that cause local code execution via the SSH client itself.
+_DANGEROUS_SSH_OPTIONS = frozenset({
+    'proxycommand',
+    'localcommand',
+    'permitlocalcommand',
+})
+
 _INTERPRETER_DASH_C_FLAGS = (
     '-c', '-lc', '-ic', '-Command', '-EncodedCommand',
     '-e', '-E', '/c', '/C',
@@ -100,6 +107,29 @@ def _is_interpreter(prog: Optional[str]) -> bool:
 def _is_dangerous_env_name(name: Optional[str]) -> bool:
     upper = (name or '').upper()
     return upper in _DANGEROUS_ENV_NAMES or upper.startswith(_DANGEROUS_ENV_PREFIXES)
+
+
+def _dangerous_ssh_option(argv: List[str]) -> Optional[str]:
+    """Return the canonical option name if argv contains an SSH flag that causes
+    local code execution (ProxyCommand, LocalCommand, PermitLocalCommand).
+    Handles both merged (-oProxyCommand=…) and split (-o ProxyCommand=…) forms.
+    Returns None if no dangerous option is found.
+    """
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        # Merged form: -oProxyCommand=value  or  -OLocalCommand=value
+        if len(token) > 2 and token[0] == '-' and token[1] in ('o', 'O'):
+            opt_name = token[2:].split('=', 1)[0]
+            if opt_name.lower() in _DANGEROUS_SSH_OPTIONS:
+                return opt_name
+        # Split form: -o ProxyCommand=value
+        elif token in ('-o', '-O') and i + 1 < len(argv):
+            opt_name = argv[i + 1].split('=', 1)[0]
+            if opt_name.lower() in _DANGEROUS_SSH_OPTIONS:
+                return opt_name
+        i += 1
+    return None
 
 
 def _looks_multi_statement(arg: str) -> bool:
@@ -242,6 +272,12 @@ def confirm_argv(stage: str, argv: List[str], record: Any = None) -> bool:
     if argv and _is_interpreter(argv[0]):
         warning_lines.append(
             'argv[0] is a shell/scripting interpreter - it can run any code.'
+        )
+    dangerous_opt = _dangerous_ssh_option(argv)
+    if dangerous_opt is not None:
+        warning_lines.append(
+            f'{_sanitize(dangerous_opt)} is set — SSH will execute a local command'
+            ' on this machine with your privileges.'
         )
     _emit_warning(warning_lines)
     _emit_section('Command to execute:', _argv_block(argv))
