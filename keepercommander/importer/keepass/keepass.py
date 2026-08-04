@@ -19,7 +19,7 @@ import urllib.parse
 from typing import Dict
 from xml.sax.saxutils import escape
 
-from pykeepass import PyKeePass
+from pykeepass import PyKeePass, create_database
 from pykeepass.exceptions import CredentialsError
 from pykeepass.attachment import Attachment as KeepassAttachment
 from pykeepass.group import Group
@@ -316,11 +316,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
             elif isinstance(x, SharedFolder):
                 sfs.append(x)
 
-        template_file = os.path.join(os.path.dirname(__file__), 'template.kdbx')
-
-        with PyKeePass(template_file, password='111111') as kdb:
-            kdb.password = password
-            kdb.keyfile = keyfile
+        with create_database(filename, password=password, keyfile=keyfile) as kdb:
             root = kdb.root_group
 
             for r in rs:
