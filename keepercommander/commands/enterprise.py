@@ -797,17 +797,24 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'transfer_status':
                             row.append(user_status_dict['acct_transfer_status'])
                         elif column == 'node':
+                            node_path = self.get_node_path(params, u['node_id'])
                             if is_verbose:
-                                row.append(str(u['node_id']))
+                                row.append({
+                                    'node_id': str(u['node_id']),
+                                    'node_name': node_path,
+                                })
                             else:
-                                row.append(self.get_node_path(params, u['node_id']))
+                                row.append(node_path)
                         elif column == 'team_count':
                             row.append(len([1 for t in teams.values() if t['users'] and user_id in t['users']]))
                         elif column == 'teams':
                             user_team_list = [t for t in teams.values()
                                               if t['users'] and user_id in t['users']]
                             if is_verbose:
-                                row.append([t['id'] for t in user_team_list])
+                                row.append([
+                                    {'team_uid': t['id'], 'team_name': t['name']}
+                                    for t in user_team_list
+                                ])
                             else:
                                 row.append([t['name'] for t in user_team_list])
                         elif column == 'role_count' or column == 'roles':
@@ -822,7 +829,13 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                 row.append(len(role_ids))
                             else:
                                 if is_verbose:
-                                    row.append([str(role_id) for role_id in role_ids if role_id in roles])
+                                    row.append([
+                                        {
+                                            'role_id': str(role_id),
+                                            'role_name': roles[role_id]['name'],
+                                        }
+                                        for role_id in role_ids if role_id in roles
+                                    ])
                                 else:
                                     role_names = [roles[role_id]['name'] for role_id in role_ids if role_id in roles]
                                     row.append(role_names)
