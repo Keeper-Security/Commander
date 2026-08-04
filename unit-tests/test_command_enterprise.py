@@ -56,7 +56,7 @@ class TestEnterprise(TestCase):
             cmd.execute(params, verbose=True)
 
     def test_enterprise_info_users_verbose_returns_ids(self):
-        """With -v, node/teams/roles columns should be IDs; without -v, names."""
+        """With -v, node/teams/roles include separate name and ID fields; without -v, names only."""
         params = get_connected_params()
         api.query_enterprise(params)
         cmd = enterprise.EnterpriseInfoCommand()
@@ -74,9 +74,18 @@ class TestEnterprise(TestCase):
             params, users=True, format='json', columns=columns, verbose=True, quiet=True)
         users = json.loads(report)
         user1 = next(u for u in users if u['user_id'] == ent_env.user1_id)
-        self.assertEqual(user1['node'], str(ent_env.node1_id))
-        self.assertEqual(user1['teams'], [ent_env.team1_uid])
-        self.assertEqual(user1['roles'], [str(ent_env.role1_id)])
+        self.assertEqual(user1['node'], {
+            'node_id': str(ent_env.node1_id),
+            'node_name': 'Enterprise 1',
+        })
+        self.assertEqual(user1['teams'], [{
+            'team_uid': ent_env.team1_uid,
+            'team_name': ent_env.team1_name,
+        }])
+        self.assertEqual(user1['roles'], [{
+            'role_id': str(ent_env.role1_id),
+            'role_name': ent_env.role1_name,
+        }])
 
     def test_enterprise_add_user(self):
         params = get_connected_params()
