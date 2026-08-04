@@ -126,12 +126,19 @@ class SailPointService:
             logger.warning(f'SailPoint poller not started: {e}')
 
     @classmethod
-    def handle_command(cls, params: KeeperParams, command: str) -> Optional[Tuple[Any, int]]:
-        """Callers must gate on ``SAILPOINT_RECORD`` before invoking this."""
+    def handle_command(
+        cls, params: KeeperParams, command: str
+    ) -> Tuple[str, Optional[Tuple[Any, int]]]:
+        """
+        Prepare a SailPoint Service Mode command.
+
+        Returns ``(command_to_run, short_circuit)``. Callers must gate on
+        ``SAILPOINT_RECORD`` before invoking this.
+        """
         cls.bind_params(params)
         uid = cls.record_uid(params)
         if not cls.record_has_marker(params, uid):
-            return None
+            return command, None
         return SailPointCommandHook(uid).before_command(params, command)
 
     @classmethod

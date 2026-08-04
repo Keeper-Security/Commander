@@ -22,6 +22,7 @@ _NSF_RECORD = frozenset({'nsf-share-record'})
 _FOLDER_CMDS = frozenset({'share-folder', 'nsf-share-folder'})
 _RECORD_CMDS = frozenset({'share-record', 'nsf-share-record'})
 _EU_CMDS = frozenset({'enterprise-user', 'eu'})
+_TRANSFER_CMDS = frozenset({'transfer-user', 'tu'})
 _INVITE_FLAGS = frozenset({'--invite', '--add'})
 
 
@@ -67,6 +68,15 @@ class ParsedIdentityMutation:
     has_role_change: bool = False
     has_team_change: bool = False
     has_node_change: bool = False
+
+
+@dataclass
+class ParsedTransfer:
+    """transfer-user offboard request (target comes from SailPoint config)."""
+
+    emails: List[str] = field(default_factory=list)
+    has_target_user: bool = False
+    has_force: bool = False
 
 
 class SailPointCommandParser:
@@ -194,6 +204,33 @@ class SailPointCommandParser:
             has_team_change=has_team,
             has_node_change=has_node,
         )
+
+    @classmethod
+    def parse_transfer(cls, command: str) -> Optional[ParsedTransfer]:
+        tokens = cls.tokenize(command)
+        if not tokens or tokens[0].lower() not in _TRANSFER_CMDS:
+            return None
+
+        parsed = ParsedTransfer()
+        emails: List[str] = []
+        i = 1
+        while i < len(tokens):
+            t = tokens[i]
+            if t in ('-f', '--force'):
+                parsed.has_force = True
+                i += 1
+            elif cls._matches_flag(t, '--target-user'):
+                parsed.has_target_user = True
+                _, i = cls._one_flag_value(t, tokens, i)
+            elif t.startswith('-'):
+                i = cls._skip_unknown_flag(tokens, i)
+            else:
+                if '@' in t:
+                    emails.append(t)
+                i += 1
+
+        parsed.emails = emails
+        return parsed
 
     @classmethod
     def parse_share(cls, command: str) -> Optional[ParsedShare]:

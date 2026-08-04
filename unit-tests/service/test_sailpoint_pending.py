@@ -200,6 +200,21 @@ class SailPointParseTest(unittest.TestCase):
         self.assertIsNotNone(nsf)
         self.assertEqual(nsf.nsf_role, 'content-manager')
 
+    def test_parse_transfer(self):
+        parsed = SailPointCommandParser.parse_transfer("transfer-user 'leaving@co.com' -f")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.emails, ['leaving@co.com'])
+        self.assertTrue(parsed.has_force)
+        self.assertFalse(parsed.has_target_user)
+
+        parsed = SailPointCommandParser.parse_transfer(
+            'transfer-user leaving@co.com --target-user=other@co.com -f'
+        )
+        self.assertTrue(parsed.has_target_user)
+        self.assertTrue(parsed.has_force)
+
+        self.assertIsNone(SailPointCommandParser.parse_transfer('enterprise-user x@co.com --delete'))
+
 
 class SailPointPolicyTest(unittest.TestCase):
     def test_sanitize_strips_get(self):
@@ -217,15 +232,25 @@ class SailPointPolicyTest(unittest.TestCase):
         parts = cleaned.split(',')
         self.assertNotIn('get', parts)
         self.assertIn('enterprise-role', parts)
-        self.assertIn('er', parts)
+        self.assertNotIn('er', parts)
 
     def test_default_allowlist_matches_integration_list(self):
         expected = [
-            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user', 'enterprise-role', 'er',
-            'enterprise-down', 'share-folder', 'share-record', 'nsf-share-folder', 'nsf-share-record',
+            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user', 'enterprise-role',
+            'enterprise-down', 'transfer-user',
+            'share-folder', 'share-record', 'nsf-share-folder', 'nsf-share-record',
             'tree',
         ]
         self.assertEqual(SailPointCommandPolicy.default_allowlist().split(','), expected)
+
+    def test_sanitize_adds_transfer_user_when_missing(self):
+        cleaned = SailPointCommandPolicy.sanitize(
+            'whoami,sync-down,enterprise-info,enterprise-user,enterprise-down,'
+            'share-folder,share-record,tree'
+        )
+        parts = cleaned.split(',')
+        self.assertIn('transfer-user', parts)
+        self.assertNotIn('tu', parts)
 
     def test_enterprise_role_blocks_add_delete_add_user(self):
         for cmd in (
@@ -256,6 +281,72 @@ class SailPointPolicyTest(unittest.TestCase):
                 'enterprise-user user@co.com --add-role Admin'
             )
         )
+
+    def test_enterprise_user_delete_blocked(self):
+        for cmd in (
+            'enterprise-user leaving@co.com --delete',
+            'eu leaving@co.com --delete',
+        ):
+            err = SailPointCommandPolicy.validate_enterprise_user_delete(cmd)
+            self.assertIsNotNone(err, cmd)
+            self.assertIn('--delete', err)
+            self.assertIn('transfer-user', err)
+
+    def test_enterprise_user_delete_allows_other_ops(self):
+        self.assertIsNone(
+            SailPointCommandPolicy.validate_enterprise_user_delete(
+                'eu user@co.com --add-role Admin'
+            )
+        )
+        self.assertIsNone(
+            SailPointCommandPolicy.validate_enterprise_user_delete(
+                'enterprise-user user@co.com --delete-alias old@co.com'
+            )
+        )
+
+    def test_prepare_transfer_appends_config_email(self):
+        cmd = "transfer-user 'leaving@co.com' -f"
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
+        self.assertIsNone(err)
+        self.assertTrue(rewritten.startswith(cmd))
+        tokens = SailPointCommandParser.tokenize(rewritten)
+        self.assertIn('--target-user', tokens)
+        self.assertEqual(tokens[tokens.index('--target-user') + 1], 'target@co.com')
+
+    def test_prepare_transfer_rejects_explicit_target(self):
+        cmd = 'transfer-user leaving@co.com -f --target-user other@co.com'
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
+        self.assertEqual(rewritten, cmd)
+        self.assertIsNotNone(err)
+        self.assertIn('--target-user', err)
+
+    def test_prepare_transfer_rejects_self_transfer(self):
+        cmd = 'transfer-user Target@Co.com -f'
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
+        self.assertEqual(rewritten, cmd)
+        self.assertIsNotNone(err)
+        self.assertIn('itself', err)
+
+    def test_prepare_transfer_requires_force_and_valid_config(self):
+        cmd = 'transfer-user leaving@co.com'
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
+        self.assertEqual(rewritten, cmd)
+        self.assertIn('-f', err)
+
+        cmd = 'transfer-user leaving@co.com -f'
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, '')
+        self.assertEqual(rewritten, cmd)
+        self.assertIn('not configured', err)
+
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'not-an-email')
+        self.assertEqual(rewritten, cmd)
+        self.assertIn('not configured', err)
+
+    def test_prepare_transfer_ignores_other_commands(self):
+        cmd = 'enterprise-user user@co.com --add-role Admin'
+        rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
+        self.assertEqual(rewritten, cmd)
+        self.assertIsNone(err)
 
 
 class SailPointPendingMergeTest(unittest.TestCase):
@@ -643,6 +734,38 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn('mix Active and non-Active', response['error'])
+
+    def test_before_command_injects_transfer_target(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        caps = SailPointCapabilities(transfer_target_email='target@co.com')
+        hook = SailPointCommandHook('cfg-uid')
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            command, short = hook.before_command(
+                mock.Mock(), "transfer-user 'leaving@co.com' -f"
+            )
+        self.assertIsNone(short)
+        self.assertIn('--target-user', command)
+        self.assertIn('target@co.com', command)
+
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            command, short = hook.before_command(
+                mock.Mock(), 'enterprise-user leaving@co.com --delete'
+            )
+        self.assertIsNotNone(short)
+        self.assertEqual(short[1], 403)
+        self.assertIn('--delete', short[0]['error'])
 
     def test_after_command_skips_missing_user(self):
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (
