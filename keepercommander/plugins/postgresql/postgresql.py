@@ -11,6 +11,7 @@
 #
 
 import psycopg2
+import psycopg2.sql
 import logging
 
 """Commander Plugin for Postgres Database Server
@@ -51,7 +52,9 @@ class Rotator:
                                   database=self.db) as connection:
                 logging.debug(f'Connected to {self.host}')
                 with connection.cursor() as cursor:
-                    sql = f'alter user {self.login} with password %s'
+                    sql = psycopg2.sql.SQL('ALTER USER {} WITH PASSWORD %s').format(
+                        psycopg2.sql.Identifier(self.login)
+                    )
                     cursor.execute(sql, (new_password,))
                     return True
         except Exception as e:
