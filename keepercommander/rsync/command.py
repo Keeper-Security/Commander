@@ -52,7 +52,7 @@ class RSyncCommand(Command, RecordMixin):
 
     def execute(self, params, **kwargs):
         local_path = kwargs.get('local_path')
-        if not local_path:
+        if not isinstance(local_path, str) or not local_path:
             self.get_parser().print_help()
             return
 
@@ -187,9 +187,13 @@ class RSyncCommand(Command, RecordMixin):
 
             if len(to_download) > 0:
                 logging.info('Downloading %d file(s):', len(to_download))
+                safe_root = os.path.realpath(local_path)
                 verified_folders = set()
                 for file in to_download:
-                    absolute_path = os.path.join(local_path, file.path)
+                    absolute_path = os.path.realpath(os.path.join(local_path, file.path))
+                    if not (absolute_path == safe_root or absolute_path.startswith(safe_root + os.sep)):
+                        logging.warning(f'Skipping entry with path outside sync root: {file.path}')
+                        continue
                     logging.info(absolute_path)
                     folder_name = os.path.dirname(absolute_path)
                     if folder_name not in verified_folders:
