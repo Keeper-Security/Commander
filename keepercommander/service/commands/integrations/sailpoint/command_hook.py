@@ -34,35 +34,54 @@ class SailPointCommandHook:
     def __init__(self, record_uid: str):
         self.record_uid = record_uid
 
-    def before_command(self, params: KeeperParams, command: str) -> Optional[Tuple[Any, int]]:
-        """Return (response, status_code) to short-circuit, or None to continue."""
+    def before_command(self, params: KeeperParams, command: str) -> Tuple[str, Optional[Tuple[Any, int]]]:
+        """
+        Prepare a Service Mode command for SailPoint.
+
+        Returns ``(command_to_run, short_circuit)``. When ``short_circuit`` is
+        set, do not execute the command. ``command_to_run`` may be rewritten
+        (e.g. transfer-user target injection).
+        """
         caps = read_capabilities(params, self.record_uid)
 
         scope_error = self._check_capability_gates(command, caps)
         if scope_error:
-            return {'status': 'error', 'error': scope_error}, 403
+            return self._reject(command, scope_error, 403)
 
-        er_error = SailPointCommandPolicy.validate_enterprise_role(command)
-        if er_error:
-            return {'status': 'error', 'error': er_error}, 403
+        policy_error = (
+            SailPointCommandPolicy.validate_enterprise_role(command)
+            or SailPointCommandPolicy.validate_enterprise_user_delete(command)
+        )
+        if policy_error:
+            return self._reject(command, policy_error, 403)
+
+        command, transfer_error = SailPointCommandPolicy.prepare_transfer(
+            command, caps.transfer_target_email
+        )
+        if transfer_error:
+            return self._reject(command, transfer_error, 400)
 
         invite = SailPointCommandParser.parse_invite(command)
         if invite and invite.emails:
-            return self._before_invite(params, invite)
+            return command, self._before_invite(params, invite)
 
         share = SailPointCommandParser.parse_share(command)
         if share:
             target_error = validate_share_targets(params, share)
             if target_error:
-                return {'status': 'error', 'error': target_error}, 400
-            return self._before_share(params, share, caps)
+                return self._reject(command, target_error, 400)
+            return command, self._before_share(params, share, caps)
 
         mutation = SailPointCommandParser.parse_identity_mutation(command)
         if mutation:
             err = self._first_scim_identity_error(params, mutation.emails)
             if err:
-                return {'status': 'error', 'error': err}, 403
-        return None
+                return self._reject(command, err, 403)
+        return command, None
+
+    @staticmethod
+    def _reject(command: str, error: str, status_code: int) -> Tuple[str, Tuple[Any, int]]:
+        return command, ({'status': 'error', 'error': error}, status_code)
 
     @staticmethod
     def _first_scim_identity_error(params: KeeperParams, emails: List[str]) -> Optional[str]:
@@ -217,11 +236,8 @@ class SailPointCommandHook:
         share: ParsedShare,
         caps: SailPointCapabilities,
     ) -> Optional[Tuple[Any, int]]:
-        # Revoke/remove/owner must run through Commander so Service Mode returns the
-        # native error (e.g. User Not Found for Invited users). Only grant is deferred.
-        if not share.is_grant:
-            return None
-
+        # Capability gates apply to every share action (grant, owner, revoke, cancel,
+        # remove). Deferral below is grant-only for Invited users.
         if share.is_folder and not caps.allow_folders:
             return {
                 'status': 'error',
@@ -232,6 +248,10 @@ class SailPointCommandHook:
                 'status': 'error',
                 'error': 'SailPoint allow_records is disabled; share-record is not allowed.',
             }, 403
+
+        # Non-grant actions run through Commander (native errors, no pending queue).
+        if not share.is_grant:
+            return None
 
         deferred = [e for e in share.emails if self._user_status(params, e) != 'active']
         if not deferred:

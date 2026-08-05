@@ -177,7 +177,7 @@ class CommandExecutor:
             sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
             if sailpoint_enabled:
                 from ..commands.integrations.sailpoint.service import SailPointService
-                sailpoint_response = SailPointService.handle_command(params, command)
+                command, sailpoint_response = SailPointService.handle_command(params, command)
                 if sailpoint_response is not None:
                     response, status_code = sailpoint_response
                     response = CommandExecutor.encrypt_response(response)
