@@ -1,0 +1,102 @@
+{
+  "shared_folders": [
+    {
+      "path": "NSF Roles Demo\\Engineering",
+      "permissions": [
+        {
+          "name": "user@mycompany.com",
+          "role": "viewer"
+        },
+        {
+          "name": "user1@mycompany.com",
+          "role": "share-manager"
+        },
+        {
+          "name": "user2@mycompany.com",
+          "role": "share-manager"
+        },
+        {
+          "name": "user3@mycompany.com",
+          "role": "content-manager"
+        },
+        {
+          "name": "user4@mycompany.com",
+          "role": "content-share-manager"
+        },
+        {
+          "name": "user5@mycompany.com",
+          "role": "full-manager"
+        },
+        {
+          "uid": "REPLACE_WITH_TEAM_UID",
+          "name": "Engineering Team",
+          "role": "content-manager"
+        }
+      ]
+    },
+    {
+      "path": "NSF Roles Demo\\Finance",
+      "permissions": [
+        {
+          "name": "user6@mycompany.com",
+          "role": "viewer"
+        },
+        {
+          "name": "user7@mycompany.com",
+          "role": "full-manager"
+        }
+      ]
+    },
+    {
+      "path": "NSF Roles Demo\\Contractors",
+      "permissions": [
+        {
+          "name": "user8@mycompany.com",
+          "role": "requestor"
+        },
+        {
+          "name": "user9@mycompany.com",
+          "role": "share-manager"
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "title": "GitHub — Engineering",
+      "login": "eng-bot@mycompany.com",
+      "password": "EngSamp1e!Pass",
+      "login_url": "https://github.com/mycompany",
+      "notes": "Shared engineering org credentials",
+      "folders": [
+        {
+          "folder": "NSF Roles Demo\\Engineering"
+        }
+      ]
+    },
+    {
+      "title": "AWS Console — Finance",
+      "login": "finance-ops@mycompany.com",
+      "password": "FinSamp1e!Pass",
+      "login_url": "https://console.aws.amazon.com",
+      "notes": "Finance AWS account",
+      "folders": [
+        {
+          "folder": "NSF Roles Demo\\Finance"
+        }
+      ]
+    },
+    {
+      "title": "Partner Portal",
+      "login": "contractor@partner.com",
+      "password": "PartnerSamp1e!Pass",
+      "login_url": "https://partners.example.com",
+      "notes": "Limited contractor access folder",
+      "folders": [
+        {
+          "folder": "NSF Roles Demo\\Contractors"
+        }
+      ]
+    }
+  ]
+}

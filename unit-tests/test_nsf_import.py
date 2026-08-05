@@ -294,9 +294,9 @@ class TestJsonNsfPermissions(TestCase):
     def test_json_loads_nsf_role_permissions(self):
         sample = os.path.join(
             os.path.dirname(__file__), '..', 'sample_data',
-            'import_nsf_permissions.json.txt')
+            'import_nsf_permissions.txt')
         if not os.path.isfile(sample):
-            self.skipTest('sample_data/import_nsf_permissions.json.txt missing')
+            self.skipTest('sample_data/import_nsf_permissions.txt missing')
         importer = KeeperJsonImporter()
         folders = [x for x in importer.do_import(sample) if isinstance(x, SharedFolder)]
         self.assertGreaterEqual(len(folders), 1)
@@ -314,9 +314,9 @@ class TestJsonNsfPermissions(TestCase):
 
     def test_sample_nsf_json_includes_permissions(self):
         sample = os.path.join(
-            os.path.dirname(__file__), '..', 'sample_data', 'import_nsf.json.txt')
+            os.path.dirname(__file__), '..', 'sample_data', 'import_nsf.txt')
         if not os.path.isfile(sample):
-            self.skipTest('sample_data/import_nsf.json.txt missing')
+            self.skipTest('sample_data/import_nsf.txt missing')
         importer = KeeperJsonImporter()
         folders = [x for x in importer.do_import(sample) if isinstance(x, SharedFolder)]
         with_perms = [f for f in folders if f.permissions]
@@ -347,7 +347,7 @@ class TestImportNsfCliFlag(TestCase):
             cmd.execute(
                 params,
                 format='json',
-                name='sample_data/import_nsf.json.txt',
+                name='sample_data/import_nsf.txt',
                 use_nsf=True,
                 users_only=True,
             )
@@ -391,15 +391,16 @@ class TestFilePathResolution(TestCase):
         self.assertTrue(resolved.endswith('import.json.txt'))
         self.assertTrue(os.path.isfile(resolved))
 
-    def test_resolves_json_txt_when_json_requested(self):
+    def test_resolves_txt_when_stem_requested(self):
         importer = KeeperJsonImporter()
-        sample_json = os.path.join(
-            os.path.dirname(__file__), '..', 'sample_data', 'import_nsf.json')
-        # File is stored as import_nsf.json.txt; requesting .json should find it
-        if not os.path.isfile(sample_json):
-            resolved = importer.resolve_file_path(sample_json)
-            self.assertTrue(resolved.endswith('import_nsf.json.txt'))
-            self.assertTrue(os.path.isfile(resolved))
+        # sample_data/import_nsf.txt — resolve from stem without extension
+        stem = os.path.join(
+            os.path.dirname(__file__), '..', 'sample_data', 'import_nsf')
+        if not os.path.isfile(stem + '.txt'):
+            self.skipTest('sample_data/import_nsf.txt missing')
+        resolved = importer.resolve_file_path(stem)
+        self.assertTrue(resolved.endswith('import_nsf.txt'))
+        self.assertTrue(os.path.isfile(resolved))
 
     def test_resolves_csv_exactly(self):
         from keepercommander.importer.csv.csv import KeeperCsvImporter

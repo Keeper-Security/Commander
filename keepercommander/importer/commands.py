@@ -87,8 +87,7 @@ import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
 import_parser.add_argument(
     'name', type=str,
-    help='file name (json/csv/keepass/1password/…), account name (lastpass), or URL (ManageEngine, Thycotic). '
-         'JSON samples may use .json or .json.txt'
+    help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
 )
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -184,7 +183,7 @@ To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
 
 Nested Share Folders (NSF) — works with any --format (json, csv, keepass, …):
-import --format=json --nsf sample_data/import_nsf.json.txt
+import --format=json --nsf sample_data/import_nsf.txt
 
 With --nsf, shared_folders[].permissions from JSON are granted on Nested
 Share Folders after folders and records are created. Prefer NSF roles:
@@ -197,7 +196,7 @@ Share Folders after folders and records are created. Prefer NSF roles:
 
 Accepted roles: requestor, viewer, share-manager, content-manager,
 content-share-manager, full-manager.
-Sample: sample_data/import_nsf_permissions.json.txt
+Sample: sample_data/import_nsf_permissions.txt
 Use --users --nsf to update NSF permissions only (no record import).
 '''
 

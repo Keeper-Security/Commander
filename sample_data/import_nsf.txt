@@ -1,0 +1,499 @@
+{
+  "shared_folders": [
+    {
+      "path": "NSF All Types\\Credentials",
+      "manage_users": true,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": true,
+      "permissions": [
+        {
+          "name": "user@mycompany.com",
+          "manage_users": false,
+          "manage_records": true
+        },
+        {
+          "name": "admin@mycompany.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    },
+    {
+      "path": "NSF All Types\\Personal",
+      "manage_users": false,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": false,
+      "permissions": [
+        {
+          "name": "user@mycompany.com",
+          "manage_users": false,
+          "manage_records": false
+        }
+      ]
+    },
+    {
+      "path": "NSF All Types\\Infrastructure\\Servers",
+      "manage_users": true,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": true
+    },
+    {
+      "path": "NSF All Types\\Infrastructure\\Databases",
+      "manage_users": true,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": false
+    }
+  ],
+  "records": [
+    {
+      "uid": "AddrRec00000000000001",
+      "title": "Sample - Address",
+      "$type": "address",
+      "notes": "Home address sample",
+      "custom_fields": {
+        "$address": {
+          "street1": "100 Main Street",
+          "street2": "Apt 4B",
+          "city": "San Francisco",
+          "state": "CA",
+          "zip": "94105",
+          "country": "US"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Identity"
+        }
+      ]
+    },
+    {
+      "uid": "CardRec00000000000001",
+      "title": "Sample - Payment Card",
+      "$type": "bankCard",
+      "notes": "Visa demo card",
+      "custom_fields": {
+        "$paymentCard": {
+          "cardNumber": "4111111111111111",
+          "cardExpirationDate": "12/2030",
+          "cardSecurityCode": "123"
+        },
+        "$text:cardholderName": "Jane Doe",
+        "$pinCode": "4321",
+        "$addressRef": "AddrRec00000000000001"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Finance"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Bank Account",
+      "$type": "bankAccount",
+      "login": "jdoe",
+      "password": "BankPass!234",
+      "login_url": "https://bank.example.com",
+      "notes": "Checking account sample",
+      "custom_fields": {
+        "$bankAccount": {
+          "accountType": "Checking",
+          "routingNumber": "021000021",
+          "accountNumber": "1234567890",
+          "otherType": ""
+        },
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        },
+        "$cardRef": "CardRec00000000000001"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Finance"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Login",
+      "$type": "login",
+      "login": "jane.doe@example.com",
+      "password": "LoginPass!234",
+      "login_url": "https://accounts.example.com",
+      "notes": "Standard login with TOTP and security question",
+      "custom_fields": {
+        "$oneTimeCode": "otpauth://totp/Example:jane.doe@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example&algorithm=SHA1&digits=6&period=30",
+        "$securityQuestion": [
+          {
+            "question": "What is your favorite color?",
+            "answer": "Blue"
+          },
+          {
+            "question": "Pet name?",
+            "answer": "Fluffy"
+          }
+        ],
+        "Department": "Engineering",
+        "Employee ID": "E-10042"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Credentials",
+          "folder": "Websites",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    },
+    {
+      "title": "Sample - General",
+      "$type": "general",
+      "login": "general-user",
+      "password": "GeneralPass!234",
+      "login_url": "https://general.example.com",
+      "notes": "Catch-all / general purpose record",
+      "custom_fields": {
+        "$text:label": "Misc info",
+        "Freeform Field": "Any custom value"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Credentials",
+          "folder": "Misc"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Encrypted Notes",
+      "$type": "encryptedNotes",
+      "notes": "Visible notes field",
+      "custom_fields": {
+        "$note": "This is a secured / masked note body.\nLine 2 of the secure note.",
+        "$date": 1719792000000
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Notes"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Contact",
+      "$type": "contact",
+      "notes": "Business contact",
+      "custom_fields": {
+        "$name": {
+          "first": "John",
+          "middle": "A",
+          "last": "Smith"
+        },
+        "$text:company": "Acme Corp",
+        "$email": "john.smith@acme.example.com",
+        "$phone": [
+          {
+            "region": "+1",
+            "number": "415-555-0100",
+            "ext": "200",
+            "type": "Work"
+          },
+          {
+            "region": "+1",
+            "number": "415-555-0199",
+            "type": "Mobile"
+          }
+        ],
+        "$addressRef": "AddrRec00000000000001"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Contacts"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Birth Certificate",
+      "$type": "birthCertificate",
+      "notes": "Birth certificate sample",
+      "custom_fields": {
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        },
+        "$birthDate": 631152000000
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Identity"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Driver License",
+      "$type": "driverLicense",
+      "notes": "Driver license sample",
+      "custom_fields": {
+        "$accountNumber": "D1234567",
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        },
+        "$birthDate": 631152000000,
+        "$expirationDate": 1893456000000,
+        "$addressRef": "AddrRec00000000000001"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Identity"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Passport",
+      "$type": "passport",
+      "password": "PassportPin!99",
+      "notes": "Passport sample",
+      "custom_fields": {
+        "$accountNumber": "P123456789",
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        },
+        "$birthDate": 631152000000,
+        "$expirationDate": 1924905600000,
+        "$date:dateIssued": 1609459200000,
+        "$addressRef": "AddrRec00000000000001"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Identity"
+        }
+      ]
+    },
+    {
+      "title": "Sample - SSN / Identity Card",
+      "$type": "ssnCard",
+      "notes": "Identity card sample",
+      "custom_fields": {
+        "$accountNumber": "123-45-6789",
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Identity"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Health Insurance",
+      "$type": "healthInsurance",
+      "login": "member123",
+      "password": "HealthPass!234",
+      "login_url": "https://health.example.com",
+      "notes": "Health insurance sample",
+      "custom_fields": {
+        "$accountNumber": "HIN-998877",
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Insurance"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Membership",
+      "$type": "membership",
+      "password": "MemberPass!234",
+      "notes": "Gym / club membership",
+      "custom_fields": {
+        "$accountNumber": "MEM-554433",
+        "$name": {
+          "first": "Jane",
+          "middle": "Q",
+          "last": "Doe"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Memberships"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Software License",
+      "$type": "softwareLicense",
+      "notes": "Software license key sample",
+      "custom_fields": {
+        "$licenseNumber": "AAAA-BBBB-CCCC-DDDD-EEEE",
+        "$expirationDate": 1893456000000,
+        "$date:dateActive": 1704067200000,
+        "$text:product": "Example Pro Suite",
+        "$text:seats": "10"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Credentials",
+          "folder": "Licenses"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Server Credentials",
+      "$type": "serverCredentials",
+      "login": "root",
+      "password": "ServerPass!234",
+      "notes": "Linux / Windows server",
+      "custom_fields": {
+        "$host": {
+          "hostName": "10.0.1.30",
+          "port": "22"
+        },
+        "$text:platformId": "UnixSSH",
+        "$oneTimeCode": "otpauth://totp/Server:root?secret=JBSWY3DPEHPK3PXP&issuer=Server&algorithm=SHA1&digits=6&period=30"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Infrastructure\\Servers",
+          "folder": "Unix",
+          "can_edit": true,
+          "can_share": false
+        }
+      ]
+    },
+    {
+      "title": "Sample - Database Credentials",
+      "$type": "databaseCredentials",
+      "login": "dbadmin",
+      "password": "DbPass!234",
+      "notes": "PostgreSQL sample",
+      "custom_fields": {
+        "$text:type": "postgresql",
+        "$host": {
+          "hostName": "db.example.com",
+          "port": "5432"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Infrastructure\\Databases",
+          "can_edit": true,
+          "can_share": false
+        }
+      ]
+    },
+    {
+      "title": "Sample - SSH Keys",
+      "$type": "sshKeys",
+      "login": "deploy",
+      "password": "KeyPassphrase!234",
+      "notes": "SSH key pair sample",
+      "custom_fields": {
+        "$host": {
+          "hostName": "git.example.com",
+          "port": "22"
+        },
+        "$keyPair": {
+          "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExamplePublicKeyOnlyNotReal deploy@example.com",
+          "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nEXAMPLE_PRIVATE_KEY_PLACEHOLDER_NOT_REAL\n-----END OPENSSH PRIVATE KEY-----"
+        }
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Infrastructure\\Servers",
+          "folder": "SSH Keys",
+          "can_edit": true,
+          "can_share": false
+        }
+      ]
+    },
+    {
+      "title": "Sample - WiFi Credentials",
+      "$type": "wifiCredentials",
+      "password": "WifiPass!234",
+      "notes": "Office WiFi",
+      "custom_fields": {
+        "$text:ssid": "Office-Guest",
+        "$text:networkSecurityType": "WPA2",
+        "$text:hiddenNetwork": "false"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Credentials",
+          "folder": "Networks"
+        }
+      ]
+    },
+    {
+      "title": "Sample - File Attachment Placeholder",
+      "$type": "file",
+      "notes": "File records are normally created when uploading attachments. This is a placeholder title/notes-only sample.",
+      "custom_fields": {},
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Files"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Photo Placeholder",
+      "$type": "photo",
+      "notes": "Photo records are normally created when uploading images. Placeholder sample only.",
+      "custom_fields": {},
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Personal",
+          "folder": "Photos"
+        }
+      ]
+    },
+    {
+      "title": "Sample - Multi Folder Placement",
+      "$type": "login",
+      "login": "shared.user",
+      "password": "MultiFolder!234",
+      "login_url": "https://shared.example.com",
+      "notes": "Same record path appears under Credentials with NSF nesting from shared_folder + folder",
+      "custom_fields": {
+        "Owner Team": "Platform"
+      },
+      "folders": [
+        {
+          "shared_folder": "NSF All Types\\Credentials",
+          "folder": "Shared Apps",
+          "can_edit": true,
+          "can_share": true
+        },
+        {
+          "folder": "NSF All Types\\Personal\\Bookmarks"
+        }
+      ]
+    }
+  ]
+}
