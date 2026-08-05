@@ -169,7 +169,7 @@ To load the sample data:
 import --format=csv sample_data/import.csv
 
 Nested Share Folders (NSF):
-import --format=csv --nsf --permissions=a sample_data/import_nsf.csv
+import --format=csv --nsf sample_data/import_nsf.csv
 '''
 
 json_instructions = '''JSON Import Instructions
@@ -184,11 +184,20 @@ To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
 
 Nested Share Folders (NSF) — works with any --format (json, csv, keepass, …):
-import --format=json --nsf --permissions=a sample_data/import_nsf.json.txt
-import --format=json --nsf sample_data/import_nsf.json
+import --format=json --nsf sample_data/import_nsf.json.txt
 
-With --nsf, shared_folders[].permissions (users/teams) from JSON are granted
-on the Nested Share Folders after folders and records are created.
+With --nsf, shared_folders[].permissions from JSON are granted on Nested
+Share Folders after folders and records are created. Prefer NSF roles:
+
+  "permissions": [
+    { "name": "user@company.com", "role": "viewer" },
+    { "name": "lead@company.com", "role": "content-manager" },
+    { "name": "admin@company.com", "role": "full-manager" }
+  ]
+
+Accepted roles: requestor, viewer, share-manager, content-manager,
+content-share-manager, full-manager.
+Sample: sample_data/import_nsf_permissions.json.txt
 Use --users --nsf to update NSF permissions only (no record import).
 '''
 
@@ -231,7 +240,9 @@ class RecordImportCommand(ImporterCommand):
             permissions = kwargs.get('permissions') or ''
             del kwargs['permissions']
 
-        if (kwargs.get('shared') is True or kwargs.get('use_nsf') is True) and not permissions:
+        # Classic --shared prompts for default U/R/E/S permissions.
+        # NSF uses roles from the import file (and optional -p); do not prompt.
+        if kwargs.get('shared') is True and not kwargs.get('use_nsf') and not permissions:
             permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
         if permissions:
             chars = set()

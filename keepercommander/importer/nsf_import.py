@@ -358,8 +358,14 @@ def execute_nsf_records_add(params, record_adds):
 def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_records=False,
                                  can_edit=False, can_share=False):
     # type: (KeeperParams, List[ImportSharedFolder], bool, bool, bool, bool) -> None
-    """Grant NSF folder access from ImportSharedFolder.permissions."""
+    """Grant NSF folder access from ImportSharedFolder.permissions.
+
+    Each permission may specify an NSF ``role`` (viewer, content-manager,
+    full-manager, …). When ``role`` is absent, classic manage_users /
+    manage_records flags are mapped via ``classic_perms_to_nsf_role``.
+    """
     from ..nested_share_folder.folder_api import grant_folder_access_v3
+    from ..nested_share_folder.permissions import resolve_role_name
 
     default_role = classic_perms_to_nsf_role(
         manage_users, manage_records, can_edit, can_share)
@@ -386,12 +392,27 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
         )
 
         for perm in fol.permissions or []:  # type: ImportPermission
-            role = classic_perms_to_nsf_role(
-                perm.manage_users if perm.manage_users is not None else False,
-                perm.manage_records if perm.manage_records is not None else False,
-            )
-            if role == 'viewer' and (manage_users or manage_records or can_edit or can_share):
-                role = folder_role if folder_role != 'viewer' else default_role
+            explicit_role = (getattr(perm, 'role', None) or '').strip()
+            if explicit_role:
+                try:
+                    resolve_role_name(explicit_role)
+                except ValueError as exc:
+                    logging.warning(
+                        'NSF permission for "%s" on "%s": %s',
+                        perm.name or perm.uid, fol.path or fol.uid, exc)
+                    continue
+                role = explicit_role.strip().lower().replace('_', '-')
+                if role == 'shared-manager':
+                    role = 'share-manager'
+                elif role == 'contributor':
+                    role = 'requestor'
+            else:
+                role = classic_perms_to_nsf_role(
+                    perm.manage_users if perm.manage_users is not None else False,
+                    perm.manage_records if perm.manage_records is not None else False,
+                )
+                if role == 'viewer' and (manage_users or manage_records or can_edit or can_share):
+                    role = folder_role if folder_role != 'viewer' else default_role
 
             name = perm.name or ''
             uid = perm.uid or ''

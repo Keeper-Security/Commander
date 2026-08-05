@@ -103,6 +103,7 @@ class Permission:
         self.name = None
         self.manage_users = None
         self.manage_records = None
+        self.role = None  # NSF role name: viewer, content-manager, full-manager, …
 
 
 class SharedFolder:

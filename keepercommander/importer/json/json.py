@@ -218,6 +218,9 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
                             if p.uid or p.name:
                                 p.manage_records = perm.get('manage_records') or False
                                 p.manage_users = perm.get('manage_users') or False
+                                role = perm.get('role')
+                                if isinstance(role, str) and role.strip():
+                                    p.role = role.strip()
                                 fol.permissions.append(p)
 
                 yield fol

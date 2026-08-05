@@ -179,7 +179,7 @@ class TestNsfImportHelpers(TestCase):
             self.assertEqual(kwargs.get('role'), 'content-manager')
             self.assertFalse(kwargs.get('as_team'))
 
-    def test_apply_nsf_folder_permissions_multiple_users_and_roles(self):
+    def test_apply_nsf_folder_permissions_explicit_role(self):
         params = mock.MagicMock()
         params.nested_share_folders = {
             'f1': {'name': 'Team', 'parent_uid': ''},
@@ -188,45 +188,50 @@ class TestNsfImportHelpers(TestCase):
         sf = SharedFolder()
         sf.uid = 'f1'
         sf.path = 'Team'
-        sf.manage_users = True
-        sf.manage_records = True
 
         viewer = Permission()
         viewer.name = 'viewer@example.com'
-        viewer.manage_users = False
-        viewer.manage_records = False
+        viewer.role = 'viewer'
 
         manager = Permission()
-        manager.name = 'manager@example.com'
-        manager.manage_users = True
-        manager.manage_records = True
+        manager.name = 'admin@example.com'
+        manager.role = 'full-manager'
 
-        team = Permission()
-        team.uid = 'teamUid12345678901234'
-        team.manage_records = True
-        team.manage_users = False
+        alias = Permission()
+        alias.name = 'editor@example.com'
+        alias.role = 'content_manager'  # underscore alias
 
-        sf.permissions = [viewer, manager, team]
+        sf.permissions = [viewer, manager, alias]
 
         with mock.patch(
             'keepercommander.nested_share_folder.folder_api.grant_folder_access_v3',
             return_value={'success': True},
         ) as grant_mock:
-            nsf_import.apply_nsf_folder_permissions(
-                params, [sf], manage_users=True, manage_records=True)
+            nsf_import.apply_nsf_folder_permissions(params, [sf])
             self.assertEqual(grant_mock.call_count, 3)
-            calls = grant_mock.call_args_list
-            # viewer with CLI defaults elevates to folder/default role
-            self.assertEqual(calls[0].args[2], 'viewer@example.com')
-            self.assertEqual(calls[0].kwargs.get('role'), 'full-manager')
-            self.assertFalse(calls[0].kwargs.get('as_team'))
-            # explicit full manager
-            self.assertEqual(calls[1].args[2], 'manager@example.com')
-            self.assertEqual(calls[1].kwargs.get('role'), 'full-manager')
-            # team UID treated as team
-            self.assertEqual(calls[2].args[2], 'teamUid12345678901234')
-            self.assertEqual(calls[2].kwargs.get('role'), 'content-manager')
-            self.assertTrue(calls[2].kwargs.get('as_team'))
+            roles = [c.kwargs.get('role') for c in grant_mock.call_args_list]
+            self.assertEqual(roles, ['viewer', 'full-manager', 'content-manager'])
+
+    def test_apply_nsf_folder_permissions_rejects_invalid_role(self):
+        params = mock.MagicMock()
+        params.nested_share_folders = {
+            'f1': {'name': 'Team', 'parent_uid': ''},
+        }
+
+        sf = SharedFolder()
+        sf.uid = 'f1'
+        sf.path = 'Team'
+        bad = Permission()
+        bad.name = 'user@example.com'
+        bad.role = 'superuser'
+        sf.permissions = [bad]
+
+        with mock.patch(
+            'keepercommander.nested_share_folder.folder_api.grant_folder_access_v3',
+            return_value={'success': True},
+        ) as grant_mock:
+            nsf_import.apply_nsf_folder_permissions(params, [sf])
+            grant_mock.assert_not_called()
 
 
 class TestJsonNsfPermissions(TestCase):
@@ -286,6 +291,27 @@ class TestJsonNsfPermissions(TestCase):
         self.assertEqual(folders[0].permissions[1].uid, 'teamUidABCDEFG0123456')
         self.assertTrue(folders[0].permissions[1].manage_users)
 
+    def test_json_loads_nsf_role_permissions(self):
+        sample = os.path.join(
+            os.path.dirname(__file__), '..', 'sample_data',
+            'import_nsf_permissions.json.txt')
+        if not os.path.isfile(sample):
+            self.skipTest('sample_data/import_nsf_permissions.json.txt missing')
+        importer = KeeperJsonImporter()
+        folders = [x for x in importer.do_import(sample) if isinstance(x, SharedFolder)]
+        self.assertGreaterEqual(len(folders), 1)
+        roles = []
+        for f in folders:
+            for p in f.permissions or []:
+                if p.role:
+                    roles.append(p.role)
+        self.assertIn('viewer', roles)
+        self.assertIn('full-manager', roles)
+        self.assertIn('content-manager', roles)
+        self.assertIn('share-manager', roles)
+        self.assertIn('content-share-manager', roles)
+        self.assertIn('requestor', roles)
+
     def test_sample_nsf_json_includes_permissions(self):
         sample = os.path.join(
             os.path.dirname(__file__), '..', 'sample_data', 'import_nsf.json.txt')
@@ -309,6 +335,51 @@ class TestImportNsfCliFlag(TestCase):
                 break
         self.assertIsNotNone(action)
         self.assertEqual(action.dest, 'use_nsf')
+
+    def test_nsf_does_not_prompt_for_classic_permissions(self):
+        from keepercommander.importer.commands import RecordImportCommand
+
+        params = mock.MagicMock()
+        params.enforcements = None
+        cmd = RecordImportCommand()
+        with mock.patch('keepercommander.importer.commands.user_choice') as choice_mock, \
+             mock.patch('keepercommander.importer.commands.imp_exp._import') as import_mock:
+            cmd.execute(
+                params,
+                format='json',
+                name='sample_data/import_nsf.json.txt',
+                use_nsf=True,
+                users_only=True,
+            )
+            choice_mock.assert_not_called()
+            import_mock.assert_called_once()
+            kwargs = import_mock.call_args.kwargs
+            self.assertFalse(kwargs.get('manage_users'))
+            self.assertFalse(kwargs.get('manage_records'))
+            self.assertFalse(kwargs.get('can_edit'))
+            self.assertFalse(kwargs.get('can_share'))
+
+    def test_classic_shared_still_prompts_for_permissions(self):
+        from keepercommander.importer.commands import RecordImportCommand
+
+        params = mock.MagicMock()
+        params.enforcements = None
+        cmd = RecordImportCommand()
+        with mock.patch('keepercommander.importer.commands.user_choice',
+                        return_value='a') as choice_mock, \
+             mock.patch('keepercommander.importer.commands.imp_exp._import') as import_mock:
+            cmd.execute(
+                params,
+                format='json',
+                name='sample_data/import.json.txt',
+                shared=True,
+            )
+            choice_mock.assert_called_once()
+            kwargs = import_mock.call_args.kwargs
+            self.assertTrue(kwargs.get('manage_users'))
+            self.assertTrue(kwargs.get('manage_records'))
+            self.assertTrue(kwargs.get('can_edit'))
+            self.assertTrue(kwargs.get('can_share'))
 
 
 class TestFilePathResolution(TestCase):
