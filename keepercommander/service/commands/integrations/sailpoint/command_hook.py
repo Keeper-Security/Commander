@@ -236,11 +236,8 @@ class SailPointCommandHook:
         share: ParsedShare,
         caps: SailPointCapabilities,
     ) -> Optional[Tuple[Any, int]]:
-        # Revoke/remove/owner must run through Commander so Service Mode returns the
-        # native error (e.g. User Not Found for Invited users). Only grant is deferred.
-        if not share.is_grant:
-            return None
-
+        # Capability gates apply to every share action (grant, owner, revoke, cancel,
+        # remove). Deferral below is grant-only for Invited users.
         if share.is_folder and not caps.allow_folders:
             return {
                 'status': 'error',
@@ -251,6 +248,10 @@ class SailPointCommandHook:
                 'status': 'error',
                 'error': 'SailPoint allow_records is disabled; share-record is not allowed.',
             }, 403
+
+        # Non-grant actions run through Commander (native errors, no pending queue).
+        if not share.is_grant:
+            return None
 
         deferred = [e for e in share.emails if self._user_status(params, e) != 'active']
         if not deferred:

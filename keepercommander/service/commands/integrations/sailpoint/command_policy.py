@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import shlex
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from .....utils import is_email
 from .command_parse import SailPointCommandParser
@@ -23,35 +23,36 @@ from .constants import SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS
 _ENTERPRISE_ROLE_CMDS = frozenset({'enterprise-role', 'er'})
 _ENTERPRISE_USER_CMDS = frozenset({'enterprise-user', 'eu'})
 
-# Role create / destroy / membership / rename / enforcement — not allowed in SailPoint.
-_ER_BLOCKED_FLAGS = frozenset({
-    '--add',
-    '--copy',
-    '--clone',
-    '--delete',
-    '--name',
-    '--new-user',
-    '--enforcement',
-    '-au',
-    '--add-user',
-    '-ru',
-    '--remove-user',
-    '-at',
-    '--add-team',
-    '-rt',
-    '--remove-team',
+# Destinations SailPoint may set on enterprise-role (argparse dest names).
+# Anything else that resolves on the real parser is refused — spelling-independent.
+_ER_ALLOWED_DESTS = frozenset({
+    'role',
+    'force',
+    'verbose',
+    'format',
+    'output',
+    'node',
+    'cascade',
+    'add_admin',
+    'remove_admin',
+    'add_privilege',
+    'remove_privilege',
 })
-
-_ER_BLOCKED_PREFIXES = (
-    '--name=',
-    '--new-user=',
-    '--enforcement=',
-)
 
 _ER_ALLOWED_HINT = (
     '--add-admin, --remove-admin, --add-privilege, --remove-privilege '
     '(plus --node, --cascade, -f)'
 )
+
+
+def _arg_is_set(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, (list, tuple, set)):
+        return len(value) > 0
+    return True
 
 
 class SailPointCommandPolicy:
@@ -91,21 +92,36 @@ class SailPointCommandPolicy:
         """
         Restrict enterprise-role to admin/privilege ops only.
 
-        Returns an error message when blocked, or None when allowed
-        (including read-only ``enterprise-role <role>``).
+        Uses Commander's ``enterprise_role_parser`` so ``--add-user``,
+        ``--add-user=``, ``--add-us``, and ``-au=`` are treated identically.
         """
         tokens = SailPointCommandParser.tokenize(command)
         if not tokens or tokens[0].lower() not in _ENTERPRISE_ROLE_CMDS:
             return None
 
-        for token in tokens[1:]:
-            lower = token.lower()
-            if lower in _ER_BLOCKED_FLAGS or any(lower.startswith(p) for p in _ER_BLOCKED_PREFIXES):
+        from .....commands.enterprise import enterprise_role_parser
+
+        parsed = SailPointCommandParser.parse_known(enterprise_role_parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, unknown = parsed
+
+        for token in unknown:
+            if token.startswith('-'):
                 flag = token.split('=', 1)[0]
                 return (
                     f'SailPoint mode does not allow enterprise-role {flag}. '
                     f'Allowed: {_ER_ALLOWED_HINT}.'
                 )
+
+        for dest, value in vars(ns).items():
+            if dest in _ER_ALLOWED_DESTS or not _arg_is_set(value):
+                continue
+            flag = f'--{dest.replace("_", "-")}'
+            return (
+                f'SailPoint mode does not allow enterprise-role {flag}. '
+                f'Allowed: {_ER_ALLOWED_HINT}.'
+            )
         return None
 
     @classmethod
@@ -115,13 +131,17 @@ class SailPointCommandPolicy:
         if not tokens or tokens[0].lower() not in _ENTERPRISE_USER_CMDS:
             return None
 
-        for token in tokens[1:]:
-            # Exact flag only — do not match --delete-alias.
-            if token == '--delete' or token.startswith('--delete='):
-                return (
-                    'SailPoint mode does not allow enterprise-user --delete. '
-                    'Use transfer-user with the configured vault transfer target instead.'
-                )
+        from .....commands.enterprise import enterprise_user_parser
+
+        parsed = SailPointCommandParser.parse_known(enterprise_user_parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, _unknown = parsed
+        if ns.delete:
+            return (
+                'SailPoint mode does not allow enterprise-user --delete. '
+                'Use transfer-user with the configured vault transfer target instead.'
+            )
         return None
 
     @classmethod

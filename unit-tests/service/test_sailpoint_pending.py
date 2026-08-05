@@ -260,6 +260,13 @@ class SailPointPolicyTest(unittest.TestCase):
             "enterprise-role 'QA Role' --copy",
             "er 'QA Role' --name 'Renamed'",
             "er 'QA Role' --enforcement restrict_sharing:true",
+            # Equals / abbrev / short= forms must resolve the same as blocked long flags.
+            "enterprise-role 'QA Role' --add-user=user@co.com",
+            "enterprise-role 'QA Role' --add-us user@co.com",
+            "enterprise-role 'QA Role' -au=user@co.com",
+            "enterprise-role 'QA Role' --dele -f",
+            "enterprise-role 'QA Role' --nam=Pwned",
+            "enterprise-role 'QA Role' --enforce=restrict_sharing_all:true",
         ):
             err = SailPointCommandPolicy.validate_enterprise_role(cmd)
             self.assertIsNotNone(err, cmd)
@@ -678,6 +685,35 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         )
         self.assertIsNone(err)
 
+    def test_capability_gates_catch_abbreviated_flags(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        roles_off = SailPointCapabilities(allow_roles=False, allow_teams=True)
+        err = SailPointCommandHook._check_capability_gates(
+            'enterprise-user user@co.com --add-rol Admin', roles_off
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('allow_roles', err)
+
+        teams_off = SailPointCapabilities(allow_roles=True, allow_teams=False)
+        err = SailPointCommandHook._check_capability_gates(
+            'enterprise-user user@co.com --add-tea Slack', teams_off
+        )
+        self.assertIsNotNone(err)
+        self.assertIn('allow_teams', err)
+
+        share = SailPointCommandParser.parse_share(
+            'share-record --emai attacker@co.com --write SOMERECORDUID'
+        )
+        self.assertIsNotNone(share)
+        self.assertEqual(share.emails, ['attacker@co.com'])
+        self.assertTrue(share.can_edit)
+
     def test_apply_skips_folders_and_records_when_disallowed(self):
         params = mock.Mock()
         params.enterprise = {
@@ -734,6 +770,83 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn('mix Active and non-Active', response['error'])
+
+    def test_share_capability_gates_apply_to_non_grant_actions(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        hook = SailPointCommandHook('cfg-uid')
+        params = mock.Mock()
+        records_off = SailPointCapabilities(allow_records=False, allow_folders=True)
+        folders_off = SailPointCapabilities(allow_records=True, allow_folders=False)
+        both_on = SailPointCapabilities(allow_records=True, allow_folders=True)
+
+        for cmd in (
+            'share-record -e user@co.com --action owner RECORD_UID',
+            'share-record -e user@co.com -a owner RECORD_UID',
+            'share-record -e user@co.com --action revoke RECORD_UID',
+            'share-record -e user@co.com --action cancel -f RECORD_UID',
+            'nsf-share-record -e user@co.com --action owner -r viewer RECORD_UID',
+        ):
+            share = SailPointCommandParser.parse_share(cmd)
+            self.assertIsNotNone(share, cmd)
+            self.assertFalse(share.is_grant, cmd)
+            response, status = hook._before_share(params, share, records_off)
+            self.assertEqual(status, 403, cmd)
+            self.assertIn('allow_records', response['error'], cmd)
+            self.assertIsNone(hook._before_share(params, share, both_on), cmd)
+
+        for cmd in (
+            'share-folder -e user@co.com --action remove FOLDER_UID',
+            'nsf-share-folder -e user@co.com --action remove FOLDER_UID',
+        ):
+            share = SailPointCommandParser.parse_share(cmd)
+            self.assertIsNotNone(share, cmd)
+            self.assertFalse(share.is_grant, cmd)
+            response, status = hook._before_share(params, share, folders_off)
+            self.assertEqual(status, 403, cmd)
+            self.assertIn('allow_folders', response['error'], cmd)
+            self.assertIsNone(hook._before_share(params, share, both_on), cmd)
+
+    def test_non_grant_share_never_queues_for_invited_user(self):
+        """Revoke/owner/remove must pass through to Commander, not pending entitlements."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.pending_store import (
+            SailPointPendingStore,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'invited@co.com', 'node_id': 1, 'status': 'invited'}],
+            'nodes': [{'node_id': 1}],
+            'scims': [],
+        }
+        hook = SailPointCommandHook('cfg-uid')
+        caps = SailPointCapabilities(allow_records=True, allow_folders=True)
+
+        with mock.patch.object(SailPointPendingStore, 'update') as update:
+            for cmd in (
+                'share-record -e invited@co.com --action revoke RECORD_UID',
+                'share-record -e invited@co.com --action owner RECORD_UID',
+                'share-record -e invited@co.com --action cancel -f RECORD_UID',
+                'share-folder -e invited@co.com --action remove FOLDER_UID',
+                'nsf-share-record -e invited@co.com --action owner -r viewer RECORD_UID',
+                'nsf-share-folder -e invited@co.com --action remove FOLDER_UID',
+            ):
+                share = SailPointCommandParser.parse_share(cmd)
+                self.assertIsNotNone(share, cmd)
+                self.assertFalse(share.is_grant, cmd)
+                self.assertIsNone(hook._before_share(params, share, caps), cmd)
+            update.assert_not_called()
 
     def test_before_command_injects_transfer_target(self):
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (
