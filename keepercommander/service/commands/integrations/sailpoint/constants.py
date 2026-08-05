@@ -26,6 +26,7 @@ ALLOW_FOLDERS_FIELD = 'allow_folders'
 ALLOW_RECORDS_FIELD = 'allow_records'
 ALLOW_ROLES_FIELD = 'allow_roles'
 ALLOW_TEAMS_FIELD = 'allow_teams'
+TRANSFER_TARGET_EMAIL_FIELD = 'transfer_target_email'
 POLL_INTERVAL_FIELD = 'poll_interval_seconds'
 
 DEFAULT_POLL_INTERVAL_SECONDS = 60
@@ -37,8 +38,8 @@ SAILPOINT_ALLOWED_COMMANDS = (
     'enterprise-info',
     'enterprise-user',
     'enterprise-role',
-    'er',
     'enterprise-down',
+    'transfer-user',
     'share-folder',
     'share-record',
     'nsf-share-folder',

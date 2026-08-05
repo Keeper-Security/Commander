@@ -130,6 +130,7 @@ class SailPointConfig:
     allow_records: bool = True
     allow_roles: bool = True
     allow_teams: bool = True
+    transfer_target_email: str = ''
     # Keep in sync with sailpoint.constants.DEFAULT_POLL_INTERVAL_SECONDS
     poll_interval_seconds: int = 60
 
