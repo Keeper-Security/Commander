@@ -322,6 +322,27 @@ class TestEnterprise(TestCase):
         arr.sort()
         self.assertListEqual(arr, [0, 1, 2, 3, 4, 5, 6, 7])
 
+    def test_audit_report_sox_fetch_uses_freshness_when_record_details_allowed(self):
+        params = mock.Mock()
+        cmd = aram.AuditReportCommand()
+        cmd.allow_sox_data_fetch = True
+        sox_data = mock.Mock()
+        before = int(datetime.now().timestamp())
+        with mock.patch('keepercommander.commands.aram.is_compliance_reporting_enabled', return_value=True), \
+                mock.patch('keepercommander.commands.aram.get_compliance_data', return_value=sox_data) as mock_get:
+            self.assertIs(cmd.get_sox_data(params), sox_data)
+        min_updated = mock_get.call_args.kwargs.get('min_updated')
+        self.assertGreaterEqual(min_updated, before)
+
+    def test_audit_report_sox_fetch_uses_cache_only_by_default(self):
+        params = mock.Mock()
+        cmd = aram.AuditReportCommand()
+        sox_data = mock.Mock()
+        with mock.patch('keepercommander.commands.aram.is_compliance_reporting_enabled', return_value=True), \
+                mock.patch('keepercommander.commands.aram.get_compliance_data', return_value=sox_data) as mock_get:
+            self.assertIs(cmd.get_sox_data(params), sox_data)
+        self.assertEqual(mock_get.call_args.kwargs.get('min_updated'), 0)
+
     def test_enterprise_push_command(self):
         params = get_connected_params()
         api.query_enterprise(params)
