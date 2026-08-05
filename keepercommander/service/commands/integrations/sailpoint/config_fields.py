@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 from .....params import KeeperParams
 from .constants import (
@@ -24,6 +25,7 @@ from .constants import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     POLL_INTERVAL_FIELD,
+    TRANSFER_TARGET_EMAIL_FIELD,
 )
 
 _TRUE_VALUES = frozenset({'true', '1', 'yes', 'y', 'on'})
@@ -32,12 +34,13 @@ _FALSE_VALUES = frozenset({'false', '0', 'no', 'n', 'off'})
 
 @dataclass(frozen=True)
 class SailPointCapabilities:
-    """Share and identity entitlement gates (nodes are never gated)."""
+    """Runtime SailPoint config: entitlement gates plus transfer target."""
 
     allow_folders: bool = True
     allow_records: bool = True
     allow_roles: bool = True
     allow_teams: bool = True
+    transfer_target_email: str = ''
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS
 
 
@@ -55,6 +58,17 @@ def parse_bool(raw, default: bool = True) -> bool:
     return default
 
 
+def _custom_field_value(by_label: dict, label: str) -> Optional[str]:
+    field = by_label.get(label)
+    if not field:
+        return None
+    value = field.get_default_value()
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def read_capabilities(params: KeeperParams, record_uid: str) -> SailPointCapabilities:
     from ..... import vault
 
@@ -66,17 +80,13 @@ def read_capabilities(params: KeeperParams, record_uid: str) -> SailPointCapabil
     by_label = {field.label: field for field in record.custom if field.label}
 
     def _bool_field(label: str) -> bool:
-        field = by_label.get(label)
-        return parse_bool(field.get_default_value() if field else None, default=True)
+        return parse_bool(_custom_field_value(by_label, label), default=True)
 
     interval = DEFAULT_POLL_INTERVAL_SECONDS
-    interval_field = by_label.get(POLL_INTERVAL_FIELD)
-    if interval_field:
+    raw_interval = _custom_field_value(by_label, POLL_INTERVAL_FIELD)
+    if raw_interval:
         try:
-            interval = max(
-                MIN_POLL_INTERVAL_SECONDS,
-                int(interval_field.get_default_value() or interval),
-            )
+            interval = max(MIN_POLL_INTERVAL_SECONDS, int(raw_interval))
         except (TypeError, ValueError):
             pass
 
@@ -85,5 +95,6 @@ def read_capabilities(params: KeeperParams, record_uid: str) -> SailPointCapabil
         allow_records=_bool_field(ALLOW_RECORDS_FIELD),
         allow_roles=_bool_field(ALLOW_ROLES_FIELD),
         allow_teams=_bool_field(ALLOW_TEAMS_FIELD),
+        transfer_target_email=_custom_field_value(by_label, TRANSFER_TARGET_EMAIL_FIELD) or '',
         poll_interval_seconds=interval,
     )
