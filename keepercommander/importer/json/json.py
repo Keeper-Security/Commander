@@ -203,7 +203,9 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
                 fol.manage_users = shf.get('manage_users') or False
                 fol.can_edit = shf.get('can_edit') or False
                 fol.can_share = shf.get('can_share') or False
-                if users_only and 'permissions' in shf:
+                # Always parse user/team permissions. Classic shared folders apply
+                # them with --users; NSF applies them during --nsf import.
+                if 'permissions' in shf:
                     fol.permissions = []
                     permissions = shf['permissions']
                     if not isinstance(permissions, list):
