@@ -1212,7 +1212,8 @@ class AuditReportCommand(Command):
 
     def get_sox_data(self, params):
         if not self.sox_data and is_compliance_reporting_enabled(params):
-            self.sox_data = get_compliance_data(params, 0, 0,False, min_updated=0, no_cache=False)
+            min_updated = int(datetime.datetime.now().timestamp()) if self.allow_sox_data_fetch else 0
+            self.sox_data = get_compliance_data(params, 0, 0, False, min_updated=min_updated, no_cache=False)
         return self.sox_data
 
     def get_value(self, params, field, event):
