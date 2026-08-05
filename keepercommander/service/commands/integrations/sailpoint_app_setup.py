@@ -18,9 +18,11 @@ from dataclasses import asdict
 from .... import vault
 from ....display import bcolors
 from ....error import CommandError
+from ....utils import is_email
 from ...docker import DockerComposeBuilder, DockerSetupPrinter, SailPointConfig, SetupResult, ServiceConfig
 from .integration_setup_base import IntegrationSetupCommand
 from .sailpoint.command_policy import SailPointCommandPolicy
+from .sailpoint.config_fields import read_capabilities
 from .sailpoint.constants import (
     ALLOW_FOLDERS_FIELD,
     ALLOW_RECORDS_FIELD,
@@ -33,6 +35,7 @@ from .sailpoint.constants import (
     POLL_INTERVAL_FIELD,
     SAILPOINT_MARKER_FIELD,
     SAILPOINT_RECORD_ENV,
+    TRANSFER_TARGET_EMAIL_FIELD,
 )
 from .sailpoint.pending_store import SailPointPendingStore
 
@@ -57,7 +60,7 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
     def get_service_commands(self) -> str:
         return SailPointCommandPolicy.default_allowlist()
 
-    def collect_integration_config(self, params):
+    def collect_integration_config(self, params, transfer_target_default: str = ''):
         print(f"\n{bcolors.BOLD}SHARE ENTITLEMENTS:{bcolors.ENDC}")
         print(f"  Control which share entitlements SailPoint may manage via Service Mode")
         allow_folders = self._prompt_yes_no('Allow folder shares?', default=True)
@@ -67,6 +70,10 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
         print(f"  Control whether SailPoint may assign roles/teams via enterprise-user")
         allow_roles = self._prompt_yes_no('Allow role assignment?', default=True)
         allow_teams = self._prompt_yes_no('Allow team assignment?', default=True)
+
+        print(f"\n{bcolors.BOLD}VAULT TRANSFER TARGET:{bcolors.ENDC}")
+        print(f"  Active user that receives vault data when SailPoint offboards via transfer-user")
+        transfer_target_email = self._prompt_transfer_target_email(transfer_target_default)
 
         print(f"\n{bcolors.BOLD}POLL INTERVAL:{bcolors.ENDC}")
         print(f"  How often (seconds) to check whether invited users have become Active")
@@ -93,8 +100,27 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
             allow_records=allow_records,
             allow_roles=allow_roles,
             allow_teams=allow_teams,
+            transfer_target_email=transfer_target_email,
             poll_interval_seconds=interval,
         )
+
+    def _prompt_transfer_target_email(self, default: str = '') -> str:
+        default = (default or '').strip()
+        while True:
+            if default:
+                prompt = (
+                    f"{bcolors.OKBLUE}Transfer target email "
+                    f"[Press Enter for {default}]:{bcolors.ENDC} "
+                )
+            else:
+                prompt = f"{bcolors.OKBLUE}Transfer target email (required):{bcolors.ENDC} "
+            value = input(prompt).strip() or default
+            if value and is_email(value):
+                return value
+            print(
+                f"{bcolors.FAIL}Error: Enter a valid email address"
+                f"{' or press Enter to keep the current value' if default else ''}{bcolors.ENDC}"
+            )
 
     def build_record_custom_fields(self, config):
         return [
@@ -111,6 +137,9 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
             vault.TypedField.new_field(
                 'text', 'true' if config.allow_teams else 'false', ALLOW_TEAMS_FIELD
             ),
+            vault.TypedField.new_field(
+                'text', config.transfer_target_email, TRANSFER_TARGET_EMAIL_FIELD
+            ),
             vault.TypedField.new_field('text', str(config.poll_interval_seconds), POLL_INTERVAL_FIELD),
             vault.TypedField.new_field('text', json.dumps({}), PENDING_ENTITLEMENTS_FIELD),
         ]
@@ -120,7 +149,11 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
                                record_name: str):
         """Create/update dedicated SailPoint config record (not the Docker config record)."""
         DockerSetupPrinter.print_header('SailPoint Configuration')
-        config = self.collect_integration_config(params)
+        existing_uid = self._find_record_in_folder(params, setup_result.folder_uid, record_name)
+        transfer_default = ''
+        if existing_uid:
+            transfer_default = read_capabilities(params, existing_uid).transfer_target_email
+        config = self.collect_integration_config(params, transfer_target_default=transfer_default)
 
         DockerSetupPrinter.print_step(1, 2, f"Creating SailPoint config record '{record_name}'...")
         custom_fields = self.build_record_custom_fields(config)
@@ -178,6 +211,9 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
         print(f"    • Allow Records: {bcolors.OKBLUE}{config.allow_records}{bcolors.ENDC}")
         print(f"    • Allow Roles: {bcolors.OKBLUE}{config.allow_roles}{bcolors.ENDC}")
         print(f"    • Allow Teams: {bcolors.OKBLUE}{config.allow_teams}{bcolors.ENDC}")
+        print(
+            f"    • Transfer Target: {bcolors.OKBLUE}{config.transfer_target_email}{bcolors.ENDC}"
+        )
         print(f"    • Poll Interval: {bcolors.OKBLUE}{config.poll_interval_seconds}s{bcolors.ENDC}")
         print(f"    • Pending JSON field: {bcolors.OKBLUE}{PENDING_ENTITLEMENTS_FIELD}{bcolors.ENDC}")
         print(f"    • Env key: {bcolors.OKBLUE}{self.get_record_env_key()}{bcolors.ENDC}")
@@ -188,4 +224,6 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
         print(f"    Invite now; role/team queued until the user is Active")
         print(f"  {bcolors.OKGREEN}• share-record -e user@co.com RECORD_UID{bcolors.ENDC}")
         print(f"  {bcolors.OKGREEN}• share-folder -e user@co.com FOLDER_UID{bcolors.ENDC}")
-        print(f"    Queued while invited; applied after activation\n")
+        print(f"    Queued while invited; applied after activation")
+        print(f"  {bcolors.OKGREEN}• transfer-user 'leaving@co.com' -f{bcolors.ENDC}")
+        print(f"    Transfers vault to the configured target, then removes the leaving user\n")

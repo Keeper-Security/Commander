@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 _NSF_FOLDER = frozenset({'nsf-share-folder'})
 _NSF_RECORD = frozenset({'nsf-share-record'})
 _FOLDER_CMDS = frozenset({'share-folder', 'nsf-share-folder'})
 _RECORD_CMDS = frozenset({'share-record', 'nsf-share-record'})
 _EU_CMDS = frozenset({'enterprise-user', 'eu'})
-_INVITE_FLAGS = frozenset({'--invite', '--add'})
+_TRANSFER_CMDS = frozenset({'transfer-user', 'tu'})
 
 
 @dataclass
@@ -69,8 +69,17 @@ class ParsedIdentityMutation:
     has_node_change: bool = False
 
 
+@dataclass
+class ParsedTransfer:
+    """transfer-user offboard request (target comes from SailPoint config)."""
+
+    emails: List[str] = field(default_factory=list)
+    has_target_user: bool = False
+    has_force: bool = False
+
+
 class SailPointCommandParser:
-    """Parse enterprise-user invite and share-* command strings."""
+    """Parse SailPoint Service Mode commands via Commander's argparse parsers."""
 
     @staticmethod
     def tokenize(command: str) -> List[str]:
@@ -80,112 +89,55 @@ class SailPointCommandParser:
             return command.split()
 
     @staticmethod
-    def _matches_flag(token: str, *names: str) -> bool:
-        """True for ``--flag``, ``-f``, or ``--flag=value`` forms."""
-        for name in names:
-            if token == name:
-                return True
-            if name.startswith('--') and token.startswith(f'{name}='):
-                return True
-        return False
+    def parse_known(parser, argv: Sequence[str]) -> Optional[Tuple[Any, List[str]]]:
+        """Parse with a Commander parser; None when argparse rejects the argv."""
+        from .....commands.base import ParseError
 
-    @staticmethod
-    def _one_flag_value(token: str, tokens: List[str], index: int) -> Tuple[Optional[str], int]:
-        """
-        Match Commander argparse append flags (one value per flag):
-          --add-role R1
-          --add-role=R1
-        """
-        if '=' in token:
-            return token.split('=', 1)[1], index + 1
-        if index + 1 < len(tokens) and not tokens[index + 1].startswith('-'):
-            return tokens[index + 1], index + 2
-        return None, index + 1
-
-    @staticmethod
-    def _skip_unknown_flag(tokens: List[str], index: int) -> int:
-        """Advance past an unrecognized flag and an optional value token."""
-        token = tokens[index]
-        if '=' in token:
-            return index + 1
-        if index + 1 < len(tokens) and not tokens[index + 1].startswith('-'):
-            return index + 2
-        return index + 1
-
-    @classmethod
-    def _append_flag_value(
-        cls,
-        token: str,
-        tokens: List[str],
-        index: int,
-        dest: List[str],
-    ) -> int:
-        value, next_i = cls._one_flag_value(token, tokens, index)
-        if value is not None:
-            dest.append(value)
-        return next_i
+        try:
+            ns, unknown = parser.parse_known_args(list(argv))
+            return ns, list(unknown)
+        except ParseError:
+            return None
 
     @classmethod
     def parse_invite(cls, command: str) -> Optional[ParsedInvite]:
         tokens = cls.tokenize(command)
-        if not tokens or tokens[0] not in _EU_CMDS:
+        if not tokens or tokens[0].lower() not in _EU_CMDS:
             return None
 
-        parsed = ParsedInvite()
-        emails: List[str] = []
-        i = 1
-        while i < len(tokens):
-            t = tokens[i]
-            if t in _INVITE_FLAGS:
-                parsed.is_invite = True
-                i += 1
-            elif cls._matches_flag(t, '--node', '-n'):
-                value, i = cls._one_flag_value(t, tokens, i)
-                if value is not None:
-                    parsed.node = value
-            elif cls._matches_flag(t, '--add-role'):
-                i = cls._append_flag_value(t, tokens, i, parsed.roles)
-            elif cls._matches_flag(t, '--add-team'):
-                i = cls._append_flag_value(t, tokens, i, parsed.teams)
-            elif t.startswith('-'):
-                i = cls._skip_unknown_flag(tokens, i)
-            else:
-                if '@' in t:
-                    emails.append(t)
-                i += 1
+        from .....commands.enterprise import enterprise_user_parser
 
-        parsed.emails = emails
-        return parsed if parsed.is_invite else None
+        parsed = cls.parse_known(enterprise_user_parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, _unknown = parsed
+        if not (ns.invite or ns.add):
+            return None
+        emails = [e for e in (ns.email or []) if isinstance(e, str) and '@' in e]
+        return ParsedInvite(
+            emails=emails,
+            node=ns.node,
+            roles=list(ns.add_role or []),
+            teams=list(ns.add_team or []),
+            is_invite=True,
+        )
 
     @classmethod
     def parse_identity_mutation(cls, command: str) -> Optional[ParsedIdentityMutation]:
         tokens = cls.tokenize(command)
-        if not tokens or tokens[0] not in _EU_CMDS:
+        if not tokens or tokens[0].lower() not in _EU_CMDS:
             return None
 
-        emails: List[str] = []
-        has_role = False
-        has_team = False
-        has_node = False
-        i = 1
-        while i < len(tokens):
-            t = tokens[i]
-            if cls._matches_flag(t, '--add-role', '--remove-role'):
-                has_role = True
-                _, i = cls._one_flag_value(t, tokens, i)
-            elif cls._matches_flag(t, '--add-team', '--remove-team'):
-                has_team = True
-                _, i = cls._one_flag_value(t, tokens, i)
-            elif cls._matches_flag(t, '--node', '-n'):
-                has_node = True
-                _, i = cls._one_flag_value(t, tokens, i)
-            elif t.startswith('-'):
-                i = cls._skip_unknown_flag(tokens, i)
-            else:
-                if '@' in t:
-                    emails.append(t)
-                i += 1
+        from .....commands.enterprise import enterprise_user_parser
 
+        parsed = cls.parse_known(enterprise_user_parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, _unknown = parsed
+        emails = [e for e in (ns.email or []) if isinstance(e, str) and '@' in e]
+        has_role = bool(ns.add_role or ns.remove_role)
+        has_team = bool(ns.add_team or ns.remove_team)
+        has_node = bool(ns.node)
         if not (has_role or has_team or has_node) or not emails:
             return None
         return ParsedIdentityMutation(
@@ -196,59 +148,88 @@ class SailPointCommandParser:
         )
 
     @classmethod
+    def parse_transfer(cls, command: str) -> Optional[ParsedTransfer]:
+        tokens = cls.tokenize(command)
+        if not tokens or tokens[0].lower() not in _TRANSFER_CMDS:
+            return None
+
+        from .....commands.transfer_account import transfer_user_parser
+
+        parsed = cls.parse_known(transfer_user_parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, _unknown = parsed
+        return ParsedTransfer(
+            emails=[e for e in (ns.email or []) if isinstance(e, str) and '@' in e],
+            has_target_user=bool(ns.target_user),
+            has_force=bool(ns.force),
+        )
+
+    @classmethod
     def parse_share(cls, command: str) -> Optional[ParsedShare]:
         tokens = cls.tokenize(command)
         if not tokens:
             return None
-        name = tokens[0]
+        name = tokens[0].lower()
         if name not in _FOLDER_CMDS and name not in _RECORD_CMDS:
             return None
 
-        parsed = ParsedShare(
-            command=name,
-            is_folder=name in _FOLDER_CMDS,
-            is_record=name in _RECORD_CMDS,
-            is_nsf=name in _NSF_FOLDER or name in _NSF_RECORD,
-        )
-        i = 1
-        positional: List[str] = []
-        while i < len(tokens):
-            t = tokens[i]
-            if cls._matches_flag(t, '-e', '--email'):
-                value, i = cls._one_flag_value(t, tokens, i)
-                if value:
-                    parsed.emails.append(value)
-            elif cls._matches_flag(t, '-a', '--action'):
-                value, i = cls._one_flag_value(t, tokens, i)
-                parsed.action = (value or 'grant').strip().lower() or 'grant'
-            elif t in ('-w', '--write'):
-                parsed.can_edit = True
-                i += 1
-            elif t in ('-s', '--share') and parsed.is_record:
-                parsed.can_share = True
-                i += 1
-            elif cls._matches_flag(t, '-p', '--manage-records'):
-                value, i = cls._one_flag_value(t, tokens, i)
-                if value is not None:
-                    parsed.manage_records = value
-            elif cls._matches_flag(t, '-o', '--manage-users'):
-                value, i = cls._one_flag_value(t, tokens, i)
-                if value is not None:
-                    parsed.manage_users = value
-            elif cls._matches_flag(t, '-r', '--role') and parsed.is_nsf:
-                value, i = cls._one_flag_value(t, tokens, i)
-                if value is not None:
-                    parsed.nsf_role = value
-            elif t.startswith('-'):
-                i = cls._skip_unknown_flag(tokens, i)
-            else:
-                positional.append(t)
-                i += 1
+        parser = cls._share_parser(name)
+        if parser is None:
+            return None
+        parsed = cls.parse_known(parser, tokens[1:])
+        if not parsed:
+            return None
+        ns, _unknown = parsed
 
-        if parsed.is_record:
-            if positional:
-                parsed.targets = [positional[-1]]
+        is_folder = name in _FOLDER_CMDS
+        is_record = name in _RECORD_CMDS
+        is_nsf = name in _NSF_FOLDER or name in _NSF_RECORD
+
+        if is_record:
+            emails = list(getattr(ns, 'email', None) or [])
+            record = getattr(ns, 'record', None)
+            targets = [record] if record else []
         else:
-            parsed.targets = list(positional)
+            emails = list(getattr(ns, 'user', None) or [])
+            folder = getattr(ns, 'folder', None) or []
+            targets = list(folder) if isinstance(folder, list) else ([folder] if folder else [])
 
-        return parsed if parsed.emails and parsed.targets else None
+        if not emails or not targets:
+            return None
+
+        action = (getattr(ns, 'action', None) or 'grant').strip().lower() or 'grant'
+        result = ParsedShare(
+            command=name,
+            emails=emails,
+            targets=targets,
+            action=action,
+            is_folder=is_folder,
+            is_record=is_record,
+            is_nsf=is_nsf,
+        )
+        if is_nsf:
+            result.nsf_role = getattr(ns, 'role', None)
+        elif is_record:
+            result.can_edit = bool(getattr(ns, 'can_edit', False))
+            result.can_share = bool(getattr(ns, 'can_share', False))
+        else:
+            result.manage_records = getattr(ns, 'manage_records', None)
+            result.manage_users = getattr(ns, 'manage_users', None)
+        return result
+
+    @staticmethod
+    def _share_parser(name: str):
+        if name == 'share-record':
+            from .....commands.register import share_record_parser
+            return share_record_parser
+        if name == 'share-folder':
+            from .....commands.register import share_folder_parser
+            return share_folder_parser
+        if name == 'nsf-share-record':
+            from .....commands.nested_share_folder.parsers import nested_share_record_share_parser
+            return nested_share_record_share_parser
+        if name == 'nsf-share-folder':
+            from .....commands.nested_share_folder.parsers import nested_share_folder_share_parser
+            return nested_share_folder_share_parser
+        return None
