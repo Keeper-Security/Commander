@@ -20,6 +20,8 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `service-config-add` | Add new API configuration and command access settings |
 | `service-docker-setup` | Automated Docker service mode setup with KSM configuration |
 | `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
+| `teams-app-setup` | Automated Teams App integration setup with Commander Service Mode |
+| `gchat-app-setup` | Automated Google Chat App integration setup with Commander Service Mode |
 
 ### Security Features
 - API key authentication
@@ -499,6 +501,60 @@ This automates the complete setup for Slack App integration:
 - Optional SSO Cloud Device Approval
 
 The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.
+
+### Google Chat App Integration Setup
+
+For integrating Commander Service Mode with Google Chat, use the `gchat-app-setup` command:
+
+```bash
+My Vault> gchat-app-setup
+```
+
+This automates the complete setup for Google Chat App integration:
+- **Phase 1**: Runs Docker setup (same as `service-docker-setup`)
+- **Phase 2**: Configures Google Chat App integration
+  - Collects service account JSON (Pub/Sub + Chat API worker credentials)
+  - Collects Google Project ID (defaults from the service account JSON when omitted)
+  - Collects Pub/Sub Topic ID, Subscription ID, Approvals Space ID, and slash command IDs
+  - Creates Google Chat configuration record
+  - Updates `docker-compose.yml` with Google Chat App service
+  - Supports optional EPM and Device Approval integrations
+
+**Configuration Options:**
+- Port selection (default: 8900)
+- Ngrok/Cloudflare tunneling for public URL exposure
+- Google Chat service account / Pub/Sub / space credentials
+- Optional EPM integration
+- Optional SSO Cloud Device Approval
+
+The command generates a complete `docker-compose.yml` with both Commander service and Google Chat App service configured.
+
+**Vault config record fields** (read by the Google Chat app via KSM / `GCHAT_RECORD`):
+
+| Field label | Type | Description |
+|-------------|------|-------------|
+| `google_service_account_json` | secret | Full GCP service account JSON (Pub/Sub + Chat API) |
+| `google_project_id` | text | GCP project ID |
+| `google_topic_id` | text | Pub/Sub topic ID (short form) |
+| `google_subscription_id` | text | Pub/Sub subscription ID (short form) |
+| `chat_approvals_space_id` | text | Google Chat space ID (`spaces/...`) |
+| `chat_command_request_record_id` | text | Slash command ID for `/keeper-request-record` |
+| `chat_command_request_folder_id` | text | Slash command ID for `/keeper-request-folder` |
+| `chat_command_one_time_share_id` | text | Slash command ID for `/keeper-one-time-share` |
+| `pedm_enabled` | text | `true` / `false` |
+| `pedm_polling_interval` | text | Seconds |
+| `device_approval_enabled` | text | `true` / `false` |
+| `device_approval_polling_interval` | text | Seconds |
+
+**Generated compose environment for the Google Chat service:**
+
+| Env var | Value |
+|---------|-------|
+| `KSM_CONFIG` | Base64 KSM config |
+| `COMMANDER_RECORD` | Commander Docker config record UID |
+| `GCHAT_RECORD` | Google Chat config record UID |
+
+Image name used in compose: `keeper/gchat-app:latest`.
 
 ---
 

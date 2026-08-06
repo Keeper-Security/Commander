@@ -14,7 +14,10 @@ from ..service.commands.config_operation import AddConfigService
 from ..service.commands.handle_service import StartService, StopService, ServiceStatus
 from ..service.commands.service_docker_setup import ServiceDockerSetupCommand
 from ..service.commands.integrations import (
-    SlackAppSetupCommand, TeamsAppSetupCommand, SailPointAppSetupCommand,
+    GChatAppSetupCommand,
+    SlackAppSetupCommand,
+    TeamsAppSetupCommand,
+    SailPointAppSetupCommand,
 )
 
 def register_commands(commands):
@@ -27,6 +30,7 @@ def register_commands(commands):
     commands['slack-app-setup'] = SlackAppSetupCommand()
     commands['teams-app-setup'] = TeamsAppSetupCommand()
     commands['sailpoint-app-setup'] = SailPointAppSetupCommand()
+    commands['gchat-app-setup'] = GChatAppSetupCommand()
 
 def register_command_info(aliases, command_info):
     service_classes = [
@@ -39,6 +43,7 @@ def register_command_info(aliases, command_info):
         SlackAppSetupCommand,
         TeamsAppSetupCommand,
         SailPointAppSetupCommand,
+        GChatAppSetupCommand,
     ]
     
     for service_class in service_classes:
