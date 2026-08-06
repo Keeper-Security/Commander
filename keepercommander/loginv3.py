@@ -1155,7 +1155,7 @@ class LoginV3API:
         return api.communicate_rest(params, rq, 'login/account_summary', rs_type=AccountSummary_pb2.AccountSummaryElements)
 
     @staticmethod
-    def loginToMc(rest_context, session_token, mc_id):
+    def loginToMc(rest_context, session_token, mc_id):   # type: (Any, str, int) -> enterprise_pb2.LoginToMcResponse
 
         endpoint = 'authentication/login_to_mc'
 
