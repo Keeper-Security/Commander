@@ -650,7 +650,7 @@ class SuperShellApp(App):
             # Call get_whoami_info directly - returns dict without printing
             data = WhoamiCommand.get_whoami_info(self.params)
 
-            # Add enterprise license info if available (similar to whoami --json)
+            # Add enterprise license info if available (similar to whoami --format json)
             if self.params.enterprise:
                 enterprise_licenses = []
                 for x in self.params.enterprise.get('licenses', []):

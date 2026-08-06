@@ -1990,6 +1990,8 @@ trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', h
 
 
 trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record')
+trash_get_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json'],
+                              default='detail', help='output format')
 trash_get_parser.add_argument('record', action='store', help='Deleted record UID')
 
 trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records')
@@ -2308,13 +2310,20 @@ class TrashGetCommand(Command, TrashMixin):
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
         orphaned_records = self.get_orphaned_records(params)
+        fmt = kwargs.get('format') or 'detail'
         if len(deleted_records) == 0 and len(orphaned_records) == 0:
-            logging.info('Trash is empty')
+            if fmt == 'json':
+                print(json.dumps({'message': 'Trash is empty'}, indent=2))
+            else:
+                logging.info('Trash is empty')
             return
 
         record_uid = kwargs.get('record')
         if not record_uid:
-            logging.info('Record UID parameter is required')
+            if fmt == 'json':
+                print(json.dumps({'message': 'Record UID parameter is required'}, indent=2))
+            else:
+                logging.info('Record UID parameter is required')
             return
 
         is_shared = False
@@ -2323,12 +2332,68 @@ class TrashGetCommand(Command, TrashMixin):
             rec = orphaned_records.get(record_uid)
             is_shared = True
         if not rec:
-            logging.info('%s is not a valid deleted record UID', record_uid)
+            message = f'{record_uid} is not a valid deleted record UID'
+            if fmt == 'json':
+                print(json.dumps({'message': message}, indent=2))
+            else:
+                logging.info('%s is not a valid deleted record UID', record_uid)
             return
 
         record = vault.KeeperRecord.load(params, rec)
         if not record:
-            logging.info('Cannot restore record %s', record_uid)
+            message = f'Cannot restore record {record_uid}'
+            if fmt == 'json':
+                print(json.dumps({'message': message}, indent=2))
+            else:
+                logging.info('Cannot restore record %s', record_uid)
+            return
+
+        if fmt == 'json':
+            payload = {
+                'record_uid': record.record_uid,
+                'title': record.title,
+                'record_type': record.record_type,
+                'status': 'Share' if is_shared else 'Record',
+                'fields': {},
+            }
+            for name, value in record.enumerate_fields():
+                if value:
+                    if isinstance(value, list):
+                        payload['fields'][name] = value
+                    elif len(value) > 100:
+                        payload['fields'][name] = value[:99] + '...'
+                    else:
+                        payload['fields'][name] = value
+
+            if is_shared:
+                if 'shares' not in rec:
+                    rec['shares'] = {}
+                    shares = api.get_record_shares(params, (record_uid,), True)
+                    if isinstance(shares, list):
+                        record_shares = next(
+                            (x.get('shares') for x in shares if x.get('record_uid') == record_uid), None)
+                        if isinstance(record_shares, dict):
+                            rec['shares'] = record_shares
+
+                user_shares = []
+                if 'shares' in rec and 'user_permissions' in rec['shares']:
+                    for uo in rec['shares']['user_permissions']:
+                        if uo.get('owner'):
+                            continue
+                        flags = []
+                        if uo.get('editable'):
+                            flags.append('Can Edit')
+                        if uo.get('shareable'):
+                            flags.append('Can Share')
+                        user_shares.append({
+                            'username': uo.get('username'),
+                            'permissions': ' & '.join(flags) if flags else 'Read Only',
+                            'self': uo.get('username') == params.user,
+                        })
+                if user_shares:
+                    payload['direct_user_shares'] = user_shares
+
+            print(json.dumps(payload, indent=2, default=base.json_serialized))
             return
 
         for name, value in record.enumerate_fields():

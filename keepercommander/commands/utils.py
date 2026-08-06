@@ -232,7 +232,8 @@ sync_down_parser.add_argument('-f', '--force', dest='force', action='store_true'
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the current user')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-whoami_parser.add_argument('--json', dest='json_output', action='store_true', help='output in JSON format')
+whoami_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'], default='text',
+                           help='output format (default: text)')
 whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
@@ -1265,8 +1266,87 @@ class WhoamiCommand(Command):
         return whoami_parser
 
     @staticmethod
+    def _enterprise_license_info(license_entry):
+        """Build a JSON-serializable dict for one enterprise license entry."""
+        license_info = {}
+        product_type_id = license_entry.get('product_type_id', 0)
+        tier = license_entry.get('tier', 0)
+        if product_type_id in (3, 5):
+            plan = 'Enterprise' if tier == 1 else 'Business'
+        elif product_type_id in (9, 10):
+            distributor = license_entry.get('distributor', False)
+            plan = 'Distributor' if distributor else 'Managed MSP'
+        elif product_type_id in (11, 12):
+            plan = 'Keeper MSP'
+        elif product_type_id == 8:
+            plan = 'MC ' + ('Enterprise' if tier == 1 else 'Business')
+        else:
+            plan = 'Unknown'
+        if product_type_id in (5, 10, 12):
+            plan += ' Trial'
+        license_info['base_plan'] = plan
+
+        paid = license_entry.get('paid') is True
+        if paid:
+            exp = license_entry.get('expiration')
+            try:
+                exp_seconds = int(exp) // 1000
+            except (TypeError, ValueError):
+                exp_seconds = 0
+            if exp_seconds > 0:
+                try:
+                    dt = datetime.datetime.fromtimestamp(exp_seconds)
+                except (OSError, OverflowError, ValueError):
+                    try:
+                        dt = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=exp_seconds)
+                    except (OverflowError, ValueError):
+                        dt = None
+                if dt:
+                    dt = dt + datetime.timedelta(days=1)
+                    n = datetime.datetime.now()
+                    td = (dt - n).days
+                    expires = str(dt.date())
+                    if td > 0:
+                        expires += f' (in {td} days)'
+                    else:
+                        expires += ' (expired)'
+                    license_info['license_expires'] = expires
+
+        seats_plan = license_entry.get('number_of_seats', '')
+        if isinstance(seats_plan, int) and seats_plan >= 2147483647:
+            seats_plan = 'Unlimited'
+        license_info['user_licenses'] = {
+            'plan': seats_plan,
+            'active': license_entry.get('seats_allocated', ''),
+            'invited': license_entry.get('seats_pending', ''),
+        }
+
+        file_plan = license_entry.get('file_plan')
+        file_plan_lookup = {fp[0]: fp[2] for fp in constants.ENTERPRISE_FILE_PLANS}
+        license_info['secure_file_storage'] = file_plan_lookup.get(file_plan, '')
+
+        addons = []
+        addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
+        for ao in license_entry.get('add_ons') or []:
+            if isinstance(ao, dict) and ao.get('enabled') is True:
+                name = ao.get('name')
+                addon_name = addon_lookup.get(name) or name
+                if name == 'secrets_manager':
+                    api_count = ao.get('api_call_count')
+                    if isinstance(api_count, int) and api_count > 0:
+                        addon_name += f' ({api_count:,} API calls)'
+                elif name == 'connection_manager':
+                    seats = ao.get('seats')
+                    if isinstance(seats, int) and seats > 0:
+                        addon_name += f' ({seats} licenses)'
+                addons.append(addon_name)
+        if addons:
+            license_info['add_ons'] = addons
+        return license_info
+
+    @staticmethod
     def get_whoami_info(params: KeeperParams, verbose: bool = False):
-        """Get whoami info as a dictionary (for programmatic use)"""
+        """Get whoami info as a dictionary (for programmatic use and --format json)."""
         data = {}
 
         if params.session_token:
@@ -1312,6 +1392,14 @@ class WhoamiCommand(Command):
                 team_count = len(params.team_cache)
                 if team_count > 0:
                     data['teams_count'] = team_count
+
+            if params.enterprise:
+                enterprise_licenses = [
+                    WhoamiCommand._enterprise_license_info(x)
+                    for x in params.enterprise.get('licenses', [])
+                ]
+                if enterprise_licenses:
+                    data['enterprise_licenses'] = enterprise_licenses
         else:
             data['logged_in'] = False
             data['message'] = 'Not logged in'
@@ -1319,133 +1407,10 @@ class WhoamiCommand(Command):
         return data
 
     def execute(self, params, **kwargs):
-        json_output = kwargs.get('json_output', False)
         verbose = kwargs.get('verbose', False)
-        
-        if json_output:
-            # Collect data for JSON output
-            data = {}
-            
-            if params.session_token:
-                data['logged_in'] = True
-                hostname = get_hostname(params.rest_context.server_base)
-                data['user'] = params.user
-                data['server'] = hostname
-                data['data_center'] = get_data_center(hostname)
-                
-                environment = get_environment(hostname)
-                if environment:
-                    data['environment'] = environment
-                
-                if params.license:
-                    account_type = params.license['account_type'] if 'account_type' in params.license else None
-                    if account_type == 2:
-                        data['admin'] = params.enterprise is not None
-                    
-                    account_type_name = 'Enterprise' if account_type == 2 \
-                        else 'Family Plan' if account_type == 1 \
-                        else params.license['product_type_name']
-                    data['account_type'] = account_type_name
-                    data['renewal_date'] = params.license['expiration_date']
-                    
-                    if 'bytes_total' in params.license:
-                        storage_bytes = int(params.license['bytes_total'])
-                        storage_gb = storage_bytes >> 30
-                        storage_bytes_used = params.license['bytes_used'] if 'bytes_used' in params.license else 0
-                        data['storage_capacity'] = f'{storage_gb}GB'
-                        storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0
-                        data['storage_usage'] = f'{storage_usage}%'
-                        data['storage_renewal_date'] = params.license['storage_expiration_date']
-                    
-                    data['breachwatch'] = params.license.get('breach_watch_enabled', False)
-                    if params.enterprise:
-                        data['reporting_and_alerts'] = params.license.get('audit_and_reporting_enabled', False)
 
-                if verbose:
-                    data['records_count'] = len(params.record_cache)
-                    sf_count = len(params.shared_folder_cache)
-                    if sf_count > 0:
-                        data['shared_folders_count'] = sf_count
-                    team_count = len(params.team_cache)
-                    if team_count > 0:
-                        data['teams_count'] = team_count
-
-                if params.enterprise:
-                    enterprise_licenses = []
-                    for x in params.enterprise.get('licenses', []):
-                        license_info = {}
-                        product_type_id = x.get('product_type_id', 0)
-                        tier = x.get('tier', 0)
-                        if product_type_id in (3, 5):
-                            plan = 'Enterprise' if tier == 1 else 'Business'
-                        elif product_type_id in (9, 10):
-                            distributor = x.get('distributor', False)
-                            plan = 'Distributor' if distributor else 'Managed MSP'
-                        elif product_type_id in (11, 12):
-                            plan = 'Keeper MSP'
-                        elif product_type_id == 8:
-                            plan = 'MC ' + 'Enterprise' if tier == 1 else 'Business'
-                        else:
-                            plan = 'Unknown'
-                        if product_type_id in (5, 10, 12):
-                            plan += ' Trial'
-                        license_info['base_plan'] = plan
-                        
-                        paid = x.get('paid') is True
-                        if paid:
-                            exp = x.get('expiration')
-                            if exp > 0:
-                                dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
-                                n = datetime.datetime.now()
-                                td = (dt - n).days
-                                expires = str(dt.date())
-                                if td > 0:
-                                    expires += f' (in {td} days)'
-                                else:
-                                    expires += ' (expired)'
-                                license_info['license_expires'] = expires
-                        
-                        license_info['user_licenses'] = {
-                            'plan': x.get("number_of_seats", ""),
-                            'active': x.get("seats_allocated", ""),
-                            'invited': x.get("seats_pending", "")
-                        }
-                        
-                        file_plan = x.get('file_plan')
-                        file_plan_lookup = {x[0]: x[2] for x in constants.ENTERPRISE_FILE_PLANS}
-                        license_info['secure_file_storage'] = file_plan_lookup.get(file_plan, '')
-                        
-                        addons = []
-                        addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
-                        for ao in x.get('add_ons'):
-                            if isinstance(ao, dict):
-                                enabled = ao.get('enabled') is True
-                                if enabled:
-                                    name = ao.get('name')
-                                    addon_name = addon_lookup.get(name) or name
-                                    if name == 'secrets_manager':
-                                        api_count = ao.get('api_call_count')
-                                        if isinstance(api_count, int) and api_count > 0:
-                                            addon_name += f' ({api_count:,} API calls)'
-                                    elif name == 'connection_manager':
-                                        seats = ao.get('seats')
-                                        if isinstance(seats, int) and seats > 0:
-                                            addon_name += f' ({seats} licenses)'
-                                    addons.append(addon_name)
-                        if addons:
-                            license_info['add_ons'] = addons
-                        
-                        enterprise_licenses.append(license_info)
-                    
-                    if enterprise_licenses:
-                        data['enterprise_licenses'] = enterprise_licenses
-            else:
-                data['logged_in'] = False
-                data['message'] = 'Not logged in'
-            
-            # Output JSON
-            import json
-            print(json.dumps(data, indent=2))
+        if kwargs.get('format') == 'json':
+            print(json.dumps(self.get_whoami_info(params, verbose=verbose), indent=2))
         else:
             # Clean formatted output
             DIM = Fore.WHITE

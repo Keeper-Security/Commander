@@ -824,7 +824,7 @@ class KeeperResponseParser:
         Returns:
             Dict[str, Any]: Structured response with standard format
         """
-        # Extract base command by removing --format=json or --format json
+        # Extract base command by removing --format json
         if ' --format=json' in command:
             base_command = command.split(' --format=json')[0]
         elif ' --format json' in command:

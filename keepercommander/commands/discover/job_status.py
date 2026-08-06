@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import json
 import logging
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import router_get_connected_gateways
@@ -48,6 +49,8 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                         help='Show history')
     parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
                         action='store', help='PAM configuration UID is using --history')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                        default='table', help='Output format (table, json)')
 
     def get_parser(self):
         return PAMGatewayActionDiscoverJobStatusCommand.parser
@@ -155,9 +158,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         print("")
 
     @staticmethod
-    def print_job_detail(params: KeeperParams,
-                         all_gateways: List,
-                         job_id: str):
+    def _build_job_detail(params: KeeperParams,
+                          all_gateways: List,
+                          job_id: str) -> Optional[Dict]:
 
         def _find_job(configuration_record) -> Optional[Dict]:
             jobs_obj = Jobs(record=configuration_record, params=params)
@@ -172,96 +175,162 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                                                                find_func=_find_job,
                                                                gateways=all_gateways)
 
-        if gateway_context is not None:
-            jobs = payload["jobs"]
-            job = jobs.get_job(job_id)  # type: JobItem
-            infra = Infrastructure(record=gateway_context.configuration, params=params)
+        if gateway_context is None:
+            return None
 
-            color = bcolors.OKBLUE
-            status = "RUNNING"
-            if job.end_ts is not None and not job.error:
-                if job.success is None:
-                    color = bcolors.WHITE
-                    status = "CANCELLED"
+        jobs = payload["jobs"]
+        job = jobs.get_job(job_id)
+        infra = Infrastructure(record=gateway_context.configuration, params=params)
+
+        status = "RUNNING"
+        if job.end_ts is not None and not job.error:
+            if job.success is None:
+                status = "CANCELLED"
+            else:
+                status = "COMPLETE"
+        elif job.error:
+            status = "FAILED"
+
+        detail = {
+            "job_id": job.job_id,
+            "sync_point": job.sync_point,
+            "gateway": gateway_context.gateway_name,
+            "gateway_uid": gateway_context.gateway_uid,
+            "configuration_uid": gateway_context.configuration_uid,
+            "status": status,
+            "resource_uid": job.resource_uid or "",
+            "started": job.start_ts_str or "",
+            "completed": job.end_ts_str or "",
+            "duration": job.duration_sec_str or "",
+        }
+
+        if status == "FAILED":
+            detail["error"] = job.error
+            detail["stacktrace"] = job.stacktrace
+        elif job.end_ts is not None:
+            try:
+                infra.load(sync_point=0)
+                delta_json = job.delta
+                if delta_json is not None:
+                    delta = DiscoveryDelta.model_validate(delta_json)
+                    added = []
+                    for item in delta.added:
+                        vertex = infra.dag.get_vertex(item.uid)
+                        if vertex is None or vertex.active is False or vertex.has_data is False:
+                            logging.debug("added: vertex is none, inactive or has no data")
+                            continue
+                        discovery_object = DiscoveryObject.get_discovery_object(vertex)
+                        added.append({
+                            "uid": item.uid,
+                            "description": discovery_object.description,
+                        })
+
+                    changed = []
+                    for item in delta.changed:
+                        vertex = infra.dag.get_vertex(item.uid)
+                        if vertex is None or vertex.active is False or vertex.has_data is False:
+                            logging.debug("changed: vertex is none, inactive or has no data")
+                            continue
+                        discovery_object = DiscoveryObject.get_discovery_object(vertex)
+                        changed.append({
+                            "uid": item.uid,
+                            "description": discovery_object.description,
+                            "changes": item.changes,
+                        })
+
+                    deleted = [{"uid": item.uid} for item in delta.deleted]
+                    detail["delta"] = {
+                        "added": added,
+                        "changed": changed,
+                        "deleted": deleted,
+                    }
                 else:
-                    color = bcolors.OKGREEN
-                    status = "COMPLETE"
-            elif job.error:
-                color = bcolors.FAIL
-                status = "FAILED"
-
-            color_status = f"{color}{status}{bcolors.ENDC}"
-
-            print("")
-            print(f"{_h('Job ID')}: {job.job_id}")
-            print(f"{_h('Sync Point')}: {job.sync_point}")
-            print(f"{_h('Gateway Name')}: {gateway_context.gateway_name}")
-            print(f"{_h('Gateway UID')}: {gateway_context.gateway_uid}")
-            print(f"{_h('Configuration UID')}: {gateway_context.configuration_uid}")
-            print(f"{_h('Status')}: {color_status}")
-            print(f"{_h('Resource UID')}: {job.resource_uid or 'NA'}")
-            print(f"{_h('Started')}: {job.start_ts_str}")
-            print(f"{_h('Completed')}: {job.end_ts_str}")
-            print(f"{_h('Duration')}: {job.duration_sec_str}")
-
-            # If it failed, show the error and stacktrace.
-            if status == "FAILED":
-                print("")
-                print(f"{_h('Gateway Error')}:")
-                print(f"{color}{job.error}{bcolors.ENDC}")
-                print("")
-                print(f"{_h('Gateway Stacktrace')}:")
-                print(f"{color}{job.stacktrace}{bcolors.ENDC}")
-            # If it finished, show information about what was discovered.
-            elif job.end_ts is not None:
-
+                    detail["delta"] = None
+                    detail["message"] = "There are no available delta changes for this job."
+            except Exception as err:
+                detail["delta_error"] = str(err)
                 try:
-                    infra.load(sync_point=0)
-                    print("")
-                    delta_json = job.delta
-                    if delta_json is not None:
-                        delta = DiscoveryDelta.model_validate(delta_json)
-                        print(f"{_h('Added')} - {len(delta.added)} count")
-                        for item in delta.added:
-                            vertex = infra.dag.get_vertex(item.uid)
-                            if vertex is None or vertex.active is False or vertex.has_data is False:
-                                logging.debug("added: vertex is none, inactive or has no data")
-                                continue
-                            discovery_object = DiscoveryObject.get_discovery_object(vertex)
-                            print(f"  * {discovery_object.description}")
-
-                        print("")
-                        print(f"{_h('Changed')} - {len(delta.changed)} count")
-                        for item in delta.changed:
-                            vertex = infra.dag.get_vertex(item.uid)
-                            if vertex is None or vertex.active is False or vertex.has_data is False:
-                                logging.debug("changed: vertex is none, inactive or has no data")
-                                continue
-                            discovery_object = DiscoveryObject.get_discovery_object(vertex)
-                            print(f"  * {discovery_object.description}")
-                            if item.changes is None:
-                                print("    no changed, may be a object not added in prior discoveries.")
-                            else:
-                                for key, value in item.changes.items():
-                                    print(f"    - {key} = {value}")
-
-                        print("")
-                        print(f"{_h('Deleted')} - {len(delta.deleted)} count")
-                        for item in delta.deleted:
-                            print(f"  * discovery vertex {item.uid}")
-                    else:
-                        print(f"{_f('There are no available delta changes for this job.')}")
-
-                except Exception as err:
-                    print(f"{_f('Could not load delta from infrastructure: ' + str(err))}")
-                    print("Fall back to raw graph.")
-                    print("")
                     dag = DAG(conn=infra.conn, record=infra.record,
                               graph_id=PamGraphId.INFRASTRUCTURE)
-                    print(dag.to_dot_raw(sync_point=job.sync_point, rank_dir="RL"))
+                    detail["raw_graph_dot"] = dag.to_dot_raw(sync_point=job.sync_point, rank_dir="RL")
+                except Exception:
+                    pass
 
-        else:
+        return detail
+
+    @staticmethod
+    def print_job_detail(params: KeeperParams,
+                         all_gateways: List,
+                         job_id: str):
+
+        detail = PAMGatewayActionDiscoverJobStatusCommand._build_job_detail(
+            params=params, all_gateways=all_gateways, job_id=job_id)
+
+        if detail is None:
             print(f"{bcolors.FAIL}Could not find the gateway with job {job_id}.")
+            return
+
+        status = detail["status"]
+        color = bcolors.OKBLUE
+        if status == "CANCELLED":
+            color = bcolors.WHITE
+        elif status == "COMPLETE":
+            color = bcolors.OKGREEN
+        elif status == "FAILED":
+            color = bcolors.FAIL
+
+        color_status = f"{color}{status}{bcolors.ENDC}"
+
+        print("")
+        print(f"{_h('Job ID')}: {detail['job_id']}")
+        print(f"{_h('Sync Point')}: {detail['sync_point']}")
+        print(f"{_h('Gateway Name')}: {detail['gateway']}")
+        print(f"{_h('Gateway UID')}: {detail['gateway_uid']}")
+        print(f"{_h('Configuration UID')}: {detail['configuration_uid']}")
+        print(f"{_h('Status')}: {color_status}")
+        print(f"{_h('Resource UID')}: {detail['resource_uid'] or 'NA'}")
+        print(f"{_h('Started')}: {detail['started']}")
+        print(f"{_h('Completed')}: {detail['completed']}")
+        print(f"{_h('Duration')}: {detail['duration']}")
+
+        if status == "FAILED":
+            print("")
+            print(f"{_h('Gateway Error')}:")
+            print(f"{color}{detail.get('error')}{bcolors.ENDC}")
+            print("")
+            print(f"{_h('Gateway Stacktrace')}:")
+            print(f"{color}{detail.get('stacktrace')}{bcolors.ENDC}")
+        elif detail.get("completed"):
+            if detail.get("delta_error"):
+                print(f"{_f('Could not load delta from infrastructure: ' + detail['delta_error'])}")
+                if detail.get("raw_graph_dot"):
+                    print("Fall back to raw graph.")
+                    print("")
+                    print(detail["raw_graph_dot"])
+            elif detail.get("delta") is None:
+                print("")
+                print(f"{_f(detail.get('message') or 'There are no available delta changes for this job.')}")
+            else:
+                delta = detail["delta"]
+                print("")
+                print(f"{_h('Added')} - {len(delta['added'])} count")
+                for item in delta["added"]:
+                    print(f"  * {item['description']}")
+
+                print("")
+                print(f"{_h('Changed')} - {len(delta['changed'])} count")
+                for item in delta["changed"]:
+                    print(f"  * {item['description']}")
+                    if item.get("changes") is None:
+                        print("    no changed, may be a object not added in prior discoveries.")
+                    else:
+                        for key, value in item["changes"].items():
+                            print(f"    - {key} = {value}")
+
+                print("")
+                print(f"{_h('Deleted')} - {len(delta['deleted'])} count")
+                for item in delta["deleted"]:
+                    print(f"  * discovery vertex {item['uid']}")
 
     def execute(self, params, **kwargs):
 
@@ -277,6 +346,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         # Show the history for the gateway.
         # gateway_filter needs to be set for
         show_history = kwargs.get("show_history")
+        format_type = kwargs.get("format") or "table"
 
         # Get all the gateways here so we don't have to keep calling this method.
         # It gets passed into find_gateway, and find_gateway will pass it around.
@@ -292,6 +362,19 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
 
         # If we have a job id, only display information about the one job
         if job_id:
+            if format_type == "json":
+                detail = self._build_job_detail(params=params,
+                                                all_gateways=all_gateways,
+                                                job_id=job_id)
+                if detail is None:
+                    print(json.dumps({
+                        "job": None,
+                        "message": f"Could not find the gateway with job {job_id}."
+                    }, indent=2))
+                else:
+                    print(json.dumps({"job": detail}, indent=2))
+                return
+
             self.print_job_detail(params=params,
                                   all_gateways=all_gateways,
                                   job_id=job_id)
@@ -301,6 +384,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
 
             # Based on parameters set by user, select specific jobs to be displayed.
             selected_jobs = []  # type: List[Dict]
+            json_jobs = []  # type: List[Dict]
 
             # For each configuration/ gateway, we are going to get all jobs.
             # We are going to query the gateway for any updated status.
@@ -357,10 +441,29 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                         job["status"] = "FAILED"
 
                     selected_jobs.append(job)
+                    json_jobs.append({
+                        "job_id": job_item.job_id,
+                        "gateway": gateway_context.gateway_name,
+                        "gateway_uid": gateway_context.gateway_uid,
+                        "configuration_uid": gateway_context.configuration_uid,
+                        "status": job["status"],
+                        "resource_uid": getattr(job_item, "resource_uid", None) or "",
+                        "started": job_item.start_ts_str if job_item.start_ts is not None else "",
+                        "completed": job_item.end_ts_str if job_item.end_ts is not None else "",
+                        "duration": job_item.duration_sec_str,
+                    })
 
             if len(selected_jobs) == 0:
-                print(f"{bcolors.FAIL}There are no discovery jobs. Use 'pam action discover start' to start a "
-                      f"discovery job.{bcolors.ENDC}")
+                message = ("There are no discovery jobs. Use 'pam action discover start' to start a "
+                           "discovery job.")
+                if format_type == "json":
+                    print(json.dumps({"jobs": [], "message": message}, indent=2))
+                else:
+                    print(f"{bcolors.FAIL}{message}{bcolors.ENDC}")
+                return
+
+            if format_type == "json":
+                print(json.dumps({"jobs": json_jobs}, indent=2))
                 return
 
             self.print_job_table(jobs=selected_jobs,
