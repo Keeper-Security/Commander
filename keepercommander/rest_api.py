@@ -227,6 +227,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
         elif rs.status_code >= 400:
             if content_type.startswith('application/json'):
                 failure = rs.json()
+                if isinstance(failure, list):
+                    failure = failure[0] if failure else {}
                 logging.debug('<<< Response Error: [%s]', failure)
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
@@ -252,7 +254,7 @@ def execute_rest(context, endpoint, payload, timeout=None):
                                 context.server_key_id = server_key_id
                             run_request = True
                             continue
-                elif rs.status_code == 403:
+                elif rs.status_code in (403, 429):
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
                         throttle_retries += 1
                         if throttle_retries > max_throttle_retries:
