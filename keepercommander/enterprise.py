@@ -161,10 +161,14 @@ class _EnterpriseLoader(object):
                 rq.enterprisePublicKey = rsa_public_key
                 rq.encryptedEnterprisePrivateKey = rsa_encrypted_private_key
                 rq.keyType = proto.RSA
-                api.communicate_rest(params, rq, 'enterprise/set_enterprise_key_pair')
-                self._enterprise._rsa_key = rsa_private_key
-                keys['rsa_public_key'] = utils.base64_url_encode(rsa_public_key)
-                keys['rsa_encrypted_private_key'] = utils.base64_url_encode(rsa_encrypted_private_key)
+                try:
+                    api.communicate_rest(params, rq, 'enterprise/set_enterprise_key_pair')
+                    self._enterprise._rsa_key = rsa_private_key
+                    keys['rsa_public_key'] = utils.base64_url_encode(rsa_public_key)
+                    keys['rsa_encrypted_private_key'] = utils.base64_url_encode(rsa_encrypted_private_key)
+                except:
+                    logging.info('Failed to set enterprise RSA key')
+                    pass
 
             if 'ecc_encrypted_private_key' not in keys:
                 ec_private, ec_public = crypto.generate_ec_key()
