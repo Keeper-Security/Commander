@@ -75,7 +75,7 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
         except ImportError:
             raise CommandError(
                 'azure-secrets-import',
-                'azure-identity is required. Install it with: pip install keeper-commander[azure]'
+                'azure-identity is required. Install it with: pip install keepercommander[azure]'
             )
 
         if tenant_id and client_id and client_secret:
@@ -110,7 +110,7 @@ class AzureSecretsImportCommand(Command, CloudImportMixin):
         except ImportError:
             raise CommandError(
                 'azure-secrets-import',
-                'azure-keyvault-secrets is required. Install it with: pip install keeper-commander[azure]'
+                'azure-keyvault-secrets is required. Install it with: pip install keepercommander[azure]'
             )
         vault_url = f'https://{vault_name}.vault.azure.net/'
         return SecretClient(vault_url=vault_url, credential=credential)
