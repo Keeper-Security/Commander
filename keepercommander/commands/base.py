@@ -203,6 +203,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import enterprise_reports
     enterprise_reports.register_commands(commands)
     enterprise_reports.register_command_info(aliases, command_info)
+    from . import cspm
+    cspm.register_commands(commands)
+    cspm.register_command_info(aliases, command_info)
     from .risk_management import RiskManagementReportCommand
     commands['risk-management'] = RiskManagementReportCommand()
     command_info['risk-management'] = 'Risk Management Reports'
