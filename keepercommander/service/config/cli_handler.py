@@ -41,21 +41,35 @@ class CommandHandler:
 
     @debug_decorator
     def find_config_record(self, params: KeeperParams, title: str) -> Optional[str]:
-        """Find existing config record by exact title match using vault search."""
+        """Find owned config record by exact title match using vault search.
+
+        Only records owned by the current account are eligible. Shared or
+        non-owned records (even with a matching title) are ignored so that
+        service configuration cannot be supplied or overwritten by another user.
+        """
         try:
             from ... import vault_extensions
             
             logger.debug(f"Searching for record with exact title: '{title}'")
             records = list(vault_extensions.find_records(params, title))
             
-            # Filter to exact title match only
             for record in records:
                 logger.debug(f"Checking record: '{record.title}' (UID: {record.record_uid})")
-                if record.title == title:
-                    logger.debug(f"✓ Found exact title match: '{title}' (UID: {record.record_uid})")
-                    return record.record_uid
+                if record.title != title:
+                    continue
+
+                owner = (params.record_owner_cache or {}).get(record.record_uid)
+                if not owner or not owner.owner:
+                    logger.debug(
+                        f"Skipping non-owned config record '{title}' "
+                        f"(UID: {record.record_uid})"
+                    )
+                    continue
+
+                logger.debug(f"✓ Found owned exact title match: '{title}' (UID: {record.record_uid})")
+                return record.record_uid
             
-            logger.debug(f"✗ No record found with exact title: '{title}'")
+            logger.debug(f"✗ No owned record found with exact title: '{title}'")
             return None
             
         except Exception as e:
