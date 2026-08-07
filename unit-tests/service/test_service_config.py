@@ -161,3 +161,55 @@ class TestServiceConfig(unittest.TestCase):
         mock_record_handler.update_or_add_record.assert_called_once_with(
             params, self.service_config.title, self.service_config.config_path
         )
+
+
+class TestFindConfigRecordOwnership(unittest.TestCase):
+    """Service config records must be owned by the current account."""
+
+    TITLE = 'Commander Service Mode Config'
+
+    def _make_record(self, uid, title=None):
+        record = MagicMock()
+        record.record_uid = uid
+        record.title = title or self.TITLE
+        return record
+
+    @patch('keepercommander.vault_extensions.find_records')
+    def test_skips_non_owned_record(self, mock_find):
+        from keepercommander.params import RecordOwner
+        from keepercommander.service.config.cli_handler import CommandHandler
+
+        shared = self._make_record('SHARED_UID')
+        owned = self._make_record('OWNED_UID')
+        mock_find.return_value = [shared, owned]
+
+        params = MagicMock(spec=KeeperParams)
+        params.record_owner_cache = {
+            'SHARED_UID': RecordOwner(False, 'attacker'),
+            'OWNED_UID': RecordOwner(True, 'operator'),
+        }
+
+        self.assertEqual(CommandHandler().find_config_record(params, self.TITLE), 'OWNED_UID')
+
+    @patch('keepercommander.vault_extensions.find_records')
+    def test_returns_none_when_only_shared_match(self, mock_find):
+        from keepercommander.params import RecordOwner
+        from keepercommander.service.config.cli_handler import CommandHandler
+
+        mock_find.return_value = [self._make_record('SHARED_UID')]
+        params = MagicMock(spec=KeeperParams)
+        params.record_owner_cache = {
+            'SHARED_UID': RecordOwner(False, 'attacker'),
+        }
+
+        self.assertIsNone(CommandHandler().find_config_record(params, self.TITLE))
+
+    @patch('keepercommander.vault_extensions.find_records')
+    def test_returns_none_when_owner_cache_missing(self, mock_find):
+        from keepercommander.service.config.cli_handler import CommandHandler
+
+        mock_find.return_value = [self._make_record('UNKNOWN_UID')]
+        params = MagicMock(spec=KeeperParams)
+        params.record_owner_cache = {}
+
+        self.assertIsNone(CommandHandler().find_config_record(params, self.TITLE))
