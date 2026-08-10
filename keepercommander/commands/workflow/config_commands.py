@@ -22,7 +22,13 @@ from ...params import KeeperParams
 from ...proto import workflow_pb2
 from ... import utils
 
-from .helpers import RecordResolver, ProtobufRefBuilder, WorkflowFormatter, sanitize_router_error
+from .helpers import (
+    RecordResolver,
+    ProtobufRefBuilder,
+    WorkflowFormatter,
+    sanitize_router_error,
+    ensure_can_configure_workflow_settings,
+)
 
 
 def _add_approvers_to_workflow(params, record_uid, record_name,
@@ -89,6 +95,10 @@ class WorkflowCreateCommand(Command):
         return WorkflowCreateCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        # Defense in depth: registry also gates admin verbs after refreshing
+        # enforcements. Re-check here so direct execute() cannot skip the policy.
+        ensure_can_configure_workflow_settings(params, refresh=True, action='create')
+
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         RecordResolver.validate_workflow_record_type(record)
         record_uid_bytes = utils.base64_url_decode(record_uid)
@@ -376,6 +386,8 @@ class WorkflowUpdateCommand(Command):
         return WorkflowUpdateCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        ensure_can_configure_workflow_settings(params, refresh=True, action='update')
+
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
 
@@ -456,6 +468,8 @@ class WorkflowDeleteCommand(Command):
         return WorkflowDeleteCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        ensure_can_configure_workflow_settings(params, refresh=True, action='delete')
+
         record_uid, record = RecordResolver.resolve(params, kwargs.get('record'))
         record_uid_bytes = utils.base64_url_decode(record_uid)
         ref = ProtobufRefBuilder.record_ref(record_uid_bytes, record.title)
@@ -511,6 +525,8 @@ class WorkflowAddApproversCommand(Command):
         return WorkflowAddApproversCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        ensure_can_configure_workflow_settings(params, refresh=True, action='add-approver')
+
         users = list(dict.fromkeys(
             u.strip() for u in (kwargs.get('user') or []) if u and u.strip()
         ))
@@ -582,6 +598,8 @@ class WorkflowDeleteApproversCommand(Command):
         return WorkflowDeleteApproversCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        ensure_can_configure_workflow_settings(params, refresh=True, action='remove-approver')
+
         users = kwargs.get('user') or []
         teams = kwargs.get('team') or []
 
