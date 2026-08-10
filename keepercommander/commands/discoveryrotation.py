@@ -433,12 +433,13 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command', 'r')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details', 'ji')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
-        self.register_command('job-list', PAMCmdListJobs(), 'List discovery jobs', 'jl')
         self.register_command('service', PAMActionServiceCommand(),
                               'Manage services and scheduled tasks user mappings.', 's')
         self.register_command('saas', PAMActionSaasCommand(),
                               'Manage user SaaS rotations.', 'sa')
         self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
+
+        # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
 
 
 class PAMDebugCommand(GroupCommand):
@@ -489,111 +490,29 @@ class PAMLegacyCommand(Command):
 
 class PAMCmdListJobs(Command):
     parser = argparse.ArgumentParser(prog='pam action job-list')
-    parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
-                        help='Show only discovery jobs from a specific gateway')
-    parser.add_argument('--history', required=False, dest='show_history', action='store_true',
-                        help='Show job history for the selected gateway')
-    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
-                        default='table', help='Output format (table, json)')
+    parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store', help='ID of the Job running')
 
     def get_parser(self):
         return PAMCmdListJobs.parser
 
     def execute(self, params, **kwargs):
-        from .discover import GatewayContext
-        from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
-        from ..discovery_common.jobs import Jobs
-        from .pam.router_helper import router_get_connected_gateways
+        if getattr(params, 'ws', None) is None:
+            logging.warning(f'Connection doesn\'t exist. Please connect to the router before executing '
+                            f'commands using following command {bcolors.OKGREEN}dr connect{bcolors.ENDC}')
 
-        if not hasattr(params, 'pam_controllers'):
-            router_get_connected_gateways(params)
-
-        gateway_filter = kwargs.get('gateway')
-        show_history = kwargs.get('show_history') is True
-        format_type = kwargs.get('format') or 'table'
-
-        # History requires a specific gateway filter.
-        if gateway_filter is None:
-            show_history = False
-
-        all_gateways = GatewayContext.all_gateways(params)
-        selected_jobs = []
-        max_gateway_name = 12
-
-        configuration_records = GatewayContext.get_configuration_records(params=params)
-        for configuration_record in configuration_records:
-            gateway_context = GatewayContext.from_configuration_uid(
-                params=params,
-                configuration_uid=configuration_record.record_uid,
-                gateways=all_gateways)
-            if gateway_context is None:
-                continue
-            if gateway_filter is not None and gateway_context.is_gateway(gateway_filter) is False:
-                continue
-
-            if len(gateway_context.gateway_name) > max_gateway_name:
-                max_gateway_name = len(gateway_context.gateway_name)
-
-            jobs = Jobs(record=configuration_record, params=params)
-            if show_history:
-                job_list = reversed(jobs.history)
-            else:
-                job_list = []
-                if jobs.current_job is not None:
-                    job_list = [jobs.current_job]
-
-            for job_item in job_list:
-                status = 'RUNNING'
-                if job_item.end_ts is not None:
-                    status = 'COMPLETE'
-                if job_item.success is None and job_item.end_ts:
-                    status = 'CANCELLED'
-                elif job_item.success is False:
-                    status = 'FAILED'
-
-                selected_jobs.append({
-                    'job_id': job_item.job_id,
-                    'gateway': gateway_context.gateway_name,
-                    'gateway_uid': gateway_context.gateway_uid,
-                    'configuration_uid': gateway_context.configuration_uid,
-                    'status': status,
-                    'resource_uid': getattr(job_item, 'resource_uid', None) or '',
-                    'started': job_item.start_ts_str if job_item.start_ts is not None else '',
-                    'completed': job_item.end_ts_str if job_item.end_ts is not None else '',
-                    'duration': job_item.duration_sec_str,
-                })
-
-        if not selected_jobs:
-            message = ("There are no discovery jobs. Use 'pam action discover start' to start a "
-                       "discovery job.")
-            if format_type == 'json':
-                print(json.dumps({'jobs': [], 'message': message}, indent=2))
-            else:
-                print(f"{bcolors.FAIL}{message}{bcolors.ENDC}")
             return
 
-        if format_type == 'json':
-            print(json.dumps({'jobs': selected_jobs}, indent=2))
-            return
+        destinations = kwargs.get('destinations', [])
 
-        # Reuse the existing discover-status table printer for consistent table output.
-        status_cmd = PAMGatewayActionDiscoverJobStatusCommand()
-        cooked = []
-        for job in selected_jobs:
-            cooked.append({
-                'job_id': job['job_id'],
-                'gateway': job['gateway'],
-                'gateway_uid': job['gateway_uid'],
-                'configuration_uid': job['configuration_uid'],
-                'status': job['status'],
-                'resource_uid': job['resource_uid'],
-                'start_ts_str': job['started'],
-                'end_ts_str': job['completed'],
-                'duration': job['duration'],
-            })
-        status_cmd.print_job_table(jobs=cooked,
-                                   max_gateway_name=max_gateway_name,
-                                   show_history=show_history)
+        action = kwargs.get('action', [])
+
+        command_payload = {
+            'action': action,
+            # 'args': command_arr[1:] if len(command_arr) > 1 else []
+            'kwargs': kwargs
+        }
+
+        params.ws.send(command_payload, destinations)
 
 
 class PAMCreateRecordRotationCommand(Command):

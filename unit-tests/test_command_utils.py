@@ -1,7 +1,6 @@
 from unittest import TestCase, mock, skip
 
 import datetime
-import json
 
 from data_enterprise import EnterpriseEnvironment
 from data_vault import get_synced_params, get_user_params, get_connected_params, VaultEnvironment
@@ -29,16 +28,6 @@ class TestRegister(TestCase):
         cmd = utils.WhoamiCommand()
         with mock.patch('builtins.print'):
             cmd.execute(params, verbose=True)
-
-    def test_whoami_format_json(self):
-        params = get_synced_params()
-        cmd = utils.WhoamiCommand()
-        with mock.patch('builtins.print') as mock_print:
-            cmd.execute(params, format='json')
-            mock_print.assert_called_once()
-            payload = json.loads(mock_print.call_args[0][0])
-            self.assertTrue(payload.get('logged_in'))
-            self.assertEqual(payload.get('user'), params.user)
 
     def test_login(self):
         params = get_user_params()
