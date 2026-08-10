@@ -19,6 +19,7 @@ from ..workflow.helpers import (
     RecordResolver,
     WorkflowFormatter,
     sanitize_router_error,
+    ensure_can_configure_workflow_settings,
 )
 from ...error import CommandError, KeeperApiError
 from ...params import KeeperParams
@@ -192,6 +193,8 @@ def apply_workflow(
     opts: PamWorkflowOptions,
 ) -> None:
     """Create or update workflow config via Krouter. Raises CommandError on failure."""
+    ensure_can_configure_workflow_settings(params, refresh=True, action='apply')
+
     record_uid_bytes = utils.base64_url_decode(record_uid)
     ref = ProtobufRefBuilder.record_ref(record_uid_bytes, record_title)
 
