@@ -9,8 +9,10 @@
 # Contact: ops@keepersecurity.com
 #
 
+import logging
 import re
 import shlex
+import time
 from typing import List, Optional, Tuple
 
 from ...error import CommandError
@@ -23,6 +25,68 @@ _PROTO_DUMP_RE = re.compile(
     r'\s*(?:type|value|name|stage|conditions|flowUid|resource)\s*:\s*(?:"[^"]*"|\S+)\s*',
 )
 _RESPONSE_CODE_RE = re.compile(r'\s*[Rr]esponse\s+code:\s*\S+\s*$')
+
+# Enterprise role enforcement: "Can manage workflow settings"
+WORKFLOW_SETTINGS_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
+
+# Avoid duplicate account-summary calls when registry + command both refresh.
+_ENFORCEMENT_REFRESH_TTL_SEC = 2.0
+_ENFORCEMENT_REFRESH_ATTR = '_workflow_enforcement_refreshed_at'
+
+
+def refresh_enforcements(params: KeeperParams) -> None:
+    """Reload account summary so revoked role enforcements take effect without re-login."""
+    now = time.monotonic()
+    last = getattr(params, _ENFORCEMENT_REFRESH_ATTR, 0.0)
+    if not isinstance(last, (int, float)):
+        last = 0.0
+    if now - last < _ENFORCEMENT_REFRESH_TTL_SEC:
+        return
+    try:
+        from ...loginv3 import LoginV3Flow
+        LoginV3Flow.populateAccountSummary(params)
+        setattr(params, _ENFORCEMENT_REFRESH_ATTR, now)
+    except Exception as e:
+        logging.error('Failed to refresh enforcements: %s', e, exc_info=True)
+
+
+def can_configure_workflow_settings(params: KeeperParams, *, refresh: bool = False) -> bool:
+    """True when the user currently has allow_configure_workflow_settings.
+
+    When refresh=True, reloads account summary first so a mid-session policy revoke
+    is visible (plain sync-down does not refresh enforcements).
+    """
+    if refresh:
+        refresh_enforcements(params)
+    enforcements = getattr(params, 'enforcements', None)
+    if not enforcements or 'booleans' not in enforcements:
+        return False
+    booleans = enforcements.get('booleans') or []
+    if not isinstance(booleans, list):
+        return False
+    return any(
+        bool(b.get('value'))
+        for b in booleans
+        if isinstance(b, dict) and b.get('key') == WORKFLOW_SETTINGS_ENFORCEMENT_KEY
+    )
+
+
+def ensure_can_configure_workflow_settings(
+    params: KeeperParams,
+    *,
+    refresh: bool = True,
+    action: str = 'manage',
+) -> None:
+    """Raise CommandError unless the user may configure workflow settings."""
+    if can_configure_workflow_settings(params, refresh=refresh):
+        return
+    raise CommandError(
+        '',
+        f'You do not have permission to manage workflow settings. '
+        f'The "{action}" command requires the "Can manage workflow settings" '
+        f'enforcement policy. Contact your Keeper administrator to enable this '
+        f'for your role.',
+    )
 
 
 class DashUidArgsMixin:
