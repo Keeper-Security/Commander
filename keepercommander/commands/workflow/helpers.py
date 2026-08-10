@@ -31,21 +31,23 @@ WORKFLOW_SETTINGS_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
 
 # Avoid duplicate account-summary calls when registry + command both refresh.
 _ENFORCEMENT_REFRESH_TTL_SEC = 2.0
-_last_enforcement_refresh = {}  # id(params) -> monotonic timestamp
+_ENFORCEMENT_REFRESH_ATTR = '_workflow_enforcement_refreshed_at'
 
 
 def refresh_enforcements(params: KeeperParams) -> None:
     """Reload account summary so revoked role enforcements take effect without re-login."""
     now = time.monotonic()
-    key = id(params)
-    if now - _last_enforcement_refresh.get(key, 0.0) < _ENFORCEMENT_REFRESH_TTL_SEC:
+    last = getattr(params, _ENFORCEMENT_REFRESH_ATTR, 0.0)
+    if not isinstance(last, (int, float)):
+        last = 0.0
+    if now - last < _ENFORCEMENT_REFRESH_TTL_SEC:
         return
     try:
         from ...loginv3 import LoginV3Flow
         LoginV3Flow.populateAccountSummary(params)
-        _last_enforcement_refresh[key] = now
+        setattr(params, _ENFORCEMENT_REFRESH_ATTR, now)
     except Exception as e:
-        logging.debug('Failed to refresh enforcements: %s', e)
+        logging.error('Failed to refresh enforcements: %s', e, exc_info=True)
 
 
 def can_configure_workflow_settings(params: KeeperParams, *, refresh: bool = False) -> bool:

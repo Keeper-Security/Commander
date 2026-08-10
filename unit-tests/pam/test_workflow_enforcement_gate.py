@@ -6,7 +6,7 @@
 #
 # Keeper Commander
 # Copyright 2026 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Contact: commander@keepersecurity.com
 #
 
 """Tests for PAM workflow settings enforcement gating."""
@@ -16,7 +16,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from keepercommander.error import CommandError
-from keepercommander.commands.workflow import helpers as wf_helpers
 from keepercommander.commands.workflow.helpers import (
     WORKFLOW_SETTINGS_ENFORCEMENT_KEY,
     can_configure_workflow_settings,
@@ -42,9 +41,6 @@ def _params_with_enforcement(allowed):
 
 
 class TestCanConfigureWorkflowSettings(unittest.TestCase):
-
-    def tearDown(self):
-        wf_helpers._last_enforcement_refresh.clear()
 
     def test_allowed_when_enforcement_true(self):
         self.assertTrue(can_configure_workflow_settings(_params_with_enforcement(True)))
@@ -79,9 +75,6 @@ class TestCanConfigureWorkflowSettings(unittest.TestCase):
 
 
 class TestWorkflowAdminGateRefresh(unittest.TestCase):
-
-    def tearDown(self):
-        wf_helpers._last_enforcement_refresh.clear()
 
     def test_delete_blocked_after_refresh_shows_revoke(self):
         """Repro: stale allow in session, revoke mid-session — delete must not reach Router."""
