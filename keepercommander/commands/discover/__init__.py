@@ -270,8 +270,11 @@ class GatewayContext:
             if application is None:
                 logging.debug(f"cannot find application for gateway {gateway}, skipping.")
 
-            if (utils.base64_url_encode(found_gateway.controllerUid) == gateway or
-                    found_gateway.controllerName.lower() == gateway.lower()):
+            # When --configuration-uid selected the config, trust that selection.
+            # Otherwise require the gateway name/UID to match.
+            if (configuration_uid is not None
+                    or utils.base64_url_encode(found_gateway.controllerUid) == gateway
+                    or found_gateway.controllerName.lower() == gateway.lower()):
                 return GatewayContext(
                     configuration=configuration_record,
                     facade=configuration_facade,
