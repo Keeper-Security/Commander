@@ -706,9 +706,41 @@ def import_user_permissions(params,
                 logging.info("%d user(s) removed from shared folders", users_removed)
 
 
+def _strip_path_prefix(records, folders, prefix):
+    # type: (List[ImportRecord], List[ImportSharedFolder], str) -> None
+    """Remove an import --folder prefix from record/shared-folder paths."""
+    if not prefix:
+        return
+    prefix_l = prefix.lower()
+    delim = PathDelimiter
+
+    def strip_one(path):
+        if not path:
+            return path
+        path_l = path.lower()
+        if path_l == prefix_l:
+            return ''
+        if path_l.startswith(prefix_l + delim):
+            return path[len(prefix) + len(delim):]
+        return path
+
+    for rec in records or []:
+        if not rec.folders:
+            continue
+        for fol in rec.folders:
+            if fol.domain:
+                fol.domain = strip_one(fol.domain)
+            if fol.path:
+                fol.path = strip_one(fol.path)
+    for fol in folders or []:
+        if fol.path:
+            fol.path = strip_one(fol.path)
+
+
 def _import(params, file_format, filename, **kwargs):
     """Import records from one of a variety of sources."""
     shared = kwargs.get('shared') or False
+    use_nsf = kwargs.get('use_nsf') or False
     import_users = kwargs.get('users_only') or False
     old_domain = kwargs.get('old_domain')
     new_domain = kwargs.get('new_domain')
@@ -735,6 +767,9 @@ def _import(params, file_format, filename, **kwargs):
 
     filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
 
+    # When --nsf is set, skip classic shared-folder domain splitting.
+    classic_shared = shared and not use_nsf
+
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids, dry_run=dry_run):
         if isinstance(x, ImportRecord):
@@ -759,11 +794,11 @@ def _import(params, file_format, filename, **kwargs):
                 else:
                     continue
 
-            if shared or import_into:
+            if classic_shared or import_into or use_nsf:
                 if not x.folders:
                     x.folders = [ImportFolder()]
                 for f in x.folders:
-                    if shared:
+                    if classic_shared:
                         d_comps = list(path_components(f.domain)) if f.domain else []
                         p_comps = list(path_components(f.path)) if f.path else []
                         if len(d_comps) > 0:
@@ -789,7 +824,7 @@ def _import(params, file_format, filename, **kwargs):
                 logging.info(ce.message)
             records.append(x)
         elif isinstance(x, ImportSharedFolder):
-            if shared:
+            if classic_shared:
                 continue
             if filter_folder and not importer.support_folder_filter():
                 name = x.path.lower().lstrip('\\')
@@ -803,18 +838,40 @@ def _import(params, file_format, filename, **kwargs):
 
             folders.append(x)
 
-    if import_users:
-        import_user_permissions(params, folders)
-        return
-
-    sync_down.sync_down(params)
-
     manage_users = kwargs.get('manage_users') or False
     manage_records = kwargs.get('manage_records') or False
     can_edit = kwargs.get('can_edit') or False
     can_share = kwargs.get('can_share') or False
 
-    if shared:
+    if import_users:
+        if use_nsf:
+            from .nsf_import import apply_nsf_folder_permissions, prepare_nsf_folders
+            sync_down.sync_down(params)
+            prepare_nsf_folders(params, folders, [], '')
+            apply_nsf_folder_permissions(
+                params, folders, manage_users, manage_records, can_edit, can_share)
+        else:
+            import_user_permissions(params, folders)
+        return
+
+    sync_down.sync_down(params)
+
+    nsf_base_parent = ''
+    if import_into:
+        from .nsf_import import resolve_nsf_folder
+        resolved_nsf = resolve_nsf_folder(params, import_into)
+        if resolved_nsf:
+            use_nsf = True
+            # If --folder was an NSF UID, treat it as parent and strip the UID prefix.
+            if import_into == resolved_nsf:
+                nsf_base_parent = resolved_nsf
+                _strip_path_prefix(records, folders, import_into)
+
+    if use_nsf:
+        from .nsf_import import flatten_record_folder_paths
+        flatten_record_folder_paths(records)
+
+    if classic_shared:
         sfol = set()
         for r in records:
             if r.folders:
@@ -830,52 +887,58 @@ def _import(params, file_format, filename, **kwargs):
             sf.can_share = can_share
             folders.append(sf)
 
-    # shared folder mapping
+    # shared folder mapping (classic only)
     sf_map = {}     # type: Dict[str, str]
-    for shared_folder_uid in params.shared_folder_cache:
-        folder = params.folder_cache.get(shared_folder_uid)
-        if not folder:
-            continue
-        if folder.parent_uid:
-            sf_path = get_folder_path(params, folder.parent_uid)
-            sf_path.strip(PathDelimiter)
-        else:
-            sf_path = ''
-        sf_name = folder.name.strip()
-        if ' - ' in sf_name:
-            sf_from_name = sf_name.replace(' - ', PathDelimiter)
-            sf_to_name = folder.name
-            if sf_path:
-                sf_from_name = sf_path + PathDelimiter + sf_from_name
-                sf_to_name = sf_path + PathDelimiter + sf_to_name
-            sf_map[sf_from_name.lower()] = sf_to_name
-    if len(sf_map) > 0:
-        sf_keys = list(sf_map.keys())
-        sf_keys.sort()
-        for record in records:
-            if isinstance(record.folders, list) and len(record.folders) > 0:
-                for fol in record.folders:
-                    path = fol.domain or ''
-                    if fol.path:
-                        if path:
-                            path += PathDelimiter
-                        path += fol.path
-                    path_l = path.lower()
-                    idx = bisect.bisect_right(sf_keys, path_l)
-                    if 0 <= idx < len(sf_map) and path_l == sf_keys[idx]:
-                        fol.domain = sf_map[path_l]
-                        fol.path = ''
-                    elif 0 < idx <= len(sf_map) and path_l.startswith(sf_keys[idx - 1]):
-                        sf_name = sf_keys[idx - 1]
-                        fol.domain = sf_map[sf_name]
-                        fol.path = (path[len(sf_name):]).strip(PathDelimiter)
+    if not use_nsf:
+        for shared_folder_uid in params.shared_folder_cache:
+            folder = params.folder_cache.get(shared_folder_uid)
+            if not folder:
+                continue
+            if folder.parent_uid:
+                sf_path = get_folder_path(params, folder.parent_uid)
+                sf_path.strip(PathDelimiter)
+            else:
+                sf_path = ''
+            sf_name = folder.name.strip()
+            if ' - ' in sf_name:
+                sf_from_name = sf_name.replace(' - ', PathDelimiter)
+                sf_to_name = folder.name
+                if sf_path:
+                    sf_from_name = sf_path + PathDelimiter + sf_from_name
+                    sf_to_name = sf_path + PathDelimiter + sf_to_name
+                sf_map[sf_from_name.lower()] = sf_to_name
+        if len(sf_map) > 0:
+            sf_keys = list(sf_map.keys())
+            sf_keys.sort()
+            for record in records:
+                if isinstance(record.folders, list) and len(record.folders) > 0:
+                    for fol in record.folders:
+                        path = fol.domain or ''
+                        if fol.path:
+                            if path:
+                                path += PathDelimiter
+                            path += fol.path
+                        path_l = path.lower()
+                        idx = bisect.bisect_right(sf_keys, path_l)
+                        if 0 <= idx < len(sf_map) and path_l == sf_keys[idx]:
+                            fol.domain = sf_map[path_l]
+                            fol.path = ''
+                        elif 0 < idx <= len(sf_map) and path_l.startswith(sf_keys[idx - 1]):
+                            sf_name = sf_keys[idx - 1]
+                            fol.domain = sf_map[sf_name]
+                            fol.path = (path[len(sf_name):]).strip(PathDelimiter)
 
-    folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
-    if folder_add:
+    if use_nsf:
+        from .nsf_import import prepare_nsf_folders
         if not dry_run:
-            fol_rs, _ = execute_import_folder_record(params, folder_add, None)
-            _ = fol_rs
-            sync_down.sync_down(params)
+            prepare_nsf_folders(params, folders, records, nsf_base_parent)
+    else:
+        folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
+        if folder_add:
+            if not dry_run:
+                fol_rs, _ = execute_import_folder_record(params, folder_add, None)
+                _ = fol_rs
+                sync_down.sync_down(params)
 
     record_keys = {}
     audit_uids = []
@@ -884,6 +947,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v2_to_update = []   # type: List[dict]
         records_v3_to_add = []      # type: List[record_pb2.RecordAdd]
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
+        nsf_records_to_add = []     # NSF vault/records/v3/add payloads
         import_uids = {}
 
         records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
@@ -1028,6 +1092,23 @@ def _import(params, file_format, filename, **kwargs):
                         if folder.type == BaseFolderNode.RootFolderType:
                             folder_uid = ''
 
+                from .nsf_import import is_nsf_folder
+                if folder_uid and is_nsf_folder(params, folder_uid):
+                    data = _construct_record_v3_data(import_record)
+                    data_bytes = api.get_record_data_json_bytes(data)
+                    if len(data_bytes) > RECORD_MAX_DATA_LEN:
+                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], len(data_bytes), RECORD_MAX_DATA_LEN))
+                        continue
+                    from .nsf_import import build_nsf_record_add
+                    try:
+                        nsf_add = build_nsf_record_add(params, import_record, record_key, data)
+                    except Exception as exc:
+                        logging.warning('Skipping NSF record "%s": %s', import_record.title, exc)
+                        continue
+                    import_uids[import_record.uid] = {'ver': 'nsf', 'op': 'add'}
+                    nsf_records_to_add.append(nsf_add)
+                    continue
+
                 v3_add_rq = record_pb2.RecordAdd()
                 v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
                 import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
@@ -1088,6 +1169,9 @@ def _import(params, file_format, filename, **kwargs):
                 if record_key and link_key:
                     link.record_key = crypto.encrypt_aes_v2(link_key, record_key)
 
+        if nsf_records_to_add:
+            from .nsf_import import execute_nsf_records_add
+            execute_nsf_records_add(params, nsf_records_to_add)
         if records_v3_to_add:
             rec_rs = execute_records_add(params, records_v3_to_add)
         if records_v2_to_update:
@@ -1095,7 +1179,11 @@ def _import(params, file_format, filename, **kwargs):
         if records_v3_to_update:
             rec_rs = execute_records_update(params, records_v3_to_update)
 
-        sync_down.sync_down(params)
+        if use_nsf or nsf_records_to_add:
+            from ..commands.pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
+        else:
+            sync_down.sync_down(params)
 
         # update audit data
         if audit_uids and params.enterprise_ec_key:
@@ -1161,7 +1249,7 @@ def _import(params, file_format, filename, **kwargs):
             if r.attachments:
                 if r.uid in import_uids:
                     ver = import_uids[r.uid]['ver']
-                    if ver == 'v3':
+                    if ver == 'v3' or ver == 'nsf':
                         v3_atts.append(r)
                     else:
                         for a in r.attachments:
@@ -1206,6 +1294,11 @@ def _import(params, file_format, filename, **kwargs):
             upload_attachment(params, v2_atts)
         if len(v3_atts) > 0:
             upload_v3_attachments(params, v3_atts)
+
+    if use_nsf and folders and not dry_run:
+        from .nsf_import import apply_nsf_folder_permissions
+        apply_nsf_folder_permissions(
+            params, folders, manage_users, manage_records, can_edit, can_share)
 
     if hasattr(importer, 'cleanup') and callable(importer.cleanup):
         importer.cleanup()
@@ -2223,6 +2316,10 @@ def prepare_record_link(params, records):
                 for fol in rec.folders or [None]:
                     folder_uid = fol.uid if fol else ''
                     if folder_uid and folder_uid not in params.folder_cache:
+                        continue
+                    from .nsf_import import is_nsf_folder
+                    if folder_uid and is_nsf_folder(params, folder_uid):
+                        # NSF multi-folder links use a different API; skip classic move/link.
                         continue
                     if folder_uid in folder_ids:
                         continue
