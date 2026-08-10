@@ -103,6 +103,7 @@ class Permission:
         self.name = None
         self.manage_users = None
         self.manage_records = None
+        self.role = None  # NSF role name: viewer, content-manager, full-manager, …
 
 
 class SharedFolder:
@@ -398,21 +399,57 @@ class BaseFileImporter(BaseImporter, abc.ABC):
     def __init__(self):
         super(BaseFileImporter, self).__init__()
 
-    def execute(self, name, **kwargs):
-        # type: (str, ...) -> Iterable[Union[Record, SharedFolder, File]]
+    def _path_candidates(self, name):
+        # type: (str) -> List[str]
+        """Yield existing-path candidates for *name* (exact, +ext, sample .ext.txt)."""
+        path = os.path.expanduser(name)
+        candidates = [path]
+        ext = (self.extension() or '').lstrip('.')
+        if ext:
+            lower = path.lower()
+            ext_suffix = '.' + ext.lower()
+            ext_txt_suffix = ext_suffix + '.txt'
+            if lower.endswith(ext_txt_suffix):
+                pass
+            elif lower.endswith(ext_suffix):
+                # foo.json → also try foo.json.txt (sample_data convention)
+                candidates.append(path + '.txt')
+            else:
+                # foo → foo.json, foo.json.txt, foo.txt
+                candidates.append(path + '.' + ext)
+                candidates.append(path + '.' + ext + '.txt')
+                candidates.append(path + '.txt')
+        # Deduplicate while preserving order
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            yield candidate
+
+    def resolve_file_path(self, name):
+        # type: (str) -> str
+        """Resolve an import file path, trying common extensions and sample suffixes."""
         try:
             json.loads(name)
-            path = name
-        except ValueError as e:    
-            path = os.path.expanduser(name)
-            if not os.path.isfile(path):
-                ext = self.extension()
-                if ext:
-                    path = path + '.' + ext
+            return name
+        except ValueError:
+            pass
 
-            if not os.path.isfile(path):
-                raise CommandError('import', f'File \'{name}\' does not exist')
+        tried = []
+        for candidate in self._path_candidates(name):
+            tried.append(candidate)
+            if os.path.isfile(candidate):
+                return candidate
+        hint = ''
+        ext = (self.extension() or '').lstrip('.')
+        if ext:
+            hint = f' (tried: {", ".join(tried[:4])}{"…" if len(tried) > 4 else ""})'
+        raise CommandError('import', f'File \'{name}\' does not exist{hint}')
 
+    def execute(self, name, **kwargs):
+        # type: (str, ...) -> Iterable[Union[Record, SharedFolder, File]]
+        path = self.resolve_file_path(name)
         yield from self.do_import(path, **kwargs)
 
 
