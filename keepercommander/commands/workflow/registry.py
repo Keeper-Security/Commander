@@ -12,8 +12,7 @@
 from ..base import GroupCommand, dump_report_data
 from ...display import bcolors
 
-_ENFORCEMENT_KEY = 'allow_configure_workflow_settings'
-
+from .helpers import can_configure_workflow_settings
 from .config_commands import (
     WorkflowCreateCommand,
     WorkflowReadCommand,
@@ -43,14 +42,8 @@ class PAMWorkflowCommand(GroupCommand):
     _ADMIN_VERBS = frozenset({'create', 'update', 'delete', 'add-approver', 'remove-approver'})
 
     @staticmethod
-    def _can_manage_workflows(params):
-        enforcements = getattr(params, 'enforcements', None)
-        if not enforcements or 'booleans' not in enforcements:
-            return False
-        return any(
-            b.get('value') for b in enforcements['booleans']
-            if b.get('key') == _ENFORCEMENT_KEY
-        )
+    def _can_manage_workflows(params, *, refresh=False):
+        return can_configure_workflow_settings(params, refresh=refresh)
 
     def execute_args(self, params, args, **kwargs):
         self._current_params = params
@@ -59,7 +52,10 @@ class PAMWorkflowCommand(GroupCommand):
         verb = (args[:pos].strip() if pos > 0 else args.strip()).lower() if args else ''
         resolved_verb = self._aliases.get(verb, verb)
 
-        if resolved_verb in self._ADMIN_VERBS and not self._can_manage_workflows(params):
+        # Refresh enforcements before admin verbs so a mid-session revoke of
+        # "Can manage workflow settings" blocks create/update/delete equally.
+        # (Plain sync-down does not reload account enforcements.)
+        if resolved_verb in self._ADMIN_VERBS and not self._can_manage_workflows(params, refresh=True):
             print(
                 f"\n{bcolors.WARNING}You do not have permission to manage workflow settings.{bcolors.ENDC}\n"
                 f"The '{bcolors.BOLD}{resolved_verb}{bcolors.ENDC}' command requires the "
