@@ -61,6 +61,8 @@ import_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                            help='display records to be imported without importing them')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
                            help='import folders as Keeper shared folders')
+import_parser.add_argument('--nsf', dest='use_nsf', action='store_true',
+                           help='import folders and records into Nested Share Folders (works with any --format)')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
@@ -68,7 +70,7 @@ import_parser.add_argument('--update',  dest='update_flag',  action='store_true'
 import_parser.add_argument('--no-shortcuts',  dest='no_shortcuts',  action='store_true',
                            help='disable shortcut handling (only new records)')
 import_parser.add_argument('--users',  dest='users_only',  action='store_true',
-                           help='update shared folder user permissions only')
+                           help='update shared folder / NSF user permissions only')
 import_parser.add_argument('--record-type', dest='record_type', action='store',
                            help='Import legacy records as record type')
 import_parser.add_argument('--login-type', '-l', dest='login_type', action='store_true',
@@ -84,7 +86,8 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
 import_parser.add_argument(
-    'name', type=str, help='file name (json, csv, keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic)'
+    'name', type=str,
+    help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
 )
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -163,6 +166,9 @@ Personal,Twitter,craig@gmail.com,123456,https://twitter.com,,Social Media#edit#r
 
 To load the sample data:
 import --format=csv sample_data/import.csv
+
+Nested Share Folders (NSF):
+import --format=csv --nsf sample_data/import_nsf.csv
 '''
 
 json_instructions = '''JSON Import Instructions
@@ -175,6 +181,23 @@ Within shared folders, you can also automatically assign user or team permission
 
 To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
+
+Nested Share Folders (NSF) — works with any --format (json, csv, keepass, …):
+import --format=json --nsf sample_data/import_nsf.txt
+
+With --nsf, shared_folders[].permissions from JSON are granted on Nested
+Share Folders after folders and records are created. Prefer NSF roles:
+
+  "permissions": [
+    { "name": "user@company.com", "role": "viewer" },
+    { "name": "lead@company.com", "role": "content-manager" },
+    { "name": "admin@company.com", "role": "full-manager" }
+  ]
+
+Accepted roles: requestor, viewer, share-manager, content-manager,
+content-share-manager, full-manager.
+Sample: sample_data/import_nsf_permissions.txt
+Use --users --nsf to update NSF permissions only (no record import).
 '''
 
 
@@ -216,7 +239,9 @@ class RecordImportCommand(ImporterCommand):
             permissions = kwargs.get('permissions') or ''
             del kwargs['permissions']
 
-        if kwargs.get('shared') is True and not permissions:
+        # Classic --shared prompts for default U/R/E/S permissions.
+        # NSF uses roles from the import file (and optional -p); do not prompt.
+        if kwargs.get('shared') is True and not kwargs.get('use_nsf') and not permissions:
             permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
         if permissions:
             chars = set()
