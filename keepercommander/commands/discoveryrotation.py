@@ -1683,6 +1683,8 @@ class PAMListRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation list')
     parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
                         help='Verbose output')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
 
     def get_parser(self):
         return PAMListRecordRotationCommand.parser
@@ -1690,6 +1692,7 @@ class PAMListRecordRotationCommand(Command):
     def execute(self, params, **kwargs):
 
         is_verbose = kwargs.get('is_verbose')
+        format_type = kwargs.get('format') or 'table'
 
         rq = pam_pb2.PAMGenericUidsRequest()
         schedules_proto = router_get_rotation_schedules(params, rq)
@@ -1708,19 +1711,27 @@ class PAMListRecordRotationCommand(Command):
         all_pam_config_records = pam_configurations_get_all(params)
         table = []
 
-        headers = []
-        headers.append('Record UID')
-        headers.append('Record Title')
-        headers.append('Record Type')
-        headers.append('Schedule')
+        if format_type == 'json':
+            headers = ['record_uid', 'record_title', 'record_type', 'schedule', 'gateway']
+            if is_verbose:
+                headers.append('gateway_uid')
+            headers.append('pam_configuration')
+            if is_verbose:
+                headers.append('pam_configuration_uid')
+        else:
+            headers = []
+            headers.append('Record UID')
+            headers.append('Record Title')
+            headers.append('Record Type')
+            headers.append('Schedule')
 
-        headers.append('Gateway')
-        if is_verbose:
-            headers.append('Gateway UID')
+            headers.append('Gateway')
+            if is_verbose:
+                headers.append('Gateway UID')
 
-        headers.append('PAM Configuration (Type)')
-        if is_verbose:
-            headers.append('PAM Configuration UID')
+            headers.append('PAM Configuration (Type)')
+            if is_verbose:
+                headers.append('PAM Configuration UID')
 
         for s in schedules:
             row = []
@@ -1737,12 +1748,11 @@ class PAMListRecordRotationCommand(Command):
             is_controller_online = any(
                 (poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
 
-            row_color = ''
             if record_exists_in_vault(params, record_uid):
-                row_color = bcolors.HIGHINTENSITYWHITE
+                record_accessible = True
                 record_title, record_type = get_vault_record_title_type(params, record_uid)
             else:
-                row_color = bcolors.WHITE
+                record_accessible = False
                 record_title = '[record inaccessible]'
                 record_type = '[record inaccessible]'
 
@@ -1750,9 +1760,15 @@ class PAMListRecordRotationCommand(Command):
                 # only pamUser records are supported for rotation
                 continue
 
-            row.append(f'{row_color}{record_uid}')
-            row.append(record_title or '[untitled]')
-            row.append(record_type or '[unknown]')
+            if format_type == 'json':
+                row.append(record_uid)
+                row.append(record_title or '[untitled]')
+                row.append(record_type or '[unknown]')
+            else:
+                row_color = bcolors.HIGHINTENSITYWHITE if record_accessible else bcolors.WHITE
+                row.append(f'{row_color}{record_uid}')
+                row.append(record_title or '[untitled]')
+                row.append(record_type or '[unknown]')
 
             if s.noSchedule is True:
                 # Per Sergey A:
@@ -1769,9 +1785,15 @@ class PAMListRecordRotationCommand(Command):
                     else:
                         schedule_str = s.scheduleData
                 else:
-                    schedule_str = f'{bcolors.FAIL}[empty]'
+                    schedule_str = '[empty]'
 
-            row.append(f'{schedule_str}')
+            if format_type == 'json':
+                row.append(schedule_str)
+            else:
+                if schedule_str == '[empty]':
+                    row.append(f'{bcolors.FAIL}[empty]')
+                else:
+                    row.append(f'{schedule_str}')
 
             # Controller Info
             connected_controller = None
@@ -1780,29 +1802,45 @@ class PAMListRecordRotationCommand(Command):
                                       list(enterprise_controllers_connected_resp.controllers)}
                 connected_controller = router_controllers.get(controller_details.controllerUid)
 
-            if connected_controller:
-                controller_stat_color = bcolors.OKGREEN
+            if format_type == 'json':
+                if controller_details:
+                    row.append(controller_details.controllerName)
+                else:
+                    row.append('[Does not exist]')
+                if is_verbose:
+                    row.append(utils.base64_url_encode(controller_uid))
             else:
-                controller_stat_color = bcolors.WHITE
+                if connected_controller:
+                    controller_stat_color = bcolors.OKGREEN
+                else:
+                    controller_stat_color = bcolors.WHITE
 
-            controller_color = bcolors.WHITE
-            if is_controller_online:
-                controller_color = bcolors.OKGREEN
+                controller_color = bcolors.WHITE
+                if is_controller_online:
+                    controller_color = bcolors.OKGREEN
 
-            if controller_details:
-                row.append(f'{controller_stat_color}{controller_details.controllerName}{bcolors.ENDC}')
-            else:
-                row.append(f'{controller_stat_color}[Does not exist]{bcolors.ENDC}')
+                if controller_details:
+                    row.append(f'{controller_stat_color}{controller_details.controllerName}{bcolors.ENDC}')
+                else:
+                    row.append(f'{controller_stat_color}[Does not exist]{bcolors.ENDC}')
 
-            if is_verbose:
-                row.append(f'{controller_color}{utils.base64_url_encode(controller_uid)}{bcolors.ENDC}')
+                if is_verbose:
+                    row.append(f'{controller_color}{utils.base64_url_encode(controller_uid)}{bcolors.ENDC}')
 
             if not pam_configuration:
-                if not is_verbose:
-                    row.append(f"{bcolors.FAIL}[No config found]{bcolors.ENDC}")
+                if format_type == 'json':
+                    if not is_verbose:
+                        row.append('[No config found]')
+                    else:
+                        row.append(
+                            f'[No config found. Looks like configuration {configuration_uid_str} was removed '
+                            f'but rotation schedule was not modified]')
                 else:
-                    row.append(
-                        f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
+                    if not is_verbose:
+                        row.append(f"{bcolors.FAIL}[No config found]{bcolors.ENDC}")
+                    else:
+                        row.append(
+                            f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
 
             else:
                 pam_config_name, pam_config_type = get_vault_record_title_type(params, configuration_uid_str)
@@ -1826,13 +1864,19 @@ class PAMListRecordRotationCommand(Command):
                 row.append(f"{pam_config_name or '[untitled]'} ({pam_config_type or '[unknown]'})")
 
             if is_verbose:
-                row.append(f'{utils.base64_url_encode(configuration_uid)}{bcolors.ENDC}')
+                if format_type == 'json':
+                    row.append(utils.base64_url_encode(configuration_uid))
+                else:
+                    row.append(f'{utils.base64_url_encode(configuration_uid)}{bcolors.ENDC}')
 
             table.append(row)
 
         table.sort(key=lambda x: (x[1] or ''))
 
-        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+        report = dump_report_data(table, headers, fmt=format_type, filename="",
+                                  row_number=False, column_width=None)
+        if format_type == 'json':
+            return report
 
         print(f"\n{bcolors.OKBLUE}----------------------------------------------------------{bcolors.ENDC}")
         print(f"{bcolors.OKBLUE}Example to rotate record to which this user has access to:{bcolors.ENDC}")
@@ -4217,13 +4261,18 @@ class PAMGatewayActionServerInfoCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-info-command')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid', action='store', help='Gateway UID')
     parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose Output')
+    parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                        default='text', help='Output format (text, json)')
 
     def get_parser(self):
         return PAMGatewayActionServerInfoCommand.parser
 
     def execute(self, params, **kwargs):
+        from .pam.router_helper import get_response_payload
+
         destination_gateway_uid_str = kwargs.get('gateway_uid')
         is_verbose = kwargs.get('verbose')
+        format_type = kwargs.get('format') or 'text'
         router_response = router_send_action_to_gateway(
             params=params,
             gateway_action=GatewayActionGatewayInfo(is_scheduled=False),
@@ -4231,6 +4280,23 @@ class PAMGatewayActionServerInfoCommand(Command):
             is_streaming=False,
             destination_gateway_uid_str=destination_gateway_uid_str
         )
+
+        if format_type == 'json':
+            if not router_response:
+                print(json.dumps({"gateway_info": None, "message": "No response from gateway."}, indent=2))
+                return
+            payload = get_response_payload(router_response)
+            if not (payload.get('is_ok') or payload.get('isOk')):
+                print(json.dumps({"ok": False, "response": payload}, indent=2))
+                return
+            result = {
+                "ok": True,
+                "gateway_info": payload.get('data'),
+            }
+            if payload.get('warnings'):
+                result['warnings'] = payload.get('warnings')
+            print(json.dumps(result, indent=2))
+            return
 
         print_router_response(router_response, 'gateway_info', is_verbose=is_verbose,
                               gateway_uid=destination_gateway_uid_str)

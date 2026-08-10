@@ -417,16 +417,111 @@ class PAMAccessUserListCommand(Command):
                                      description='List users in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
+    parser.add_argument('--format', '-f', dest='output_format', choices=['table', 'json'],
+                        default='table', help='Output format (default: table)')
     parser.add_argument('--gateway', '-g', dest='gateway',
                         help='Gateway UID or name')
 
     def get_parser(self):
         return PAMAccessUserListCommand.parser
 
+    @staticmethod
+    def _normalize_user(entry):
+        """Normalize a group member entry into a dict with id/name keys."""
+        if isinstance(entry, dict):
+            user_id = entry.get('id') or entry.get('userId') or entry.get('uid') or ''
+            name = (entry.get('name') or entry.get('primaryEmail') or entry.get('username')
+                    or entry.get('mail') or entry.get('userPrincipalName') or '')
+            return {'id': user_id, 'name': name, 'raw': entry}
+        if isinstance(entry, str):
+            return {'id': '', 'name': entry, 'raw': {'name': entry}}
+        return None
+
     def execute(self, params, **kwargs):
-        raise CommandError('pam-privileged-access',
-                           'User listing is not yet implemented. '
-                           'Use "pam idp group list" to list groups, or check the IdP portal directly.')
+        config_uid = kwargs['config_uid']
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
+
+        # There is no dedicated IdP user-list gateway action; reuse group list with members.
+        inputs = GatewayActionIdpInputs(
+            configuration_uid=config_uid,
+            idp_config_uid=idp_config_uid,
+            includeUsers=True,
+        )
+        action = GatewayActionIdpGroupList(inputs=inputs)
+
+        payload = _dispatch_idp_action(params, action, kwargs.get('gateway'))
+
+        response_data = payload.get('data', {})
+        if isinstance(response_data, str):
+            try:
+                response_data = json.loads(response_data)
+            except (json.JSONDecodeError, TypeError):
+                response_data = {}
+
+        if not isinstance(response_data, dict) or not response_data.get('success'):
+            error = response_data.get('error', 'Unknown error') if isinstance(response_data, dict) else str(response_data)
+            raise CommandError('pam-privileged-access', f'Gateway reported failure: {error}')
+
+        encrypted_content = response_data.get('data')
+        if not encrypted_content:
+            if kwargs.get('output_format') == 'json':
+                print(json.dumps([], indent=2))
+            else:
+                print('No users found.')
+            return
+
+        groups = _decrypt_gateway_data(params, config_uid, encrypted_content)
+
+        users_by_key = {}
+        if isinstance(groups, list):
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                group_info = {
+                    'id': group.get('id', ''),
+                    'name': group.get('name', ''),
+                }
+                members = group.get('users', [])
+                if not isinstance(members, list):
+                    continue
+                for member in members:
+                    normalized = self._normalize_user(member)
+                    if not normalized:
+                        continue
+                    key = (normalized['id'] or normalized['name'] or '').lower()
+                    if not key:
+                        continue
+                    if key not in users_by_key:
+                        users_by_key[key] = {
+                            'id': normalized['id'],
+                            'name': normalized['name'],
+                            'groups': [],
+                        }
+                    users_by_key[key]['groups'].append(group_info)
+
+        users = sorted(users_by_key.values(), key=lambda u: (u.get('name') or '').lower())
+
+        if kwargs.get('output_format') == 'json':
+            print(json.dumps(users, indent=2))
+            return
+
+        if not users:
+            print('No users found.')
+            return
+
+        from keepercommander.commands.base import dump_report_data
+        headers = ['User ID', 'Name', 'Groups']
+        table = []
+        for user in users:
+            group_names = ', '.join(
+                g.get('name') or g.get('id') or '' for g in user.get('groups', [])
+            )
+            table.append([
+                user.get('id', ''),
+                user.get('name', ''),
+                group_names,
+            ])
+        dump_report_data(table, headers=headers)
 
 
 # --- Group Commands ---
