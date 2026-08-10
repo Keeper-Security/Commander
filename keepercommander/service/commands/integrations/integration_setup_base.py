@@ -347,7 +347,9 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         if folder_uid in params.subfolder_record_cache:
             for rec_uid in params.subfolder_record_cache[folder_uid]:
                 rec = api.get_record(params, rec_uid)
-                if rec.title == record_name:
+                if rec.title != record_name:
+                    continue
+                if self._is_owned_record(params, rec_uid):
                     return rec_uid
         return None
 
@@ -394,9 +396,11 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
 
     def _find_folder_uid_by_name(self, params, folder_name: str) -> Optional[str]:
-        # Prefer shared folders; integration setup always creates a shared folder.
+        # Prefer owned shared folders; never adopt a folder owned by another account.
         for folder_uid, folder_data in params.shared_folder_cache.items():
-            if folder_data.get('name') == folder_name:
+            if folder_data.get('name') != folder_name:
+                continue
+            if self._is_owned_shared_folder(params, folder_uid):
                 return folder_uid
         return None
 
