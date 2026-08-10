@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import json
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import vault
@@ -26,11 +27,13 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                         action='store', help='PAM configuration UID, if gateway has multiple.')
     parser.add_argument('--by-machine', '-m', required=False, dest='do_by_machine', action='store_true',
                         help='List by machine')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                        default='table', help='Output format (table, json)')
 
     def get_parser(self):
         return PAMActionServiceListCommand.parser
 
-    def _by_user(self, params: KeeperParams, record_link: RecordLink, user_service: UserService):
+    def _collect_by_user(self, params: KeeperParams, record_link: RecordLink, user_service: UserService):
         service_map = {}
         for resource_vertex in record_link.dag.get_root.has_vertices(edge_type=EdgeType.LINK):
 
@@ -63,31 +66,18 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                     if user_record.record_uid not in service_map:
                         service_map[user_record.record_uid] = {
                             "title": user_record.title,
+                            "uid": user_record.record_uid,
                             "active": user_active,
                             "machines": []
                         }
-                    text = f"{resource_record.title} ({resource_record.record_uid})"
-                    if not resource_active:
-                        text += f" : {bcolors.FAIL}Disabled{bcolors.ENDC}"
-                    service_map[user_record.record_uid]["machines"].append(text)
+                    service_map[user_record.record_uid]["machines"].append({
+                        "title": resource_record.title,
+                        "uid": resource_record.record_uid,
+                        "active": resource_active,
+                    })
+        return service_map
 
-        print("")
-        printed_something = False
-        print(self._h("User Mapping"))
-        for user_uid in service_map:
-            user = service_map[user_uid]
-            printed_something = True
-            active_text = ""
-            if not user['active']:
-                active_text = f" {bcolors.FAIL}Disabled{bcolors.ENDC}"
-            print(f"  {self._b(user['title'])} ({user_uid}){active_text}")
-            for machine in user["machines"]:
-                print(f"    * {machine}")
-            print("")
-        if not printed_something:
-            print(f"  {bcolors.FAIL}There are no service mappings.{bcolors.ENDC}")
-
-    def _by_machine(self, params: KeeperParams, record_link: RecordLink, user_service: UserService):
+    def _collect_by_machine(self, params: KeeperParams, record_link: RecordLink, user_service: UserService):
         service_map = {}
         for resource_vertex in record_link.dag.get_root.has_vertices(edge_type=EdgeType.LINK):
             resource_record = vault.KeeperRecord.load(params, resource_vertex.uid)  # type: Optional[TypedRecord]
@@ -119,26 +109,53 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                     if resource_record.record_uid not in service_map:
                         service_map[resource_record.record_uid] = {
                             "title": resource_record.title,
+                            "uid": resource_record.record_uid,
                             "active": resource_active,
                             "users": []
                         }
-                    text = f"{user_record.title} ({user_record.record_uid})"
-                    if not user_active:
-                        text += f" : {bcolors.FAIL}Disabled{bcolors.ENDC}"
-                    service_map[resource_record.record_uid]["users"].append(text)
+                    service_map[resource_record.record_uid]["users"].append({
+                        "title": user_record.title,
+                        "uid": user_record.record_uid,
+                        "active": user_active,
+                    })
+        return service_map
 
+    def _print_by_user(self, service_map):
         print("")
         printed_something = False
-        print(self._h("Machine Mapping"))
-        for resource_uid in service_map:
-            user = service_map[resource_uid]
+        print(self._h("User Mapping"))
+        for user_uid in service_map:
+            user = service_map[user_uid]
             printed_something = True
             active_text = ""
             if not user['active']:
                 active_text = f" {bcolors.FAIL}Disabled{bcolors.ENDC}"
-            print(f"  {self._b(user['title'])} ({resource_uid}){active_text}")
-            for user in user["users"]:
-                print(f"    * {user}")
+            print(f"  {self._b(user['title'])} ({user_uid}){active_text}")
+            for machine in user["machines"]:
+                text = f"{machine['title']} ({machine['uid']})"
+                if not machine['active']:
+                    text += f" : {bcolors.FAIL}Disabled{bcolors.ENDC}"
+                print(f"    * {text}")
+            print("")
+        if not printed_something:
+            print(f"  {bcolors.FAIL}There are no service mappings.{bcolors.ENDC}")
+
+    def _print_by_machine(self, service_map):
+        print("")
+        printed_something = False
+        print(self._h("Machine Mapping"))
+        for resource_uid in service_map:
+            resource = service_map[resource_uid]
+            printed_something = True
+            active_text = ""
+            if not resource['active']:
+                active_text = f" {bcolors.FAIL}Disabled{bcolors.ENDC}"
+            print(f"  {self._b(resource['title'])} ({resource_uid}){active_text}")
+            for user in resource["users"]:
+                text = f"{user['title']} ({user['uid']})"
+                if not user['active']:
+                    text += f" : {bcolors.FAIL}Disabled{bcolors.ENDC}"
+                print(f"    * {text}")
             print("")
         if not printed_something:
             print(f"  {bcolors.FAIL}There are no service mappings.{bcolors.ENDC}")
@@ -146,16 +163,35 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
     def execute(self, params: KeeperParams, **kwargs):
 
         gateway = kwargs.get("gateway", "none_set")
+        format_type = kwargs.get('format') or 'table'
 
         try:
             gateway_context = GatewayContext.from_gateway(params=params,
                                                           gateway=gateway,
                                                           configuration_uid=kwargs.get('configuration_uid'))
             if gateway_context is None:
-                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                message = f'Could not find the gateway configuration for {gateway}.'
+                if format_type == 'json':
+                    print(json.dumps({'message': message}, indent=2))
+                else:
+                    print(f"{bcolors.FAIL}{message}{bcolors.ENDC}")
                 return
         except MultiConfigurationException as err:
-            multi_conf_msg(gateway, err)
+            if format_type == 'json':
+                configs = []
+                for item in (err.items or []):
+                    record = item.get('configuration_record')
+                    if record is not None:
+                        configs.append({
+                            'uid': getattr(record, 'record_uid', ''),
+                            'title': getattr(record, 'title', ''),
+                        })
+                print(json.dumps({
+                    'message': f'Found multiple configuration records for gateway {gateway}.',
+                    'configurations': configs,
+                }, indent=2))
+            else:
+                multi_conf_msg(gateway, err)
             return
 
         record_link = RecordLink(record=gateway_context.configuration,
@@ -171,11 +207,28 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                                    fail_on_corrupt=False,
                                    agent=f"Cmdr/{__version__}")
 
-        if kwargs.get("do_by_machine"):
-            self._by_machine(params=params,
-                             record_link=record_link,
-                             user_service=user_service)
+        by_machine = bool(kwargs.get("do_by_machine"))
+        if by_machine:
+            service_map = self._collect_by_machine(params=params,
+                                                   record_link=record_link,
+                                                   user_service=user_service)
         else:
-            self._by_user(params=params,
-                          record_link=record_link,
-                          user_service=user_service)
+            service_map = self._collect_by_user(params=params,
+                                                record_link=record_link,
+                                                user_service=user_service)
+
+        if format_type == 'json':
+            payload = {
+                'gateway': gateway_context.gateway_name,
+                'gateway_uid': gateway_context.gateway_uid,
+                'configuration_uid': gateway_context.configuration_uid,
+                'group_by': 'machine' if by_machine else 'user',
+                'mappings': list(service_map.values()),
+            }
+            print(json.dumps(payload, indent=2))
+            return
+
+        if by_machine:
+            self._print_by_machine(service_map)
+        else:
+            self._print_by_user(service_map)

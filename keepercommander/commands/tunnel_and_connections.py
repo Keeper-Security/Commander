@@ -124,13 +124,19 @@ class PAMRbiCommand(GroupCommand):
 # Individual Commands
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
+    pam_cmd_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                                default='table', help='Output format (table, json)')
 
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
+        format_type = kwargs.get('format') or 'table'
         table = []
-        headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
+        if format_type == 'json':
+            headers = ['record', 'remote_target', 'local_address', 'tunnel_id', 'conversation_id', 'status']
+        else:
+            headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
 
         # In-process tunnels from the Rust PyTubeRegistry
         tube_registry = get_or_create_tube_registry(params)
@@ -142,28 +148,39 @@ class PAMTunnelListCommand(Command):
                 conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
                 tunnel_session = get_tunnel_session(tube_id)
 
-                record_title = tunnel_session.record_title if tunnel_session and tunnel_session.record_title else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                if tunnel_session and tunnel_session.record_title:
+                    record_title = tunnel_session.record_title
+                else:
+                    record_title = 'unknown'
 
                 if tunnel_session and tunnel_session.target_host and tunnel_session.target_port:
                     remote_target = f"{tunnel_session.target_host}:{tunnel_session.target_port}"
                 else:
-                    remote_target = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                    remote_target = 'unknown'
 
                 if tunnel_session and tunnel_session.host and tunnel_session.port:
-                    local_addr = f"{bcolors.OKGREEN}{tunnel_session.host}:{tunnel_session.port}{bcolors.ENDC}"
+                    local_addr = f"{tunnel_session.host}:{tunnel_session.port}"
                 else:
-                    local_addr = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                    local_addr = 'unknown'
 
                 conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
 
                 try:
                     state = tube_registry.get_connection_state(tube_id)
-                    status_color = f"{bcolors.OKGREEN}" if state.lower() == "connected" else f"{bcolors.WARNING}"
-                    status = f"{status_color}{state}{bcolors.ENDC}"
+                    status = state
                 except Exception:
-                    status = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                    status = 'unknown'
 
-                table.append([record_title, remote_target, local_addr, tube_id, conv_id, status])
+                if format_type == 'json':
+                    table.append([record_title, remote_target, local_addr, tube_id, conv_id, status])
+                else:
+                    rec_disp = record_title if record_title != 'unknown' else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                    rem_disp = remote_target if remote_target != 'unknown' else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+                    loc_disp = (f"{bcolors.OKGREEN}{local_addr}{bcolors.ENDC}"
+                                if local_addr != 'unknown' else f"{bcolors.WARNING}unknown{bcolors.ENDC}")
+                    status_color = f"{bcolors.OKGREEN}" if status.lower() == "connected" else f"{bcolors.WARNING}"
+                    status_disp = f"{status_color}{status}{bcolors.ENDC}"
+                    table.append([rec_disp, rem_disp, loc_disp, tube_id, conv_id, status_disp])
 
         # Cross-process tunnels from the file-based registry
         for entry in list_registered_tunnels():
@@ -173,20 +190,31 @@ class PAMTunnelListCommand(Command):
             rec = entry.get('record_title') or entry.get('record_uid', '?')
             th = entry.get('target_host')
             tp = entry.get('target_port')
-            remote = f"{th}:{tp}" if th and tp else f"{bcolors.WARNING}n/a{bcolors.ENDC}"
+            remote = f"{th}:{tp}" if th and tp else 'n/a'
             h = entry.get('host', '127.0.0.1')
             p = entry.get('port', '?')
-            local = f"{bcolors.OKGREEN}{h}:{p}{bcolors.ENDC}"
+            local = f"{h}:{p}"
             tid = entry.get('tube_id', '')
             mode = entry.get('mode', '?')
-            status = f"{bcolors.OKGREEN}{mode} (PID {pid}){bcolors.ENDC}"
-            table.append([rec, remote, local, tid, '', status])
+            status = f"{mode} (PID {pid})"
+            if format_type == 'json':
+                table.append([rec, remote, local, tid, '', status])
+            else:
+                rem_disp = remote if remote != 'n/a' else f"{bcolors.WARNING}n/a{bcolors.ENDC}"
+                table.append([rec, rem_disp, f"{bcolors.OKGREEN}{local}{bcolors.ENDC}", tid, '',
+                              f"{bcolors.OKGREEN}{status}{bcolors.ENDC}"])
 
         if not table:
-            logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
+            message = "No Tunnels running"
+            if format_type == 'json':
+                print(json.dumps({"tunnels": [], "message": message}, indent=2))
+            else:
+                logging.warning(f"{bcolors.OKBLUE}{message}{bcolors.ENDC}")
             return
 
-        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+        report = dump_report_data(table, headers, fmt=format_type, filename="", row_number=False, column_width=None)
+        if format_type == 'json':
+            return report
 
 
 class PAMTunnelStopCommand(Command):
