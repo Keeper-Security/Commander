@@ -6,6 +6,7 @@ in this package ever needs to inline key/user/response logic.
 """
 
 import logging
+import re
 from typing import Optional, Dict, Any, Tuple
 
 from .. import utils, crypto, api
@@ -13,6 +14,14 @@ from ..proto import folder_pb2, record_sharing_pb2
 from ..error import KeeperApiError
 
 logger = logging.getLogger(__name__)
+
+# Keeper UIDs are 16 random bytes encoded as unpadded base64url (22 chars).
+_KEEPER_UID_RE = re.compile(r'^[A-Za-z0-9_-]{22}$')
+
+
+def is_keeper_uid(value: str) -> bool:
+    """True when *value* looks like a Keeper UID (not a display name)."""
+    return bool(value and _KEEPER_UID_RE.match(value))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -93,10 +102,9 @@ def encrypt_for_recipient(plaintext_key: bytes, public_key, use_ecc: bool) -> by
 # ═══════════════════════════════════════════════════════════════════════════
 
 def resolve_user_uid_bytes(params, user_identifier: str) -> Optional[bytes]:
-    """Resolve an email or base64-url UID to raw UID bytes.
+    """Resolve a user email or account UID to raw account UID bytes.
 
-    Lookup order: user_cache → enterprise users → base64 decode.
-    Returns None when the identifier cannot be resolved.
+    Only UID-shaped strings are decoded — never display names.
     """
     is_email = '@' in user_identifier
 
@@ -114,56 +122,70 @@ def resolve_user_uid_bytes(params, user_identifier: str) -> Optional[bytes]:
                     break
         return None
 
-    try:
-        return utils.base64_url_decode(user_identifier)
-    except Exception:
-        return None
-
+    # Only treat UID-shaped strings as account UIDs — never decode display names.
+    if is_keeper_uid(user_identifier):
+        try:
+            return utils.base64_url_decode(user_identifier)
+        except Exception:
+            return None
+    return None
 
 
 def resolve_team_uid_bytes(params, team_identifier: str) -> Optional[bytes]:
-    """Resolve a team name or base64-url team UID to raw UID bytes.
+    """Resolve team UID or display name to team UID bytes.
+
+    Matches classic share-folder: look up shareable
+    teams by UID or exact name. Does **not** base64-decode arbitrary strings —
+    that produced garbage UIDs (e.g. truncated names) and
+    ``bad_inputs_invalid_uid_string`` on ``team_get_keys``.
     """
-    if not team_identifier:
+    identifier = (team_identifier or '').strip()
+    if not identifier:
         return None
 
     team_cache = getattr(params, 'team_cache', None) or {}
-    if team_identifier in team_cache:
-        return utils.base64_url_decode(team_identifier)
-    lower = team_identifier.lower()
+    if identifier in team_cache:
+        return utils.base64_url_decode(identifier)
+    lower = identifier.casefold()
     for uid, t in team_cache.items():
         name = t.get('name') if isinstance(t, dict) else getattr(t, 'name', None)
-        if name and name.lower() == lower:
+        if name and name.casefold() == lower:
             return utils.base64_url_decode(uid)
 
     try:
         share_objects = api.get_share_objects(params).get('teams', {}) or {}
     except Exception:
         share_objects = {}
-    if team_identifier in share_objects:
-        return utils.base64_url_decode(team_identifier)
+    if identifier in share_objects:
+        return utils.base64_url_decode(identifier)
     for uid, t in share_objects.items():
         name = (t.get('name') if isinstance(t, dict) else None) or ''
-        if name.lower() == lower:
+        if name and name.casefold() == lower:
             return utils.base64_url_decode(uid)
 
-    if len(share_objects) >= 500 or getattr(params, 'available_team_cache', None) is None:
+    # Enterprise teams not always present in get_share_objects — same as classic
+    # share-folder when the share-objects list is large / incomplete.
+    available = getattr(params, 'available_team_cache', None)
+    if len(share_objects) >= 500 or available is None:
         try:
             api.load_available_teams(params)
+            available = getattr(params, 'available_team_cache', None)
         except Exception:
             pass
-    for t in (getattr(params, 'available_team_cache', None) or []):
+    if not isinstance(available, (list, tuple)):
+        available = []
+    for t in available:
         uid = t.get('team_uid')
         name = t.get('team_name', '')
-        if uid and (uid == team_identifier or name.lower() == lower):
+        if uid and (uid == identifier or (name and name.casefold() == lower)):
             return utils.base64_url_decode(uid)
 
-    try:
-        decoded = utils.base64_url_decode(team_identifier)
-        return decoded if decoded else None
-    except Exception:
-        return None
-
+    if is_keeper_uid(identifier):
+        try:
+            return utils.base64_url_decode(identifier)
+        except Exception:
+            return None
+    return None
 
 def resolve_team_identifier(params, team_identifier: str) -> Optional[Tuple[str, bytes]]:
     """Resolve a team name/UID to ``(team_uid_b64, team_uid_bytes)`` or ``None``."""
@@ -177,6 +199,9 @@ def get_team_keys(params, team_uid_b64: str):
     """Return the cached ``PublicKeys`` for a team, loading them if needed.
     """
     from ..params import PublicKeys
+
+    if not is_keeper_uid(team_uid_b64):
+        raise ValueError(f'Invalid team UID: {team_uid_b64}')
 
     cached = params.key_cache.get(team_uid_b64)
     has_asym = bool(cached and (getattr(cached, 'rsa', None) or getattr(cached, 'ec', None)))
