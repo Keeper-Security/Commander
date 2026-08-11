@@ -27,32 +27,39 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Function to run keeper service with intelligent lifecycle management
+# Function to run keeper service with intelligent lifecycle management.
+# Usage: run_keeper_service <config_file_or_empty> <command> [args...]
+# Arguments are passed through as an array so values containing spaces survive.
 run_keeper_service() {
-    local config_arg="$1"
-    local command_args="$2"
-    
+    local config_file="$1"
+    shift
+
+    local config_args=()
+    if [[ -n "${config_file}" ]]; then
+        config_args=("--config" "${config_file}")
+    fi
+
     # Check if command contains service-create
-    if [[ "$command_args" =~ service-create ]]; then
+    if [[ "$*" =~ service-create ]]; then
         log "Service command detected, checking service status..."
-        
+
         # Get service status
         local service_status
-        service_status=$(python3 keeper.py ${config_arg} service-status 2>/dev/null || true)
-        
+        service_status=$(python3 keeper.py "${config_args[@]}" service-status 2>/dev/null || true)
+
         if echo "${service_status}" | grep -q "Stopped"; then
             log "Service exists but is stopped, starting it..."
-            python3 keeper.py ${config_arg} service-start
+            python3 keeper.py "${config_args[@]}" service-start
         elif echo "${service_status}" | grep -q "Running"; then
             log "Service is already running, no action needed."
         else
             log "Service not found, creating new service..."
-            log "Running: python3 keeper.py ${config_arg} ${command_args}"
-            python3 keeper.py ${config_arg} ${command_args}
+            log "Running: python3 keeper.py ${config_args[*]} $*"
+            python3 keeper.py "${config_args[@]}" "$@"
         fi
     else
         # Not a service command, run as normal
-        python3 keeper.py ${config_arg} ${command_args}
+        python3 keeper.py "${config_args[@]}" "$@"
     fi
 }
 
@@ -103,23 +110,28 @@ parse_credentials() {
     done
 }
 
-# Filter out authentication arguments and return remaining command arguments
+# Filter out authentication arguments, leaving the actual Commander command in
+# the global COMMAND_ARGS array. An array rather than a string so that arguments
+# containing spaces -- record titles, notes, search queries -- reach Commander
+# as single arguments instead of being re-split by word splitting.
 filter_args() {
-    local filtered_args=()
-    
+    COMMAND_ARGS=()
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             --user|--password|--server|--ksm-config|--ksm-token|--record)
-                shift 2  # Skip argument and its value
+                # Skip the flag and its value, tolerating a missing value.
+                shift
+                if [[ $# -gt 0 ]]; then
+                    shift
+                fi
                 ;;
             *)
-                filtered_args+=("$1")
+                COMMAND_ARGS+=("$1")
                 shift
                 ;;
         esac
     done
-    
-    echo "${filtered_args[@]}"
 }
 
 
@@ -221,6 +233,36 @@ download_config_from_ksm() {
     log "Config.json downloaded successfully from KSM record"
 }
 
+# Upload config.json back to the KSM record once, without starting a monitor.
+# Used after a one-shot command so refreshed device/session state is persisted
+# before the container exits. Best effort: a failed upload must not mask the
+# status of the command the user actually asked for.
+upload_config_to_ksm() {
+    local ksm_config_path="$1"
+    local ksm_token="$2"
+    local record_uid="$3"
+
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        return 0
+    fi
+
+    local helper_args=("upload" "--record-uid" "${record_uid}" \
+        "--config-file" "${CONFIG_FILE}")
+
+    if [[ -n "${ksm_config_path}" ]]; then
+        helper_args+=("--ksm-config" "${ksm_config_path}")
+    elif [[ -n "${ksm_token}" ]]; then
+        helper_args+=("--ksm-token" "${ksm_token}")
+    else
+        return 0
+    fi
+
+    log "Syncing config.json back to KSM record: ${record_uid}"
+    if ! python3 docker_ksm_utility.py "${helper_args[@]}"; then
+        log "WARNING: Failed to sync config back to KSM record"
+    fi
+}
+
 # Start config.json monitoring and upload changes
 start_config_monitor() {
     local ksm_config_path="$1"
@@ -275,6 +317,9 @@ stop_config_monitor() {
 # CLEANUP AND SIGNAL HANDLING
 # =============================================================================
 
+# PID of the idle process used by keep-alive mode, so signal handling can end it.
+KEEP_ALIVE_PID=""
+
 # Handle cleanup on exit
 cleanup_on_exit() {
     log "Performing cleanup on exit..."
@@ -282,8 +327,93 @@ cleanup_on_exit() {
     log "Cleanup completed"
 }
 
-# Set up exit trap for cleanup
-trap cleanup_on_exit EXIT INT TERM
+# Handle SIGTERM/SIGINT (e.g. `docker stop`) by ending the keep-alive wait and
+# exiting, which runs the EXIT trap and therefore the cleanup above.
+on_terminate() {
+    local signum="$1"
+
+    log "Received signal, shutting down..."
+    if [[ -n "${KEEP_ALIVE_PID}" ]]; then
+        kill "${KEEP_ALIVE_PID}" 2>/dev/null || true
+        KEEP_ALIVE_PID=""
+    fi
+
+    # Conventional shell status for death by signal.
+    exit $((128 + signum))
+}
+
+# Set up traps: cleanup always runs on exit, signals shut down deliberately.
+trap cleanup_on_exit EXIT
+trap 'on_terminate 15' TERM
+trap 'on_terminate 2' INT
+
+
+# =============================================================================
+# CONTAINER LIFECYCLE
+# =============================================================================
+
+# Decide whether the container should stay resident once setup is done.
+#
+# Persistent modes have to stay up: service mode leaves Commander running as a
+# background daemon, and a bare `docker run` with no command is a request for a
+# live container to exec into. A one-shot command is the opposite -- it must
+# exit with its own status so the container behaves like the CLI it wraps and
+# can be used in scripts and pipelines. Set KEEPER_KEEP_ALIVE=true to force the
+# container to stay up regardless.
+should_keep_alive() {
+    local flag
+    flag=$(printf '%s' "${KEEPER_KEEP_ALIVE:-}" | tr '[:upper:]' '[:lower:]')
+    case "${flag}" in
+        1|true|yes)
+            return 0
+            ;;
+    esac
+
+    # No command given -- nothing to finish, so keep the container available.
+    if [[ ${#COMMAND_ARGS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    # Service mode runs Commander as a daemon inside the container.
+    if [[ "${COMMAND_ARGS[*]}" =~ (service-create|service-start) ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Run the requested command (if any) and return its exit status. Uses
+# `|| status=$?` so that `set -e` does not abort before we can report it.
+run_command_args() {
+    local config_file="$1"
+    local status=0
+
+    if [[ ${#COMMAND_ARGS[@]} -gt 0 ]]; then
+        run_keeper_service "${config_file}" "${COMMAND_ARGS[@]}" || status=$?
+    fi
+
+    return "${status}"
+}
+
+# Final disposition: hold the container open for persistent modes, otherwise
+# exit with the wrapped command's status.
+finish() {
+    local status="${1:-0}"
+
+    if should_keep_alive; then
+        log "Keeping container alive..."
+        # Idle in the background and `wait` rather than running `sleep infinity`
+        # in the foreground: bash defers trap handlers until a foreground child
+        # finishes, so a foreground sleep would make the container ignore
+        # SIGTERM entirely and force `docker stop` to fall back to SIGKILL
+        # without ever running cleanup.
+        sleep infinity &
+        KEEP_ALIVE_PID=$!
+        wait "${KEEP_ALIVE_PID}" || true
+    fi
+
+    exit "${status}"
+}
 
 
 # =============================================================================
@@ -331,40 +461,35 @@ if [[ (-n "${KSM_CONFIG}" || -n "${KSM_TOKEN}") && -n "${RECORD}" ]]; then
     
     # Download config.json from KSM record
     download_config_from_ksm "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
-    
-    # Start monitoring for config.json changes to upload back to KSM
-    start_config_monitor "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
-    
+
     # Filter out KSM arguments from command args
-    COMMAND_ARGS=$(filter_args "$@")
-    
-    # Execute commands or keep container alive
-    if [[ -z "${COMMAND_ARGS}" ]]; then
-        log "No command arguments provided, keeping container alive..."
-        sleep infinity
-    else
-        # Run the service command with downloaded config file
-        run_keeper_service "--config ${CONFIG_FILE}" "${COMMAND_ARGS}"
-        log "Keeping container alive..."
-        sleep infinity
+    filter_args "$@"
+
+    if should_keep_alive; then
+        # Persistent run: watch config.json and push changes back to the record
+        # for as long as the container lives.
+        start_config_monitor "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
+        status=0
+        run_command_args "${CONFIG_FILE}" || status=$?
+        finish "${status}"
     fi
+
+    # One-shot run: no monitor needed. Sync the config back once so refreshed
+    # device/session state is preserved, then exit with the command's status.
+    status=0
+    run_command_args "${CONFIG_FILE}" || status=$?
+    upload_config_to_ksm "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
+    exit "${status}"
 # Check if config.json is mounted or available
 elif [[ -f "${CONFIG_FILE}" ]]; then
     log "Config file found at ${CONFIG_FILE}, using config-based authentication"
-    
+
     # Filter out authentication arguments, keep the rest
-    COMMAND_ARGS=$(filter_args "$@")
-    
-    # Execute commands or keep container alive
-    if [[ -z "${COMMAND_ARGS}" ]]; then
-        log "No command arguments provided, keeping container alive..."
-        sleep infinity
-    else
-        # Run the service command with config file
-        run_keeper_service "--config ${CONFIG_FILE}" "${COMMAND_ARGS}"
-        log "Keeping container alive..."
-        sleep infinity
-    fi
+    filter_args "$@"
+
+    status=0
+    run_command_args "${CONFIG_FILE}" || status=$?
+    finish "${status}"
 # Check if user/password authentication is provided
 elif [[ -n "${USER}" && -n "${PASSWORD}" ]]; then
     log "No config file found, using user/password authentication"
@@ -381,33 +506,21 @@ elif [[ -n "${USER}" && -n "${PASSWORD}" ]]; then
     setup_device "${USER}" "${PASSWORD}" "${SERVER}"
 
     # Filter out authentication arguments, keep the rest
-    COMMAND_ARGS=$(filter_args "$@")
+    filter_args "$@"
 
-    # Execute commands or keep container alive
-    if [[ -z "${COMMAND_ARGS}" ]]; then
-        log "Keeping container alive..."
-        sleep infinity
-    else
-        # Run the service command without credentials (device is now registered)
-        run_keeper_service "" "${COMMAND_ARGS}"
-        log "Keeping container alive..."
-        sleep infinity
-    fi
+    # Run without credentials -- the device is registered at this point.
+    status=0
+    run_command_args "" || status=$?
+    finish "${status}"
 # Fallback: no authentication provided
 else
     log "No config file found and no user/password provided"
-    
-    # Filter out authentication arguments, keep the rest
-    COMMAND_ARGS=$(filter_args "$@")
 
-    # Execute commands or keep container alive
-    if [[ -z "${COMMAND_ARGS}" ]]; then
-        log "Keeping container alive..."
-        sleep infinity
-    else
-        # Run the command directly without any authentication setup
-        run_keeper_service "" "${COMMAND_ARGS}"
-        log "Keeping container alive..."
-        sleep infinity
-    fi
+    # Filter out authentication arguments, keep the rest
+    filter_args "$@"
+
+    # Run the command directly without any authentication setup
+    status=0
+    run_command_args "" || status=$?
+    finish "${status}"
 fi
