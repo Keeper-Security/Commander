@@ -24,9 +24,8 @@ import sys
 import tempfile
 from typing import Dict, Any
 
-from ...commands.folder import FolderMakeCommand
 from ...commands.ksm import KSMCommand
-from ... import api, vault, utils, attachment, record_management, loginv3
+from ... import api, vault, utils, crypto, attachment, record_management, loginv3
 from ...display import bcolors
 from ...error import CommandError
 
@@ -38,6 +37,51 @@ from ..config.record_handler import RecordHandler
 
 class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
+
+    @staticmethod
+    def _is_owned_record(params, record_uid: str) -> bool:
+        """True when record_owner_cache marks the record as owned by this account."""
+        if not record_uid:
+            return False
+        owner_cache = getattr(params, 'record_owner_cache', None) or {}
+        owner = owner_cache.get(record_uid)
+        return bool(owner and owner.owner)
+
+    @staticmethod
+    def _is_owned_shared_folder(params, folder_uid: str) -> bool:
+        """True when the shared folder is owned by the current account."""
+        if not folder_uid:
+            return False
+        shared_folder = (getattr(params, 'shared_folder_cache', None) or {}).get(folder_uid)
+        if not shared_folder:
+            return False
+
+        owner_uid = shared_folder.get('owner_account_uid')
+        account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+        if owner_uid and account_uid_bytes:
+            return owner_uid == utils.base64_url_encode(account_uid_bytes)
+
+        owner_username = shared_folder.get('owner_username')
+        if owner_username and getattr(params, 'user', None):
+            return owner_username.lower() == params.user.lower()
+        return False
+
+    @staticmethod
+    def _find_owned_ksm_app_by_title(params, app_name: str):
+        """Return an owned KSM app with this title, or None (ignores non-owned squats)."""
+        if not app_name:
+            return None
+        for rec_cache_val in (getattr(params, 'record_cache', None) or {}).values():
+            rec = KSMCommand._app_record_from_cache_entry(rec_cache_val)
+            if not rec:
+                continue
+            try:
+                title = json.loads(rec['data_unencrypted'].decode('utf-8')).get('title')
+            except Exception:
+                continue
+            if title == app_name and DockerSetupBase._is_owned_record(params, rec.get('record_uid')):
+                return rec
+        return None
 
     @staticmethod
     def resolve_commander_config_path(config_path: str = None, params=None) -> str:
@@ -163,57 +207,94 @@ class DockerSetupBase:
         except Exception as e:
             raise CommandError('docker-setup', f'Device setup failed: {str(e)}')
 
-    def _create_shared_folder(self, params, folder_name: str) -> str:
-        """Create shared folder or return existing one"""
-        # Check if folder exists
-        for folder_uid, folder in params.folder_cache.items():
-            if folder.name == folder_name and folder_uid in params.shared_folder_cache:
-                DockerSetupPrinter.print_success("Using existing shared folder")
-                return folder_uid
+    @staticmethod
+    def _add_owned_shared_folder(params, folder_name: str) -> str:
+        """Create a root-level shared folder via folder_add (allows duplicate display names).
 
-        # Create new folder
+        Bypasses FolderMakeCommand/mkdir, which refuses to create when any visible
+        folder already has the same name — including a non-owned squat.
+        """
+        name = (folder_name or '').strip()
+        if not name:
+            raise CommandError('docker-setup', 'Shared folder name is required')
+        if not getattr(params, 'data_key', None):
+            raise CommandError('docker-setup', 'Not logged in (missing data key)')
+
+        folder_uid = api.generate_record_uid()
+        folder_key = utils.generate_aes_key()
+        request = {
+            'command': 'folder_add',
+            'folder_type': 'shared_folder',
+            'folder_uid': folder_uid,
+            'key': utils.base64_url_encode(crypto.encrypt_aes_v1(folder_key, params.data_key)),
+            'name': utils.base64_url_encode(crypto.encrypt_aes_v1(name.encode('utf-8'), folder_key)),
+            'data': utils.base64_url_encode(
+                crypto.encrypt_aes_v1(json.dumps({'name': name}).encode('utf-8'), folder_key)
+            ),
+            'manage_users': True,
+            'manage_records': True,
+            'can_share': True,
+            'can_edit': True,
+        }
+        api.communicate(params, request)
+        params.sync_data = True
+        return folder_uid
+
+    def _create_shared_folder(self, params, folder_name: str) -> str:
+        """Create a shared folder, or reuse one owned by this account with the same name."""
+        saw_non_owned = False
+        for folder_uid, folder in (params.folder_cache or {}).items():
+            if folder.name != folder_name or folder_uid not in (params.shared_folder_cache or {}):
+                continue
+            if self._is_owned_shared_folder(params, folder_uid):
+                DockerSetupPrinter.print_success(f"Using existing shared folder (UID: {folder_uid})")
+                return folder_uid
+            saw_non_owned = True
+
+        if saw_non_owned:
+            DockerSetupPrinter.print_warning(
+                f"Ignoring shared folder(s) named '{folder_name}' owned by another account; "
+                f"creating a new owned folder"
+            )
+
         try:
-            old_stdout = sys.stdout
-            sys.stdout = io.StringIO()
-            try:
-                folder_uid = FolderMakeCommand().execute(
-                    params,
-                    folder=folder_name,
-                    shared_folder=True,
-                    manage_users=True,
-                    manage_records=True,
-                    can_edit=True,
-                    can_share=True
-                )
-            finally:
-                sys.stdout = old_stdout
+            folder_uid = self._add_owned_shared_folder(params, folder_name)
             api.sync_down(params)
             DockerSetupPrinter.print_success(f"Shared folder created successfully (UID: {folder_uid})")
             return folder_uid
+        except CommandError:
+            raise
         except Exception as e:
             raise CommandError('docker-setup', f'Failed to create shared folder: {str(e)}')
 
     def _create_config_record(self, params, record_name: str, folder_uid: str) -> str:
-        """Create a config record or return existing one"""
-        # Check if record exists
-        if folder_uid in params.subfolder_record_cache:
-            for rec_uid in params.subfolder_record_cache[folder_uid]:
-                rec = api.get_record(params, rec_uid)
-                if rec.title == record_name:
-                    DockerSetupPrinter.print_success("Using existing record")
-                    return rec_uid
+        """Create a config record, or reuse an owned one with the same title in the folder."""
+        saw_non_owned = False
+        for rec_uid in (params.subfolder_record_cache or {}).get(folder_uid, []):
+            rec = api.get_record(params, rec_uid)
+            if rec.title != record_name:
+                continue
+            if self._is_owned_record(params, rec_uid):
+                DockerSetupPrinter.print_success("Using existing record")
+                return rec_uid
+            saw_non_owned = True
 
-        # Create new record
+        if saw_non_owned:
+            DockerSetupPrinter.print_warning(
+                f"Ignoring record(s) titled '{record_name}' owned by another account; "
+                f"creating a new owned record"
+            )
+
         try:
             record = vault.KeeperRecord.create(params, 'login')
             record.record_uid = utils.generate_uid()
             record.record_key = utils.generate_aes_key()
             record.title = record_name
             record.type_name = 'login'
-            
+
             record_management.add_record_to_folder(params, record, folder_uid)
             api.sync_down(params)
-            
+
             DockerSetupPrinter.print_success(f"Record created successfully (UID: {record.record_uid})")
             return record.record_uid
         except Exception as e:
@@ -336,32 +417,46 @@ class DockerSetupBase:
             return config_path
 
     def _create_ksm_app(self, params, app_name: str) -> str:
-        """Create KSM app or return existing one"""
-        # Check if app exists
-        existing_app = KSMCommand.get_app_record(params, app_name)
+        """Create a KSM app, or reuse an owned app with the same title."""
+        existing_app = self._find_owned_ksm_app_by_title(params, app_name)
         if existing_app:
             DockerSetupPrinter.print_success("Using existing app")
             return existing_app.get('record_uid')
 
-        # Create new app
+        existing_any = KSMCommand.get_app_record(params, app_name)
+        force_to_add = False
+        if existing_any:
+            existing_uid = existing_any.get('record_uid')
+            if self._is_owned_record(params, existing_uid):
+                DockerSetupPrinter.print_success("Using existing app")
+                return existing_uid
+            force_to_add = True
+            DockerSetupPrinter.print_warning(
+                f"Ignoring Secrets Manager app '{app_name}' owned by another account; "
+                f"creating a new owned app"
+            )
+
         try:
-            # Suppress KSM command output
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                KSMCommand.add_new_v5_app(params, app_name, force_to_add=False, format_type='table')
+                KSMCommand.add_new_v5_app(
+                    params, app_name, force_to_add=force_to_add, format_type='table'
+                )
             finally:
                 sys.stdout = old_stdout
-            
+
             api.sync_down(params)
-            
-            app_rec = KSMCommand.get_app_record(params, app_name)
+
+            app_rec = self._find_owned_ksm_app_by_title(params, app_name)
             if not app_rec:
                 raise CommandError('docker-setup', 'Failed to retrieve created app')
-            
+
             app_uid = app_rec.get('record_uid')
             DockerSetupPrinter.print_success(f"App created successfully (UID: {app_uid})")
             return app_uid
+        except CommandError:
+            raise
         except Exception as e:
             raise CommandError('docker-setup', f'Failed to create KSM app: {str(e)}')
 
