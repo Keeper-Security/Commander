@@ -476,6 +476,42 @@ class TestPamRbiEditRecordUpdate(unittest.TestCase):
                            ignore_server_cert='off', allow_copy='on', allowed_urls=['*.example.com'])
         mock_update.assert_called_once()
 
+    @mock.patch('keepercommander.commands.pam.vault_target.record_management.update_record')
+    @mock.patch('keepercommander.commands.pam_import.nsf_helpers.sync_down_preserving_nsf_keys')
+    @mock.patch('keepercommander.nested_share_folder.record_api.update_record_v3',
+                return_value={'success': True})
+    @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
+                return_value={'type': 'pamRemoteBrowser', 'title': 'NSF RBI', 'fields': []})
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    def test_nsf_rbi_edit_routes_to_update_record_v3(self, mock_resolve, _extract, mock_update_v3,
+                                                     mock_nsf_sync, mock_classic_update):
+        """Regression: NSF pamRemoteBrowser edits must use NSF v3 update, not classic update_record."""
+        record_uid = 'nsf-rbi-uid'
+        record = vault.TypedRecord(version=3)
+        record.record_uid = record_uid
+        record.type_name = 'pamRemoteBrowser'
+        record.title = 'NSF RBI'
+        record.fields.append(vault.TypedField.new_field('trafficEncryptionSeed', 'seed', ''))
+        record.fields.append(vault.TypedField.new_field(
+            'pamRemoteBrowserSettings',
+            {'connection': {'protocol': 'http', 'sessionPersistence': 'resource'}},
+            ''))
+
+        params = mock.MagicMock()
+        params.nested_share_records = {record_uid: {'revision': 1}}
+        params.nested_share_record_data = {}
+        mock_resolve.return_value = record
+
+        self.command.execute(params, record=record_uid, session_persistence='user')
+
+        mock_update_v3.assert_called_once()
+        self.assertEqual(mock_update_v3.call_args.args[1], record_uid)
+        mock_nsf_sync.assert_called_once_with(params)
+        mock_classic_update.assert_not_called()
+        self.assertEqual(
+            record.get_typed_field('pamRemoteBrowserSettings').value[0]['connection']['sessionPersistence'],
+            'user')
+
 
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditHelp(unittest.TestCase):
