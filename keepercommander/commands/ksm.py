@@ -1757,7 +1757,7 @@ class KSMCommand(Command):
         logging.debug("Creating new KSM Application named '%s'" % app_name)
 
         found_app = KSMCommand.get_app_record(params, app_name)
-        if (found_app is not None) and (found_app is not force_to_add):
+        if found_app is not None and not force_to_add:
             if format_type == 'json':
                 return json.dumps({"error": f'Application with the same name "{app_name}" already exists.'})
             else:
