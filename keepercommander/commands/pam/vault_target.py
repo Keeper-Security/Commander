@@ -1,3 +1,5 @@
+import logging
+
 from ..folder import FolderMoveCommand
 from ... import api, record_management, vault, vault_extensions
 from ...error import CommandError
@@ -553,8 +555,14 @@ def is_pam_nsf_record(params, record_uid):
         for folder_uid in find_folders(params, record_uid):
             if is_nested_share_folder(params, folder_uid):
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        # Fail open to the classic update path when folder lookup fails.
+        # NSF records missing from nested_share_* caches can then silently use
+        # classic update_record and appear not to persist.
+        logging.debug(
+            'is_pam_nsf_record: folder lookup failed for record %s (%s); '
+            'treating as classic/non-NSF',
+            record_uid, e)
     return False
 
 
