@@ -2736,6 +2736,62 @@ class RecordHistoryCommand(Command, RecordMixin):
             if action == 'view':
                 rev = history[index]
                 record = vault.KeeperRecord.load(params, rev)
+                fmt = kwargs.get('format') or ''
+
+                if fmt == 'json':
+                    version = rev.get('version') or 0
+                    ro = {
+                        'record_uid': record.record_uid
+                    }
+                    if version < 3:
+                        ro['title'] = record.title
+                        if isinstance(record, vault.PasswordRecord):
+                            if record.login:
+                                ro['login'] = record.login
+                            if record.password:
+                                ro['password'] = record.password
+                            if record.link:
+                                ro['login_url'] = record.link
+                            if record.custom:
+                                ro['custom_fields'] = [{
+                                    'name': x.name,
+                                    'value': x.value,
+                                    'type': x.type
+                                } for x in record.custom]
+                            if record.totp:
+                                ro['totp'] = record.totp
+                            if record.attachments:
+                                ro['attachments'] = [{
+                                    'id': a.id,
+                                    'name': a.name,
+                                    'size': a.size
+                                } for a in record.attachments]
+                            if record.notes:
+                                ro['notes'] = record.notes
+                    else:
+                        data = rev['data_unencrypted'] if 'data_unencrypted' in rev else b'{}'
+                        data = json.loads(data.decode())
+                        ro.update(data)
+                    ro['version'] = version
+                    ro['revision'] = record.revision
+                    if 'user_name' in rev:
+                        ro['modified_by'] = rev['user_name']
+                    if 'client_modified_time' in rev:
+                        cmt = rev['client_modified_time']
+                        if isinstance(cmt, (int, float)):
+                            dt = datetime.datetime.fromtimestamp(int(cmt / 1000))
+                            ro['client_modified_time'] = dt.isoformat()
+
+                    output = kwargs.get('output')
+                    if output:
+                        _, ext = os.path.splitext(output)
+                        if not ext:
+                            output += '.json'
+                        with open(output, 'w') as f:
+                            json.dump(ro, f, indent=2)
+                    else:
+                        print(json.dumps(ro, indent=2))
+                    return
 
                 rows = []
                 for name, value in record.enumerate_fields():
@@ -2747,7 +2803,6 @@ class RecordHistoryCommand(Command, RecordMixin):
                         rows.append([name, value])
                 modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
                 rows.append(['Modified', modified])
-                fmt = kwargs.get('format') or ''
                 return base.dump_report_data(rows, headers=['Name', 'Value'],
                                  title=f'Record Revision V.{revision}', no_header=True, right_align=(0,),
                                  fmt=fmt, filename=kwargs.get('output'))
