@@ -1,22 +1,36 @@
 class Verifycommand:
+    # pam tunnel aliases: start=s, list=l, stop=x, edit=e, diagnose=d
+    # (see PAMTunnelCommand.register_command in tunnel_and_connections.py)
+    _PAM_TUNNEL_ALIASES = {
+        's': 'start',
+        'l': 'list',
+        'x': 'stop',
+        'e': 'edit',
+        'd': 'diagnose',
+    }
+    _PAM_TUNNEL_ALLOWED = frozenset({'edit'})
+
     @staticmethod
-    def validate_pam_tunnel_command(command):
+    def validate_service_mode_restrictions(command_tokens):
         """
-        Service Mode: only 'pam tunnel edit' is allowed (aliases: pam t edit/e).
-        Blocks start/list/stop/diagnose (and aliases), including pam tunnel start --run.
-        Returns None if allowed or not a pam tunnel command; error string if blocked.
+        Authoritative Service Mode command policy.
+
+        Call on tokens from CommandExecutor (html.unescape + shlex.split),
+        not on raw HTTP split(" "). Returns error string if blocked, else None.
         """
-        if not command or len(command) < 2:
+        if not command_tokens:
             return None
-        if command[0] != 'pam':
-            return None
-        if command[1] not in ('tunnel', 't'):
-            return None
-        if len(command) >= 3 and command[2] in ('edit', 'e'):
-            return None
-        return (
-            'pam tunnel commands other than edit are not available in Service Mode'
-        )
+
+        tokens_l = [t.lower() for t in command_tokens]
+        if tokens_l[0] == 'pam' and len(tokens_l) >= 2 and tokens_l[1] in ('tunnel', 't'):
+            # Default verb matches PAMTunnelCommand.default_verb ('list')
+            verb = tokens_l[2] if len(tokens_l) >= 3 else 'list'
+            verb = Verifycommand._PAM_TUNNEL_ALIASES.get(verb, verb)
+            if verb not in Verifycommand._PAM_TUNNEL_ALLOWED:
+                return (
+                    'pam tunnel commands other than edit are not available in Service Mode'
+                )
+        return None
 
     @staticmethod
     def validate_append_command(command):

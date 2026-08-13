@@ -100,8 +100,8 @@ class TestAuthSecurity(TestCase):
             self.assertIn('Not permitted', response[0]['error'])
 
     @mock.patch.object(ConfigReader, 'read_config')
-    def test_policy_check_blocks_pam_tunnel_start(self, mock_read_config):
-        """pam tunnel start (incl. --run) is blocked in Service Mode"""
+    def test_policy_check_allows_pam_tunnel_start_at_http_layer(self, mock_read_config):
+        """Tunnel ban is enforced in CommandExecutor, not policy_check split(' ')."""
         mock_read_config.return_value = "pam"
 
         with self.app.test_request_context(
@@ -110,12 +110,12 @@ class TestAuthSecurity(TestCase):
             headers={'api-key': 'test_key'},
         ):
             response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
-            self.assertEqual(response[1], 403)
-            self.assertIn('pam tunnel', response[0]['error'])
+            self.assertEqual(response[1], 200)
+            self.assertEqual(response[0]['status'], 'success')
 
     @mock.patch.object(ConfigReader, 'read_config')
     def test_policy_check_allows_pam_tunnel_edit(self, mock_read_config):
-        """pam tunnel edit remains allowed in Service Mode"""
+        """pam tunnel edit remains allowed through policy_check"""
         mock_read_config.return_value = "pam"
 
         with self.app.test_request_context(
@@ -127,15 +127,18 @@ class TestAuthSecurity(TestCase):
             self.assertEqual(response[1], 200)
             self.assertEqual(response[0]['status'], 'success')
 
-    def test_validate_pam_tunnel_command(self):
-        """Unit-level checks for pam tunnel Service Mode allowlist"""
+    def test_validate_service_mode_restrictions_pam_tunnel(self):
+        """Unit-level checks for pam tunnel Service Mode allowlist (post-shlex tokens)"""
         ban = 'not available in Service Mode'
-        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'edit', 'uid']))
-        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 't', 'e', 'uid']))
-        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 'rotation', 'list']))
-        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(
-            ['pam', 'tunnel', 'start', 'uid', '--run', 'id']))
-        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'list']))
-        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'stop', 'uid']))
-        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'diagnose']))
-        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 't', 's', 'uid']))
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIsNone(check(['pam', 'tunnel', 'edit', 'uid']))
+        self.assertIsNone(check(['pam', 't', 'e', 'uid']))
+        self.assertIsNone(check(['pam', 'rotation', 'list']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'start', 'uid', '--run', 'id']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'list']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'stop', 'uid']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'diagnose']))
+        self.assertIn(ban, check(['pam', 't', 's', 'uid']))
+        # Case-insensitive (executor-normalized tokens)
+        self.assertIn(ban, check(['pam', 'TUNNEL', 'START', 'uid']))
+        self.assertIsNone(check(['pam', 'TUNNEL', 'EDIT', 'uid']))
