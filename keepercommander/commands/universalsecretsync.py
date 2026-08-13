@@ -112,6 +112,9 @@ class PAMUniversalSyncConfigListCommand(Command):
                     # Get the configuration data
                     config_data = universal_sync_edge.content_as_dict or {}
 
+                    # GitHub-specific fields are nested under the 'github' key.
+                    github_data = config_data.get('github') or {}
+
                     # Decrypt vault_name if present. The router stores it under the
                     # 'vaultName' key as a base64-url string of the encrypted bytes.
                     vault_name = 'N/A'
@@ -145,9 +148,9 @@ class PAMUniversalSyncConfigListCommand(Command):
                             sync_identity = 'N/A'
 
                     # Decrypt owner if present. The router stores it under the
-                    # 'owner' key as a base64-url string of the encrypted bytes.
+                    # 'github.owner' key as a base64-url string of the encrypted bytes.
                     owner = 'N/A'
-                    owner_encrypted = config_data.get('owner')
+                    owner_encrypted = github_data.get('owner')
                     if owner_encrypted:
                         try:
                             owner_bytes = crypto.decrypt_aes_v2(
@@ -158,23 +161,23 @@ class PAMUniversalSyncConfigListCommand(Command):
                             owner = 'N/A'
 
                     # scope/organizationVisibility are stored unencrypted (plain enum values)
-                    scope_value = config_data.get('scope')
+                    scope_value = github_data.get('scope')
                     try:
-                        scope_str = pam_pb2.Scope.Name(scope_value) if scope_value is not None else 'N/A'
+                        scope_str = pam_pb2.GitHubScope.Name(scope_value) if scope_value is not None else 'N/A'
                     except ValueError:
                         scope_str = 'N/A'
 
-                    org_visibility_value = config_data.get('organizationVisibility')
+                    org_visibility_value = github_data.get('organizationVisibility')
                     try:
-                        org_visibility_str = pam_pb2.OrganizationVisibility.Name(org_visibility_value) \
+                        org_visibility_str = pam_pb2.GitHubOrganizationVisibility.Name(org_visibility_value) \
                             if org_visibility_value is not None else 'N/A'
                     except ValueError:
                         org_visibility_str = 'N/A'
 
                     # Decrypt GitHub repository names if present. The router stores them under
-                    # the 'repos' key as a list of base64-url strings of the encrypted bytes.
+                    # the 'github.repos' key as a list of base64-url strings of the encrypted bytes.
                     repo_names = []
-                    for repo_encrypted in config_data.get('repos', []):
+                    for repo_encrypted in github_data.get('repos', []):
                         try:
                             repo_bytes = crypto.decrypt_aes_v2(
                                 utils.base64_url_decode(repo_encrypted), record.record_key)
@@ -304,6 +307,9 @@ class PAMUniversalSyncConfigListCommand(Command):
             # Get the configuration data
             config_data = universal_sync_edge.content_as_dict or {}
 
+            # GitHub-specific fields are nested under the 'github' key.
+            github_data = config_data.get('github') or {}
+
             # Decrypt vault_name if present. The router stores it under the
             # 'vaultName' key as a base64-url string of the encrypted bytes.
             vault_name = 'N/A'
@@ -337,9 +343,9 @@ class PAMUniversalSyncConfigListCommand(Command):
                     sync_identity = 'N/A'
 
             # Decrypt owner if present. The router stores it under the
-            # 'owner' key as a base64-url string of the encrypted bytes.
+            # 'github.owner' key as a base64-url string of the encrypted bytes.
             owner = 'N/A'
-            owner_encrypted = config_data.get('owner')
+            owner_encrypted = github_data.get('owner')
             if owner_encrypted:
                 try:
                     owner_bytes = crypto.decrypt_aes_v2(
@@ -350,23 +356,23 @@ class PAMUniversalSyncConfigListCommand(Command):
                     owner = 'N/A'
 
             # scope/organizationVisibility are stored unencrypted (plain enum values)
-            scope_value = config_data.get('scope')
+            scope_value = github_data.get('scope')
             try:
-                scope_str = pam_pb2.Scope.Name(scope_value) if scope_value is not None else 'N/A'
+                scope_str = pam_pb2.GitHubScope.Name(scope_value) if scope_value is not None else 'N/A'
             except ValueError:
                 scope_str = 'N/A'
 
-            org_visibility_value = config_data.get('organizationVisibility')
+            org_visibility_value = github_data.get('organizationVisibility')
             try:
-                org_visibility_str = pam_pb2.OrganizationVisibility.Name(org_visibility_value) \
+                org_visibility_str = pam_pb2.GitHubOrganizationVisibility.Name(org_visibility_value) \
                     if org_visibility_value is not None else 'N/A'
             except ValueError:
                 org_visibility_str = 'N/A'
 
             # Decrypt GitHub repository names if present. The router stores them under
-            # the 'repos' key as a list of base64-url strings of the encrypted bytes.
+            # the 'github.repos' key as a list of base64-url strings of the encrypted bytes.
             repo_names = []
-            for repo_encrypted in config_data.get('repos', []):
+            for repo_encrypted in github_data.get('repos', []):
                 try:
                     repo_bytes = crypto.decrypt_aes_v2(
                         utils.base64_url_decode(repo_encrypted), network.record_key)
@@ -589,18 +595,18 @@ class PAMUniversalSyncConfigAddCommand(Command):
 
         scope = kwargs.get('scope')
         if scope is not None:
-            rq.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
+            rq.github.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
 
         owner = kwargs.get('owner')
         if owner:
             owner_bytes = string_to_bytes(owner)
             encrypted_owner = crypto.encrypt_aes_v2(owner_bytes, network.record_key)
-            rq.owner = encrypted_owner
+            rq.github.owner = encrypted_owner
 
         org_visibility = kwargs.get('org_visibility')
         if org_visibility is not None:
             org_visibility_map = {'all': pam_pb2.ALL, 'private': pam_pb2.PRIVATE, 'selected': pam_pb2.SELECTED}
-            rq.organizationVisibility = org_visibility_map[org_visibility]
+            rq.github.organizationVisibility = org_visibility_map[org_visibility]
 
         repos = kwargs.get('repo')
         if repos:
@@ -608,7 +614,7 @@ class PAMUniversalSyncConfigAddCommand(Command):
                 repo_bytes = string_to_bytes(repo_name)
                 repo_obj = pam_pb2.GitHubRepository()
                 repo_obj.name = crypto.encrypt_aes_v2(repo_bytes, network.record_key)
-                rq.repos.append(repo_obj)
+                rq.github.repos.append(repo_obj)
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
@@ -741,26 +747,30 @@ class PAMUniversalSyncConfigEditCommand(Command):
         elif existing_config.get('vaultName'):
             rq.vaultName = utils.base64_url_decode(existing_config['vaultName'])
 
+        # GitHub-specific fields live under the nested 'github' object, both in the
+        # request message (rq.github) and in the existing DAG edge content.
+        existing_github = existing_config.get('github') or {}
+
         scope = kwargs.get('scope')
         if scope is not None:
-            rq.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
-        elif 'scope' in existing_config:
-            rq.scope = existing_config['scope']
+            rq.github.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
+        elif 'scope' in existing_github:
+            rq.github.scope = existing_github['scope']
 
         owner = kwargs.get('owner')
         if owner:
             owner_bytes = string_to_bytes(owner)
             encrypted_owner = crypto.encrypt_aes_v2(owner_bytes, network.record_key)
-            rq.owner = encrypted_owner
-        elif existing_config.get('owner'):
-            rq.owner = utils.base64_url_decode(existing_config['owner'])
+            rq.github.owner = encrypted_owner
+        elif existing_github.get('owner'):
+            rq.github.owner = utils.base64_url_decode(existing_github['owner'])
 
         org_visibility = kwargs.get('org_visibility')
         if org_visibility is not None:
             org_visibility_map = {'all': pam_pb2.ALL, 'private': pam_pb2.PRIVATE, 'selected': pam_pb2.SELECTED}
-            rq.organizationVisibility = org_visibility_map[org_visibility]
-        elif 'organizationVisibility' in existing_config:
-            rq.organizationVisibility = existing_config['organizationVisibility']
+            rq.github.organizationVisibility = org_visibility_map[org_visibility]
+        elif 'organizationVisibility' in existing_github:
+            rq.github.organizationVisibility = existing_github['organizationVisibility']
 
         # Handle repos - if provided, replace all; if not, keep existing (re-encrypted values carried forward as-is)
         repos = kwargs.get('repo')
@@ -769,12 +779,12 @@ class PAMUniversalSyncConfigEditCommand(Command):
                 repo_bytes = string_to_bytes(repo_name)
                 repo_obj = pam_pb2.GitHubRepository()
                 repo_obj.name = crypto.encrypt_aes_v2(repo_bytes, network.record_key)
-                rq.repos.append(repo_obj)
+                rq.github.repos.append(repo_obj)
         else:
-            for existing_repo in existing_config.get('repos', []):
+            for existing_repo in existing_github.get('repos', []):
                 repo_obj = pam_pb2.GitHubRepository()
                 repo_obj.name = utils.base64_url_decode(existing_repo)
-                rq.repos.append(repo_obj)
+                rq.github.repos.append(repo_obj)
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 

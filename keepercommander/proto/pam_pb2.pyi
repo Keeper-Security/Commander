@@ -4,7 +4,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -63,16 +64,16 @@ class PAMRecordingRiskLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PRR_HIGH: _ClassVar[PAMRecordingRiskLevel]
     PRR_CRITICAL: _ClassVar[PAMRecordingRiskLevel]
 
-class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+class GitHubScope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    REPOSITORY: _ClassVar[Scope]
-    ORGANIZATION: _ClassVar[Scope]
+    REPOSITORY: _ClassVar[GitHubScope]
+    ORGANIZATION: _ClassVar[GitHubScope]
 
-class OrganizationVisibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+class GitHubOrganizationVisibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    ALL: _ClassVar[OrganizationVisibility]
-    PRIVATE: _ClassVar[OrganizationVisibility]
-    SELECTED: _ClassVar[OrganizationVisibility]
+    ALL: _ClassVar[GitHubOrganizationVisibility]
+    PRIVATE: _ClassVar[GitHubOrganizationVisibility]
+    SELECTED: _ClassVar[GitHubOrganizationVisibility]
 
 class NhiCategory(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -118,11 +119,11 @@ PRR_LOW: PAMRecordingRiskLevel
 PRR_MEDIUM: PAMRecordingRiskLevel
 PRR_HIGH: PAMRecordingRiskLevel
 PRR_CRITICAL: PAMRecordingRiskLevel
-REPOSITORY: Scope
-ORGANIZATION: Scope
-ALL: OrganizationVisibility
-PRIVATE: OrganizationVisibility
-SELECTED: OrganizationVisibility
+REPOSITORY: GitHubScope
+ORGANIZATION: GitHubScope
+ALL: GitHubOrganizationVisibility
+PRIVATE: GitHubOrganizationVisibility
+SELECTED: GitHubOrganizationVisibility
 NHI_CATEGORY_UNKNOWN: NhiCategory
 PAM_USER: NhiCategory
 PAM_RESOURCE: NhiCategory
@@ -141,7 +142,7 @@ class PAMRotationSchedule(_message.Message):
     controllerUid: bytes
     scheduleData: str
     noSchedule: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., configurationUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., scheduleData: _Optional[str] = ..., noSchedule: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., configurationUid: _Optional[bytes] = ..., controllerUid: _Optional[bytes] = ..., scheduleData: _Optional[str] = ..., noSchedule: _Optional[bool] = ...) -> None: ...
 
 class PAMRotationSchedulesResponse(_message.Message):
     __slots__ = ("schedules",)
@@ -345,7 +346,7 @@ class PAMController(_message.Message):
     isInitialized: bool
     maxInstanceCount: int
     lastSeen: int
-    def __init__(self, controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., deviceToken: _Optional[str] = ..., deviceName: _Optional[str] = ..., nodeId: _Optional[int] = ..., created: _Optional[int] = ..., lastModified: _Optional[int] = ..., applicationUid: _Optional[bytes] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., isInitialized: bool = ..., maxInstanceCount: _Optional[int] = ..., lastSeen: _Optional[int] = ...) -> None: ...
+    def __init__(self, controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., deviceToken: _Optional[str] = ..., deviceName: _Optional[str] = ..., nodeId: _Optional[int] = ..., created: _Optional[int] = ..., lastModified: _Optional[int] = ..., applicationUid: _Optional[bytes] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., isInitialized: _Optional[bool] = ..., maxInstanceCount: _Optional[int] = ..., lastSeen: _Optional[int] = ...) -> None: ...
 
 class PAMSetMaxInstanceCountRequest(_message.Message):
     __slots__ = ("controllerUid", "maxInstanceCount")
@@ -481,7 +482,7 @@ class PAMRecordingsResponse(_message.Message):
     HASMORE_FIELD_NUMBER: _ClassVar[int]
     recordings: _containers.RepeatedCompositeFieldContainer[PAMRecording]
     hasMore: bool
-    def __init__(self, recordings: _Optional[_Iterable[_Union[PAMRecording, _Mapping]]] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, recordings: _Optional[_Iterable[_Union[PAMRecording, _Mapping]]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class PAMData(_message.Message):
     __slots__ = ("vertex", "content")
@@ -496,6 +497,14 @@ class UidList(_message.Message):
     UIDS_FIELD_NUMBER: _ClassVar[int]
     uids: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, uids: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class PAMServiceNames(_message.Message):
+    __slots__ = ("resourceUid", "names")
+    RESOURCEUID_FIELD_NUMBER: _ClassVar[int]
+    NAMES_FIELD_NUMBER: _ClassVar[int]
+    resourceUid: bytes
+    names: bytes
+    def __init__(self, resourceUid: _Optional[bytes] = ..., names: _Optional[bytes] = ...) -> None: ...
 
 class PAMResourceConfig(_message.Message):
     __slots__ = ("recordUid", "networkUid", "adminUid", "meta", "connectionSettings", "connectUsers", "domainUid", "jitSettings", "keeperAiSettings", "updateServices")
@@ -519,7 +528,7 @@ class PAMResourceConfig(_message.Message):
     jitSettings: bytes
     keeperAiSettings: bytes
     updateServices: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., networkUid: _Optional[bytes] = ..., adminUid: _Optional[bytes] = ..., meta: _Optional[bytes] = ..., connectionSettings: _Optional[bytes] = ..., connectUsers: _Optional[_Union[UidList, _Mapping]] = ..., domainUid: _Optional[bytes] = ..., jitSettings: _Optional[bytes] = ..., keeperAiSettings: _Optional[bytes] = ..., updateServices: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., networkUid: _Optional[bytes] = ..., adminUid: _Optional[bytes] = ..., meta: _Optional[bytes] = ..., connectionSettings: _Optional[bytes] = ..., connectUsers: _Optional[_Union[UidList, _Mapping]] = ..., domainUid: _Optional[bytes] = ..., jitSettings: _Optional[bytes] = ..., keeperAiSettings: _Optional[bytes] = ..., updateServices: _Optional[bool] = ...) -> None: ...
 
 class PAMUniversalSyncFolder(_message.Message):
     __slots__ = ("uid",)
@@ -533,29 +542,35 @@ class GitHubRepository(_message.Message):
     name: bytes
     def __init__(self, name: _Optional[bytes] = ...) -> None: ...
 
+class GitHubConfig(_message.Message):
+    __slots__ = ("scope", "owner", "organizationVisibility", "repos")
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    ORGANIZATIONVISIBILITY_FIELD_NUMBER: _ClassVar[int]
+    REPOS_FIELD_NUMBER: _ClassVar[int]
+    scope: GitHubScope
+    owner: bytes
+    organizationVisibility: GitHubOrganizationVisibility
+    repos: _containers.RepeatedCompositeFieldContainer[GitHubRepository]
+    def __init__(self, scope: _Optional[_Union[GitHubScope, str]] = ..., owner: _Optional[bytes] = ..., organizationVisibility: _Optional[_Union[GitHubOrganizationVisibility, str]] = ..., repos: _Optional[_Iterable[_Union[GitHubRepository, _Mapping]]] = ...) -> None: ...
+
 class PAMUniversalSyncConfig(_message.Message):
-    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "scope", "owner", "organizationVisibility", "repos")
+    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "github")
     NETWORKUID_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     DRYRUNENABLED_FIELD_NUMBER: _ClassVar[int]
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     SYNCIDENTITY_FIELD_NUMBER: _ClassVar[int]
     VAULTNAME_FIELD_NUMBER: _ClassVar[int]
-    SCOPE_FIELD_NUMBER: _ClassVar[int]
-    OWNER_FIELD_NUMBER: _ClassVar[int]
-    ORGANIZATIONVISIBILITY_FIELD_NUMBER: _ClassVar[int]
-    REPOS_FIELD_NUMBER: _ClassVar[int]
+    GITHUB_FIELD_NUMBER: _ClassVar[int]
     networkUid: bytes
     enabled: bool
     dryRunEnabled: bool
     folders: _containers.RepeatedCompositeFieldContainer[PAMUniversalSyncFolder]
     syncIdentity: bytes
     vaultName: bytes
-    scope: Scope
-    owner: bytes
-    organizationVisibility: OrganizationVisibility
-    repos: _containers.RepeatedCompositeFieldContainer[GitHubRepository]
-    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: bool = ..., dryRunEnabled: bool = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., scope: _Optional[_Union[Scope, str]] = ..., owner: _Optional[bytes] = ..., organizationVisibility: _Optional[_Union[OrganizationVisibility, str]] = ..., repos: _Optional[_Iterable[_Union[GitHubRepository, _Mapping]]] = ...) -> None: ...
+    github: GitHubConfig
+    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: _Optional[bool] = ..., dryRunEnabled: _Optional[bool] = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., github: _Optional[_Union[GitHubConfig, _Mapping]] = ...) -> None: ...
 
 class NhiMetricsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")
@@ -639,7 +654,7 @@ class NhiUidEntry(_message.Message):
     category: NhiCategory
     ksmNhi: bool
     appUid: str
-    def __init__(self, uid: _Optional[str] = ..., category: _Optional[_Union[NhiCategory, str]] = ..., ksmNhi: bool = ..., appUid: _Optional[str] = ...) -> None: ...
+    def __init__(self, uid: _Optional[str] = ..., category: _Optional[_Union[NhiCategory, str]] = ..., ksmNhi: _Optional[bool] = ..., appUid: _Optional[str] = ...) -> None: ...
 
 class GetNhiUidsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")
@@ -683,7 +698,7 @@ class PAMUniversalSyncPreCheckResult(_message.Message):
     ISUSED_FIELD_NUMBER: _ClassVar[int]
     folderUid: bytes
     isUsed: bool
-    def __init__(self, folderUid: _Optional[bytes] = ..., isUsed: bool = ...) -> None: ...
+    def __init__(self, folderUid: _Optional[bytes] = ..., isUsed: _Optional[bool] = ...) -> None: ...
 
 class PAMUniversalSyncPreCheckResponse(_message.Message):
     __slots__ = ("results",)
