@@ -128,6 +128,15 @@ def policy_check(fn):
                 'status': 'error',
                 'error': transform_folder_error
             }, 400
+
+        # Block pam tunnel (except edit) in Service Mode — closes host shell via --run
+        pam_tunnel_error = Verifycommand.validate_pam_tunnel_command(command)
+        if pam_tunnel_error:
+            logger.debug(f"Command validation failed: {command[0]} - {pam_tunnel_error}")
+            return {
+                'status': 'error',
+                'error': pam_tunnel_error
+            }, 403
             
         return fn(*args, **kwargs)
     return wrapper

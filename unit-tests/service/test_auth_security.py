@@ -3,6 +3,7 @@ from flask import Flask
 from keepercommander.service.decorators.auth import auth_check, policy_check
 from keepercommander.service.decorators.security import security_check, is_allowed_ip
 from keepercommander.service.util.config_reader import ConfigReader
+from keepercommander.service.util.verified_command import Verifycommand
 
 class TestAuthSecurity(TestCase):
     def setUp(self):
@@ -97,3 +98,44 @@ class TestAuthSecurity(TestCase):
             self.assertEqual(response[1], 403)
             self.assertEqual(response[0]['status'], 'error')
             self.assertIn('Not permitted', response[0]['error'])
+
+    @mock.patch.object(ConfigReader, 'read_config')
+    def test_policy_check_blocks_pam_tunnel_start(self, mock_read_config):
+        """pam tunnel start (incl. --run) is blocked in Service Mode"""
+        mock_read_config.return_value = "pam"
+
+        with self.app.test_request_context(
+            '/test', method='POST',
+            json={"command": "pam tunnel start uid --run id"},
+            headers={'api-key': 'test_key'},
+        ):
+            response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
+            self.assertEqual(response[1], 403)
+            self.assertIn('pam tunnel', response[0]['error'])
+
+    @mock.patch.object(ConfigReader, 'read_config')
+    def test_policy_check_allows_pam_tunnel_edit(self, mock_read_config):
+        """pam tunnel edit remains allowed in Service Mode"""
+        mock_read_config.return_value = "pam"
+
+        with self.app.test_request_context(
+            '/test', method='POST',
+            json={"command": "pam tunnel edit uid --enable-tunneling"},
+            headers={'api-key': 'test_key'},
+        ):
+            response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
+            self.assertEqual(response[1], 200)
+            self.assertEqual(response[0]['status'], 'success')
+
+    def test_validate_pam_tunnel_command(self):
+        """Unit-level checks for pam tunnel Service Mode allowlist"""
+        ban = 'not available in Service Mode'
+        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'edit', 'uid']))
+        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 't', 'e', 'uid']))
+        self.assertIsNone(Verifycommand.validate_pam_tunnel_command(['pam', 'rotation', 'list']))
+        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(
+            ['pam', 'tunnel', 'start', 'uid', '--run', 'id']))
+        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'list']))
+        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'stop', 'uid']))
+        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 'tunnel', 'diagnose']))
+        self.assertIn(ban, Verifycommand.validate_pam_tunnel_command(['pam', 't', 's', 'uid']))

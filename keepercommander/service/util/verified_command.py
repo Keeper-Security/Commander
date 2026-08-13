@@ -1,5 +1,24 @@
 class Verifycommand:
     @staticmethod
+    def validate_pam_tunnel_command(command):
+        """
+        Service Mode: only 'pam tunnel edit' is allowed (aliases: pam t edit/e).
+        Blocks start/list/stop/diagnose (and aliases), including pam tunnel start --run.
+        Returns None if allowed or not a pam tunnel command; error string if blocked.
+        """
+        if not command or len(command) < 2:
+            return None
+        if command[0] != 'pam':
+            return None
+        if command[1] not in ('tunnel', 't'):
+            return None
+        if len(command) >= 3 and command[2] in ('edit', 'e'):
+            return None
+        return (
+            'pam tunnel commands other than edit are not available in Service Mode'
+        )
+
+    @staticmethod
     def validate_append_command(command):
         """
         Validates 'append-notes' command and returns error message if invalid.
