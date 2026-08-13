@@ -4055,8 +4055,7 @@ class PAMRbiEditCommand(Command):
             update_connection_choice('sessionPersistence', session_persistence)
 
         if dirty:
-            record_management.update_record(params, record)
-            api.sync_down(params)
+            update_pam_record(params, record, command='pam rbi edit')
 
             traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
             if not traffic_encryption_key:
