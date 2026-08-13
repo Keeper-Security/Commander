@@ -446,6 +446,7 @@ class PedmScimCommand(base.ArgparseCommand):
                     return None
             key = (account_type_key, user_domain.lower(), user_login.lower())
             data = {
+                'Id': user.id,
                 'Domainname': user_domain,
                 'Username': user_login,
                 'AccountType': account_type,
@@ -476,8 +477,9 @@ class PedmScimCommand(base.ArgparseCommand):
                 return None
             group_domain = group.domain or domain_name
             data = {
+                'Id': group.id,
+                'Domainname': group_domain,
                 'GroupName': group.name,
-                'Domainname': group_domain
             }
 
             key = (group_domain.lower(), group.name.lower())
