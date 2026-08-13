@@ -250,142 +250,125 @@ class TestPamRbiEditExecute(unittest.TestCase):
         self.assertIn('At least one parameter is required', str(context.exception))
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_url_navigation_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_url_navigation_on_sets_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='on')
         self.assertEqual(self.pam_settings['connection'].get('allowUrlManipulation'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_url_navigation_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_url_navigation_off_sets_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='off')
         self.assertEqual(self.pam_settings['connection'].get('allowUrlManipulation'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_url_navigation_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_url_navigation_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['allowUrlManipulation'] = True
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='default')
         self.assertNotIn('allowUrlManipulation', self.pam_settings['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_ignore_server_cert_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_ignore_server_cert_on_sets_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', ignore_server_cert='on')
         self.assertEqual(self.pam_settings['connection'].get('ignoreInitialSslCert'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_uploads_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_uploads_on_sets_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_file_uploads='on')
         self.assertEqual(self.pam_settings['connection'].get('allowFileUploads'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_uploads_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_uploads_off_sets_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_file_uploads='off')
         self.assertEqual(self.pam_settings['connection'].get('allowFileUploads'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_uploads_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_uploads_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['allowFileUploads'] = True
         self.command.execute(self.mock_params, record='test-record', allow_file_uploads='default')
         self.assertNotIn('allowFileUploads', self.pam_settings['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_downloads_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_downloads_on_sets_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_file_downloads='on')
         self.assertEqual(self.pam_settings['connection'].get('allowFileDownloads'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_downloads_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_downloads_off_sets_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_file_downloads='off')
         self.assertEqual(self.pam_settings['connection'].get('allowFileDownloads'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_file_downloads_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_file_downloads_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['allowFileDownloads'] = True
         self.command.execute(self.mock_params, record='test-record', allow_file_downloads='default')
         self.assertNotIn('allowFileDownloads', self.pam_settings['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allowed_urls_joins_with_newlines(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allowed_urls_joins_with_newlines(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allowed_urls=['*.example.com', '*.test.com'])
         self.assertEqual(self.pam_settings['connection'].get('allowedUrlPatterns'), '*.example.com\n*.test.com')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allowed_resource_urls_joins_with_newlines(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allowed_resource_urls_joins_with_newlines(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allowed_resource_urls=['*.cdn.example.com'])
         self.assertEqual(self.pam_settings['connection'].get('allowedResourceUrlPatterns'), '*.cdn.example.com')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_autofill_targets_joins_with_newlines(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_autofill_targets_joins_with_newlines(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', autofill_targets=['#username', '#password'])
         self.assertEqual(self.pam_settings['connection'].get('autofillConfiguration'), '#username\n#password')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_session_persistence_sets_value(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_session_persistence_sets_value(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', session_persistence='user')
         self.assertEqual(self.pam_settings['connection'].get('sessionPersistence'), 'user')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_session_persistence_none_sets_literal(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_session_persistence_none_sets_literal(self, mock_update, mock_resolve):
         # 'none' is a real enum value (no persistence), not a removal sentinel
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', session_persistence='none')
         self.assertEqual(self.pam_settings['connection'].get('sessionPersistence'), 'none')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_session_persistence_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_session_persistence_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['sessionPersistence'] = 'user'
         self.command.execute(self.mock_params, record='test-record', session_persistence='default')
         self.assertNotIn('sessionPersistence', self.pam_settings['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_session_persistence_default_removes_present_but_null(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_session_persistence_default_removes_present_but_null(self, mock_update, mock_resolve):
         # A present-but-null value must still be removed (membership check, not None check)
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['sessionPersistence'] = None
@@ -409,59 +392,52 @@ class TestPamRbiEditClipboardInversion(unittest.TestCase):
         self.mock_params = mock.MagicMock()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_copy_on_sets_disable_copy_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_copy_on_sets_disable_copy_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_copy='on')
         self.assertEqual(self.pam_settings['connection'].get('disableCopy'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_copy_off_sets_disable_copy_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_copy_off_sets_disable_copy_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_copy='off')
         self.assertEqual(self.pam_settings['connection'].get('disableCopy'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_copy_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_copy_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['disableCopy'] = True
         self.command.execute(self.mock_params, record='test-record', allow_copy='default')
         self.assertNotIn('disableCopy', self.pam_settings['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_paste_on_sets_disable_paste_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_paste_on_sets_disable_paste_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_paste='on')
         self.assertEqual(self.pam_settings['connection'].get('disablePaste'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_allow_paste_off_sets_disable_paste_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_paste_off_sets_disable_paste_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_paste='off')
         self.assertEqual(self.pam_settings['connection'].get('disablePaste'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_clipboard_both_on(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_both_on(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_copy='on', allow_paste='on')
         self.assertEqual(self.pam_settings['connection'].get('disableCopy'), False)
         self.assertEqual(self.pam_settings['connection'].get('disablePaste'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_clipboard_both_off(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_both_off(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_copy='off', allow_paste='off')
         self.assertEqual(self.pam_settings['connection'].get('disableCopy'), True)
@@ -484,22 +460,57 @@ class TestPamRbiEditRecordUpdate(unittest.TestCase):
         self.mock_params = mock.MagicMock()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_record_update_called_when_field_changes(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_record_update_called_when_field_changes(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='on')
         mock_update.assert_called_once()
-        mock_sync.assert_called_once()
+        args, kwargs = mock_update.call_args
+        self.assertEqual(kwargs.get('command'), 'pam rbi edit')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_multiple_fields_single_update(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_multiple_fields_single_update(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='on',
                            ignore_server_cert='off', allow_copy='on', allowed_urls=['*.example.com'])
         mock_update.assert_called_once()
+
+    @mock.patch('keepercommander.commands.pam.vault_target.record_management.update_record')
+    @mock.patch('keepercommander.commands.pam_import.nsf_helpers.sync_down_preserving_nsf_keys')
+    @mock.patch('keepercommander.nested_share_folder.record_api.update_record_v3',
+                return_value={'success': True})
+    @mock.patch('keepercommander.vault_extensions.extract_typed_record_data',
+                return_value={'type': 'pamRemoteBrowser', 'title': 'NSF RBI', 'fields': []})
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    def test_nsf_rbi_edit_routes_to_update_record_v3(self, mock_resolve, _extract, mock_update_v3,
+                                                     mock_nsf_sync, mock_classic_update):
+        """Regression: NSF pamRemoteBrowser edits must use NSF v3 update, not classic update_record."""
+        record_uid = 'nsf-rbi-uid'
+        record = vault.TypedRecord(version=3)
+        record.record_uid = record_uid
+        record.type_name = 'pamRemoteBrowser'
+        record.title = 'NSF RBI'
+        record.fields.append(vault.TypedField.new_field('trafficEncryptionSeed', 'seed', ''))
+        record.fields.append(vault.TypedField.new_field(
+            'pamRemoteBrowserSettings',
+            {'connection': {'protocol': 'http', 'sessionPersistence': 'resource'}},
+            ''))
+
+        params = mock.MagicMock()
+        params.nested_share_records = {record_uid: {'revision': 1}}
+        params.nested_share_record_data = {}
+        mock_resolve.return_value = record
+
+        self.command.execute(params, record=record_uid, session_persistence='user')
+
+        mock_update_v3.assert_called_once()
+        self.assertEqual(mock_update_v3.call_args.args[1], record_uid)
+        mock_nsf_sync.assert_called_once_with(params)
+        mock_classic_update.assert_not_called()
+        self.assertEqual(
+            record.get_typed_field('pamRemoteBrowserSettings').value[0]['connection']['sessionPersistence'],
+            'user')
 
 
 @unittest.skipIf(skip_tests, skip_reason)
@@ -616,25 +627,22 @@ class TestPamRbiEditAudioSettings(unittest.TestCase):
         self.assertEqual(args.disable_audio, 'default')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_disable_audio_on_sets_true(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_disable_audio_on_sets_true(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', disable_audio='on')
         self.assertEqual(self.pam_settings['connection'].get('disableAudio'), True)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_disable_audio_off_sets_false(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_disable_audio_off_sets_false(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', disable_audio='off')
         self.assertEqual(self.pam_settings['connection'].get('disableAudio'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_disable_audio_default_removes_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_disable_audio_default_removes_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.pam_settings['connection']['disableAudio'] = True
         self.command.execute(self.mock_params, record='test-record', disable_audio='default')
@@ -649,9 +657,8 @@ class TestPamRbiEditAudioSettings(unittest.TestCase):
         self.assertEqual(args.audio_channels, 1)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_audio_channels_sets_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_audio_channels_sets_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', audio_channels=2)
         self.assertEqual(self.pam_settings['connection'].get('audioChannels'), 2)
@@ -669,9 +676,8 @@ class TestPamRbiEditAudioSettings(unittest.TestCase):
             self.parser.parse_args(['--record', 'test-record', '--audio-bit-depth', '24'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_audio_bit_depth_sets_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_audio_bit_depth_sets_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', audio_bit_depth=16)
         self.assertEqual(self.pam_settings['connection'].get('audioBps'), 16)
@@ -685,17 +691,15 @@ class TestPamRbiEditAudioSettings(unittest.TestCase):
         self.assertEqual(args.audio_sample_rate, 48000)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_audio_sample_rate_sets_field(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_audio_sample_rate_sets_field(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', audio_sample_rate=48000)
         self.assertEqual(self.pam_settings['connection'].get('audioSampleRate'), 48000)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    def test_all_audio_settings_combined(self, mock_sync, mock_update, mock_resolve):
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_all_audio_settings_combined(self, mock_update, mock_resolve):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', disable_audio='off',
                            audio_channels=2, audio_bit_depth=16, audio_sample_rate=44100)
