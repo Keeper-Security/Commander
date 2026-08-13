@@ -5,7 +5,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -27,6 +28,7 @@ class SkillType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DEVICE_APPROVAL: _ClassVar[SkillType]
     TEAM_APPROVAL: _ClassVar[SkillType]
     TEAM_FOR_USER_APPROVAL: _ClassVar[SkillType]
+    REPORTING: _ClassVar[SkillType]
 
 class AutomatorState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -46,6 +48,7 @@ UNKNOWN_SKILL_TYPE: SkillType
 DEVICE_APPROVAL: SkillType
 TEAM_APPROVAL: SkillType
 TEAM_FOR_USER_APPROVAL: SkillType
+REPORTING: SkillType
 UNKNOWN_STATE: AutomatorState
 RUNNING: AutomatorState
 ERROR: AutomatorState
@@ -83,7 +86,7 @@ class AutomatorSettingValue(_message.Message):
     translated: bool
     userVisible: bool
     required: bool
-    def __init__(self, settingId: _Optional[int] = ..., settingTypeId: _Optional[int] = ..., settingTag: _Optional[str] = ..., settingName: _Optional[str] = ..., settingValue: _Optional[str] = ..., dataType: _Optional[_Union[_ssocloud_pb2.DataType, str]] = ..., lastModified: _Optional[str] = ..., fromFile: bool = ..., encrypted: bool = ..., encoded: bool = ..., editable: bool = ..., translated: bool = ..., userVisible: bool = ..., required: bool = ...) -> None: ...
+    def __init__(self, settingId: _Optional[int] = ..., settingTypeId: _Optional[int] = ..., settingTag: _Optional[str] = ..., settingName: _Optional[str] = ..., settingValue: _Optional[str] = ..., dataType: _Optional[_Union[_ssocloud_pb2.DataType, str]] = ..., lastModified: _Optional[str] = ..., fromFile: _Optional[bool] = ..., encrypted: _Optional[bool] = ..., encoded: _Optional[bool] = ..., editable: _Optional[bool] = ..., translated: _Optional[bool] = ..., userVisible: _Optional[bool] = ..., required: _Optional[bool] = ...) -> None: ...
 
 class ApproveDeviceRequest(_message.Message):
     __slots__ = ("automatorId", "ssoAuthenticationProtocolType", "authMessage", "email", "devicePublicKey", "serverEccPublicKeyId", "userEncryptedDataKey", "userEncryptedDataKeyType", "ipAddress", "isTesting", "isEccOnly")
@@ -109,7 +112,7 @@ class ApproveDeviceRequest(_message.Message):
     ipAddress: str
     isTesting: bool
     isEccOnly: bool
-    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., devicePublicKey: _Optional[bytes] = ..., serverEccPublicKeyId: _Optional[int] = ..., userEncryptedDataKey: _Optional[bytes] = ..., userEncryptedDataKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., ipAddress: _Optional[str] = ..., isTesting: bool = ..., isEccOnly: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., devicePublicKey: _Optional[bytes] = ..., serverEccPublicKeyId: _Optional[int] = ..., userEncryptedDataKey: _Optional[bytes] = ..., userEncryptedDataKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., ipAddress: _Optional[str] = ..., isTesting: _Optional[bool] = ..., isEccOnly: _Optional[bool] = ...) -> None: ...
 
 class SetupRequest(_message.Message):
     __slots__ = ("automatorId", "serverEccPublicKeyId", "automatorState", "encryptedEnterprisePrivateEccKey", "encryptedEnterprisePrivateRsaKey", "automatorSkills", "encryptedTreeKey", "isEccOnly")
@@ -129,7 +132,7 @@ class SetupRequest(_message.Message):
     automatorSkills: _containers.RepeatedCompositeFieldContainer[AutomatorSkill]
     encryptedTreeKey: bytes
     isEccOnly: bool
-    def __init__(self, automatorId: _Optional[int] = ..., serverEccPublicKeyId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., encryptedEnterprisePrivateEccKey: _Optional[bytes] = ..., encryptedEnterprisePrivateRsaKey: _Optional[bytes] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ..., encryptedTreeKey: _Optional[bytes] = ..., isEccOnly: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., serverEccPublicKeyId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., encryptedEnterprisePrivateEccKey: _Optional[bytes] = ..., encryptedEnterprisePrivateRsaKey: _Optional[bytes] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ..., encryptedTreeKey: _Optional[bytes] = ..., isEccOnly: _Optional[bool] = ...) -> None: ...
 
 class StatusRequest(_message.Message):
     __slots__ = ("automatorId", "serverEccPublicKeyId", "isEccOnly")
@@ -139,7 +142,7 @@ class StatusRequest(_message.Message):
     automatorId: int
     serverEccPublicKeyId: int
     isEccOnly: bool
-    def __init__(self, automatorId: _Optional[int] = ..., serverEccPublicKeyId: _Optional[int] = ..., isEccOnly: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., serverEccPublicKeyId: _Optional[int] = ..., isEccOnly: _Optional[bool] = ...) -> None: ...
 
 class InitializeRequest(_message.Message):
     __slots__ = ("automatorId", "idpMetadata", "idpSigningCertificate", "ssoEntityId", "emailMapping", "firstnameMapping", "lastnameMapping", "disabled", "serverEccPublicKeyId", "config", "sslMode", "persistState", "disableSniCheck", "sslCertificateFilename", "sslCertificateFilePassword", "sslCertificateKeyPassword", "sslCertificateContents", "automatorHost", "automatorPort", "ipAllow", "ipDeny", "isEccOnly")
@@ -187,7 +190,7 @@ class InitializeRequest(_message.Message):
     ipAllow: str
     ipDeny: str
     isEccOnly: bool
-    def __init__(self, automatorId: _Optional[int] = ..., idpMetadata: _Optional[str] = ..., idpSigningCertificate: _Optional[bytes] = ..., ssoEntityId: _Optional[str] = ..., emailMapping: _Optional[str] = ..., firstnameMapping: _Optional[str] = ..., lastnameMapping: _Optional[str] = ..., disabled: bool = ..., serverEccPublicKeyId: _Optional[int] = ..., config: _Optional[bytes] = ..., sslMode: _Optional[str] = ..., persistState: bool = ..., disableSniCheck: bool = ..., sslCertificateFilename: _Optional[str] = ..., sslCertificateFilePassword: _Optional[str] = ..., sslCertificateKeyPassword: _Optional[str] = ..., sslCertificateContents: _Optional[bytes] = ..., automatorHost: _Optional[str] = ..., automatorPort: _Optional[str] = ..., ipAllow: _Optional[str] = ..., ipDeny: _Optional[str] = ..., isEccOnly: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., idpMetadata: _Optional[str] = ..., idpSigningCertificate: _Optional[bytes] = ..., ssoEntityId: _Optional[str] = ..., emailMapping: _Optional[str] = ..., firstnameMapping: _Optional[str] = ..., lastnameMapping: _Optional[str] = ..., disabled: _Optional[bool] = ..., serverEccPublicKeyId: _Optional[int] = ..., config: _Optional[bytes] = ..., sslMode: _Optional[str] = ..., persistState: _Optional[bool] = ..., disableSniCheck: _Optional[bool] = ..., sslCertificateFilename: _Optional[str] = ..., sslCertificateFilePassword: _Optional[str] = ..., sslCertificateKeyPassword: _Optional[str] = ..., sslCertificateContents: _Optional[bytes] = ..., automatorHost: _Optional[str] = ..., automatorPort: _Optional[str] = ..., ipAllow: _Optional[str] = ..., ipDeny: _Optional[str] = ..., isEccOnly: _Optional[bool] = ...) -> None: ...
 
 class NotInitializedResponse(_message.Message):
     __slots__ = ("automatorTransmissionKey", "signingCertificate", "signingCertificateFilename", "signingCertificatePassword", "signingKeyPassword", "signingCertificateFormat", "automatorPublicKey", "config")
@@ -235,7 +238,7 @@ class AutomatorResponse(_message.Message):
     automatorState: AutomatorState
     automatorPublicEccKey: bytes
     version: _version_pb2.Version
-    def __init__(self, automatorId: _Optional[int] = ..., enabled: bool = ..., timestamp: _Optional[int] = ..., approveDevice: _Optional[_Union[ApproveDeviceResponse, _Mapping]] = ..., status: _Optional[_Union[StatusResponse, _Mapping]] = ..., notInitialized: _Optional[_Union[NotInitializedResponse, _Mapping]] = ..., error: _Optional[_Union[ErrorResponse, _Mapping]] = ..., approveTeamsForUser: _Optional[_Union[ApproveTeamsForUserResponse, _Mapping]] = ..., approveTeams: _Optional[_Union[ApproveTeamsResponse, _Mapping]] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., automatorPublicEccKey: _Optional[bytes] = ..., version: _Optional[_Union[_version_pb2.Version, _Mapping]] = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., enabled: _Optional[bool] = ..., timestamp: _Optional[int] = ..., approveDevice: _Optional[_Union[ApproveDeviceResponse, _Mapping]] = ..., status: _Optional[_Union[StatusResponse, _Mapping]] = ..., notInitialized: _Optional[_Union[NotInitializedResponse, _Mapping]] = ..., error: _Optional[_Union[ErrorResponse, _Mapping]] = ..., approveTeamsForUser: _Optional[_Union[ApproveTeamsForUserResponse, _Mapping]] = ..., approveTeams: _Optional[_Union[ApproveTeamsResponse, _Mapping]] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., automatorPublicEccKey: _Optional[bytes] = ..., version: _Optional[_Union[_version_pb2.Version, _Mapping]] = ...) -> None: ...
 
 class ApproveDeviceResponse(_message.Message):
     __slots__ = ("approved", "encryptedUserDataKey", "message", "encryptedUserDataKeyType")
@@ -247,7 +250,7 @@ class ApproveDeviceResponse(_message.Message):
     encryptedUserDataKey: bytes
     message: str
     encryptedUserDataKeyType: _enterprise_pb2.EncryptedKeyType
-    def __init__(self, approved: bool = ..., encryptedUserDataKey: _Optional[bytes] = ..., message: _Optional[str] = ..., encryptedUserDataKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
+    def __init__(self, approved: _Optional[bool] = ..., encryptedUserDataKey: _Optional[bytes] = ..., message: _Optional[str] = ..., encryptedUserDataKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
 
 class StatusResponse(_message.Message):
     __slots__ = ("initialized", "enabledTimestamp", "initializedTimestamp", "updatedTimestamp", "numberOfDevicesApproved", "numberOfDevicesDenied", "numberOfErrors", "sslCertificateExpiration", "notInitializedResponse", "config", "numberOfTeamMembershipsApproved", "numberOfTeamMembershipsDenied", "numberOfTeamsApproved", "numberOfTeamsDenied", "sslCertificateInfo")
@@ -281,7 +284,7 @@ class StatusResponse(_message.Message):
     numberOfTeamsApproved: int
     numberOfTeamsDenied: int
     sslCertificateInfo: _containers.RepeatedCompositeFieldContainer[SSLCertificateInfo]
-    def __init__(self, initialized: bool = ..., enabledTimestamp: _Optional[int] = ..., initializedTimestamp: _Optional[int] = ..., updatedTimestamp: _Optional[int] = ..., numberOfDevicesApproved: _Optional[int] = ..., numberOfDevicesDenied: _Optional[int] = ..., numberOfErrors: _Optional[int] = ..., sslCertificateExpiration: _Optional[int] = ..., notInitializedResponse: _Optional[_Union[NotInitializedResponse, _Mapping]] = ..., config: _Optional[bytes] = ..., numberOfTeamMembershipsApproved: _Optional[int] = ..., numberOfTeamMembershipsDenied: _Optional[int] = ..., numberOfTeamsApproved: _Optional[int] = ..., numberOfTeamsDenied: _Optional[int] = ..., sslCertificateInfo: _Optional[_Iterable[_Union[SSLCertificateInfo, _Mapping]]] = ...) -> None: ...
+    def __init__(self, initialized: _Optional[bool] = ..., enabledTimestamp: _Optional[int] = ..., initializedTimestamp: _Optional[int] = ..., updatedTimestamp: _Optional[int] = ..., numberOfDevicesApproved: _Optional[int] = ..., numberOfDevicesDenied: _Optional[int] = ..., numberOfErrors: _Optional[int] = ..., sslCertificateExpiration: _Optional[int] = ..., notInitializedResponse: _Optional[_Union[NotInitializedResponse, _Mapping]] = ..., config: _Optional[bytes] = ..., numberOfTeamMembershipsApproved: _Optional[int] = ..., numberOfTeamMembershipsDenied: _Optional[int] = ..., numberOfTeamsApproved: _Optional[int] = ..., numberOfTeamsDenied: _Optional[int] = ..., sslCertificateInfo: _Optional[_Iterable[_Union[SSLCertificateInfo, _Mapping]]] = ...) -> None: ...
 
 class ErrorResponse(_message.Message):
     __slots__ = ("message",)
@@ -309,7 +312,7 @@ class AdminResponse(_message.Message):
     success: bool
     message: str
     automatorInfo: _containers.RepeatedCompositeFieldContainer[AutomatorInfo]
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., automatorInfo: _Optional[_Iterable[_Union[AutomatorInfo, _Mapping]]] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ..., automatorInfo: _Optional[_Iterable[_Union[AutomatorInfo, _Mapping]]] = ...) -> None: ...
 
 class AutomatorInfo(_message.Message):
     __slots__ = ("automatorId", "nodeId", "name", "enabled", "url", "automatorSkills", "automatorSettingValues", "status", "logEntries", "automatorState", "version", "sslCertificateExpirationDate")
@@ -337,7 +340,7 @@ class AutomatorInfo(_message.Message):
     automatorState: AutomatorState
     version: str
     sslCertificateExpirationDate: str
-    def __init__(self, automatorId: _Optional[int] = ..., nodeId: _Optional[int] = ..., name: _Optional[str] = ..., enabled: bool = ..., url: _Optional[str] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ..., automatorSettingValues: _Optional[_Iterable[_Union[AutomatorSettingValue, _Mapping]]] = ..., status: _Optional[_Union[StatusResponse, _Mapping]] = ..., logEntries: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., version: _Optional[str] = ..., sslCertificateExpirationDate: _Optional[str] = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., nodeId: _Optional[int] = ..., name: _Optional[str] = ..., enabled: _Optional[bool] = ..., url: _Optional[str] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ..., automatorSettingValues: _Optional[_Iterable[_Union[AutomatorSettingValue, _Mapping]]] = ..., status: _Optional[_Union[StatusResponse, _Mapping]] = ..., logEntries: _Optional[_Iterable[_Union[LogEntry, _Mapping]]] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., version: _Optional[str] = ..., sslCertificateExpirationDate: _Optional[str] = ...) -> None: ...
 
 class AdminCreateAutomatorRequest(_message.Message):
     __slots__ = ("nodeId", "name", "skill")
@@ -379,7 +382,7 @@ class AdminEnableAutomatorRequest(_message.Message):
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     automatorId: int
     enabled: bool
-    def __init__(self, automatorId: _Optional[int] = ..., enabled: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., enabled: _Optional[bool] = ...) -> None: ...
 
 class AdminEditAutomatorRequest(_message.Message):
     __slots__ = ("automatorId", "name", "enabled", "url", "skillTypes", "automatorSettingValues")
@@ -395,7 +398,7 @@ class AdminEditAutomatorRequest(_message.Message):
     url: str
     skillTypes: _containers.RepeatedScalarFieldContainer[SkillType]
     automatorSettingValues: _containers.RepeatedCompositeFieldContainer[AutomatorSettingValue]
-    def __init__(self, automatorId: _Optional[int] = ..., name: _Optional[str] = ..., enabled: bool = ..., url: _Optional[str] = ..., skillTypes: _Optional[_Iterable[_Union[SkillType, str]]] = ..., automatorSettingValues: _Optional[_Iterable[_Union[AutomatorSettingValue, _Mapping]]] = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., name: _Optional[str] = ..., enabled: _Optional[bool] = ..., url: _Optional[str] = ..., skillTypes: _Optional[_Iterable[_Union[SkillType, str]]] = ..., automatorSettingValues: _Optional[_Iterable[_Union[AutomatorSettingValue, _Mapping]]] = ...) -> None: ...
 
 class AdminSetupAutomatorRequest(_message.Message):
     __slots__ = ("automatorId", "automatorState", "encryptedEccEnterprisePrivateKey", "encryptedRsaEnterprisePrivateKey", "skillTypes", "encryptedTreeKey")
@@ -425,7 +428,7 @@ class AdminSetupAutomatorResponse(_message.Message):
     automatorId: int
     automatorState: AutomatorState
     automatorEccPublicKey: bytes
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., automatorId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., automatorEccPublicKey: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ..., automatorId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., automatorEccPublicKey: _Optional[bytes] = ...) -> None: ...
 
 class AdminAutomatorSkillsRequest(_message.Message):
     __slots__ = ("automatorId",)
@@ -451,7 +454,7 @@ class AdminAutomatorSkillsResponse(_message.Message):
     success: bool
     message: str
     automatorSkills: _containers.RepeatedCompositeFieldContainer[AutomatorSkill]
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ..., automatorSkills: _Optional[_Iterable[_Union[AutomatorSkill, _Mapping]]] = ...) -> None: ...
 
 class AdminResetAutomatorRequest(_message.Message):
     __slots__ = ("automatorId",)
@@ -501,7 +504,7 @@ class ApproveTeamsForUserRequest(_message.Message):
     isTesting: bool
     isEccOnly: bool
     userPublicKeyEcc: bytes
-    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., serverEccPublicKeyId: _Optional[int] = ..., ipAddress: _Optional[str] = ..., userPublicKey: _Optional[bytes] = ..., teamDescription: _Optional[_Iterable[_Union[TeamDescription, _Mapping]]] = ..., isTesting: bool = ..., isEccOnly: bool = ..., userPublicKeyEcc: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., serverEccPublicKeyId: _Optional[int] = ..., ipAddress: _Optional[str] = ..., userPublicKey: _Optional[bytes] = ..., teamDescription: _Optional[_Iterable[_Union[TeamDescription, _Mapping]]] = ..., isTesting: _Optional[bool] = ..., isEccOnly: _Optional[bool] = ..., userPublicKeyEcc: _Optional[bytes] = ...) -> None: ...
 
 class TeamDescription(_message.Message):
     __slots__ = ("teamUid", "teamName", "encryptedTeamKey", "encryptedTeamKeyType")
@@ -545,7 +548,7 @@ class ApproveOneTeamForUserResponse(_message.Message):
     userEncryptedTeamKeyType: _enterprise_pb2.EncryptedKeyType
     userEncryptedTeamKeyByEcc: bytes
     userEncryptedTeamKeyByEccType: _enterprise_pb2.EncryptedKeyType
-    def __init__(self, approved: bool = ..., message: _Optional[str] = ..., teamUid: _Optional[bytes] = ..., teamName: _Optional[str] = ..., userEncryptedTeamKey: _Optional[bytes] = ..., userEncryptedTeamKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., userEncryptedTeamKeyByEcc: _Optional[bytes] = ..., userEncryptedTeamKeyByEccType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
+    def __init__(self, approved: _Optional[bool] = ..., message: _Optional[str] = ..., teamUid: _Optional[bytes] = ..., teamName: _Optional[str] = ..., userEncryptedTeamKey: _Optional[bytes] = ..., userEncryptedTeamKeyType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., userEncryptedTeamKeyByEcc: _Optional[bytes] = ..., userEncryptedTeamKeyByEccType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
 
 class ApproveTeamsRequest(_message.Message):
     __slots__ = ("automatorId", "ssoAuthenticationProtocolType", "authMessage", "email", "serverEccPublicKeyId", "ipAddress", "teamDescription", "isEccOnly", "isTesting")
@@ -567,7 +570,7 @@ class ApproveTeamsRequest(_message.Message):
     teamDescription: _containers.RepeatedCompositeFieldContainer[TeamDescription]
     isEccOnly: bool
     isTesting: bool
-    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., serverEccPublicKeyId: _Optional[int] = ..., ipAddress: _Optional[str] = ..., teamDescription: _Optional[_Iterable[_Union[TeamDescription, _Mapping]]] = ..., isEccOnly: bool = ..., isTesting: bool = ...) -> None: ...
+    def __init__(self, automatorId: _Optional[int] = ..., ssoAuthenticationProtocolType: _Optional[_Union[SsoAuthenticationProtocolType, str]] = ..., authMessage: _Optional[str] = ..., email: _Optional[str] = ..., serverEccPublicKeyId: _Optional[int] = ..., ipAddress: _Optional[str] = ..., teamDescription: _Optional[_Iterable[_Union[TeamDescription, _Mapping]]] = ..., isEccOnly: _Optional[bool] = ..., isTesting: _Optional[bool] = ...) -> None: ...
 
 class ApproveTeamsResponse(_message.Message):
     __slots__ = ("automatorId", "message", "approveTeamResponse")
@@ -609,7 +612,7 @@ class ApproveOneTeamResponse(_message.Message):
     teamPublicKeyEcc: bytes
     encryptedTeamPrivateKeyEcc: bytes
     encryptedTeamPrivateKeyEccType: _enterprise_pb2.EncryptedKeyType
-    def __init__(self, approved: bool = ..., message: _Optional[str] = ..., teamUid: _Optional[bytes] = ..., teamName: _Optional[str] = ..., encryptedTeamKeyCbc: _Optional[bytes] = ..., encryptedTeamKeyCbcType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., encryptedTeamKeyGcm: _Optional[bytes] = ..., encryptedTeamKeyGcmType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., teamPublicKeyRsa: _Optional[bytes] = ..., encryptedTeamPrivateKeyRsa: _Optional[bytes] = ..., encryptedTeamPrivateKeyRsaType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., teamPublicKeyEcc: _Optional[bytes] = ..., encryptedTeamPrivateKeyEcc: _Optional[bytes] = ..., encryptedTeamPrivateKeyEccType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
+    def __init__(self, approved: _Optional[bool] = ..., message: _Optional[str] = ..., teamUid: _Optional[bytes] = ..., teamName: _Optional[str] = ..., encryptedTeamKeyCbc: _Optional[bytes] = ..., encryptedTeamKeyCbcType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., encryptedTeamKeyGcm: _Optional[bytes] = ..., encryptedTeamKeyGcmType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., teamPublicKeyRsa: _Optional[bytes] = ..., encryptedTeamPrivateKeyRsa: _Optional[bytes] = ..., encryptedTeamPrivateKeyRsaType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ..., teamPublicKeyEcc: _Optional[bytes] = ..., encryptedTeamPrivateKeyEcc: _Optional[bytes] = ..., encryptedTeamPrivateKeyEccType: _Optional[_Union[_enterprise_pb2.EncryptedKeyType, str]] = ...) -> None: ...
 
 class SSLCertificateInfo(_message.Message):
     __slots__ = ("automatorId", "hostUrl", "subject", "issuer", "issuedOn", "expiresOn", "checkedOn")
