@@ -131,7 +131,7 @@ def encrypt_with_keeper_key(context, data: bytes) -> bytes:
         raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
 
 
-DEFAULT_TIMEOUT = (15, 120)
+DEFAULT_TIMEOUT = (15, 300)
 
 
 def execute_rest(context, endpoint, payload, timeout=None):
