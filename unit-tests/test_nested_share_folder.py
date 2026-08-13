@@ -54,6 +54,9 @@ def _make_params(**overrides):
     p.nested_share_raw_dag_data = []
     p.sync_data = False
     p.enterprise = None
+    p.team_cache = {}
+    p.available_team_cache = []
+    p.key_cache = {}
     for k, v in overrides.items():
         setattr(p, k, v)
     return p
@@ -1310,6 +1313,43 @@ class TestNestedShareFolderFolderApi(TestCase):
         with mock.patch('keepercommander.api.get_share_objects', return_value={'teams': {}}):
             result = classify_share_recipient(params, 'Ops Team')
         self.assertEqual(result, ('team', team_uid))
+
+    def test_classify_share_recipient_rejects_unknown_team_name(self):
+        """Unknown display names must not be treated as users or fake team UIDs."""
+        params = _make_params(team_cache={})
+        with mock.patch('keepercommander.api.get_share_objects', return_value={'teams': {}}):
+            with mock.patch('keepercommander.api.load_available_teams'):
+                self.assertIsNone(
+                    classify_share_recipient(params, 'Random Non existent team'))
+                # Base64-decodable short names previously became garbage team UIDs.
+                self.assertIsNone(classify_share_recipient(params, 'MyTeam'))
+                self.assertIsNone(classify_share_recipient(params, 'Ops'))
+
+    def test_resolve_team_uid_bytes_does_not_decode_display_names(self):
+        from keepercommander.nested_share_folder.common import (
+            resolve_team_uid_bytes, is_keeper_uid, get_team_keys)
+
+        params = _make_params(team_cache={})
+        with mock.patch('keepercommander.api.get_share_objects', return_value={'teams': {}}):
+            with mock.patch('keepercommander.api.load_available_teams'):
+                self.assertIsNone(resolve_team_uid_bytes(params, 'MyTeam'))
+                self.assertIsNone(resolve_team_uid_bytes(params, 'Random Non existent team'))
+
+        team_uid = utils.generate_uid()
+        self.assertTrue(is_keeper_uid(team_uid))
+        self.assertFalse(is_keeper_uid('MyTeam'))
+        self.assertFalse(is_keeper_uid('Random Non existent team'))
+
+        params = _make_params(team_cache={
+            team_uid: {'name': 'Ops Team', 'team_uid': team_uid},
+        })
+        with mock.patch('keepercommander.api.get_share_objects', return_value={'teams': {}}):
+            self.assertEqual(
+                resolve_team_uid_bytes(params, 'Ops Team'),
+                utils.base64_url_decode(team_uid))
+
+        with self.assertRaises(ValueError):
+            get_team_keys(params, 'MyTeam')
 
     def test_parse_folder_access_result_treats_success_message_as_success(self):
         """SUCCESS status with a non-empty message is still treated as success."""

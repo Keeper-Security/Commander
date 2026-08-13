@@ -24,7 +24,7 @@ _SUBMODULE_MAP = {
         'handle_share_invite', 'resolve_user_uid_bytes',
         'load_user_public_key', 'parse_folder_access_result',
         'resolve_team_uid_bytes', 'resolve_team_identifier',
-        'get_team_keys', 'encrypt_for_team',
+        'get_team_keys', 'encrypt_for_team', 'is_keeper_uid',
     ],
     'folder_api': [
         'create_folder_data', 'encrypt_folder_key',
