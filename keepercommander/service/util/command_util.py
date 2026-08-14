@@ -168,6 +168,14 @@ class CommandExecutor:
                 command_tokens = shlex.split(command)
             except ValueError:
                 command_tokens = command.split()
+
+            # Same tokens the CLI will run — do not use raw HTTP split(" ")
+            service_mode_error = Verifycommand.validate_service_mode_restrictions(
+                command_tokens
+            )
+            if service_mode_error:
+                return {"status": "error", "error": service_mode_error}, 403
+
             force_error = Verifycommand.validate_enterprise_user_add_role_force(
                 command_tokens, params
             )
