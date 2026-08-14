@@ -436,23 +436,6 @@ class TestRecord(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, notes='notes', record='invalid')
 
-    def test_upload_attachments_blocked_in_service_mode(self):
-        params = get_synced_params()
-        params.service_mode = True
-        mixin = record_edit.RecordEditMixin()
-        files = [record_edit.ParsedFieldValue('', 'file', '', '@/tmp/any-file.txt')]
-        with self.assertRaises(CommandError) as ctx:
-            mixin.upload_attachments(params, vault.TypedRecord(), files, True)
-        self.assertIn('Service Mode', str(ctx.exception))
-
-    def test_download_attachment_blocked_in_service_mode(self):
-        params = get_synced_params()
-        params.service_mode = True
-        cmd = record_edit.RecordDownloadAttachmentCommand()
-        with self.assertRaises(CommandError) as ctx:
-            cmd.execute(params, records=['any-uid'])
-        self.assertIn('Service Mode', str(ctx.exception))
-
     def test_download_attachment_command(self):
         params = get_synced_params()
         cmd = record_edit.RecordDownloadAttachmentCommand()

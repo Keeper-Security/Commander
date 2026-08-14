@@ -55,3 +55,32 @@ class TestServiceModeCommandPolicy(TestCase):
             with self.subTest(raw=raw):
                 err = Verifycommand.validate_service_mode_restrictions(_tokens(raw))
                 self.assertIsNotNone(err, msg=f'should block: {raw!r} -> {_tokens(raw)}')
+
+    def test_attachment_commands_blocked_for_remote_api(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIsNotNone(check(_tokens('download-attachment SOME_UID')))
+        self.assertIsNotNone(check(_tokens('da SOME_UID')))
+        self.assertIsNotNone(check(_tokens('upload-attachment /tmp/x --record SOME_UID')))
+        self.assertIsNotNone(check(_tokens('ua /tmp/x --record SOME_UID')))
+        self.assertIsNotNone(
+            check(_tokens('record-add --title t -rt login "file=@/tmp/x"'))
+        )
+        # Same shape as record_handler._update_or_add_record_attachment
+        self.assertIsNotNone(
+            check(_tokens(
+                "record-update --force --record UID --title t "
+                "--record-type=login f.file='/tmp/service_config.json'"
+            ))
+        )
+        self.assertIsNotNone(
+            check(_tokens('record-add --title t -rt login file.Label=/etc/passwd'))
+        )
+        self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
+
+    def test_is_record_file_attachment_arg(self):
+        is_file = Verifycommand._is_record_file_attachment_arg
+        self.assertTrue(is_file('file=@/tmp/x'))
+        self.assertTrue(is_file("f.file='/path/service_config.json'"))
+        self.assertTrue(is_file('file.MyDoc=/tmp/x'))
+        self.assertFalse(is_file('login=user'))
+        self.assertFalse(is_file('--title'))

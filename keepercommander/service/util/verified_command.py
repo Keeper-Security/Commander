@@ -12,25 +12,84 @@ class Verifycommand:
 
     @staticmethod
     def validate_service_mode_restrictions(command_tokens):
-        """
-        Authoritative Service Mode command policy.
-
-        Call on tokens from CommandExecutor (html.unescape + shlex.split),
-        not on raw HTTP split(" "). Returns error string if blocked, else None.
-        """
+        """Run Service Mode bans on executor tokens (shlex); error string or None."""
         if not command_tokens:
             return None
 
-        tokens_l = [t.lower() for t in command_tokens]
-        if tokens_l[0] == 'pam' and len(tokens_l) >= 2 and tokens_l[1] in ('tunnel', 't'):
-            # Default verb matches PAMTunnelCommand.default_verb ('list')
-            verb = tokens_l[2] if len(tokens_l) >= 3 else 'list'
-            verb = Verifycommand._PAM_TUNNEL_ALIASES.get(verb, verb)
-            if verb not in Verifycommand._PAM_TUNNEL_ALLOWED:
-                return (
-                    'pam tunnel commands other than edit are not available in Service Mode'
-                )
+        for validator in (
+            Verifycommand.validate_service_mode_pam_tunnel_command,
+            Verifycommand.validate_service_mode_download_attachment_command,
+            Verifycommand.validate_service_mode_upload_attachment_command,
+            Verifycommand.validate_service_mode_record_file_attachment_command,
+        ):
+            error = validator(command_tokens)
+            if error:
+                return error
         return None
+
+    @staticmethod
+    def validate_service_mode_pam_tunnel_command(command_tokens):
+        """Allow only pam tunnel edit in Service Mode; error string or None."""
+        if not command_tokens or len(command_tokens) < 2:
+            return None
+
+        tokens_l = [t.lower() for t in command_tokens]
+        if tokens_l[0] != 'pam' or tokens_l[1] not in ('tunnel', 't'):
+            return None
+
+        # Default verb matches PAMTunnelCommand.default_verb ('list')
+        verb = tokens_l[2] if len(tokens_l) >= 3 else 'list'
+        verb = Verifycommand._PAM_TUNNEL_ALIASES.get(verb, verb)
+        if verb in Verifycommand._PAM_TUNNEL_ALLOWED:
+            return None
+        return (
+            'pam tunnel commands other than edit are not available in Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_download_attachment_command(command_tokens):
+        """Block download-attachment in Service Mode; error string or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in ('download-attachment', 'da'):
+            return None
+        return (
+            'Downloading attachments to the local filesystem is not permitted '
+            'through Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_upload_attachment_command(command_tokens):
+        """Block upload-attachment in Service Mode; error string or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in ('upload-attachment', 'ua'):
+            return None
+        return (
+            'Uploading attachments from the local filesystem is not permitted '
+            'through Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_record_file_attachment_command(command_tokens):
+        """Block record-add/update file=@ / f.file= in Service Mode; error or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in ('record-add', 'record-update'):
+            return None
+        if not any(Verifycommand._is_record_file_attachment_arg(tok) for tok in command_tokens):
+            return None
+        return (
+            'File attachments by local path are not permitted through Service Mode'
+        )
+
+    @staticmethod
+    def _is_record_file_attachment_arg(token):
+        """True for file=@path, file.Label=path, or f.file='/path'."""
+        if not token or '=' not in token:
+            return False
+        left = token.split('=', 1)[0].lower()
+        return left == 'file' or left.startswith('file.') or left.endswith('.file')
 
     @staticmethod
     def validate_append_command(command):

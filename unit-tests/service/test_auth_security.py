@@ -142,3 +142,17 @@ class TestAuthSecurity(TestCase):
         # Case-insensitive (executor-normalized tokens)
         self.assertIn(ban, check(['pam', 'TUNNEL', 'START', 'uid']))
         self.assertIsNone(check(['pam', 'TUNNEL', 'EDIT', 'uid']))
+
+    def test_validate_service_mode_restrictions_attachments(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIn('Download', check(['download-attachment', 'uid']))
+        self.assertIn('Upload', check(['upload-attachment', '/tmp/x', '--record', 'uid']))
+        self.assertIn(
+            'File attachments',
+            check(['record-add', '--title', 't', '-rt', 'login', 'file=@/tmp/x']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['record-update', '--force', '--record', 'uid', "f.file=/tmp/service_config.json"]),
+        )
+        self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'login=user']))

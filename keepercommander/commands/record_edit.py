@@ -773,13 +773,6 @@ class RecordEditMixin:
 
     def upload_attachments(self, params, record, files, stop_on_error):
         # type: (KeeperParams, Union[vault.PasswordRecord, vault.TypedRecord], List[ParsedFieldValue], bool) -> None
-        if files and getattr(params, 'service_mode', False):
-            # Remote Service Mode callers must not open arbitrary host paths
-            # (e.g. file=@~/.keeper/config.json). Local CLI is unchanged.
-            raise CommandError(
-                '',
-                'File attachments by local path are not permitted through Service Mode')
-
         tasks = []
         for file_attachment in files:
             if file_attachment.value.startswith('@'):
@@ -1510,13 +1503,6 @@ class RecordDownloadAttachmentCommand(Command):
         return download_parser
 
     def execute(self, params, **kwargs):
-        if getattr(params, 'service_mode', False):
-            # Downloads write to the Commander host disk; remote API callers
-            # do not receive the file bytes in the HTTP response.
-            raise CommandError(
-                'download-attachment',
-                'Downloading attachments to the local filesystem is not permitted through Service Mode')
-
         records = kwargs.get('records')
         if not records:
             self.get_parser().print_help()
