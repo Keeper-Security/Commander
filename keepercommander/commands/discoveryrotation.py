@@ -2566,6 +2566,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
     PAM_CONFIG_RECORD_TYPES = frozenset({
         'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
         'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
+        'pamGitHubConfiguration',
     })
     PAM_RESOURCE_RECORD_TYPES = frozenset({
         'pamDatabase', 'pamDirectory', 'pamMachine', 'pamRemoteBrowser',
@@ -2758,7 +2759,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
                 extra_properties.append(f'text.pamGitHubId={github_id}')
             personal_access_token = kwargs.get('personal_access_token')
             if personal_access_token:
-                extra_properties.append(f'secret.personalAccessToken={personal_access_token}')
+                extra_properties.append(f'secret.pamGitHubPersonalAccessToken={personal_access_token}')
             github_base_url = kwargs.get('github_base_url')
             if github_base_url:
                 extra_properties.append(f'text.pamGitHubBaseUrl={github_base_url}')
@@ -2870,7 +2871,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
     # Fields that the backend previously required but now treats as optional for pamAzureConfiguration.
     AZURE_OPTIONAL_FIELDS = frozenset({'clientId', 'clientSecret'})
 
-    def verify_required(self, record):  # type: (vault.TypedRecord) -> None
+    def verify_required(self, record, command=''):  # type: (vault.TypedRecord, str) -> None
+        missing_fields = []
         for field in record.fields:
             if field.required:
                 if len(field.value) == 0:
@@ -2882,10 +2884,15 @@ class PamConfigurationEditMixin(RecordEditMixin):
                           and field.label in self.AZURE_OPTIONAL_FIELDS):
                         pass
                     else:
-                        self.warnings.append(f'Empty required field: "{field.get_field_name()}"')
+                        missing_fields.append(field.get_field_name())
         for custom in record.custom:
             if custom.required:
                 custom.required = False
+        if missing_fields:
+            if len(missing_fields) == 1:
+                raise CommandError(command, f'Empty required field: "{missing_fields[0]}"')
+            fields_text = ', '.join(f'"{x}"' for x in missing_fields)
+            raise CommandError(command, f'Empty required fields: {fields_text}')
 
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
@@ -2986,7 +2993,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         if not gateway_uid:
             logging.warning(f'Gateway "{gw_name}" not found.')
 
-        self.verify_required(record)
+        self.verify_required(record, command='pam-config-new')
 
         create_pam_configuration_in_folder(params, record, shared_folder_uid, command='pam-config-new')
 
@@ -3119,7 +3126,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             orig_admin_cred_ref = value.get('adminCredentialRef') or ''
 
         self.parse_properties(params, configuration, config_edit=True, **kwargs)
-        self.verify_required(configuration)
+        self.verify_required(configuration, command='pam-config-edit')
 
         update_pam_record(params, configuration, command='pam-config-edit')
 
