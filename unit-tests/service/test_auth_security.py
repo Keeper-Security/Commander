@@ -3,6 +3,7 @@ from flask import Flask
 from keepercommander.service.decorators.auth import auth_check, policy_check
 from keepercommander.service.decorators.security import security_check, is_allowed_ip
 from keepercommander.service.util.config_reader import ConfigReader
+from keepercommander.service.util.verified_command import Verifycommand
 
 class TestAuthSecurity(TestCase):
     def setUp(self):
@@ -97,3 +98,74 @@ class TestAuthSecurity(TestCase):
             self.assertEqual(response[1], 403)
             self.assertEqual(response[0]['status'], 'error')
             self.assertIn('Not permitted', response[0]['error'])
+
+    @mock.patch.object(ConfigReader, 'read_config')
+    def test_policy_check_allows_pam_tunnel_start_at_http_layer(self, mock_read_config):
+        """Tunnel ban is enforced in CommandExecutor, not policy_check split(' ')."""
+        mock_read_config.return_value = "pam"
+
+        with self.app.test_request_context(
+            '/test', method='POST',
+            json={"command": "pam tunnel start uid --run id"},
+            headers={'api-key': 'test_key'},
+        ):
+            response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
+            self.assertEqual(response[1], 200)
+            self.assertEqual(response[0]['status'], 'success')
+
+    @mock.patch.object(ConfigReader, 'read_config')
+    def test_policy_check_allows_pam_tunnel_edit(self, mock_read_config):
+        """pam tunnel edit remains allowed through policy_check"""
+        mock_read_config.return_value = "pam"
+
+        with self.app.test_request_context(
+            '/test', method='POST',
+            json={"command": "pam tunnel edit uid --enable-tunneling"},
+            headers={'api-key': 'test_key'},
+        ):
+            response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
+            self.assertEqual(response[1], 200)
+            self.assertEqual(response[0]['status'], 'success')
+
+    def test_validate_service_mode_restrictions_pam_tunnel(self):
+        """Unit-level checks for pam tunnel Service Mode allowlist (post-shlex tokens)"""
+        ban = 'not available in Service Mode'
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIsNone(check(['pam', 'tunnel', 'edit', 'uid']))
+        self.assertIsNone(check(['pam', 't', 'e', 'uid']))
+        self.assertIsNone(check(['pam', 'rotation', 'list']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'start', 'uid', '--run', 'id']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'list']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'stop', 'uid']))
+        self.assertIn(ban, check(['pam', 'tunnel', 'diagnose']))
+        self.assertIn(ban, check(['pam', 't', 's', 'uid']))
+        # Case-insensitive (executor-normalized tokens)
+        self.assertIn(ban, check(['pam', 'TUNNEL', 'START', 'uid']))
+        self.assertIsNone(check(['pam', 'TUNNEL', 'EDIT', 'uid']))
+
+    def test_validate_service_mode_restrictions_attachments(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIn('Download', check(['download-attachment', 'uid']))
+        self.assertIn('Upload', check(['upload-attachment', '/tmp/x', '--record', 'uid']))
+        self.assertIn(
+            'File attachments',
+            check(['record-add', '--title', 't', '-rt', 'login', 'file=@/tmp/x']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['record-update', '--force', '--record', 'uid', "f.file=/tmp/service_config.json"]),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['ra', '--title', 't', '-rt', 'login', 'file=@/etc/passwd']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['ru', '--force', '--record', 'uid', 'f.file.doc=@/etc/passwd']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['record-add', '--title', 't', '-rt', 'login', 'c.file.doc=@/etc/passwd']),
+        )
+        self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'login=user']))
+        self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'my.file=x']))

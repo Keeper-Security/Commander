@@ -1,4 +1,102 @@
 class Verifycommand:
+    # pam tunnel aliases: start=s, list=l, stop=x, edit=e, diagnose=d
+    # (see PAMTunnelCommand.register_command in tunnel_and_connections.py)
+    _PAM_TUNNEL_ALIASES = {
+        's': 'start',
+        'l': 'list',
+        'x': 'stop',
+        'e': 'edit',
+        'd': 'diagnose',
+    }
+    _PAM_TUNNEL_ALLOWED = frozenset({'edit'})
+    # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
+    _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
+
+    @staticmethod
+    def validate_service_mode_restrictions(command_tokens):
+        """Run Service Mode bans on executor tokens (shlex); error string or None."""
+        if not command_tokens:
+            return None
+
+        for validator in (
+            Verifycommand.validate_service_mode_pam_tunnel_command,
+            Verifycommand.validate_service_mode_download_attachment_command,
+            Verifycommand.validate_service_mode_upload_attachment_command,
+            Verifycommand.validate_service_mode_record_file_attachment_command,
+        ):
+            error = validator(command_tokens)
+            if error:
+                return error
+        return None
+
+    @staticmethod
+    def validate_service_mode_pam_tunnel_command(command_tokens):
+        """Allow only pam tunnel edit in Service Mode; error string or None."""
+        if not command_tokens or len(command_tokens) < 2:
+            return None
+
+        tokens_l = [t.lower() for t in command_tokens]
+        if tokens_l[0] != 'pam' or tokens_l[1] not in ('tunnel', 't'):
+            return None
+
+        # Default verb matches PAMTunnelCommand.default_verb ('list')
+        verb = tokens_l[2] if len(tokens_l) >= 3 else 'list'
+        verb = Verifycommand._PAM_TUNNEL_ALIASES.get(verb, verb)
+        if verb in Verifycommand._PAM_TUNNEL_ALLOWED:
+            return None
+        return (
+            'pam tunnel commands other than edit are not available in Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_download_attachment_command(command_tokens):
+        """Block download-attachment in Service Mode; error string or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in ('download-attachment', 'da'):
+            return None
+        return (
+            'Downloading attachments to the local filesystem is not permitted '
+            'through Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_upload_attachment_command(command_tokens):
+        """Block upload-attachment in Service Mode; error string or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in ('upload-attachment', 'ua'):
+            return None
+        return (
+            'Uploading attachments from the local filesystem is not permitted '
+            'through Service Mode'
+        )
+
+    @staticmethod
+    def validate_service_mode_record_file_attachment_command(command_tokens):
+        """Block record-add/update (and ra/ru) file fields in Service Mode; error or None."""
+        if not command_tokens:
+            return None
+        # Tokens are checked before cli alias expansion, so list ra/ru explicitly.
+        if command_tokens[0].lower() not in Verifycommand._RECORD_EDIT_COMMANDS:
+            return None
+        if not any(Verifycommand._is_record_file_attachment_arg(tok) for tok in command_tokens):
+            return None
+        return (
+            'File attachments by local path are not permitted through Service Mode'
+        )
+
+    @staticmethod
+    def _is_record_file_attachment_arg(token):
+        """True when parse_field would treat this token as a file attachment field."""
+        if not token or '=' not in token:
+            return False
+        # Mirror RecordEditMixin.parse_field field-name normalization.
+        name = token.split('=', 1)[0].lower()
+        if name.startswith('f.') or name.startswith('c.'):
+            name = name[2:]
+        return name.split('.', 1)[0] == 'file'
+
     @staticmethod
     def validate_append_command(command):
         """

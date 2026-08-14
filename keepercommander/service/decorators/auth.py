@@ -128,6 +128,6 @@ def policy_check(fn):
                 'status': 'error',
                 'error': transform_folder_error
             }, 400
-            
+
         return fn(*args, **kwargs)
     return wrapper
