@@ -65,7 +65,6 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertIsNotNone(
             check(_tokens('record-add --title t -rt login "file=@/tmp/x"'))
         )
-        # Same shape as record_handler._update_or_add_record_attachment
         self.assertIsNotNone(
             check(_tokens(
                 "record-update --force --record UID --title t "
@@ -75,6 +74,20 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertIsNotNone(
             check(_tokens('record-add --title t -rt login file.Label=/etc/passwd'))
         )
+        # Aliases checked before cli expansion
+        self.assertIsNotNone(
+            check(_tokens('ra --title t -rt login file=@/etc/passwd'))
+        )
+        self.assertIsNotNone(
+            check(_tokens('ru --force --record UID f.file=/etc/shadow'))
+        )
+        # Labeled f./c. file fields (parse_field type == file)
+        self.assertIsNotNone(
+            check(_tokens('record-add --title t -rt login f.file.doc=@/etc/passwd'))
+        )
+        self.assertIsNotNone(
+            check(_tokens('record-add --title t -rt login c.file.doc=@/etc/passwd'))
+        )
         self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
 
     def test_is_record_file_attachment_arg(self):
@@ -82,5 +95,9 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertTrue(is_file('file=@/tmp/x'))
         self.assertTrue(is_file("f.file='/path/service_config.json'"))
         self.assertTrue(is_file('file.MyDoc=/tmp/x'))
+        self.assertTrue(is_file('f.file.doc=@/etc/passwd'))
+        self.assertTrue(is_file('c.file.doc=@/etc/passwd'))
         self.assertFalse(is_file('login=user'))
         self.assertFalse(is_file('--title'))
+        self.assertFalse(is_file('profile=x'))
+        self.assertFalse(is_file('my.file=x'))  # not a file-type field after parse_field

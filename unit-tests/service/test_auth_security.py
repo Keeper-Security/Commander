@@ -155,4 +155,17 @@ class TestAuthSecurity(TestCase):
             'File attachments',
             check(['record-update', '--force', '--record', 'uid', "f.file=/tmp/service_config.json"]),
         )
+        self.assertIn(
+            'File attachments',
+            check(['ra', '--title', 't', '-rt', 'login', 'file=@/etc/passwd']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['ru', '--force', '--record', 'uid', 'f.file.doc=@/etc/passwd']),
+        )
+        self.assertIn(
+            'File attachments',
+            check(['record-add', '--title', 't', '-rt', 'login', 'c.file.doc=@/etc/passwd']),
+        )
         self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'login=user']))
+        self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'my.file=x']))

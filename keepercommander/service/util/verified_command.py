@@ -9,6 +9,8 @@ class Verifycommand:
         'd': 'diagnose',
     }
     _PAM_TUNNEL_ALLOWED = frozenset({'edit'})
+    # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
+    _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
 
     @staticmethod
     def validate_service_mode_restrictions(command_tokens):
@@ -72,10 +74,11 @@ class Verifycommand:
 
     @staticmethod
     def validate_service_mode_record_file_attachment_command(command_tokens):
-        """Block record-add/update file=@ / f.file= in Service Mode; error or None."""
+        """Block record-add/update (and ra/ru) file fields in Service Mode; error or None."""
         if not command_tokens:
             return None
-        if command_tokens[0].lower() not in ('record-add', 'record-update'):
+        # Tokens are checked before cli alias expansion, so list ra/ru explicitly.
+        if command_tokens[0].lower() not in Verifycommand._RECORD_EDIT_COMMANDS:
             return None
         if not any(Verifycommand._is_record_file_attachment_arg(tok) for tok in command_tokens):
             return None
@@ -85,11 +88,14 @@ class Verifycommand:
 
     @staticmethod
     def _is_record_file_attachment_arg(token):
-        """True for file=@path, file.Label=path, or f.file='/path'."""
+        """True when parse_field would treat this token as a file attachment field."""
         if not token or '=' not in token:
             return False
-        left = token.split('=', 1)[0].lower()
-        return left == 'file' or left.startswith('file.') or left.endswith('.file')
+        # Mirror RecordEditMixin.parse_field field-name normalization.
+        name = token.split('=', 1)[0].lower()
+        if name.startswith('f.') or name.startswith('c.'):
+            name = name[2:]
+        return name.split('.', 1)[0] == 'file'
 
     @staticmethod
     def validate_append_command(command):
