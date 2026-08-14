@@ -970,7 +970,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
-    def verify_required(self, record):    # type: (vault.TypedRecord) -> None
+    def verify_required(self, record, command=''):    # type: (vault.TypedRecord, str) -> None
+        missing_fields = []
         for field in record.fields:
             if field.required:
                 if len(field.value) == 0:
@@ -981,10 +982,15 @@ class PamConfigurationEditMixin(RecordEditMixin):
                             'tz': 'Etc/UTC',
                         }]
                     else:
-                        self.warnings.append(f'Empty required field: "{field.get_field_name()}"')
+                        missing_fields.append(field.get_field_name())
         for custom in record.custom:
             if custom.required:
                 custom.required = False
+        if missing_fields:
+            if len(missing_fields) == 1:
+                raise CommandError(command, f'Empty required field: "{missing_fields[0]}"')
+            fields_text = ', '.join(f'"{x}"' for x in missing_fields)
+            raise CommandError(command, f'Empty required fields: {fields_text}')
 
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
@@ -1037,7 +1043,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         if not shared_folder_uid:
             raise CommandError('pam-config-new', '--shared_folder parameter is required to create a PAM configuration')
 
-        self.verify_required(record)
+        self.verify_required(record, command='pam-config-new')
 
         pam_configuration_create_record_v6(params, record, shared_folder_uid)
 
@@ -1126,7 +1132,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             orig_shared_folder_uid = value.get('folderUid') or ''
 
         self.parse_properties(params, configuration, **kwargs)
-        self.verify_required(configuration)
+        self.verify_required(configuration, command='pam-config-edit')
 
         record_management.update_record(params, configuration)
 

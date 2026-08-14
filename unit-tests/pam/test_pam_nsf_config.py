@@ -345,6 +345,98 @@ class TestPamConfigEditNsfPlacement(unittest.TestCase):
             params, 'config_uid', 'legacy_folder', command='pam-config-edit')
 
 
+class TestPamConfigRequiredFieldValidation(unittest.TestCase):
+    """Regression tests: an empty required field (e.g. a GitHub config with no PAT) must abort
+    the whole operation instead of just logging a warning after the record was already saved."""
+
+    @staticmethod
+    def _make_missing_pat_field():
+        field = vault.TypedField.new_field('secret', None, 'pamGitHubPersonalAccessToken')
+        field.required = True
+        return field
+
+    @mock.patch('keepercommander.commands.discoveryrotation.create_pam_configuration_in_folder')
+    @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
+                return_value=[])
+    def test_new_raises_and_does_not_create_record_when_required_field_empty(
+            self, mock_record_fields, mock_create_config):
+        params = _make_params()
+        folder = SharedFolderNode()
+        folder.uid = 'legacy_folder'
+        params.folder_cache[folder.uid] = folder
+        command = PAMConfigurationNewCommand()
+
+        def parse_properties(_, record, **kwargs):
+            record.fields.append(vault.TypedField.new_field(
+                'pamResources', {'folderUid': 'legacy_folder'}))
+            record.fields.append(self._make_missing_pat_field())
+
+        with mock.patch.object(command, 'parse_properties', side_effect=parse_properties):
+            with self.assertRaises(CommandError) as ctx:
+                command.execute(params, config_type='github', title='GitHub Config')
+
+        self.assertIn('pamGitHubPersonalAccessToken', str(ctx.exception))
+        mock_create_config.assert_not_called()
+
+    @mock.patch('keepercommander.commands.discoveryrotation.update_pam_record')
+    @mock.patch('keepercommander.commands.discoveryrotation.RecordEditMixin.get_record_type_fields',
+                return_value=[])
+    @mock.patch('keepercommander.vault.KeeperRecord.load')
+    def test_edit_raises_and_does_not_update_record_when_required_field_empty(
+            self, mock_load, mock_record_fields, mock_update_record):
+        params = _make_params()
+        folder = SharedFolderNode()
+        folder.uid = 'legacy_folder'
+        params.folder_cache[folder.uid] = folder
+        params.record_cache = {'config_uid': {}}
+        command = PAMConfigurationEditCommand()
+
+        configuration = vault.TypedRecord(version=6)
+        configuration.record_uid = 'config_uid'
+        configuration.type_name = 'pamGitHubConfiguration'
+        configuration.fields.append(vault.TypedField.new_field(
+            'pamResources', {'folderUid': 'legacy_folder'}))
+        mock_load.return_value = configuration
+
+        def parse_properties(_, record, **kwargs):
+            record.fields.append(self._make_missing_pat_field())
+
+        with mock.patch.object(command, 'parse_properties', side_effect=parse_properties):
+            with self.assertRaises(CommandError) as ctx:
+                command.execute(params, uid='config_uid')
+
+        self.assertIn('pamGitHubPersonalAccessToken', str(ctx.exception))
+        mock_update_record.assert_not_called()
+
+
+class TestPamConfigGitHubFieldMapping(unittest.TestCase):
+    """Regression test: --personal-access-token must land on the schema field the backend
+    actually marks required ("(secret).pamGitHubPersonalAccessToken"), not on a differently
+    labeled field, or the value is silently dropped and "pam config new" always aborts."""
+
+    def test_personal_access_token_populates_the_required_schema_field(self):
+        params = _make_params()
+        record = vault.TypedRecord(version=6)
+        record.type_name = 'pamGitHubConfiguration'
+        record.fields.append(vault.TypedField.new_field(
+            'pamResources', {'folderUid': 'legacy_folder'}))
+        required_field = vault.TypedField.new_field('secret', None, 'pamGitHubPersonalAccessToken')
+        required_field.required = True
+        record.fields.append(required_field)
+
+        command = PAMConfigurationNewCommand()
+        command.parse_properties(
+            params, record, github_id='github-test-acct', personal_access_token='github_pat_example')
+
+        field = record.get_typed_field('secret', 'pamGitHubPersonalAccessToken')
+        self.assertIsNotNone(field)
+        self.assertEqual(field.get_default_value(str), 'github_pat_example')
+        # Regression guard: previously the mismatched label ("personalAccessToken" instead of
+        # "pamGitHubPersonalAccessToken") caused the value to be misfiled into a new custom field,
+        # leaving the actual required field empty.
+        self.assertIsNone(record.get_typed_field('secret', 'personalAccessToken'))
+
+
 class TestPamConfigRemoveNsf(unittest.TestCase):
 
     @mock.patch('keepercommander.vault.KeeperRecord.load')
@@ -387,6 +479,21 @@ class TestPamConfigRemoveNsf(unittest.TestCase):
 
         uid = PAMConfigurationRemoveCommand._resolve_pam_config_uid(
             params, 'PAM NSF Test Configuration')
+        self.assertEqual(uid, 'config_uid')
+
+    @mock.patch('keepercommander.vault.KeeperRecord.load')
+    def test_resolve_pam_config_uid_finds_github_config_by_uid(self, mock_load):
+        # Regression test: pamGitHubConfiguration must be resolvable like every other
+        # PAM configuration type, or "pam config edit"/"pam config remove" can never find it.
+        params = _make_params()
+        params.record_cache = {'config_uid': {}}
+
+        configuration = vault.TypedRecord(version=6)
+        configuration.record_uid = 'config_uid'
+        configuration.type_name = 'pamGitHubConfiguration'
+        mock_load.return_value = configuration
+
+        uid = PAMConfigurationRemoveCommand._resolve_pam_config_uid(params, 'config_uid')
         self.assertEqual(uid, 'config_uid')
 
     @mock.patch('keepercommander.commands.pam.config_helper.RecordRemoveCommand')

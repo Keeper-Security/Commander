@@ -78,7 +78,8 @@ class PAMUniversalSyncConfigListCommand(Command):
             configurations = list(vault_extensions.find_records(params, record_version=6))
 
             # Only process these specific configuration types
-            uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration')
+            uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
+                                   'pamGitHubConfiguration')
 
             configs_data = []
             for record in configurations:
@@ -110,6 +111,9 @@ class PAMUniversalSyncConfigListCommand(Command):
 
                     # Get the configuration data
                     config_data = universal_sync_edge.content_as_dict or {}
+
+                    # GitHub-specific fields are nested under the 'github' key.
+                    github_data = config_data.get('github') or {}
 
                     # Decrypt vault_name if present. The router stores it under the
                     # 'vaultName' key as a base64-url string of the encrypted bytes.
@@ -143,6 +147,44 @@ class PAMUniversalSyncConfigListCommand(Command):
                             logging.debug(f"Failed to decrypt sync_identity for record {record.record_uid}: {e}")
                             sync_identity = 'N/A'
 
+                    # Decrypt owner if present. The router stores it under the
+                    # 'github.owner' key as a base64-url string of the encrypted bytes.
+                    owner = 'N/A'
+                    owner_encrypted = github_data.get('owner')
+                    if owner_encrypted:
+                        try:
+                            owner_bytes = crypto.decrypt_aes_v2(
+                                utils.base64_url_decode(owner_encrypted), record.record_key)
+                            owner = owner_bytes.decode('utf-8')
+                        except Exception as e:
+                            logging.debug(f"Failed to decrypt owner for record {record.record_uid}: {e}")
+                            owner = 'N/A'
+
+                    # scope/organizationVisibility are stored unencrypted (plain enum values)
+                    scope_value = github_data.get('scope')
+                    try:
+                        scope_str = pam_pb2.GitHubScope.Name(scope_value) if scope_value is not None else 'N/A'
+                    except ValueError:
+                        scope_str = 'N/A'
+
+                    org_visibility_value = github_data.get('organizationVisibility')
+                    try:
+                        org_visibility_str = pam_pb2.GitHubOrganizationVisibility.Name(org_visibility_value) \
+                            if org_visibility_value is not None else 'N/A'
+                    except ValueError:
+                        org_visibility_str = 'N/A'
+
+                    # Decrypt GitHub repository names if present. The router stores them under
+                    # the 'github.repos' key as a list of base64-url strings of the encrypted bytes.
+                    repo_names = []
+                    for repo_encrypted in github_data.get('repos', []):
+                        try:
+                            repo_bytes = crypto.decrypt_aes_v2(
+                                utils.base64_url_decode(repo_encrypted), record.record_key)
+                            repo_names.append(repo_bytes.decode('utf-8'))
+                        except Exception as e:
+                            logging.debug(f"Failed to decrypt repo name for record {record.record_uid}: {e}")
+
                     # Get folder UIDs - folders connected via universal_sync_folder (simple count only)
                     folder_count = 0
                     for vertex in root.has_vertices():
@@ -160,6 +202,10 @@ class PAMUniversalSyncConfigListCommand(Command):
                         'folder_count': folder_count,
                         'vault_name': vault_name,
                         'sync_identity': sync_identity,
+                        'scope': scope_str,
+                        'owner': owner,
+                        'organization_visibility': org_visibility_str,
+                        'repos': repo_names,
                     })
                 except Exception as e:
                     # Skip records that fail to load or don't have USS config
@@ -180,13 +226,16 @@ class PAMUniversalSyncConfigListCommand(Command):
 
         # Display as simple summary table
         table = []
-        headers = ['Network UID', 'Title', 'Type', 'Enabled', 'Dry Run', 'Folders', 'Vault Name', 'Sync Identity']
+        headers = ['Network UID', 'Title', 'Type', 'Enabled', 'Dry Run', 'Folders', 'Vault Name', 'Sync Identity',
+                   'Scope', 'Owner', 'Org Visibility', 'Repos']
 
         for config in configs_data:
             enabled_str = f"{bcolors.OKGREEN}Yes{bcolors.ENDC}" if config['enabled'] else f"{bcolors.FAIL}No{bcolors.ENDC}"
             dry_run_str = f"{bcolors.WARNING}Yes{bcolors.ENDC}" if config['dry_run_enabled'] else "No"
             folder_count = config.get('folder_count', 0)
             folders_str = f"{folder_count} folder(s)" if folder_count > 0 else "None"
+            repos = config.get('repos', [])
+            repos_str = f"{len(repos)} repo(s)" if repos else "None"
 
             row = [
                 config['record_uid'],
@@ -196,7 +245,11 @@ class PAMUniversalSyncConfigListCommand(Command):
                 dry_run_str,
                 folders_str,
                 config['vault_name'],
-                config['sync_identity']
+                config['sync_identity'],
+                config.get('scope', 'N/A'),
+                config.get('owner', 'N/A'),
+                config.get('organization_visibility', 'N/A'),
+                repos_str
             ]
             table.append(row)
 
@@ -219,7 +272,8 @@ class PAMUniversalSyncConfigListCommand(Command):
                 raise CommandError('', f'{bcolors.FAIL}Network "{network_uid}" not found{bcolors.ENDC}')
 
         # Check if it's a supported USS configuration type
-        uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration')
+        uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
+                               'pamGitHubConfiguration')
         if not isinstance(network, vault.TypedRecord) or network.record_type not in uss_supported_types:
             if format_type == 'json':
                 return json.dumps({"error": f'Record "{network_uid}" is not a USS configuration'})
@@ -253,6 +307,9 @@ class PAMUniversalSyncConfigListCommand(Command):
             # Get the configuration data
             config_data = universal_sync_edge.content_as_dict or {}
 
+            # GitHub-specific fields are nested under the 'github' key.
+            github_data = config_data.get('github') or {}
+
             # Decrypt vault_name if present. The router stores it under the
             # 'vaultName' key as a base64-url string of the encrypted bytes.
             vault_name = 'N/A'
@@ -284,6 +341,44 @@ class PAMUniversalSyncConfigListCommand(Command):
                 except Exception as e:
                     logging.debug(f"Failed to decrypt sync_identity for network {network.record_uid}: {e}")
                     sync_identity = 'N/A'
+
+            # Decrypt owner if present. The router stores it under the
+            # 'github.owner' key as a base64-url string of the encrypted bytes.
+            owner = 'N/A'
+            owner_encrypted = github_data.get('owner')
+            if owner_encrypted:
+                try:
+                    owner_bytes = crypto.decrypt_aes_v2(
+                        utils.base64_url_decode(owner_encrypted), network.record_key)
+                    owner = owner_bytes.decode('utf-8')
+                except Exception as e:
+                    logging.debug(f"Failed to decrypt owner for network {network.record_uid}: {e}")
+                    owner = 'N/A'
+
+            # scope/organizationVisibility are stored unencrypted (plain enum values)
+            scope_value = github_data.get('scope')
+            try:
+                scope_str = pam_pb2.GitHubScope.Name(scope_value) if scope_value is not None else 'N/A'
+            except ValueError:
+                scope_str = 'N/A'
+
+            org_visibility_value = github_data.get('organizationVisibility')
+            try:
+                org_visibility_str = pam_pb2.GitHubOrganizationVisibility.Name(org_visibility_value) \
+                    if org_visibility_value is not None else 'N/A'
+            except ValueError:
+                org_visibility_str = 'N/A'
+
+            # Decrypt GitHub repository names if present. The router stores them under
+            # the 'github.repos' key as a list of base64-url strings of the encrypted bytes.
+            repo_names = []
+            for repo_encrypted in github_data.get('repos', []):
+                try:
+                    repo_bytes = crypto.decrypt_aes_v2(
+                        utils.base64_url_decode(repo_encrypted), network.record_key)
+                    repo_names.append(repo_bytes.decode('utf-8'))
+                except Exception as e:
+                    logging.debug(f"Failed to decrypt repo name for network {network.record_uid}: {e}")
 
             # Get folder vertices with sync status
             folder_vertices = []
@@ -339,6 +434,10 @@ class PAMUniversalSyncConfigListCommand(Command):
                 'dry_run_enabled': config_data.get('dryRunEnabled', False),
                 'vault_name': vault_name,
                 'sync_identity': sync_identity,
+                'scope': scope_str,
+                'owner': owner,
+                'organization_visibility': org_visibility_str,
+                'repos': repo_names,
                 'folders': []
             }
 
@@ -370,6 +469,10 @@ class PAMUniversalSyncConfigListCommand(Command):
             table.append(['Dry Run', 'Yes' if config_data.get('dryRunEnabled', False) else 'No'])
             table.append(['Vault Name', vault_name])
             table.append(['Sync Identity', sync_identity])
+            table.append(['Scope', scope_str])
+            table.append(['Owner', owner])
+            table.append(['Org Visibility', org_visibility_str])
+            table.append(['Repos', ', '.join(repo_names) if repo_names else 'None'])
             table.append(['', ''])  # Blank row separator
 
             # Display folder sync details
@@ -430,6 +533,16 @@ class PAMUniversalSyncConfigAddCommand(Command):
                         help='Identity record UID to use for syncing')
     parser.add_argument('--vault-name', '-vn', dest='vault_name', action='store',
                         help='Vault name for universal sync')
+    parser.add_argument('--scope', '-sc', dest='scope', action='store',
+                        choices=['repository', 'organization'],
+                        help='GitHub sync scope: a single repository or an entire organization')
+    parser.add_argument('--owner', '-o', dest='owner', action='store',
+                        help='GitHub organization or user name that owns the repositories')
+    parser.add_argument('--org-visibility', '-ov', dest='org_visibility', action='store',
+                        choices=['all', 'private', 'selected'],
+                        help='Repository visibility to sync when scope is organization')
+    parser.add_argument('--repo', '-r', dest='repo', action='append',
+                        help='GitHub repository name to sync (can be specified multiple times; scope must be repository)')
 
     def get_parser(self):
         return PAMUniversalSyncConfigAddCommand.parser
@@ -480,6 +593,29 @@ class PAMUniversalSyncConfigAddCommand(Command):
             encrypted_vault_name = crypto.encrypt_aes_v2(vault_name_bytes, network.record_key)
             rq.vaultName = encrypted_vault_name
 
+        scope = kwargs.get('scope')
+        if scope is not None:
+            rq.github.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
+
+        owner = kwargs.get('owner')
+        if owner:
+            owner_bytes = string_to_bytes(owner)
+            encrypted_owner = crypto.encrypt_aes_v2(owner_bytes, network.record_key)
+            rq.github.owner = encrypted_owner
+
+        org_visibility = kwargs.get('org_visibility')
+        if org_visibility is not None:
+            org_visibility_map = {'all': pam_pb2.ALL, 'private': pam_pb2.PRIVATE, 'selected': pam_pb2.SELECTED}
+            rq.github.organizationVisibility = org_visibility_map[org_visibility]
+
+        repos = kwargs.get('repo')
+        if repos:
+            for repo_name in repos:
+                repo_bytes = string_to_bytes(repo_name)
+                repo_obj = pam_pb2.GitHubRepository()
+                repo_obj.name = crypto.encrypt_aes_v2(repo_bytes, network.record_key)
+                rq.github.repos.append(repo_obj)
+
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         try:
@@ -505,6 +641,16 @@ class PAMUniversalSyncConfigEditCommand(Command):
                         help='Identity record UID to use for syncing')
     parser.add_argument('--vault-name', '-vn', dest='vault_name', action='store',
                         help='Vault name for universal sync')
+    parser.add_argument('--scope', '-sc', dest='scope', action='store',
+                        choices=['repository', 'organization'],
+                        help='GitHub sync scope: a single repository or an entire organization')
+    parser.add_argument('--owner', '-o', dest='owner', action='store',
+                        help='GitHub organization or user name that owns the repositories')
+    parser.add_argument('--org-visibility', '-ov', dest='org_visibility', action='store',
+                        choices=['all', 'private', 'selected'],
+                        help='Repository visibility to sync when scope is organization')
+    parser.add_argument('--repo', '-r', dest='repo', action='append',
+                        help='GitHub repository name to sync (can be specified multiple times; scope must be repository)')
 
     def get_parser(self):
         return PAMUniversalSyncConfigEditCommand.parser
@@ -600,6 +746,45 @@ class PAMUniversalSyncConfigEditCommand(Command):
             rq.vaultName = encrypted_vault_name
         elif existing_config.get('vaultName'):
             rq.vaultName = utils.base64_url_decode(existing_config['vaultName'])
+
+        # GitHub-specific fields live under the nested 'github' object, both in the
+        # request message (rq.github) and in the existing DAG edge content.
+        existing_github = existing_config.get('github') or {}
+
+        scope = kwargs.get('scope')
+        if scope is not None:
+            rq.github.scope = pam_pb2.ORGANIZATION if scope == 'organization' else pam_pb2.REPOSITORY
+        elif 'scope' in existing_github:
+            rq.github.scope = existing_github['scope']
+
+        owner = kwargs.get('owner')
+        if owner:
+            owner_bytes = string_to_bytes(owner)
+            encrypted_owner = crypto.encrypt_aes_v2(owner_bytes, network.record_key)
+            rq.github.owner = encrypted_owner
+        elif existing_github.get('owner'):
+            rq.github.owner = utils.base64_url_decode(existing_github['owner'])
+
+        org_visibility = kwargs.get('org_visibility')
+        if org_visibility is not None:
+            org_visibility_map = {'all': pam_pb2.ALL, 'private': pam_pb2.PRIVATE, 'selected': pam_pb2.SELECTED}
+            rq.github.organizationVisibility = org_visibility_map[org_visibility]
+        elif 'organizationVisibility' in existing_github:
+            rq.github.organizationVisibility = existing_github['organizationVisibility']
+
+        # Handle repos - if provided, replace all; if not, keep existing (re-encrypted values carried forward as-is)
+        repos = kwargs.get('repo')
+        if repos:
+            for repo_name in repos:
+                repo_bytes = string_to_bytes(repo_name)
+                repo_obj = pam_pb2.GitHubRepository()
+                repo_obj.name = crypto.encrypt_aes_v2(repo_bytes, network.record_key)
+                rq.github.repos.append(repo_obj)
+        else:
+            for existing_repo in existing_github.get('repos', []):
+                repo_obj = pam_pb2.GitHubRepository()
+                repo_obj.name = utils.base64_url_decode(existing_repo)
+                rq.github.repos.append(repo_obj)
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
