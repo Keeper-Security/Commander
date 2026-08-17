@@ -331,12 +331,13 @@ def export(params, file_format, filename, **kwargs):
     # for record_uid in params.record_cache.keys():
     #     ext_id += 1
     #     external_ids[record_uid] = ext_id
-    for record_uid in params.record_cache:
+    record_list = params.record_cache if not kwargs.get('owned_only') else {uid:params.record_cache[uid] for uid in params.record_owner_cache if params.record_owner_cache[uid].owner is True}
+    for record_uid in record_list:
         if record_filter or folder_path:
             if record_uid not in record_filter:
                 continue
 
-        record = params.record_cache[record_uid]
+        record = record_list[record_uid]
         record_version = record.get('version') or 0
         if record_version == 2 or record_version == 3:
             try:
