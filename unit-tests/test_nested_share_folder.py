@@ -956,6 +956,28 @@ class TestNestedShareFolderSharingCommands(TestCase):
         self.assertIn('nsf-share-folder: Share invitation has been sent', output)
         self.assertNotIn("User '", output)
 
+    @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
+    def test_share_record_invite_message_logged_as_warning(self, mock_share):
+        import keepercommander.nested_share_folder as nsf
+        from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+
+        nsf.__dict__.pop('share_record_v3', None)
+        ruid, robj = _make_record()
+        email = 'user@example.com'
+        mock_share.side_effect = ValueError(
+            f"Share invitation has been sent to '{email}'. "
+            "Please repeat this command once the invitation is accepted.")
+
+        cmd = NestedShareRecordShareCommand()
+        with self.assertLogs(level='WARNING') as logs, \
+                mock.patch.object(NestedShareRecordShareCommand, '_get_direct_user_share',
+                                  return_value=None):
+            cmd.execute(_make_params(nested_share_records={ruid: robj}),
+                        record=ruid, email=[email], action='grant', role='viewer')
+
+        output = '\n'.join(logs.output)
+        self.assertIn('nsf-share-record: Share invitation has been sent', output)
+
     def test_share_record_roe_rejects_non_grant(self):
         from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
         ruid, robj = _make_record()

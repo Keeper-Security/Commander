@@ -106,10 +106,15 @@ class NestedShareRecordShareCommand(Command):
                     raise_if_record_share_target_is_owner(
                         params, record_uid, email, 'nsf-share-record',
                         is_ownership_transfer=(action == 'owner'))
-                    result, effective_action = self._dispatch(
-                        params, action, record_uid, email, access_role_type, expiration,
-                        rotate_on_expiration)
-                    self._log_results(result, effective_action, email)
+                    try:
+                        result, effective_action = self._dispatch(
+                            params, action, record_uid, email, access_role_type, expiration,
+                            rotate_on_expiration)
+                        self._log_results(result, effective_action, email)
+                    except ValueError as e:
+                        # handle_share_invite raises ValueError after sending an
+                        # invitation; treat as success (same as nsf-share-folder).
+                        logging.warning('nsf-share-record: %s', e)
 
     # Strategy dispatch — returns (result, effective_action)
     @staticmethod

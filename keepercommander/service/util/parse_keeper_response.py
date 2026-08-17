@@ -1077,6 +1077,23 @@ class KeeperResponseParser:
         
         has_success_indicator = any(indicator in response_lower for indicator in success_indicators)
 
+        # Share invitation is a successful outcome for first-time share targets.
+        # Commands may also emit trailing "User ... not found" after inviting;
+        # treat the invitation itself as success for Service Mode / Chat.
+        invitation_patterns = [
+            "share invitation has been sent",
+            "invitation has been sent",
+        ]
+        has_invitation = any(pattern in response_lower for pattern in invitation_patterns)
+        if has_invitation:
+            formatted_message = KeeperResponseParser._format_multiline_message(response_str)
+            return {
+                "status": "success",
+                "command": command.split()[0] if command.split() else command,
+                "message": formatted_message,
+                "data": None,
+            }
+
         if is_throttle_text(response_str):
             return {
                 "status": "error",
