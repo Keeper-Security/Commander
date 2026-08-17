@@ -1214,11 +1214,56 @@ class CyberArkImporter(BaseImporter):
             self.import_user_groups(
                 pvwa_host, authorization_token, params,
                 cyberark_users=cyberark_users,
+                target_node=kwargs.get("target_node"),
             )
 
         print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
 
-    def import_user_groups(self, pvwa_host, authorization_token, params, cyberark_users=None):
+    def _resolve_provisioning_node_id(self, params, target_node=None):
+        """Resolve the enterprise node for CyberArk teams/roles/users.
+
+        If ``target_node`` is set (name or numeric ID), resolve it via
+        ``EnterpriseCommand.resolve_nodes``. Otherwise fall back to the first
+        user-root node (same default as ``enterprise-user --add`` / ``enterprise-team --add``).
+
+        Returns the node id, or ``None`` if resolution fails (errors are printed).
+        """
+        if target_node:
+            nodes = list(EnterpriseCommand.resolve_nodes(params, target_node))
+            if len(nodes) == 0:
+                print_formatted_text(
+                    HTML(
+                        f"<ansired>Cannot provision into node:</ansired> "
+                        f'node "<b>{target_node}</b>" was not found.'
+                    )
+                )
+                return None
+            if len(nodes) > 1:
+                print_formatted_text(
+                    HTML(
+                        f"<ansired>Cannot provision into node:</ansired> "
+                        f'more than one node named "<b>{target_node}</b>" was found. '
+                        f"Use the numeric node ID."
+                    )
+                )
+                return None
+            return nodes[0]["node_id"]
+
+        # Default: first user-root node, then first tree root (parent_id unset/0).
+        for nid in params.enterprise.get("user_root_nodes", []) or []:
+            return nid
+        for n in params.enterprise.get("nodes", []) or []:
+            if not n.get("parent_id"):
+                return n["node_id"]
+        print_formatted_text(
+            HTML(
+                "<ansired>Cannot create Keeper Teams/users:</ansired> no root node found in the "
+                "enterprise tree."
+            )
+        )
+        return None
+
+    def import_user_groups(self, pvwa_host, authorization_token, params, cyberark_users=None, target_node=None):
         """Fetch CyberArk User Groups and create them as Keeper Enterprise Teams.
 
         This mirrors the ``enterprise-team --add`` command flow: for each
@@ -1304,25 +1349,17 @@ class CyberArkImporter(BaseImporter):
                 existing_team_names.add(team["name"].lower())
 
         # Determine the target node id (same default as enterprise-team --add):
-        # the first user-root node when no --node was specified.
-        node_id = None
-        for nid in params.enterprise.get("user_root_nodes", []) or []:
-            node_id = nid
-            break
+        # --target-node when specified, otherwise the first user-root node.
+        node_id = self._resolve_provisioning_node_id(params, target_node)
         if node_id is None:
-            # Fall back to the first node in the tree (root has parent_id=0)
-            for n in params.enterprise.get("nodes", []) or []:
-                if not n.get("parent_id"):
-                    node_id = n["node_id"]
-                    break
-        if node_id is None:
+            return
+        if target_node:
             print_formatted_text(
                 HTML(
-                    "<ansired>Cannot create Keeper Teams:</ansired> no root node found in the "
-                    "enterprise tree."
+                    f"Provisioning teams, roles, and users into node "
+                    f"<b>{target_node}</b> (id <b>{node_id}</b>)"
                 )
             )
-            return
 
         print_formatted_text(
             HTML(f"Importing <b>{len(groups)}</b> user groups as Keeper Teams (members not provisioned):\n"),
@@ -1743,21 +1780,13 @@ class CyberArkImporter(BaseImporter):
             if uname:
                 existing_user_by_email[uname] = u
 
-        # Determine the target node (root node) for new invitations.
-        invite_node_id = None
-        for nid in params.enterprise.get("user_root_nodes", []) or []:
-            invite_node_id = nid
-            break
-        if invite_node_id is None:
-            for n in params.enterprise.get("nodes", []) or []:
-                if not n.get("parent_id"):
-                    invite_node_id = n["node_id"]
-                    break
+        # Use the caller-resolved provisioning node (from --target-node or root default).
+        invite_node_id = node_id
         if invite_node_id is None:
             print_formatted_text(
                 HTML(
-                    "\n<ansired>Cannot invite Keeper users:</ansired> no root node found in "
-                    "the enterprise tree."
+                    "\n<ansired>Cannot invite Keeper users:</ansired> no target node was "
+                    "resolved for provisioning."
                 )
             )
             return

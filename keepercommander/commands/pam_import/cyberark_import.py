@@ -2202,11 +2202,55 @@ Examples:
         print()
 
     @staticmethod
+    def _parse_index_selection(choice: str, count: int) -> list[int]:
+        """Parse a selection string into 0-based indices.
+
+        Supports single indexes and inclusive ranges, mixed freely::
+
+            "1,3"      -> [0, 2]
+            "1-4"      -> [0, 1, 2, 3]
+            "4-1"      -> [0, 1, 2, 3]   (reversed ranges accepted)
+            "1,3,6-9"  -> [0, 2, 5, 6, 7, 8]
+
+        Out-of-range and non-numeric tokens are skipped. Duplicates are
+        removed while preserving first-seen order.
+        """
+        selected: list[int] = []
+        seen: set[int] = set()
+        for part in choice.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if '-' in part:
+                    left, right = part.split('-', 1)
+                    start = int(left.strip())
+                    end = int(right.strip())
+                    if start > end:
+                        start, end = end, start
+                    for num in range(start, end + 1):
+                        idx = num - 1
+                        if 0 <= idx < count and idx not in seen:
+                            selected.append(idx)
+                            seen.add(idx)
+                else:
+                    idx = int(part) - 1
+                    if 0 <= idx < count and idx not in seen:
+                        selected.append(idx)
+                        seen.add(idx)
+            except ValueError:
+                continue
+        return selected
+
+    @staticmethod
     def _interactive_safe_picker(safes: list[dict]) -> Optional[str]:
         """Show safes and let user select which to import.
 
         Returns comma-separated safe names for apply_safe_filter,
         or None to import all.
+
+        Selection accepts single indexes and inclusive ranges, e.g.
+        ``1-4``, ``1,2,3,6-9,11,14-18``, or ``A`` for all.
         """
         print(f'\n{bcolors.OKBLUE}CyberArk Safes Found:{bcolors.ENDC}')
         print('─' * 50)
@@ -2219,22 +2263,19 @@ Examples:
         print()
 
         try:
-            choice = input(f'  Select safes (comma-separated numbers, or A for all) [A]: ').strip()
+            choice = input(
+                '  Select safes (numbers/ranges e.g. 1-4,6,8-10, or A for all) [A]: '
+            ).strip()
         except EOFError:
             return None
 
         if not choice or choice.upper() == 'A':
             return None
 
-        selected = []
-        for part in choice.split(','):
-            part = part.strip()
-            try:
-                idx = int(part) - 1
-                if 0 <= idx < len(numbered):
-                    selected.append(numbered[idx])
-            except ValueError:
-                continue
+        selected = [
+            numbered[idx]
+            for idx in CyberArkPAMImportCommand._parse_index_selection(choice, len(numbered))
+        ]
 
         if not selected:
             return None

@@ -85,6 +85,8 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
                            help='Display skipped records')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
+import_parser.add_argument('--target-node', dest='target_node', action='store',
+                           help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument(
     'name', type=str,
     help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '

@@ -1453,6 +1453,38 @@ class TestInteractiveSafePicker:
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
         assert result == "Alpha,Gamma"
 
+    def test_select_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="2-4"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == "S2,S3,S4"
+
+    def test_select_mixed_ranges_and_indexes(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 21)]
+        with patch("builtins.input", return_value="1,2,3,6-9,11,14-18"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == "S1,S2,S3,S6,S7,S8,S9,S11,S14,S15,S16,S17,S18"
+
+    def test_select_reversed_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="4-1"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == "S1,S2,S3,S4"
+
+    def test_select_deduplicates(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="1,1-3,2"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == "S1,S2,S3"
+
     def test_select_invalid_input(self):
         from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
         from unittest.mock import patch
@@ -1468,6 +1500,32 @@ class TestInteractiveSafePicker:
         with patch("builtins.input", side_effect=EOFError):
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
         assert result is None
+
+
+class TestParseIndexSelection:
+    """Unit tests for _parse_index_selection."""
+
+    def test_single_indexes(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,3", 5) == [0, 2]
+
+    def test_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1-4", 10) == [0, 1, 2, 3]
+
+    def test_mixed(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,2,3,6-9,11,14-18", 20) == [
+            0, 1, 2, 5, 6, 7, 8, 10, 13, 14, 15, 16, 17
+        ]
+
+    def test_out_of_range_skipped(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,99,2-3,50-60", 5) == [0, 1, 2]
+
+    def test_whitespace_tolerant(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection(" 1 , 3 - 5 , 7 ", 10) == [0, 2, 3, 4, 6]
 
 
 class TestListSafesDetailed:
