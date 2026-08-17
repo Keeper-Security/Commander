@@ -45,7 +45,7 @@ from .tunnel_registry import (
     stop_tunnel_process,
     unregister_tunnel,
 )
-from .. import api, vault, record_management
+from .. import api, vault
 from ..display import bcolors
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
@@ -2983,8 +2983,7 @@ class PAMConnectionEditCommand(Command):
                         logging.debug(f'security is already {target_sec} on record={record_uid}')
 
             if dirty:
-                record_management.update_record(params, record)
-                api.sync_down(params)
+                update_pam_record(params, record, command='pam connection edit')
 
                 traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
                 if not traffic_encryption_key:
@@ -4055,8 +4054,7 @@ class PAMRbiEditCommand(Command):
             update_connection_choice('sessionPersistence', session_persistence)
 
         if dirty:
-            record_management.update_record(params, record)
-            api.sync_down(params)
+            update_pam_record(params, record, command='pam rbi edit')
 
             traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
             if not traffic_encryption_key:
@@ -4235,7 +4233,7 @@ class PAMSplitCommand(Command):
                     pam_settings = vault.TypedField.new_field('pamSettings', "", "")
                     record.fields.append(pam_settings)
 
-                record_management.update_record(params, record)
+                update_pam_record(params, record, command='pam-split')
                 params.sync_data = True
 
                 print(f"{bcolors.WARNING}Record {record_uid} has no data to split and "
@@ -4291,7 +4289,7 @@ class PAMSplitCommand(Command):
             pam_settings = vault.TypedField.new_field('pamSettings', "", "")
             record.fields.append(pam_settings)
 
-        record_management.update_record(params, record)
+        update_pam_record(params, record, command='pam-split')
         params.sync_data = True
 
         if pam_config_uid:

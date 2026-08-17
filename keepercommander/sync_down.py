@@ -287,7 +287,18 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
 
             for r in response.records:
                 record = convert_record(r)
-                params.record_cache[record['record_uid']] = record
+                record_uid = record['record_uid']
+                params.record_cache[record_uid] = record
+                # Classic vault updates bump revision without NSF keeperDriveData.
+                # Keep nested_share_records.revision aligned so NSF updates do not
+                # send a stale revision (RS_OUT_OF_SYNC / "This object no longer exists").
+                nsf_records = getattr(params, 'nested_share_records', None)
+                if nsf_records and record_uid in nsf_records:
+                    nsf_rec = nsf_records[record_uid]
+                    nsf_rec['revision'] = record['revision']
+                    nsf_rec['version'] = record['version']
+                    nsf_rec['shared'] = record['shared']
+                    nsf_rec['client_modified_time'] = record['client_modified_time']
 
         if len(response.nonSharedData) > 0:
             for nsd in response.nonSharedData:

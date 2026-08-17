@@ -1472,6 +1472,156 @@ class TestNestedShareFolderRecordApi(TestCase):
         self.assertEqual(by_type['login'], ['bob2'])
         self.assertEqual(by_type['password'], ['KeepMe'])
 
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    def test_update_record_v3_patches_revision_in_both_caches(self, mock_update):
+        """Successful NSF update must refresh nested_share_records and record_cache revision."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        robj['revision'] = 3
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 3,
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+                'data_unencrypted': json.dumps({
+                    'type': 'login', 'title': 'T', 'fields': [],
+                }).encode('utf-8'),
+            }},
+        )
+        mock_rs = Mock()
+        mock_rec = Mock()
+        mock_rec.status = record_pb2.RS_SUCCESS
+        mock_rec.message = ''
+        mock_rs.records = [mock_rec]
+        mock_rs.revision = 7
+        mock_update.return_value = mock_rs
+
+        result = update_record_v3(params, ruid, title='Updated')
+        self.assertTrue(result['success'])
+        self.assertEqual(result['revision'], 7)
+        self.assertEqual(params.nested_share_records[ruid]['revision'], 7)
+        self.assertEqual(params.record_cache[ruid]['revision'], 7)
+
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    def test_update_record_v3_uses_max_revision_across_caches(self, mock_update):
+        """Stale NSF metadata must not win over a newer classic record_cache revision."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        robj['revision'] = 4  # stale NSF cache (preferred by get_record_from_cache)
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 9,  # fresher after classic PAM edit / sync_down
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+                'data_unencrypted': json.dumps({
+                    'type': 'login', 'title': 'T', 'fields': [],
+                }).encode('utf-8'),
+            }},
+        )
+        mock_rs = Mock()
+        mock_rec = Mock()
+        mock_rec.status = record_pb2.RS_SUCCESS
+        mock_rec.message = ''
+        mock_rs.records = [mock_rec]
+        mock_rs.revision = 10
+        mock_update.return_value = mock_rs
+
+        result = update_record_v3(params, ruid, title='Updated')
+        self.assertTrue(result['success'])
+
+        ru = mock_update.call_args[0][1][0]
+        self.assertEqual(ru.revision, 9)
+
+    def test_get_record_revision_prefers_max(self):
+        from keepercommander.nested_share_folder.common import get_record_revision
+
+        ruid = utils.generate_uid()
+        params = _make_params(
+            nested_share_records={ruid: {'revision': 2}},
+            record_cache={ruid: {'revision': 5}},
+        )
+        self.assertEqual(get_record_revision(params, ruid), 5)
+        self.assertEqual(get_record_revision(params, 'missing', default=1), 1)
+
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    @patch('keepercommander.sync_down.sync_down')
+    def test_update_record_v3_retries_on_out_of_sync(self, mock_sync, mock_update):
+        """RS_OUT_OF_SYNC should sync once and retry with refreshed revision."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        robj['revision'] = 4
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 4,
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+                'data_unencrypted': json.dumps({
+                    'type': 'login', 'title': 'T', 'fields': [],
+                }).encode('utf-8'),
+            }},
+        )
+
+        def _sync_side_effect(_params):
+            _params.nested_share_records[ruid]['revision'] = 9
+            _params.record_cache[ruid]['revision'] = 9
+
+        mock_sync.side_effect = _sync_side_effect
+
+        stale = Mock()
+        stale.status = record_pb2.RS_OUT_OF_SYNC
+        stale.message = 'This object no longer exists.'
+        stale_rs = Mock()
+        stale_rs.records = [stale]
+        stale_rs.revision = 0
+
+        ok = Mock()
+        ok.status = record_pb2.RS_SUCCESS
+        ok.message = ''
+        ok_rs = Mock()
+        ok_rs.records = [ok]
+        ok_rs.revision = 10
+        sent_revisions = []
+
+        def _update_side_effect(params_arg, records):
+            sent_revisions.append(records[0].revision)
+            if len(sent_revisions) == 1:
+                return stale_rs
+            return ok_rs
+
+        mock_update.side_effect = _update_side_effect
+
+        result = update_record_v3(params, ruid, title='Updated')
+        self.assertTrue(result['success'])
+        self.assertEqual(sent_revisions, [4, 9])
+        mock_sync.assert_called_once()
+        self.assertEqual(params.nested_share_records[ruid]['revision'], 10)
+
+    def test_process_records_does_not_downgrade_revision(self):
+        from keepercommander.nested_share_folder.sync import _process_records
+        from types import SimpleNamespace
+
+        ruid, robj = _make_record()
+        robj['revision'] = 9
+        params = _make_params(nested_share_records={ruid: robj})
+        drive_rec = SimpleNamespace(
+            recordUid=utils.base64_url_decode(ruid),
+            revision=4,
+            version=3,
+            shared=False,
+            clientModifiedTime=0,
+            fileSize=0,
+            thumbnailSize=0,
+        )
+        _process_records(params, [drive_rec])
+        self.assertEqual(params.nested_share_records[ruid]['revision'], 9)
+        self.assertIn('record_key_unencrypted', params.nested_share_records[ruid])
+
     @patch('keepercommander.nested_share_folder.record_api.api.communicate_rest')
     @patch('keepercommander.nested_share_folder.record_api.encrypt_for_recipient')
     @patch('keepercommander.nested_share_folder.record_api.get_user_public_key')

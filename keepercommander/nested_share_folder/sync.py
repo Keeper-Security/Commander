@@ -386,9 +386,14 @@ def _process_records(params, records):
     """Store DriveRecord metadata (no encrypted content)."""
     for record in records:
         record_uid = utils.base64_url_encode(record.recordUid)
+        existing = params.nested_share_records.get(record_uid) or {}
+        # Classic vault updates can bump revision before NSF drive metadata
+        # catches up. Never allow a lagging DriveRecord to downgrade the cache.
+        incoming_rev = record.revision or 0
+        existing_rev = existing.get('revision', 0) or 0
         record_obj = {
             'record_uid': record_uid,
-            'revision': record.revision,
+            'revision': max(incoming_rev, existing_rev),
             'version': record.version,
             'shared': record.shared if record.shared else False,
             'client_modified_time': record.clientModifiedTime if record.clientModifiedTime else 0,
@@ -397,6 +402,9 @@ def _process_records(params, records):
             record_obj['file_size'] = record.fileSize
         if record.thumbnailSize:
             record_obj['thumbnail_size'] = record.thumbnailSize
+        # Preserve decrypted key material across metadata refreshes.
+        if 'record_key_unencrypted' in existing:
+            record_obj['record_key_unencrypted'] = existing['record_key_unencrypted']
         params.nested_share_records[record_uid] = record_obj
 
 
@@ -1136,9 +1144,29 @@ def _reconstruct_nested_share_folder_entities(params):
         if 'data_json' not in rd_obj:
             continue
 
+        classic = params.record_cache.get(record_uid) or {}
+        classic_rev = classic.get('revision', 0) or 0
+        nsf_rev = record_obj.get('revision', 0) or 0
+        # Prefer the freshest revision across classic sync and NSF metadata.
+        revision = max(classic_rev, nsf_rev)
+        if revision != nsf_rev:
+            record_obj['revision'] = revision
+
+        # Classic response.records payloads use encrypted 'data' and are not tagged
+        # source=nested_share_folder. Prefer that copy when it is at least as fresh
+        # so lagging keeperDriveData cannot roll content/revision backwards after PAM.
+        classic_from_vault = (
+            'data' in classic and classic.get('source') != 'nested_share_folder'
+        )
+        if classic_from_vault and classic_rev >= nsf_rev:
+            classic['revision'] = revision
+            if 'record_key_unencrypted' not in classic:
+                classic['record_key_unencrypted'] = record_obj['record_key_unencrypted']
+            continue
+
         record_entry = {
             'record_uid': record_uid,
-            'revision': record_obj.get('revision', 0),
+            'revision': revision,
             'version': record_obj.get('version', 0),
             'shared': record_obj.get('shared', False),
             'record_key_unencrypted': record_obj['record_key_unencrypted'],

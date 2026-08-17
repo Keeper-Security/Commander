@@ -48,7 +48,7 @@ class TestPamSplitNsfPlacement(unittest.TestCase):
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'encrypted_session', b'encrypted_key', b'transmission_key'))
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.pam.vault_target.create_record_in_folder')
     @mock.patch('keepercommander.commands.pam.vault_target.resolve_pam_folder_uid',
                 return_value='nsf_folder')
@@ -83,7 +83,7 @@ class TestPamSplitNsfPlacement(unittest.TestCase):
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'encrypted_session', b'encrypted_key', b'transmission_key'))
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.pam.vault_target.create_record_in_folder')
     @mock.patch('keepercommander.commands.tunnel_and_connections.vault.KeeperRecord.create')
     @mock.patch('keepercommander.commands.tunnel_and_connections.vault.KeeperRecord.load')

@@ -15,6 +15,7 @@ from ..api import pad_aes_gcm
 
 from .common import (
     get_folder_key, get_record_key, get_record_from_cache,
+    get_record_revision, patch_record_revision,
     get_user_public_key, encrypt_for_recipient, handle_share_invite,
     parse_sharing_status,
 )
@@ -209,7 +210,9 @@ def update_record_v3(params, record_uid, data=None, title=None,
     ru = record_pb2.RecordUpdate()
     ru.record_uid = utils.base64_url_decode(record_uid)
     ru.client_modified_time = utils.current_milli_time()
-    ru.revision = revision if revision is not None else rec.get('revision', 0)
+    # Prefer the highest known revision: NSF metadata can lag classic sync_down.
+    ru.revision = (revision if revision is not None
+                   else get_record_revision(params, record_uid, rec.get('revision', 0)))
 
     dj = pad_aes_gcm(json.dumps(data))
     db = dj.encode() if isinstance(dj, str) else dj
@@ -223,12 +226,26 @@ def update_record_v3(params, record_uid, data=None, title=None,
     response = record_update_v3(params, [ru])
     if response.records:
         r = response.records[0]
+        # After PAM/classic edits, sync can leave NSF metadata lagging. Refresh
+        # once and retry with the freshest known revision.
+        if (r.status == record_pb2.RS_OUT_OF_SYNC and revision is None):
+            from .. import sync_down as sync_down_mod
+            sync_down_mod.sync_down(params)
+            ru.revision = get_record_revision(params, record_uid, ru.revision)
+            response = record_update_v3(params, [ru])
+            if not response.records:
+                raise KeeperApiError('no_results', 'No results from record update')
+            r = response.records[0]
+        success = r.status == record_pb2.RS_SUCCESS
+        new_revision = getattr(response, 'revision', 0)
+        if success:
+            patch_record_revision(params, record_uid, new_revision)
         return {
             'record_uid': record_uid,
             'status': record_pb2.RecordModifyResult.Name(r.status),
             'message': r.message,
-            'success': r.status == record_pb2.RS_SUCCESS,
-            'revision': getattr(response, 'revision', 0),
+            'success': success,
+            'revision': new_revision,
         }
     raise KeeperApiError('no_results', 'No results from record update')
 

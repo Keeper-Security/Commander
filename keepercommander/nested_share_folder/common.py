@@ -56,6 +56,32 @@ def get_record_from_cache(params, record_uid: str) -> Optional[dict]:
     return None
 
 
+def get_record_revision(params, record_uid: str, default: int = 0) -> int:
+    """Return the highest known revision across NSF and classic caches.
+
+    NSF metadata and classic vault sync can diverge; always prefer the
+    freshest revision when sending optimistic-concurrency updates.
+    """
+    revisions = []
+    for attr in ('nested_share_records', 'record_cache'):
+        cache = getattr(params, attr, None) or {}
+        if record_uid in cache:
+            rev = cache[record_uid].get('revision')
+            if rev is not None:
+                revisions.append(rev)
+    return max(revisions) if revisions else default
+
+
+def patch_record_revision(params, record_uid: str, revision: int) -> None:
+    """Write *revision* into both NSF and classic caches when the UID is present."""
+    if not revision:
+        return
+    for attr in ('nested_share_records', 'record_cache'):
+        cache = getattr(params, attr, None)
+        if cache and record_uid in cache:
+            cache[record_uid]['revision'] = revision
+
+
 def get_record_key_type(params, record_uid: str) -> Optional[int]:
     """Return the record key type if available (legacy AES-CBC vs AES-GCM)."""
     meta = getattr(params, 'meta_data_cache', {}).get(record_uid)
