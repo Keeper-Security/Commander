@@ -186,7 +186,8 @@ def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
                     owner = (params.record_owner_cache or {}).get(record_uid)
                     if not owner or not owner.owner:
                         logging.warning(
-                            'Ignoring email configuration "%s" (%s): owned by another account',
+                            'Ignoring email configuration "%s" (%s): '
+                            'not owned by the current account (or ownership unknown)',
                             name, record_uid)
                         continue
 
@@ -605,13 +606,17 @@ class EmailConfigCreateCommand(Command):
 
 
 class EmailConfigListCommand(Command):
-    """List all email configurations."""
+    """List owned email configurations."""
 
     def get_parser(self):
         return email_config_list_parser
 
     def execute(self, params: KeeperParams, **kwargs):
-        """Execute email-config list command."""
+        """Execute email-config list command.
+
+        Only configurations owned by the current account are listed, matching
+        ``find_email_config_record`` eligibility used by test/delete/--send-email.
+        """
         configs = []
 
         # Find all email config records
@@ -643,13 +648,24 @@ class EmailConfigListCommand(Command):
                         if values:
                             from_address = values[0]
 
-                if is_email_config:
-                    configs.append({
-                        'name': record.title,
-                        'record_uid': record_uid,
-                        'provider': provider or 'unknown',
-                        'from_address': from_address or ''
-                    })
+                if not is_email_config:
+                    continue
+
+                # Match find_email_config_record: only list owned configs
+                owner = (params.record_owner_cache or {}).get(record_uid)
+                if not owner or not owner.owner:
+                    logging.debug(
+                        'Skipping email configuration "%s" (%s) in list: '
+                        'not owned by the current account (or ownership unknown)',
+                        record.title, record_uid)
+                    continue
+
+                configs.append({
+                    'name': record.title,
+                    'record_uid': record_uid,
+                    'provider': provider or 'unknown',
+                    'from_address': from_address or ''
+                })
             except Exception as e:
                 logging.debug(f'Error loading record {record_uid}: {e}')
                 continue
