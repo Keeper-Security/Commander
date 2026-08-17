@@ -490,8 +490,7 @@ class TestPamRbiEditRecordUpdate(unittest.TestCase):
         mock_resolve.return_value = self.mock_record
         self.command.execute(self.mock_params, record='test-record', allow_url_navigation='on')
         mock_update.assert_called_once()
-        # Sync is handled inside update_pam_record for NSF; classic path does not
-        # call api.sync_down here (same as pam tunnel edit).
+        # Sync (and deferred classic sync_data) is handled inside update_pam_record.
         mock_sync.assert_not_called()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')

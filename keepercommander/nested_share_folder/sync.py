@@ -1159,9 +1159,12 @@ def _reconstruct_nested_share_folder_entities(params):
             'data' in classic and classic.get('source') != 'nested_share_folder'
         )
         if classic_from_vault and classic_rev >= nsf_rev:
-            classic['revision'] = revision
             if 'record_key_unencrypted' not in classic:
                 classic['record_key_unencrypted'] = record_obj['record_key_unencrypted']
+            # Still backfill meta/owner caches — NSF is often the only source on
+            # fresh login, and this branch is taken whenever classic sync returns
+            # the record (e.g. after PAM edits).
+            _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj)
             continue
 
         record_entry = {
@@ -1177,24 +1180,28 @@ def _reconstruct_nested_share_folder_entities(params):
         }
 
         params.record_cache[record_uid] = record_entry
+        _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj)
 
-        if record_uid not in params.meta_data_cache:
-            meta_data = {
-                'record_uid': record_uid,
-                'record_key_unencrypted': record_obj['record_key_unencrypted'],
-                'can_share': True,
-                'can_edit': True,
-            }
-            if 'user_account_uid' in rd_obj:
-                meta_data['owner_account_uid'] = rd_obj['user_account_uid']
-                if rd_obj['user_account_uid'] in params.user_cache:
-                    meta_data['owner_username'] = params.user_cache[rd_obj['user_account_uid']]
-            params.meta_data_cache[record_uid] = meta_data
 
-        if record_uid not in params.record_owner_cache:
-            if 'user_account_uid' in rd_obj:
-                is_owner = (rd_obj['user_account_uid'] == utils.base64_url_encode(params.account_uid_bytes))
-                params.record_owner_cache[record_uid] = RecordOwner(
-                    is_owner,
-                    rd_obj['user_account_uid']
-                )
+def _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj):
+    """Populate meta_data_cache / record_owner_cache from NSF data when missing."""
+    if record_uid not in params.meta_data_cache:
+        meta_data = {
+            'record_uid': record_uid,
+            'record_key_unencrypted': record_obj['record_key_unencrypted'],
+            'can_share': True,
+            'can_edit': True,
+        }
+        if 'user_account_uid' in rd_obj:
+            meta_data['owner_account_uid'] = rd_obj['user_account_uid']
+            if rd_obj['user_account_uid'] in params.user_cache:
+                meta_data['owner_username'] = params.user_cache[rd_obj['user_account_uid']]
+        params.meta_data_cache[record_uid] = meta_data
+
+    if record_uid not in params.record_owner_cache:
+        if 'user_account_uid' in rd_obj:
+            is_owner = (rd_obj['user_account_uid'] == utils.base64_url_encode(params.account_uid_bytes))
+            params.record_owner_cache[record_uid] = RecordOwner(
+                is_owner,
+                rd_obj['user_account_uid']
+            )

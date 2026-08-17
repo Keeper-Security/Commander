@@ -294,9 +294,15 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 # send a stale revision (RS_OUT_OF_SYNC / "This object no longer exists").
                 nsf_records = getattr(params, 'nested_share_records', None)
                 if nsf_records and record_uid in nsf_records:
+                    # Direct assignment is intentional: classic response.records is
+                    # vault-authoritative for this UID after a classic update. NSF
+                    # _process_records uses max() because keeperDriveData can lag;
+                    # here the classic stream is the fresher source of truth.
                     nsf_rec = nsf_records[record_uid]
                     nsf_rec['revision'] = record['revision']
                     nsf_rec['version'] = record['version']
+                    # shared/client_modified_time follow the classic payload for the
+                    # same reason; NSF-only sharing state is refreshed from drive data.
                     nsf_rec['shared'] = record['shared']
                     nsf_rec['client_modified_time'] = record['client_modified_time']
 

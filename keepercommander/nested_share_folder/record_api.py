@@ -174,64 +174,102 @@ def _load_existing_record_data(params, record_uid, rec=None):
     return None
 
 
+def _apply_record_update_overrides(data, title=None, record_type=None, fields=None, notes=None):
+    """Apply optional title/type/fields/notes overrides onto a record data dict."""
+    if title is not None:
+        data['title'] = title
+    if record_type is not None:
+        data['type'] = record_type
+    if fields is not None:
+        by_type = {}
+        for ef in data.get('fields', []):
+            by_type.setdefault(ef.get('type'), []).append(ef)
+        for ft, fv in fields.items():
+            fv = fv if isinstance(fv, list) else [fv]
+            if ft in by_type and by_type[ft]:
+                by_type[ft][0]['value'] = fv
+            else:
+                data.setdefault('fields', []).append({'type': ft, 'value': fv})
+    if notes is not None:
+        data['notes'] = notes
+    return data
+
+
+def _sync_down_for_nsf_update(params):
+    """Sync while preserving NSF folder keys when possible."""
+    try:
+        from ..commands.pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+        sync_down_preserving_nsf_keys(params)
+    except Exception:
+        from .. import sync_down as sync_down_mod
+        sync_down_mod.sync_down(params)
+
+
 def update_record_v3(params, record_uid, data=None, title=None,
                      record_type=None, fields=None, notes=None,
                      non_shared_data=None, revision=None):
+    """Update an NSF/classic-cached record via vault/records/v3/update.
+
+    On ``RS_OUT_OF_SYNC`` with no explicit *revision*, syncs once and retries.
+    When *data* was omitted, the retry rebuilds payload from refreshed caches
+    so a concurrent content edit is not silently overwritten. When the caller
+    supplied *data* (e.g. ``update_pam_record``), the retry re-sends that
+    payload at the freshest revision (force / last-write-wins for that call).
+    """
     rec = get_record_from_cache(params, record_uid)
     if not rec:
-        from .. import sync_down
-        sync_down.sync_down(params)
+        _sync_down_for_nsf_update(params)
         rec = get_record_from_cache(params, record_uid)
     if not rec:
         raise ValueError(f"Record {record_uid} not found")
 
     rk = rec.get('record_key_unencrypted') or get_record_key(params, record_uid)
+    caller_supplied_data = data is not None
 
     if data is None:
         existing = _load_existing_record_data(params, record_uid, rec)
         data = existing.copy() if existing else {'fields': []}
-        if title is not None:
-            data['title'] = title
-        if record_type is not None:
-            data['type'] = record_type
-        if fields is not None:
-            by_type = {}
-            for ef in data.get('fields', []):
-                by_type.setdefault(ef.get('type'), []).append(ef)
-            for ft, fv in fields.items():
-                fv = fv if isinstance(fv, list) else [fv]
-                if ft in by_type and by_type[ft]:
-                    by_type[ft][0]['value'] = fv
-                else:
-                    data.setdefault('fields', []).append({'type': ft, 'value': fv})
-        if notes is not None:
-            data['notes'] = notes
+        _apply_record_update_overrides(data, title, record_type, fields, notes)
 
-    ru = record_pb2.RecordUpdate()
-    ru.record_uid = utils.base64_url_decode(record_uid)
-    ru.client_modified_time = utils.current_milli_time()
-    # Prefer the highest known revision: NSF metadata can lag classic sync_down.
-    ru.revision = (revision if revision is not None
-                   else get_record_revision(params, record_uid, rec.get('revision', 0)))
+    def _build_update(payload, rev):
+        ru = record_pb2.RecordUpdate()
+        ru.record_uid = utils.base64_url_decode(record_uid)
+        ru.client_modified_time = utils.current_milli_time()
+        # Prefer the highest known revision: NSF metadata can lag classic sync_down.
+        ru.revision = (rev if rev is not None
+                       else get_record_revision(params, record_uid, rec.get('revision', 0)))
+        dj = pad_aes_gcm(json.dumps(payload))
+        db = dj.encode() if isinstance(dj, str) else dj
+        ru.data = crypto.encrypt_aes_v2(db, rk)
+        if non_shared_data:
+            nsj = pad_aes_gcm(json.dumps(non_shared_data))
+            nsb = nsj.encode() if isinstance(nsj, str) else nsj
+            ru.non_shared_data = crypto.encrypt_aes_v2(nsb, rk)
+        return ru
 
-    dj = pad_aes_gcm(json.dumps(data))
-    db = dj.encode() if isinstance(dj, str) else dj
-    ru.data = crypto.encrypt_aes_v2(db, rk)
-
-    if non_shared_data:
-        nsj = pad_aes_gcm(json.dumps(non_shared_data))
-        nsb = nsj.encode() if isinstance(nsj, str) else nsj
-        ru.non_shared_data = crypto.encrypt_aes_v2(nsb, rk)
-
+    ru = _build_update(data, revision)
     response = record_update_v3(params, [ru])
     if response.records:
         r = response.records[0]
         # After PAM/classic edits, sync can leave NSF metadata lagging. Refresh
         # once and retry with the freshest known revision.
-        if (r.status == record_pb2.RS_OUT_OF_SYNC and revision is None):
-            from .. import sync_down as sync_down_mod
-            sync_down_mod.sync_down(params)
-            ru.revision = get_record_revision(params, record_uid, ru.revision)
+        if r.status == record_pb2.RS_OUT_OF_SYNC and revision is None:
+            _sync_down_for_nsf_update(params)
+            rec = get_record_from_cache(params, record_uid) or rec
+            rk = rec.get('record_key_unencrypted') or rk
+            if caller_supplied_data:
+                logging.warning(
+                    'NSF record update retry for %s after RS_OUT_OF_SYNC may overwrite '
+                    'a concurrent content edit (caller-supplied data).',
+                    record_uid,
+                )
+                retry_data = data
+            else:
+                existing = _load_existing_record_data(params, record_uid, rec)
+                retry_data = existing.copy() if existing else {'fields': []}
+                _apply_record_update_overrides(
+                    retry_data, title, record_type, fields, notes)
+            ru = _build_update(retry_data, None)
             response = record_update_v3(params, [ru])
             if not response.records:
                 raise KeeperApiError('no_results', 'No results from record update')
