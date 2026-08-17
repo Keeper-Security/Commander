@@ -774,7 +774,7 @@ def _import(params, file_format, filename, **kwargs):
 
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
-                              dry_run=dry_run, target_node=target_node):
+                              dry_run=dry_run, target_node=target_node, use_nsf=use_nsf):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:

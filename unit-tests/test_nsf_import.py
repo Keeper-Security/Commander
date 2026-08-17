@@ -231,3 +231,46 @@ class TestNsfImport(TestCase):
             self.assertEqual(
                 os.path.abspath(KeeperCsvImporter().resolve_file_path(csv_path)),
                 os.path.abspath(csv_path))
+
+    def test_cyberark_style_nsf_folder_paths(self):
+        """CyberArk --nsf places safes as NSF paths (not classic shared domains)."""
+        rec = Record()
+        fol = Folder()
+        fol.path = 'RootSafe'
+        rec.folders = [fol]
+        sf = SharedFolder()
+        sf.path = 'RootSafe'
+
+        nsf_import.flatten_record_folder_paths([rec])
+        self.assertEqual((fol.domain or '', fol.path), ('', 'RootSafe'))
+
+        params = _params({})
+        with mock.patch(CREATE, return_value=['safe_uid']) as m:
+            nsf_import.prepare_nsf_folders(params, [sf], [rec])
+            m.assert_called_once_with(params, [('RootSafe', '')])
+            self.assertEqual(fol.uid, 'safe_uid')
+            self.assertEqual(sf.uid, 'safe_uid')
+
+    def test_cyberark_portal_style_nsf_folder_paths(self):
+        """CyberArk Portal --nsf uses Identity folder names as NSF paths."""
+        rec = Record()
+        fol = Folder()
+        fol.path = 'Identity Collection'
+        rec.folders = [fol]
+        sf = SharedFolder()
+        sf.path = 'Identity Collection'
+
+        params = _params({})
+        with mock.patch(CREATE, return_value=['portal_uid']) as m:
+            nsf_import.prepare_nsf_folders(params, [sf], [rec])
+            m.assert_called_once_with(params, [('Identity Collection', '')])
+            self.assertEqual((fol.uid, sf.uid), ('portal_uid', 'portal_uid'))
+
+    def test_classic_cyberark_domain_flattens_for_nsf(self):
+        """Legacy domain placement still flattens correctly when --nsf is used."""
+        rec = Record()
+        fol = Folder()
+        fol.domain = 'LegacySafe'
+        rec.folders = [fol]
+        nsf_import.flatten_record_folder_paths([rec])
+        self.assertEqual((fol.domain, fol.path), ('', 'LegacySafe'))

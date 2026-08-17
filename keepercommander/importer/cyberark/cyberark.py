@@ -27,6 +27,7 @@ from .pam import _esc
 from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
+    Folder,
     Permission,
     Record,
     RecordField,
@@ -979,6 +980,7 @@ class CyberArkImporter(BaseImporter):
         if auth is None:
             return
         pvwa_host, authorization_token, query_params = auth
+        use_nsf = bool(kwargs.get("use_nsf"))
 
         params = kwargs.get("params")
         will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
@@ -994,7 +996,14 @@ class CyberArkImporter(BaseImporter):
         if not safes:
             return
 
-        
+        if use_nsf:
+            print_formatted_text(
+                HTML(
+                    "\n<ansiyellow>NSF mode:</ansiyellow> CyberArk safes will be created as "
+                    "Nested Share Folders and accounts as NSF records."
+                )
+            )
+
         print_formatted_text(HTML("\nScanning CyberArk safes for accounts to migrate..."))
         safe_accounts = {}
         for safe in safes:
@@ -1093,6 +1102,10 @@ class CyberArkImporter(BaseImporter):
             f"\nYou are about to import data from CyberArk PVWA <b>{pvwa_host}</b> into Keeper:",
             f"  - <b>{total_accounts}</b> account(s) across <b>{len(safe_accounts)}</b> safe(s) as Keeper records",
         ]
+        if use_nsf:
+            summary_lines.append(
+                "  - Safes as Nested Share Folders (--nsf); records created with the NSF API"
+            )
         if group_names:
             summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams and roles")
         if eligible_users:
@@ -1123,12 +1136,23 @@ class CyberArkImporter(BaseImporter):
                 tabulate([{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts], headers="keys"),
                 end="\n\n",
             )
+            if use_nsf:
+                # Explicit NSF folder so prepare_nsf_folders has a SharedFolder target;
+                # record folder paths also resolve to the same NSF node.
+                nsf_folder = SharedFolder()
+                nsf_folder.path = safe
+                yield nsf_folder
             with _suppress_progressbar_executor_noise(), ProgressBar() as pb:
                 skip_all = {}
                 skipped_accounts = []
                 for r in pb(accounts, total=len(accounts)):
-                    folder = SharedFolder()
-                    folder.domain = r["safeName"]
+                    folder = Folder()
+                    # Classic import places each safe as a shared-folder domain.
+                    # --nsf uses a path so Nested Share Folders are created instead.
+                    if use_nsf:
+                        folder.path = r["safeName"]
+                    else:
+                        folder.domain = r["safeName"]
                     record = Record()
                     record.folders = [folder]
                     record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])

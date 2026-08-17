@@ -15,7 +15,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Folder, Record, RecordField
+from ..importer import BaseImporter, Folder, Record, RecordField, SharedFolder
 import secrets
 import string
 
@@ -396,6 +396,7 @@ class CyberArkPortalImporter(BaseImporter):
         return default_url
 
     def do_import(self, filename, **kwargs):
+        use_nsf = bool(kwargs.get("use_nsf"))
         name = filename.removeprefix("https://").removeprefix("http://")
         host_part = name.split("/")[0]
 
@@ -408,6 +409,13 @@ class CyberArkPortalImporter(BaseImporter):
             identity_base_url = self.discover_identity_url(tenant_name)
 
         logging.info(f"Using CyberArk Identity URL: {identity_base_url}")
+        if use_nsf:
+            print_formatted_text(
+                HTML(
+                    "\n<ansiyellow>NSF mode:</ansiyellow> CyberArk Identity folders will be created as "
+                    "Nested Share Folders and items as NSF records."
+                )
+            )
 
         username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk User Portal username: ")
 
@@ -722,6 +730,19 @@ class CyberArkPortalImporter(BaseImporter):
                 HTML(f"Discovered <b>{len(folders)}</b> CyberArk folder(s) for the current user."),
                 end="\n\n",
             )
+            if use_nsf:
+                seen_names = set()
+                for folder in folders:
+                    fname = self._folder_display_name(folder)
+                    if not fname:
+                        continue
+                    key = fname.lower()
+                    if key in seen_names:
+                        continue
+                    seen_names.add(key)
+                    nsf_folder = SharedFolder()
+                    nsf_folder.path = fname
+                    yield nsf_folder
 
         if len(apps) > 0:
             print_formatted_text(

@@ -62,7 +62,8 @@ import_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
                            help='import folders as Keeper shared folders')
 import_parser.add_argument('--nsf', dest='use_nsf', action='store_true',
-                           help='import folders and records into Nested Share Folders (works with any --format)')
+                           help='import folders and records into Nested Share Folders '
+                                '(json, csv, keepass, cyberark, cyberark_portal, …)')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
@@ -173,6 +174,8 @@ import --format=csv sample_data/import.csv
 
 Nested Share Folders (NSF):
 import --format=csv --nsf sample_data/import_nsf.csv
+import --format=cyberark --nsf https://tenant.privilegecloud.cyberark.cloud
+import --format=cyberark_portal --nsf https://tenant.id.cyberark.cloud
 '''
 
 json_instructions = '''JSON Import Instructions
@@ -186,8 +189,11 @@ Within shared folders, you can also automatically assign user or team permission
 To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
 
-Nested Share Folders (NSF) — works with any --format (json, csv, keepass, …):
+Nested Share Folders (NSF) — works with any --format (json, csv, keepass,
+cyberark, cyberark_portal, …):
 import --format=json --nsf sample_data/import_nsf.txt
+import --format=cyberark --nsf https://tenant.privilegecloud.cyberark.cloud
+import --format=cyberark_portal --nsf https://tenant.id.cyberark.cloud
 
 With --nsf, shared_folders[].permissions from JSON are granted on Nested
 Share Folders after folders and records are created. Prefer NSF roles:
