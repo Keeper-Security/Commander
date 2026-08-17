@@ -476,8 +476,9 @@ class PedmScimCommand(base.ArgparseCommand):
             if not group.name:
                 return None
             group_domain = group.domain or domain_name
+            group_id = group.sid or group.id
             data = {
-                'Id': group.id,
+                'Id': group_id,
                 'Domainname': group_domain,
                 'GroupName': group.name,
             }
