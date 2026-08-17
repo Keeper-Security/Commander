@@ -77,7 +77,7 @@ def check_min_commander_version() -> Optional[Tuple[dict, int]]:
 
     message = (
         f'Commander version {current_raw} is below the required minimum {required_raw}. '
-        f'Please update Keeper Commander and re-run terraform-app-setup.'
+        f'Please update Keeper Commander to >= {required_raw} and retry.'
     )
     logger.info(message)
     return {'status': 'error', 'error': message}, 426

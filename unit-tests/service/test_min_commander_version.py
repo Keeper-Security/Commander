@@ -98,7 +98,8 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertEqual(body['status'], 'error')
             self.assertIn('17.0.0', body['error'])
             self.assertIn('18.1.0', body['error'])
-            self.assertIn('terraform-app-setup', body['error'])
+            self.assertIn('Please update Keeper Commander to >= 18.1.0 and retry.', body['error'])
+            self.assertNotIn('terraform-app-setup', body['error'])
 
     @mock.patch(
         'keepercommander.service.decorators.min_commander_version.commander_version',
@@ -114,6 +115,21 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertEqual(status, 400)
             self.assertEqual(body['status'], 'error')
             self.assertIn('Invalid', body['error'])
+
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'not-a-version',
+    )
+    def test_rejects_when_running_version_unparseable(self):
+        with self.app.test_request_context(
+            '/api/v2/executecommand-async',
+            method='POST',
+            headers={MIN_COMMANDER_VERSION_HEADER: '18.1.0'},
+        ):
+            body, status = check_min_commander_version()
+            self.assertEqual(status, 500)
+            self.assertEqual(body['status'], 'error')
+            self.assertIn('Unable to determine running Commander version', body['error'])
 
     @mock.patch(
         'keepercommander.service.decorators.min_commander_version.commander_version',
