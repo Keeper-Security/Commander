@@ -28,17 +28,18 @@ class TerraformSetupConstants:
     DEFAULT_RECORD_NAME = 'Commander Service Mode Terraform Config'
     DEFAULT_TIMEOUT = DockerSetupConstants.DEFAULT_TIMEOUT
 
-    SERVICE_COMMANDS = (
-        'this-device,sync-down,switch-to-mc,switch-to-msp,'
-        'msp-add,msp-down,msp-info,msp-remove,msp-update,'
-        'enterprise-info,enterprise-node,enterprise-user,enterprise-role,'
-        'enterprise-team,enterprise-down,enterprise-push,team-approve,'
-        'record-add,record-update,rm,get,list,record-type-info,'
-        'share-folder,rmdir,rndir,mkdir,epm,scim,mv,pam,secrets-manager,'
-        'ln,share-record,'
-        'nsf-mkdir,nsf-get,nsf-rmdir,nsf-record-add,nsf-record-update,'
-        'nsf-rm,nsf-rndir,nsf-share-folder,nsf-share-record,nsf-ln'
+    SERVICE_COMMANDS_LIST = (
+        'this-device', 'sync-down', 'switch-to-mc', 'switch-to-msp',
+        'msp-add', 'msp-down', 'msp-info', 'msp-remove', 'msp-update',
+        'enterprise-info', 'enterprise-node', 'enterprise-user', 'enterprise-role',
+        'enterprise-team', 'enterprise-down', 'enterprise-push', 'team-approve',
+        'record-add', 'record-update', 'rm', 'get', 'list', 'record-type-info',
+        'share-folder', 'rmdir', 'rndir', 'mkdir', 'epm', 'scim', 'mv', 'pam',
+        'secrets-manager', 'ln', 'share-record',
+        'nsf-mkdir', 'nsf-get', 'nsf-rmdir', 'nsf-record-add', 'nsf-record-update',
+        'nsf-rm', 'nsf-rndir', 'nsf-share-folder', 'nsf-share-record', 'nsf-ln',
     )
+    SERVICE_COMMANDS = ','.join(SERVICE_COMMANDS_LIST)
 
 
 terraform_app_setup_parser = argparse.ArgumentParser(
@@ -91,13 +92,18 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
         return terraform_app_setup_parser
 
     def execute(self, params, **kwargs):
+        # setdefault covers programmatic execute() without argparse defaults.
         kwargs.setdefault('folder_name', TerraformSetupConstants.DEFAULT_FOLDER_NAME)
         kwargs.setdefault('app_name', TerraformSetupConstants.DEFAULT_APP_NAME)
         kwargs.setdefault('record_name', TerraformSetupConstants.DEFAULT_RECORD_NAME)
         kwargs.setdefault('timeout', TerraformSetupConstants.DEFAULT_TIMEOUT)
-        return super().execute(params, **kwargs)
+        self._validated_commands = self._validate_terraform_commands(params)
+        try:
+            return super().execute(params, **kwargs)
+        finally:
+            self._validated_commands = None
 
-    def _get_commands_config(self, params) -> str:
+    def _validate_terraform_commands(self, params) -> str:
         try:
             return RuntimeServiceConfig().validate_command_list(
                 TerraformSetupConstants.SERVICE_COMMANDS, params
@@ -107,6 +113,12 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
                 self.get_parser().prog,
                 f'Terraform command allowlist validation failed: {e}',
             )
+
+    def _get_commands_config(self, params) -> str:
+        cached = getattr(self, '_validated_commands', None)
+        if cached is not None:
+            return cached
+        return self._validate_terraform_commands(params)
 
     def _get_queue_config(self) -> bool:
         return True

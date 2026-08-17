@@ -24,14 +24,6 @@ from .logging import logger
 MIN_COMMANDER_VERSION_HEADER = 'Min-Commander-Version'
 
 
-def _read_min_commander_version_header() -> Optional[str]:
-    value = request.headers.get(MIN_COMMANDER_VERSION_HEADER)
-    if value is None:
-        return None
-    value = str(value).strip()
-    return value or None
-
-
 def _parse_version(version_str: str) -> Optional[Version]:
     if not version_str or len(version_str) > 64:
         return None
@@ -39,6 +31,18 @@ def _parse_version(version_str: str) -> Optional[Version]:
         return Version(version_str.lstrip('vV'))
     except InvalidVersion:
         return None
+
+
+_RUNNING_VERSION_RAW = str(commander_version).strip()
+_RUNNING_VERSION = _parse_version(_RUNNING_VERSION_RAW)
+
+
+def _read_min_commander_version_header() -> Optional[str]:
+    value = request.headers.get(MIN_COMMANDER_VERSION_HEADER)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def check_min_commander_version() -> Optional[Tuple[dict, int]]:
@@ -63,20 +67,18 @@ def check_min_commander_version() -> Optional[Tuple[dict, int]]:
             ),
         }, 400
 
-    current_raw = str(commander_version).strip()
-    current = _parse_version(current_raw)
-    if current is None:
+    if _RUNNING_VERSION is None:
         logger.error('Unable to parse running Commander version')
         return {
             'status': 'error',
             'error': 'Unable to determine running Commander version.',
         }, 500
 
-    if current >= required:
+    if _RUNNING_VERSION >= required:
         return None
 
     message = (
-        f'Commander version {current_raw} is below the required minimum {required_raw}. '
+        f'Commander version {_RUNNING_VERSION_RAW} is below the required minimum {required_raw}. '
         f'Please update Keeper Commander to >= {required_raw} and retry.'
     )
     logger.info(message)

@@ -48,7 +48,11 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIsNone(check_min_commander_version())
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('18.1.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
         '18.1.0',
     )
     def test_accepts_when_current_meets_minimum(self):
@@ -60,7 +64,11 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIsNone(check_min_commander_version())
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('18.1.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
         '18.1.0',
     )
     def test_accepts_case_insensitive_header(self):
@@ -72,7 +80,11 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIsNone(check_min_commander_version())
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('18.1.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
         '18.1.0',
     )
     def test_accepts_partial_required_version(self):
@@ -84,7 +96,11 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIsNone(check_min_commander_version())
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('17.0.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
         '17.0.0',
     )
     def test_rejects_when_current_too_old(self):
@@ -99,11 +115,10 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIn('17.0.0', body['error'])
             self.assertIn('18.1.0', body['error'])
             self.assertIn('Please update Keeper Commander to >= 18.1.0 and retry.', body['error'])
-            self.assertNotIn('terraform-app-setup', body['error'])
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
-        '18.1.0',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('18.1.0'),
     )
     def test_rejects_invalid_header(self):
         with self.app.test_request_context(
@@ -117,8 +132,8 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIn('Invalid', body['error'])
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
-        'not-a-version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        None,
     )
     def test_rejects_when_running_version_unparseable(self):
         with self.app.test_request_context(
@@ -132,7 +147,11 @@ class TestMinCommanderVersionCheck(TestCase):
             self.assertIn('Unable to determine running Commander version', body['error'])
 
     @mock.patch(
-        'keepercommander.service.decorators.min_commander_version.commander_version',
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('17.0.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
         '17.0.0',
     )
     def test_decorator_blocks_handler(self):

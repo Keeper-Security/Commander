@@ -11,11 +11,14 @@
 
 from unittest import TestCase, mock
 
+from keepercommander.cli import aliases, commands, enterprise_commands, msp_commands
+from keepercommander.error import CommandError
 from keepercommander.service.commands.terraform_app_setup import (
     TerraformAppSetupCommand,
     TerraformSetupConstants,
 )
 from keepercommander.service.docker.models import ServiceConfig
+from keepercommander.service.util.exceptions import ValidationError
 
 
 class TestTerraformAppSetupCommand(TestCase):
@@ -45,6 +48,29 @@ class TestTerraformAppSetupCommand(TestCase):
         mock_runtime_config.return_value.validate_command_list.assert_called_once_with(
             TerraformSetupConstants.SERVICE_COMMANDS, params
         )
+
+    @mock.patch(
+        'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'
+    )
+    def test_commands_config_wraps_validation_error(self, mock_runtime_config):
+        mock_runtime_config.return_value.validate_command_list.side_effect = ValidationError(
+            'bad command'
+        )
+        with self.assertRaises(CommandError) as ctx:
+            TerraformAppSetupCommand()._get_commands_config(mock.Mock())
+        self.assertEqual(ctx.exception.command, 'terraform-app-setup')
+        self.assertIn('bad command', ctx.exception.message)
+
+    @mock.patch.object(TerraformAppSetupCommand, 'run_setup_steps')
+    @mock.patch.object(
+        TerraformAppSetupCommand,
+        '_validate_terraform_commands',
+        side_effect=CommandError('terraform-app-setup', 'bad allowlist'),
+    )
+    def test_execute_validates_allowlist_before_setup(self, _mock_validate, mock_setup):
+        with self.assertRaises(CommandError):
+            TerraformAppSetupCommand().execute(mock.Mock())
+        mock_setup.assert_not_called()
 
     @mock.patch.object(TerraformAppSetupCommand, '_get_advanced_security_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_cloudflare_config')
@@ -95,27 +121,18 @@ class TestTerraformAppSetupCommand(TestCase):
 
 
 class TestTerraformSetupConstants(TestCase):
-    def test_allowlist_includes_core_commands(self):
-        commands = {
-            c.strip()
-            for c in TerraformSetupConstants.SERVICE_COMMANDS.split(',')
-            if c.strip()
-        }
-        for expected in (
-            'this-device',
-            'sync-down',
-            'enterprise-user',
-            'record-add',
-            'nsf-share-record',
-            'pam',
-            'secrets-manager',
-        ):
-            self.assertIn(expected, commands)
+    def test_allowlist_entries_are_registered_commands(self):
+        known = set(commands) | set(enterprise_commands) | set(msp_commands) | set(aliases)
+        missing = [
+            name for name in TerraformSetupConstants.SERVICE_COMMANDS_LIST
+            if name not in known
+        ]
+        self.assertEqual(missing, [])
 
     def test_allowlist_has_no_duplicate_entries(self):
-        parts = [
-            c.strip()
-            for c in TerraformSetupConstants.SERVICE_COMMANDS.split(',')
-            if c.strip()
-        ]
+        parts = TerraformSetupConstants.SERVICE_COMMANDS_LIST
         self.assertEqual(len(parts), len(set(parts)))
+        self.assertEqual(
+            TerraformSetupConstants.SERVICE_COMMANDS,
+            ','.join(TerraformSetupConstants.SERVICE_COMMANDS_LIST),
+        )
