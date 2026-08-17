@@ -153,7 +153,12 @@ email_config_delete_parser.add_argument(
 
 def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
     """
-    Find email config record by name.
+    Find an owned email config record by name.
+
+    Only records owned by the current account are eligible. Shared or
+    non-owned records (even with a matching title and ``__email_config__``
+    marker) are ignored so SMTP/provider settings cannot be supplied by
+    another user.
 
     Args:
         params: KeeperParams session
@@ -175,8 +180,17 @@ def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
             custom_fields = record_dict.get('custom', [])
             for field in custom_fields:
                 if field.get('type') == 'text' and field.get('label') == '__email_config__':
-                    if record.title == name:
-                        return record_uid
+                    if record.title != name:
+                        continue
+
+                    owner = (params.record_owner_cache or {}).get(record_uid)
+                    if not owner or not owner.owner:
+                        logging.warning(
+                            'Ignoring email configuration "%s" (%s): owned by another account',
+                            name, record_uid)
+                        continue
+
+                    return record_uid
         except:
             continue
 
