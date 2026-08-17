@@ -221,16 +221,18 @@ class AdCrmDataSource(ICrmDataSource):
                 rs = connection.extend.standard.paged_search(
                     root_dn, '(objectClass=group)',
                     search_scope=ldap3.SUBTREE, paged_size=1000, generator=True,
-                    attributes=['objectGUID', 'name'])
+                    attributes=['objectGUID', 'objectSid', 'name'])
                 for entry in rs:
                     if entry.get('type') != 'searchResEntry':
                         continue
                     attrs = entry.get('attributes') or {}
                     group_id = attrs.get('objectGUID')
+                    group_sid = attrs.get('objectSid')
                     group_name = attrs.get('name')
                     if group_id and group_name:
                         g = ScimGroup()
                         g.id = group_id
+                        g.sid = group_sid
                         g.external_id = group_id
                         g.name = group_name
                         g.domain = default_domain
@@ -240,11 +242,11 @@ class AdCrmDataSource(ICrmDataSource):
                     if scim_group.lower().startswith('cn='):
                         rs = connection.extend.standard.paged_search(
                             scim_group, f'(objectClass=group)',
-                            search_scope=ldap3.BASE, attributes=['objectGUID', 'name'], generator=False)
+                            search_scope=ldap3.BASE, attributes=['objectGUID', 'objectSid', 'name'], generator=False)
                     else:
                         rs = connection.extend.standard.paged_search(
                             root_dn, f'(&(objectClass=group)(name={escape_filter_chars(scim_group)}))',
-                            search_scope=ldap3.SUBTREE, attributes=['objectGUID', 'name'], generator=False)
+                            search_scope=ldap3.SUBTREE, attributes=['objectGUID', 'objectSid', 'name'], generator=False)
 
                     group_entry = next((x for x in rs if x.get('type') == 'searchResEntry'), None)
                     if group_entry:
@@ -255,6 +257,7 @@ class AdCrmDataSource(ICrmDataSource):
                         attrs = group_entry['attributes']
                         scim_group_obj = ScimGroup()
                         scim_group_obj.id = attrs.get('objectGUID')
+                        scim_group_obj.sid = attrs.get('objectSid')
                         scim_group_obj.external_id = attrs.get('objectGUID')
                         scim_group_obj.name = attrs.get('name')
                         scim_group_obj.domain = default_domain

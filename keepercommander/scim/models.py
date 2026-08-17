@@ -35,6 +35,7 @@ class ScimUser:
 @dataclass
 class ScimGroup:
     id: str = ''
+    sid: str = ''
     external_id: str = ''
     name: str = ''
     domain: str = ''
@@ -42,6 +43,7 @@ class ScimGroup:
     def __str__(self):
         scim_group = {
             'id': self.id,
+            'sid': self.sid,
             'external_id': self.external_id,
             'name': self.name,
             'domain': self.domain,
