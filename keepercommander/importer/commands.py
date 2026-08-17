@@ -106,6 +106,8 @@ export_parser.add_argument('-kkf', '--keepass-key-file', dest='kbdx_key_file', a
                            help='Keepass key file for the exported file')
 export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
+export_parser.add_argument('--owned-only', dest='owned_only', action='store_true',
+                           help='Only export owned records')                           
 export_parser.add_argument('--save-in-vault', dest='save_in_vault', action='store_true',
                            help='Stores exports file as a record attachment. KeePass only')
 export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
