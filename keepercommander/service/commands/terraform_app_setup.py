@@ -12,11 +12,18 @@
 """Terraform provider Docker service mode setup command."""
 
 import argparse
+from dataclasses import asdict
 
 from ...commands.base import raise_parse_exception, suppress_exit
 from ...error import CommandError
 from ..config.service_config import ServiceConfig as RuntimeServiceConfig
-from ..docker import DockerSetupConstants
+from ..docker import (
+    DockerComposeBuilder,
+    DockerSetupConstants,
+    DockerSetupPrinter,
+    ServiceConfig,
+    SetupResult,
+)
 from ..util.exceptions import ValidationError
 from .service_docker_setup import ServiceDockerSetupCommand
 
@@ -27,6 +34,8 @@ class TerraformSetupConstants:
     DEFAULT_APP_NAME = 'Commander Service Mode - Terraform KSM App'
     DEFAULT_RECORD_NAME = 'Commander Service Mode Terraform Config'
     DEFAULT_TIMEOUT = DockerSetupConstants.DEFAULT_TIMEOUT
+    COMMANDER_SERVICE_NAME = 'commander-terraform'
+    COMMANDER_CONTAINER_NAME = 'keeper-service-terraform'
 
     SERVICE_COMMANDS_LIST = (
         'this-device', 'sync-down', 'switch-to-mc', 'switch-to-msp',
@@ -122,3 +131,20 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
 
     def _get_queue_config(self) -> bool:
         return True
+
+    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: ServiceConfig) -> str:
+        builder = DockerComposeBuilder(
+            setup_result,
+            asdict(config),
+            commander_service_name=TerraformSetupConstants.COMMANDER_SERVICE_NAME,
+            commander_container_name=TerraformSetupConstants.COMMANDER_CONTAINER_NAME,
+        )
+        return builder.build()
+
+    def _print_next_steps(self, config: ServiceConfig, config_path: str) -> None:
+        DockerSetupPrinter.print_common_deployment_steps(
+            str(config.port),
+            config_path,
+            container_name=TerraformSetupConstants.COMMANDER_CONTAINER_NAME,
+        )
+        print()

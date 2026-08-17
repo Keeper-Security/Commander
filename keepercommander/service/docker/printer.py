@@ -61,7 +61,8 @@ class DockerSetupPrinter:
         print(f"{indent}• KSM Base64 Config: {bcolors.OKGREEN}✓ Generated{bcolors.ENDC}")
     
     @staticmethod
-    def print_common_deployment_steps(port: str, config_path: str = None) -> None:
+    def print_common_deployment_steps(port: str, config_path: str = None,
+                                      container_name: str = 'keeper-service') -> None:
         """Print common deployment steps (header + steps 1-5)"""
         DockerSetupPrinter.print_header("Next Steps to Deploy")
         
@@ -82,6 +83,6 @@ class DockerSetupPrinter:
         
         print(f"\n{bcolors.BOLD}Step 5: Check services health{bcolors.ENDC}")
         print(f"  {bcolors.OKGREEN}docker ps{bcolors.ENDC} - View container status")
-        print(f"  {bcolors.OKGREEN}docker logs keeper-service{bcolors.ENDC} - View Commander logs")
+        print(f"  {bcolors.OKGREEN}docker logs {container_name}{bcolors.ENDC} - View Commander logs")
         print(f"  {bcolors.OKGREEN}curl http://localhost:{port}/health{bcolors.ENDC} - Test health endpoint")
 

@@ -34,6 +34,29 @@ class TestTerraformAppSetupCommand(TestCase):
     def test_queue_config_always_enabled(self):
         self.assertTrue(TerraformAppSetupCommand()._get_queue_config())
 
+    def test_compose_uses_terraform_service_and_container_names(self):
+        setup_result = mock.Mock(
+            folder_uid='f', folder_name='folder', app_uid='a', app_name='app',
+            record_uid='r', b64_config='cfg',
+        )
+        config = ServiceConfig(
+            port=8900,
+            commands=TerraformSetupConstants.SERVICE_COMMANDS,
+            queue_enabled=True,
+            ngrok_enabled=False,
+            ngrok_auth_token='',
+            ngrok_custom_domain='',
+            cloudflare_enabled=False,
+            cloudflare_tunnel_token='',
+            cloudflare_custom_domain='',
+        )
+        yaml_content = TerraformAppSetupCommand().generate_docker_compose_yaml(
+            setup_result, config
+        )
+        self.assertIn('commander-terraform:', yaml_content)
+        self.assertIn('container_name: keeper-service-terraform', yaml_content)
+        self.assertNotIn('container_name: keeper-service\n', yaml_content)
+
     @mock.patch(
         'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'
     )
