@@ -47,6 +47,7 @@ from ...importer.cyberark.cyberark_pam import (
     exclude_system_safes,
     resolve_account_dependents,
     resolve_linked_accounts,
+    PAM_SERVICE_ADD_TYPES,
     pick_admin_credentials,
     pick_launch_credentials,
     detect_dual_account,
@@ -705,7 +706,7 @@ class CyberArkImportOrchestrator:
                 f"  • <b>{_esc(dep.get('service_name', '') or '?')}</b> "
                 f"({_esc(dep.get('raw_type', '') or 'unknown')}) "
                 f"on <b>{_esc(dep.get('machine_address', '') or '?')}</b> "
-                f"→ pam action service <b>{_esc(mapped_to)}</b>"))
+                f"→ pam action service add --type <b>{_esc(mapped_to)}</b>"))
 
     def _apply_folder_paths(self, record: dict, safe_name: str,
                             folder_mapper: SafeFolderMapper):
@@ -1504,17 +1505,7 @@ class CyberArkImportOrchestrator:
         self, mapped: MappedImportResult, project_result: dict,
         unmapped_items: list[dict],
     ) -> Optional[dict]:
-        """Replay CyberArk dependents as KeeperPAM service-account mappings.
-
-        Iterates over ``mapped.dependents`` collected during the mapping phase
-        and invokes ``PAMActionServiceAddCommand`` once per (machine, user, type)
-        tuple that resolves to imported records. Categories with no Keeper
-        equivalent, missing host machines, and non-Windows OS hosts are all
-        skipped silently and accounted for in the returned summary so the
-        import report can surface them.
-
-        Returns a summary dict, or ``None`` when nothing to do.
-        """
+        """Replay CyberArk dependents as KeeperPAM service-account mappings."""
         opts = self.options
         if opts.skip_dependents or not mapped.dependents:
             return None
@@ -1595,9 +1586,24 @@ class CyberArkImportOrchestrator:
         add_cmd = PAMActionServiceAddCommand()
 
         for dep in mapped.dependents:
+            # Match pam action service add --type {service,task,iis_pool}
             service_type = dep.get("service_type")
-            if service_type not in ("service", "task", "iis"):
+            if service_type == "iis":
+                service_type = "iis_pool"
+            if service_type not in PAM_SERVICE_ADD_TYPES:
                 summary["skipped_unsupported"] += 1
+                continue
+
+            service_name = (dep.get("service_name") or "").strip()
+            if not service_name:
+                summary["skipped_other"] += 1
+                summary["details"].append({
+                    "service": "",
+                    "host": dep.get("machine_address", ""),
+                    "type": dep.get("raw_type", ""),
+                    "reason": "pam action service add requires --name "
+                              "(Windows service / task / IIS pool name)",
+                })
                 continue
 
             machine_record = self._find_machine_record(
@@ -1606,7 +1612,7 @@ class CyberArkImportOrchestrator:
             if machine_record is None:
                 summary["skipped_missing_machine"] += 1
                 summary["details"].append({
-                    "service": dep.get("service_name", ""),
+                    "service": service_name,
                     "host": dep.get("machine_address", ""),
                     "type": dep.get("raw_type", ""),
                     "reason": "no PAM Machine record imported for this host",
@@ -1617,18 +1623,20 @@ class CyberArkImportOrchestrator:
                 summary["skipped_non_windows"] += 1
                 unmapped_items.append({
                     "category": "CyberArk dependent",
-                    "item": (f"{dep.get('service_name') or dep.get('raw_type')} "
+                    "item": (f"{service_name or dep.get('raw_type')} "
                              f"on {dep.get('machine_address')}"),
                     "action": "Host is not Windows — Keeper PAM can only rotate "
                               "Windows service / task / IIS credentials",
                 })
                 continue
 
-            user_record = user_index.get(dep.get("master_user_title", ""))
+            user_record = user_index.get(
+                (dep.get("master_user_title") or "").casefold(),
+            )
             if user_record is None:
                 summary["skipped_missing_user"] += 1
                 summary["details"].append({
-                    "service": dep.get("service_name", ""),
+                    "service": service_name,
                     "host": dep.get("machine_address", ""),
                     "type": dep.get("raw_type", ""),
                     "reason": "PAM User record not found in vault after import",
@@ -1636,27 +1644,35 @@ class CyberArkImportOrchestrator:
                 continue
 
             try:
+                # execute() reads argparse dest names, not CLI flag names:
+                # --type → service_type, --name → name, --machine-uid → machine_uid
                 add_cmd.execute(
                     self.params,
                     gateway=gateway_uid,
                     configuration_uid=gateway_context.configuration.record_uid,
                     machine_uid=machine_record.record_uid,
                     user_uid=user_record.record_uid,
-                    type=service_type,
+                    service_type=service_type,
+                    name=service_name,
                 )
                 summary["added"] += 1
             except Exception as e:  # noqa: BLE001 — never block reporting
                 summary["skipped_other"] += 1
+                err_text = str(e).strip() or type(e).__name__
                 logging.warning(
-                    "Failed to register %s mapping for %s on %s: %s",
-                    service_type, dep.get("service_name", "?"),
+                    "Failed to register %s mapping for %s on %s: %s: %s",
+                    service_type, service_name,
                     dep.get("machine_address", "?"), type(e).__name__,
+                    err_text,
                 )
                 summary["details"].append({
-                    "service": dep.get("service_name", ""),
+                    "service": service_name,
                     "host": dep.get("machine_address", ""),
                     "type": dep.get("raw_type", ""),
-                    "reason": f"pam action service add failed: {type(e).__name__}",
+                    "reason": (
+                        f"pam action service add failed: {type(e).__name__}: "
+                        f"{err_text.splitlines()[0]}"
+                    ),
                 })
 
         return summary
