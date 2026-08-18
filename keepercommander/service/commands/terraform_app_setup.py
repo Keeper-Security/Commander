@@ -24,6 +24,7 @@ from ..docker import (
     ServiceConfig as DockerServiceConfig,
     SetupResult,
 )
+from ..decorators.min_commander_version import TERRAFORM_DOCKER_ENV
 from ..util.exceptions import ValidationError
 from .service_docker_setup import ServiceDockerSetupCommand
 
@@ -133,6 +134,7 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
             asdict(config),
             commander_service_name=TerraformSetupConstants.COMMANDER_SERVICE_NAME,
             commander_container_name=TerraformSetupConstants.COMMANDER_CONTAINER_NAME,
+            commander_environment={TERRAFORM_DOCKER_ENV: '1'},
         )
         return builder.build()
 

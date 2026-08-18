@@ -17,6 +17,7 @@ from keepercommander.service.commands.terraform_app_setup import (
     TerraformAppSetupCommand,
     TerraformSetupConstants,
 )
+from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV
 from keepercommander.service.docker.models import ServiceConfig
 from keepercommander.service.util.exceptions import ValidationError
 
@@ -56,6 +57,8 @@ class TestTerraformAppSetupCommand(TestCase):
         self.assertIn('commander-terraform:', yaml_content)
         self.assertIn('container_name: keeper-service-terraform', yaml_content)
         self.assertNotIn('container_name: keeper-service\n', yaml_content)
+        self.assertIn(f'{TERRAFORM_DOCKER_ENV}:', yaml_content)
+        self.assertRegex(yaml_content, rf"{TERRAFORM_DOCKER_ENV}:\s*'?1'?")
 
     @mock.patch(
         'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'

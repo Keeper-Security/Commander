@@ -11,6 +11,7 @@
 
 """Enforce Min-Commander-Version header against the running Commander."""
 
+import os
 from functools import wraps
 from typing import Optional, Tuple
 
@@ -22,6 +23,8 @@ from .logging import logger
 
 # Hyphenated only: Werkzeug/WSGI silently drops headers that contain underscores.
 MIN_COMMANDER_VERSION_HEADER = 'Min-Commander-Version'
+# Set on terraform-app-setup compose; not a secret — instance identity only.
+TERRAFORM_DOCKER_ENV = 'KEEPER_TERRAFORM'
 
 
 def _parse_version(version_str: str) -> Optional[Version]:
@@ -37,7 +40,14 @@ _RUNNING_VERSION_RAW = str(commander_version).strip()
 _RUNNING_VERSION = _parse_version(_RUNNING_VERSION_RAW)
 
 
+def _is_terraform_docker() -> bool:
+    """True when this process was started from terraform-app-setup compose."""
+    return bool((os.environ.get(TERRAFORM_DOCKER_ENV) or '').strip())
+
+
 def _read_min_commander_version_header() -> Optional[str]:
+    if not _is_terraform_docker():
+        return None
     value = request.headers.get(MIN_COMMANDER_VERSION_HEADER)
     if value is None:
         return None
@@ -47,8 +57,10 @@ def _read_min_commander_version_header() -> Optional[str]:
 
 def check_min_commander_version() -> Optional[Tuple[dict, int]]:
     """
-    If Min-Commander-Version is present, require running Commander >= that version.
+    On Terraform Docker only: if Min-Commander-Version is present, require
+    running Commander >= that version.
 
+    Non-Terraform service mode: no-op even if the header is sent.
     Missing header: no-op.
     Invalid header: 400.
     Too old: 426 with upgrade guidance.
@@ -86,7 +98,7 @@ def check_min_commander_version() -> Optional[Tuple[dict, int]]:
 
 
 def min_commander_version_check(fn):
-    """Run after auth: enforce Min-Commander-Version when the header is present."""
+    """Run after auth: enforce Min-Commander-Version on Terraform Docker only."""
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
