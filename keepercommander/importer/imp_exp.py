@@ -871,8 +871,10 @@ def _import(params, file_format, filename, **kwargs):
                 _strip_path_prefix(records, folders, import_into)
 
     if use_nsf:
-        from .nsf_import import flatten_record_folder_paths
+        from .nsf_import import ensure_nsf_record_folders, flatten_record_folder_paths
         flatten_record_folder_paths(records)
+        default_nsf = import_into if (import_into and not nsf_base_parent) else None
+        ensure_nsf_record_folders(records, folders, default_nsf)
 
     if classic_shared:
         sfol = set()
@@ -1096,7 +1098,13 @@ def _import(params, file_format, filename, **kwargs):
                             folder_uid = ''
 
                 from .nsf_import import is_nsf_folder
-                if folder_uid and is_nsf_folder(params, folder_uid):
+                use_nsf_add = use_nsf or (folder_uid and is_nsf_folder(params, folder_uid))
+                if use_nsf_add:
+                    if folder_uid and not is_nsf_folder(params, folder_uid):
+                        logging.warning(
+                            'Skipping NSF record "%s": Nested Share Folder was not created',
+                            import_record.title)
+                        continue
                     data = _construct_record_v3_data(import_record)
                     data_bytes = api.get_record_data_json_bytes(data)
                     if len(data_bytes) > RECORD_MAX_DATA_LEN:
@@ -2307,8 +2315,11 @@ def prepare_record_link(params, records):
     """Prepare record links to folders."""
     record_folders = {}    # type: [str, [str]]
     record_links = []
+    nsf_records = getattr(params, 'nested_share_records', None) or {}
     for rec in records:
         if rec.uid:
+            if rec.uid in nsf_records:
+                continue
             if rec.uid in params.record_cache:
                 if rec.uid in record_folders:
                     folder_ids = record_folders[rec.uid]
@@ -2327,8 +2338,11 @@ def prepare_record_link(params, records):
                     if folder_uid in folder_ids:
                         continue
                     if len(folder_ids) > 0:
+                        src_uid = folder_ids[0]
+                        if src_uid not in params.folder_cache or is_nsf_folder(params, src_uid):
+                            continue
                         folder_ids.append(folder_uid)
-                        src_folder = params.folder_cache[folder_ids[0]]
+                        src_folder = params.folder_cache[src_uid]
                         dst_folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
                         ft = dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType
                         req = {

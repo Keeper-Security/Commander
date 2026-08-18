@@ -282,6 +282,18 @@ class CyberArkPortalImporter(BaseImporter):
                 or folder.get("Title") or folder.get("CollectionName")
                 or folder.get("ID") or "")
 
+    @staticmethod
+    def _folders_from_up_data(up_result):
+        """Pull Identity collections/folders from GetUPData when present."""
+        folders = []
+        if not isinstance(up_result, dict):
+            return folders
+        for key in ("Collections", "Folders", "UserCollections"):
+            items = up_result.get(key)
+            if isinstance(items, list):
+                folders.extend(x for x in items if isinstance(x, dict))
+        return folders
+
     def _apply_sharing_and_folders(self, *, record, item, item_key, folder_index,
                                    identity_base_url, authentication_token,
                                    missing_endpoint_cache, item_kind):
@@ -719,11 +731,14 @@ class CyberArkPortalImporter(BaseImporter):
         if response.status_code != HTTPStatus.OK:
             logging.error(f"HTTP {HTTPStatus(response.status_code).phrase} error getting UP data: {response.text}")
             return
-        apps = response.json()["Result"]["Apps"]
+        up_result = response.json().get("Result") or {}
+        apps = up_result.get("Apps") or []
 
-       
         missing_endpoint_cache = set()
-        folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
+        folders = list(self._folders_from_up_data(up_result))
+        fetched_folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
+        if fetched_folders:
+            folders.extend(fetched_folders)
         folder_index = self._build_folder_index(folders) if folders else {}
         if folders:
             print_formatted_text(

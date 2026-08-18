@@ -17,6 +17,7 @@ import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .importer import (
+    Folder as ImportFolder,
     PathDelimiter,
     Permission as ImportPermission,
     Record as ImportRecord,
@@ -91,6 +92,35 @@ def flatten_record_folder_paths(records):  # type: (List[ImportRecord]) -> None
             folder.path = PathDelimiter.join(
                 [c.replace(PathDelimiter, 2 * PathDelimiter) for c in comps]
             ) if comps else ''
+
+
+def ensure_nsf_record_folders(records, folders, default_name=None):
+    # type: (List[ImportRecord], List[ImportSharedFolder], Optional[str]) -> str
+    """Create SharedFolder targets for record folder paths."""
+    name = (default_name or '').strip()
+    existing = {(fol.path or '').lower() for fol in folders or [] if fol.path}
+
+    def _add_shared(path):
+        key = (path or '').lower()
+        if not path or key in existing:
+            return
+        sf = ImportSharedFolder()
+        sf.path = path
+        folders.append(sf)
+        existing.add(key)
+
+    for rec in records or []:
+        if not rec.folders:
+            if not name:
+                continue
+            rec.folders = [ImportFolder()]
+        for fol in rec.folders:
+            if not (fol.path or fol.domain):
+                if not name:
+                    continue
+                fol.path = name
+            _add_shared(fol.path or fol.domain)
+    return name
 
 
 def find_nsf_child(params, folder_name, parent_uid):
@@ -309,22 +339,23 @@ def prepare_nsf_folders(params, folders, records, base_parent_uid=''):
 
 
 def build_nsf_record_add(params, import_record, record_key, data):
-    """Build a ``vault/records/v3/add`` RecordAdd for an NSF folder."""
+    """Build a ``vault/records/v3/add`` RecordAdd."""
     from ..nested_share_folder.common import get_folder_key
     from ..nested_share_folder.record_api import create_record_data_v3
 
     folder_uid = ''
     if import_record.folders:
         folder_uid = import_record.folders[0].uid or ''
-    if not folder_uid or not is_nsf_folder(params, folder_uid):
-        raise CommandError('import', f'NSF folder not found for record "{import_record.title}"')
-
-    folder_key = get_folder_key(params, folder_uid, raise_on_missing=True)
+    folder_key = None
+    if folder_uid:
+        if not is_nsf_folder(params, folder_uid):
+            raise CommandError('import', f'NSF folder not found for record "{import_record.title}"')
+        folder_key = get_folder_key(params, folder_uid, raise_on_missing=True)
     return create_record_data_v3(
         record_uid=import_record.uid,
         record_key=record_key,
         data=data,
-        folder_uid=folder_uid,
+        folder_uid=folder_uid or None,
         folder_key=folder_key,
         data_key=params.data_key,
         client_modified_time=utils.current_milli_time(),
