@@ -584,3 +584,138 @@ class DockerSetupBase:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
         
         return config
+
+    def _get_advanced_security_config(self) -> Dict[str, Any]:
+        """Get advanced security configuration (IP filter, rate limit, encryption, token expiry)."""
+        print(f"\n{bcolors.BOLD}Advanced Security (optional):{bcolors.ENDC}")
+        print(f"  Configure IP filtering, rate limiting, and response encryption")
+        enable_advanced = input(
+            f"{bcolors.OKBLUE}Enable advanced security? [Press Enter for No] (y/n):{bcolors.ENDC} "
+        ).strip().lower() == 'y'
+
+        config = {
+            'allowed_ip': '0.0.0.0/0,::/0',
+            'denied_ip': '',
+            'rate_limit': '',
+            'encryption_enabled': False,
+            'encryption_key': '',
+            'token_expiration': ''
+        }
+
+        if enable_advanced:
+            config.update(self._get_ip_allowed_config())
+            config.update(self._get_ip_denied_config())
+            config.update(self._get_rate_limit_config())
+            config.update(self._get_encryption_config())
+            config.update(self._get_token_expiration_config())
+
+        return config
+
+    def _get_ip_allowed_config(self) -> Dict[str, str]:
+        """Get allowed IP configuration"""
+        print(f"\n{bcolors.BOLD}IP Allowed List:{bcolors.ENDC}")
+        print(f"  Comma-separated IPs or CIDR ranges (e.g., 192.168.1.0/24,10.0.0.1)")
+
+        ip_list = input(f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} ").strip()
+
+        if ip_list:
+            while True:
+                try:
+                    return {'allowed_ip': ConfigValidator.validate_ip_list(ip_list)}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    ip_list = input(
+                        f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} "
+                    ).strip()
+                    if not ip_list:
+                        break
+
+        return {'allowed_ip': '0.0.0.0/0,::/0'}
+
+    def _get_ip_denied_config(self) -> Dict[str, str]:
+        """Get denied IP configuration"""
+        print(f"\n{bcolors.BOLD}IP Denied List:{bcolors.ENDC}")
+        print(f"  Comma-separated IPs or CIDR ranges to block")
+
+        ip_list = input(f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} ").strip()
+
+        if ip_list:
+            while True:
+                try:
+                    return {'denied_ip': ConfigValidator.validate_ip_list(ip_list)}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    ip_list = input(
+                        f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} "
+                    ).strip()
+                    if not ip_list:
+                        break
+
+        return {'denied_ip': ''}
+
+    def _get_rate_limit_config(self) -> Dict[str, str]:
+        """Get rate limiting configuration"""
+        print(f"\n{bcolors.BOLD}Rate Limiting:{bcolors.ENDC}")
+        print(f"  Format: <number>/<period> (e.g., 10/minute, 100/hour, 1000/day)")
+
+        rate_limit = input(f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} ").strip()
+
+        if rate_limit:
+            while True:
+                try:
+                    return {'rate_limit': ConfigValidator.validate_rate_limit(rate_limit)}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    rate_limit = input(
+                        f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} "
+                    ).strip()
+                    if not rate_limit:
+                        break
+
+        return {'rate_limit': ''}
+
+    def _get_encryption_config(self) -> Dict[str, Any]:
+        """Get encryption configuration"""
+        print(f"\n{bcolors.BOLD}Response Encryption:{bcolors.ENDC}")
+        print(f"  Enable AES-256 encryption for API responses")
+        enable_encryption = input(
+            f"{bcolors.OKBLUE}Enable encryption? [Press Enter for No] (y/n):{bcolors.ENDC} "
+        ).strip().lower() == 'y'
+
+        config = {'encryption_enabled': enable_encryption, 'encryption_key': ''}
+
+        if enable_encryption:
+            print(f"  Encryption key must be exactly 32 alphanumeric characters")
+            while True:
+                key = input(f"{bcolors.OKBLUE}Encryption key (32 chars):{bcolors.ENDC} ").strip()
+                try:
+                    config['encryption_key'] = ConfigValidator.validate_encryption_key(key)
+                    break
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+
+        return config
+
+    def _get_token_expiration_config(self) -> Dict[str, str]:
+        """Get token expiration configuration"""
+        print(f"\n{bcolors.BOLD}API Token Expiration:{bcolors.ENDC}")
+        print(f"  Format: Xm (minutes), Xh (hours), Xd (days) - e.g., 30m, 24h, 7d")
+
+        expiration = input(
+            f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} "
+        ).strip()
+
+        if expiration:
+            while True:
+                try:
+                    ConfigValidator.parse_expiration_time(expiration)
+                    return {'token_expiration': expiration}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    expiration = input(
+                        f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} "
+                    ).strip()
+                    if not expiration:
+                        break
+
+        return {'token_expiration': ''}
