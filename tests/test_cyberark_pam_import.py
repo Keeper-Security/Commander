@@ -1491,7 +1491,15 @@ class TestInteractiveSafePicker:
         safes = [{"safeName": "Safe1"}]
         with patch("builtins.input", return_value="abc"):
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
-        assert result is None  # invalid → all
+        assert result == ""  # invalid non-empty → abort, do not import all
+
+    def test_select_invalid_range_syntax_aborts(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="1..4"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == ""
 
     def test_eof_returns_none(self):
         from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
@@ -1526,6 +1534,150 @@ class TestParseIndexSelection:
     def test_whitespace_tolerant(self):
         from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
         assert CyberArkPAMImportCommand._parse_index_selection(" 1 , 3 - 5 , 7 ", 10) == [0, 2, 3, 4, 6]
+
+    def test_clamps_huge_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1-1000000", 5) == [0, 1, 2, 3, 4]
+
+    def test_unicode_en_dash(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("2–4", 6) == [1, 2, 3]
+
+    def test_rejects_malformed_tokens(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1-2-3", 10) == []
+        assert CyberArkPAMImportCommand._parse_index_selection("1--5", 10) == []
+        assert CyberArkPAMImportCommand._parse_index_selection("1..4", 10) == []
+        assert CyberArkPAMImportCommand._parse_index_selection("1:4", 10) == []
+
+    def test_empty_tokens_ignored(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,,3", 5) == [0, 2]
+
+
+def _enterprise_params(nodes=None, user_root_nodes=None, enterprise_name="Acme"):
+    params = MagicMock()
+    params.enterprise = {
+        "nodes": nodes if nodes is not None else [
+            {"node_id": 1, "data": {}},
+            {"node_id": 2, "parent_id": 1, "data": {"displayname": "Engineering"}},
+            {"node_id": 3, "parent_id": 1, "data": {"displayname": "R&D"}},
+            {"node_id": 4, "parent_id": 1, "data": {"displayname": "Dup"}},
+            {"node_id": 5, "parent_id": 1, "data": {"displayname": "Dup"}},
+        ],
+        "user_root_nodes": user_root_nodes if user_root_nodes is not None else [1],
+        "enterprise_name": enterprise_name,
+    }
+    return params
+
+
+class TestResolveProvisioningNodeId:
+    """Tests for CyberArkImporter._resolve_provisioning_node_id."""
+
+    def _importer(self):
+        from keepercommander.importer.cyberark.cyberark import CyberArkImporter
+        return CyberArkImporter()
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_resolves_by_name(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "Engineering") == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_resolves_by_numeric_id(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "3") == 3
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_strips_whitespace(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "  Engineering  ") == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_ampersand_name_found(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "R&D") == 3
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_ampersand_name_not_found_does_not_raise(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "No&Such") is None
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_not_found(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "Missing") is None
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_ambiguous_name(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "Dup") is None
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_default_user_root_node(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(
+            _enterprise_params(user_root_nodes=[99]), None
+        ) == 99
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_default_falls_back_to_tree_root(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(
+            _enterprise_params(user_root_nodes=[]), None
+        ) == 1
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_no_enterprise(self, _print):
+        importer = self._importer()
+        params = MagicMock()
+        params.enterprise = None
+        assert importer._resolve_provisioning_node_id(params, "Engineering") is None
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_no_params(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(None, "Engineering") is None
+
+    def test_success_html_escapes_ampersand(self):
+        from prompt_toolkit import HTML
+        from keepercommander.importer.cyberark.pam.ui import _esc
+        HTML(
+            f"Provisioning teams, roles, and users into node "
+            f"<b>{_esc('R&D')}</b> (id <b>3</b>)"
+        )
+
+
+class TestImportTargetNodeArgparse:
+    """--target-node / --node on the vault import parser."""
+
+    def test_target_node_flag(self):
+        from keepercommander.importer.commands import import_parser
+        ns = import_parser.parse_args(["--format", "cyberark", "--target-node", "Eng", "https://pvwa"])
+        assert ns.target_node == "Eng"
+
+    def test_node_alias(self):
+        from keepercommander.importer.commands import import_parser
+        ns = import_parser.parse_args(["--format", "cyberark", "--node", "Eng", "https://pvwa"])
+        assert ns.target_node == "Eng"
+
+    def test_ignored_for_non_cyberark_format(self):
+        from keepercommander.importer.commands import RecordImportCommand
+        cmd = RecordImportCommand()
+        params = MagicMock()
+        params.enforcements = None
+        with patch("keepercommander.importer.commands.imp_exp._import") as mock_import:
+            cmd.execute(params, format="json", name="vault.json", target_node="Eng")
+        assert mock_import.call_args.kwargs.get("target_node") is None
+
+    def test_kept_for_cyberark_format(self):
+        from keepercommander.importer.commands import RecordImportCommand
+        cmd = RecordImportCommand()
+        params = MagicMock()
+        params.enforcements = None
+        with patch("keepercommander.importer.commands.imp_exp._import") as mock_import:
+            cmd.execute(params, format="cyberark", name="https://pvwa", target_node="Eng")
+        assert mock_import.call_args.kwargs.get("target_node") == "Eng"
 
 
 class TestListSafesDetailed:

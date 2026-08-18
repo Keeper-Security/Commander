@@ -85,7 +85,7 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
                            help='Display skipped records')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
-import_parser.add_argument('--target-node', dest='target_node', action='store',
+import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument(
     'name', type=str,
@@ -286,6 +286,10 @@ class RecordImportCommand(ImporterCommand):
             if rti is None:
                 logging.warning(f'Record type "{record_type}" not found.')
                 return
+
+        if kwargs.get('target_node') and import_format != 'cyberark':
+            logging.warning('--target-node/--node is only used with --format=cyberark; ignoring')
+            kwargs['target_node'] = None
 
         logging.info('Processing... please wait.')
         imp_exp._import(params, import_format, import_name, manage_users=manage_users, manage_records=manage_records,

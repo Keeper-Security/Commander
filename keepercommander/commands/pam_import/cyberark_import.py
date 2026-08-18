@@ -1836,6 +1836,17 @@ class CyberArkImportOrchestrator:
                     pass
 
 
+# Unicode dashes that users commonly paste instead of ASCII '-'.
+_DASH_TRANSLATE = str.maketrans({
+    '\u2010': '-',  # hyphen
+    '\u2011': '-',  # non-breaking hyphen
+    '\u2012': '-',  # figure dash
+    '\u2013': '-',  # en dash
+    '\u2014': '-',  # em dash
+    '\u2212': '-',  # minus
+})
+
+
 class CyberArkPAMImportCommand(Command):
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-import",
@@ -2203,55 +2214,37 @@ Examples:
 
     @staticmethod
     def _parse_index_selection(choice: str, count: int) -> list[int]:
-        """Parse a selection string into 0-based indices.
-
-        Supports single indexes and inclusive ranges, mixed freely::
-
-            "1,3"      -> [0, 2]
-            "1-4"      -> [0, 1, 2, 3]
-            "4-1"      -> [0, 1, 2, 3]   (reversed ranges accepted)
-            "1,3,6-9"  -> [0, 2, 5, 6, 7, 8]
-
-        Out-of-range and non-numeric tokens are skipped. Duplicates are
-        removed while preserving first-seen order.
-        """
+        """Parse a selection string into 0-based indices."""
         selected: list[int] = []
         seen: set[int] = set()
+        if count <= 0:
+            return selected
+        token_re = re.compile(r'^(\d+)(?:-(\d+))?$')
         for part in choice.split(','):
-            part = part.strip()
+            part = part.strip().translate(_DASH_TRANSLATE)
+            part = re.sub(r'\s+', '', part)
             if not part:
                 continue
-            try:
-                if '-' in part:
-                    left, right = part.split('-', 1)
-                    start = int(left.strip())
-                    end = int(right.strip())
-                    if start > end:
-                        start, end = end, start
-                    for num in range(start, end + 1):
-                        idx = num - 1
-                        if 0 <= idx < count and idx not in seen:
-                            selected.append(idx)
-                            seen.add(idx)
-                else:
-                    idx = int(part) - 1
-                    if 0 <= idx < count and idx not in seen:
-                        selected.append(idx)
-                        seen.add(idx)
-            except ValueError:
+            m = token_re.match(part)
+            if not m:
                 continue
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) is not None else start
+            lo, hi = min(start, end), max(start, end)
+            lo = max(1, lo)
+            hi = min(count, hi)
+            if lo > hi:
+                continue
+            for num in range(lo, hi + 1):
+                idx = num - 1
+                if idx not in seen:
+                    selected.append(idx)
+                    seen.add(idx)
         return selected
 
     @staticmethod
     def _interactive_safe_picker(safes: list[dict]) -> Optional[str]:
-        """Show safes and let user select which to import.
-
-        Returns comma-separated safe names for apply_safe_filter,
-        or None to import all.
-
-        Selection accepts single indexes and inclusive ranges, e.g.
-        ``1-4``, ``1,2,3,6-9,11,14-18``, or ``A`` for all.
-        """
+        """Show safes and let user select which to import."""
         print(f'\n{bcolors.OKBLUE}CyberArk Safes Found:{bcolors.ENDC}')
         print('─' * 50)
         numbered = []
@@ -2278,7 +2271,10 @@ Examples:
         ]
 
         if not selected:
-            return None
+            print(
+                f'{bcolors.FAIL}No valid indexes in {choice!r}. Import cancelled.{bcolors.ENDC}'
+            )
+            return ''
 
         logging.warning('Selected safes: %s', ', '.join(selected))
         return ','.join(selected)
