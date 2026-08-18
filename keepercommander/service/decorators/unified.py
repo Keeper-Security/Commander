@@ -15,6 +15,7 @@ from .logging import debug_decorator, catch_all
 from .api_logging import api_log_handler
 from .security import security_check
 from .auth import auth_check, policy_check
+from .min_commander_version import min_commander_version_check
 
 def unified_api_decorator() -> Callable:
     def decorator(f: Callable) -> Callable:
@@ -22,6 +23,7 @@ def unified_api_decorator() -> Callable:
         @api_log_handler
         @security_check
         @auth_check
+        @min_commander_version_check
         @policy_check
         @catch_all
         @debug_decorator

@@ -13,6 +13,7 @@ from ..service.commands.create_service import CreateService
 from ..service.commands.config_operation import AddConfigService
 from ..service.commands.handle_service import StartService, StopService, ServiceStatus
 from ..service.commands.service_docker_setup import ServiceDockerSetupCommand
+from ..service.commands.terraform_app_setup import TerraformAppSetupCommand
 from ..service.commands.integrations import (
     GChatAppSetupCommand,
     SlackAppSetupCommand,
@@ -27,6 +28,7 @@ def register_commands(commands):
     commands['service-stop'] = StopService()
     commands['service-status'] = ServiceStatus()
     commands['service-docker-setup'] = ServiceDockerSetupCommand()
+    commands['terraform-app-setup'] = TerraformAppSetupCommand()
     commands['slack-app-setup'] = SlackAppSetupCommand()
     commands['teams-app-setup'] = TeamsAppSetupCommand()
     commands['sailpoint-app-setup'] = SailPointAppSetupCommand()
@@ -40,6 +42,7 @@ def register_command_info(aliases, command_info):
         StopService,
         ServiceStatus,
         ServiceDockerSetupCommand,
+        TerraformAppSetupCommand,
         SlackAppSetupCommand,
         TeamsAppSetupCommand,
         SailPointAppSetupCommand,
