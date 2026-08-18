@@ -16,11 +16,9 @@ Standalone Docker service mode setup command.
 import argparse
 import os
 from dataclasses import asdict
-from typing import Dict, Any
 
 from ...commands.base import Command, raise_parse_exception, suppress_exit
 from ...display import bcolors
-from ...error import CommandError
 from ..config.config_validation import ConfigValidator, ValidationError
 from ..docker import (
     DockerSetupBase, DockerSetupConstants, DockerSetupPrinter,
@@ -69,19 +67,17 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
 
     def execute(self, params, **kwargs):
         """Main execution flow for standalone command"""
-        self._require_file_based_config(params, 'service-docker-setup')
+        command_name = self.get_parser().prog
+        self._require_file_based_config(params, command_name)
 
-        # Parse arguments
         config_path = self._require_commander_config_file(
-            'service-docker-setup',
+            command_name,
             kwargs.get('config_path'),
             params,
         )
-        
-        # Print header
+
         DockerSetupPrinter.print_header("Docker Setup")
-        
-        # Run core setup steps (inherited from DockerSetupBase)
+
         setup_result = self.run_setup_steps(
             params=params,
             folder_name=kwargs.get('folder_name', DockerSetupConstants.DEFAULT_FOLDER_NAME),
@@ -91,19 +87,13 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             timeout=kwargs.get('timeout', DockerSetupConstants.DEFAULT_TIMEOUT),
             skip_device_setup=kwargs.get('skip_device_setup', False)
         )
-        
-        # Get service configuration
+
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
         service_config = self.get_service_configuration(params)
-        
-        # Generate docker-compose.yml
+
         self.generate_and_save_docker_compose(setup_result, service_config)
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
-        
-        # Print success message
         self.print_standalone_success_message(setup_result, service_config, config_path)
-        
-        return
 
     def get_service_configuration(self, params) -> ServiceConfig:
         """Interactively get service configuration from user"""
@@ -221,134 +211,3 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         print(f"  Queue mode enables async API (v2) for better performance")
         queue_input = input(f"{bcolors.OKBLUE}Enable queue mode? [Press Enter for Yes] (y/n):{bcolors.ENDC} ").strip().lower()
         return queue_input != 'n'
-
-
-    def _get_advanced_security_config(self) -> Dict[str, Any]:
-        """Get advanced security configuration"""
-        print(f"\n{bcolors.BOLD}Advanced Security (optional):{bcolors.ENDC}")
-        print(f"  Configure IP filtering, rate limiting, and response encryption")
-        enable_advanced = input(f"{bcolors.OKBLUE}Enable advanced security? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
-        
-        config = {
-            'allowed_ip': '0.0.0.0/0,::/0',
-            'denied_ip': '',
-            'rate_limit': '',
-            'encryption_enabled': False,
-            'encryption_key': '',
-            'token_expiration': ''
-        }
-        
-        if enable_advanced:
-            # IP Allowed List
-            config.update(self._get_ip_allowed_config())
-            
-            # IP Denied List
-            config.update(self._get_ip_denied_config())
-            
-            # Rate Limiting
-            config.update(self._get_rate_limit_config())
-            
-            # Encryption
-            config.update(self._get_encryption_config())
-            
-            # Token Expiration
-            config.update(self._get_token_expiration_config())
-        
-        return config
-
-    def _get_ip_allowed_config(self) -> Dict[str, str]:
-        """Get allowed IP configuration"""
-        print(f"\n{bcolors.BOLD}IP Allowed List:{bcolors.ENDC}")
-        print(f"  Comma-separated IPs or CIDR ranges (e.g., 192.168.1.0/24,10.0.0.1)")
-        
-        ip_list = input(f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} ").strip()
-        
-        if ip_list:
-            while True:
-                try:
-                    return {'allowed_ip': ConfigValidator.validate_ip_list(ip_list)}
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                    ip_list = input(f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} ").strip()
-                    if not ip_list:
-                        break
-        
-        return {'allowed_ip': '0.0.0.0/0,::/0'}
-
-    def _get_ip_denied_config(self) -> Dict[str, str]:
-        """Get denied IP configuration"""
-        print(f"\n{bcolors.BOLD}IP Denied List:{bcolors.ENDC}")
-        print(f"  Comma-separated IPs or CIDR ranges to block")
-        
-        ip_list = input(f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} ").strip()
-        
-        if ip_list:
-            while True:
-                try:
-                    return {'denied_ip': ConfigValidator.validate_ip_list(ip_list)}
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                    ip_list = input(f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} ").strip()
-                    if not ip_list:
-                        break
-        
-        return {'denied_ip': ''}
-
-    def _get_rate_limit_config(self) -> Dict[str, str]:
-        """Get rate limiting configuration"""
-        print(f"\n{bcolors.BOLD}Rate Limiting:{bcolors.ENDC}")
-        print(f"  Format: <number>/<period> (e.g., 10/minute, 100/hour, 1000/day)")
-        
-        rate_limit = input(f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} ").strip()
-        
-        if rate_limit:
-            while True:
-                try:
-                    return {'rate_limit': ConfigValidator.validate_rate_limit(rate_limit)}
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                    rate_limit = input(f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} ").strip()
-                    if not rate_limit:
-                        break
-        
-        return {'rate_limit': ''}
-
-    def _get_encryption_config(self) -> Dict[str, Any]:
-        """Get encryption configuration"""
-        print(f"\n{bcolors.BOLD}Response Encryption:{bcolors.ENDC}")
-        print(f"  Enable AES-256 encryption for API responses")
-        enable_encryption = input(f"{bcolors.OKBLUE}Enable encryption? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
-        
-        config = {'encryption_enabled': enable_encryption, 'encryption_key': ''}
-        
-        if enable_encryption:
-            print(f"  Encryption key must be exactly 32 alphanumeric characters")
-            while True:
-                key = input(f"{bcolors.OKBLUE}Encryption key (32 chars):{bcolors.ENDC} ").strip()
-                try:
-                    config['encryption_key'] = ConfigValidator.validate_encryption_key(key)
-                    break
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-        
-        return config
-
-    def _get_token_expiration_config(self) -> Dict[str, str]:
-        """Get token expiration configuration"""
-        print(f"\n{bcolors.BOLD}API Token Expiration:{bcolors.ENDC}")
-        print(f"  Format: Xm (minutes), Xh (hours), Xd (days) - e.g., 30m, 24h, 7d")
-        
-        expiration = input(f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} ").strip()
-        
-        if expiration:
-            while True:
-                try:
-                    ConfigValidator.parse_expiration_time(expiration)
-                    return {'token_expiration': expiration}
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                    expiration = input(f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} ").strip()
-                    if not expiration:
-                        break
-        
-        return {'token_expiration': ''}
