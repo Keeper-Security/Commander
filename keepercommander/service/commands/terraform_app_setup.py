@@ -21,7 +21,7 @@ from ..docker import (
     DockerComposeBuilder,
     DockerSetupConstants,
     DockerSetupPrinter,
-    ServiceConfig,
+    ServiceConfig as DockerServiceConfig,
     SetupResult,
 )
 from ..util.exceptions import ValidationError
@@ -106,11 +106,9 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
         kwargs.setdefault('app_name', TerraformSetupConstants.DEFAULT_APP_NAME)
         kwargs.setdefault('record_name', TerraformSetupConstants.DEFAULT_RECORD_NAME)
         kwargs.setdefault('timeout', TerraformSetupConstants.DEFAULT_TIMEOUT)
-        self._validated_commands = self._validate_terraform_commands(params)
-        try:
-            return super().execute(params, **kwargs)
-        finally:
-            self._validated_commands = None
+        # Fail closed before any setup; _get_commands_config re-validates locally.
+        self._validate_terraform_commands(params)
+        return super().execute(params, **kwargs)
 
     def _validate_terraform_commands(self, params) -> str:
         try:
@@ -124,15 +122,12 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
             )
 
     def _get_commands_config(self, params) -> str:
-        cached = getattr(self, '_validated_commands', None)
-        if cached is not None:
-            return cached
         return self._validate_terraform_commands(params)
 
     def _get_queue_config(self) -> bool:
         return True
 
-    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: ServiceConfig) -> str:
+    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: DockerServiceConfig) -> str:
         builder = DockerComposeBuilder(
             setup_result,
             asdict(config),
@@ -141,7 +136,7 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
         )
         return builder.build()
 
-    def _print_next_steps(self, config: ServiceConfig, config_path: str) -> None:
+    def _print_next_steps(self, config: DockerServiceConfig, config_path: str) -> None:
         DockerSetupPrinter.print_common_deployment_steps(
             str(config.port),
             config_path,
