@@ -530,7 +530,7 @@ class NestedShareFolderShareCommand(Command):
                     logging.info("%s share '%s' %s", kind, recipient, verb)
             else:
                 logging.warning("%s share '%s' failed", kind, recipient)
-        except ValueError as e:
+        except _nsf.ShareInviteSentError as e:
             logging.warning("nsf-share-folder: %s", e)
         except Exception as e:
             raise CommandError('nsf-share-folder', str(e))

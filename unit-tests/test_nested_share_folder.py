@@ -939,11 +939,14 @@ class TestNestedShareFolderSharingCommands(TestCase):
 
     @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_v3')
     def test_share_folder_invite_message_uses_command_prefix(self, mock_grant):
+        import keepercommander.nested_share_folder as nsf
         from keepercommander.commands.nested_share_folder import NestedShareFolderShareCommand
+        from keepercommander.nested_share_folder.common import ShareInviteSentError
 
+        nsf.__dict__.pop('grant_folder_access_v3', None)
         fuid, fobj = _make_folder()
         email = 'user@example.com'
-        mock_grant.side_effect = ValueError(
+        mock_grant.side_effect = ShareInviteSentError(
             f"Share invitation has been sent to '{email}'. "
             "Please repeat this command once the invitation is accepted.")
 
@@ -956,15 +959,33 @@ class TestNestedShareFolderSharingCommands(TestCase):
         self.assertIn('nsf-share-folder: Share invitation has been sent', output)
         self.assertNotIn("User '", output)
 
+    @patch('keepercommander.nested_share_folder.folder_api.grant_folder_access_v3')
+    def test_share_folder_no_relationship_still_fails(self, mock_grant):
+        import keepercommander.nested_share_folder as nsf
+        from keepercommander.commands.nested_share_folder import NestedShareFolderShareCommand
+
+        nsf.__dict__.pop('grant_folder_access_v3', None)
+        fuid, fobj = _make_folder()
+        mock_grant.side_effect = ValueError(
+            "No sharing relationship with 'user@example.com'. "
+            "Please invite them to share first, then repeat this command.")
+
+        cmd = NestedShareFolderShareCommand()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(_make_params(nested_share_folders={fuid: fobj}),
+                        folder=[fuid], user=['user@example.com'], action='grant', role='viewer')
+        self.assertIn('No sharing relationship', str(ctx.exception))
+
     @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
     def test_share_record_invite_message_logged_as_warning(self, mock_share):
         import keepercommander.nested_share_folder as nsf
         from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+        from keepercommander.nested_share_folder.common import ShareInviteSentError
 
         nsf.__dict__.pop('share_record_v3', None)
         ruid, robj = _make_record()
         email = 'user@example.com'
-        mock_share.side_effect = ValueError(
+        mock_share.side_effect = ShareInviteSentError(
             f"Share invitation has been sent to '{email}'. "
             "Please repeat this command once the invitation is accepted.")
 
@@ -977,6 +998,25 @@ class TestNestedShareFolderSharingCommands(TestCase):
 
         output = '\n'.join(logs.output)
         self.assertIn('nsf-share-record: Share invitation has been sent', output)
+
+    @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
+    def test_share_record_no_relationship_still_fails(self, mock_share):
+        import keepercommander.nested_share_folder as nsf
+        from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+
+        nsf.__dict__.pop('share_record_v3', None)
+        ruid, robj = _make_record()
+        mock_share.side_effect = ValueError(
+            "No sharing relationship with 'user@example.com'. "
+            "Please invite them to share first, then repeat this command.")
+
+        cmd = NestedShareRecordShareCommand()
+        with mock.patch.object(NestedShareRecordShareCommand, '_get_direct_user_share',
+                               return_value=None):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(_make_params(nested_share_records={ruid: robj}),
+                            record=ruid, email=['user@example.com'], action='grant', role='viewer')
+        self.assertIn('No sharing relationship', str(ctx.exception))
 
     def test_share_record_roe_rejects_non_grant(self):
         from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand

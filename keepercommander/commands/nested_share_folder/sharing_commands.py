@@ -110,11 +110,10 @@ class NestedShareRecordShareCommand(Command):
                         result, effective_action = self._dispatch(
                             params, action, record_uid, email, access_role_type, expiration,
                             rotate_on_expiration)
-                        self._log_results(result, effective_action, email)
-                    except ValueError as e:
-                        # handle_share_invite raises ValueError after sending an
-                        # invitation; treat as success (same as nsf-share-folder).
+                    except _nsf.ShareInviteSentError as e:
                         logging.warning('nsf-share-record: %s', e)
+                        continue
+                    self._log_results(result, effective_action, email)
 
     # Strategy dispatch — returns (result, effective_action)
     @staticmethod

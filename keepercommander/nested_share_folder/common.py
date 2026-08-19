@@ -484,8 +484,16 @@ def _retry_with_canonical_email(params, recipient_email, _load_pk,
 # Share invite helper  (previously duplicated in share + update_share)
 # ═══════════════════════════════════════════════════════════════════════════
 
+class ShareInviteSentError(ValueError):
+    """Invite was sent; caller should treat as success-with-notice."""
+
+
 def handle_share_invite(params, recipient_email, needs_invite):
-    """Send a share invite if *needs_invite* is True; raise ValueError."""
+    """Send a share invite if *needs_invite* is True.
+
+    Raises ShareInviteSentError after a successful invite (subclass of ValueError).
+    Raises ValueError when the invite could not be sent.
+    """
     if not needs_invite:
         return
     try:
@@ -493,10 +501,10 @@ def handle_share_invite(params, recipient_email, needs_invite):
         rq = APIRequest_pb2.SendShareInviteRequest()
         rq.email = recipient_email
         api.communicate_rest(params, rq, 'vault/send_share_invite')
-        raise ValueError(
+        raise ShareInviteSentError(
             f"Share invitation has been sent to '{recipient_email}'. "
             f"Please repeat this command once the invitation is accepted.")
-    except ValueError:
+    except ShareInviteSentError:
         raise
     except Exception:
         raise ValueError(

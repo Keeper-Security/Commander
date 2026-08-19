@@ -21,7 +21,7 @@ _SUBMODULE_MAP = {
         'get_folder_key', 'get_record_key', 'get_user_public_key',
         'get_record_from_cache', 'parse_sharing_status', 'get_record_key_type',
         'encrypt_record_key_for_folder', 'encrypt_for_recipient',
-        'handle_share_invite', 'resolve_user_uid_bytes',
+        'handle_share_invite', 'ShareInviteSentError', 'resolve_user_uid_bytes',
         'load_user_public_key', 'parse_folder_access_result',
         'resolve_team_uid_bytes', 'resolve_team_identifier',
         'get_team_keys', 'encrypt_for_team', 'is_keeper_uid',
