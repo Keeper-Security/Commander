@@ -62,6 +62,8 @@ from .nsf_helpers import (
     get_folder_record_uids,
     get_ksm_app_folders,
     get_records_in_folder,
+    grant_nsf_folders_to_ksm_app,
+    sync_down_preserving_nsf_keys,
 )
 from .record_loader import load_pam_record
 from ...keeper_dag import EdgeType
@@ -464,6 +466,7 @@ class PAMProjectExtendCommand(Command):
         project = {
             "data": {"pam_data": pam_data},
             "options": {"dry_run": dry_run},
+            "ksm_app_uid": ksmapp_uid,
             "ksm_shared_folders": ksm_shared_folders,
             "folders": {},
             "pam_config": {"pam_config_uid": configuration.record_uid, "pam_config_object": None},
@@ -651,6 +654,7 @@ class PAMProjectExtendCommand(Command):
 
         if not dry_run and not step1_errors and new_nodes_list:
             sf_name_map = {shf["name"]: shf for shf in ksm_shared_folders}
+            new_nsf_uids = []
             for full_path, parent_path, name, node in new_nodes_list:
                 parent_uid = path_to_folder_uid.get(parent_path, "")
                 if not parent_uid and parent_path in sf_name_map:
@@ -658,13 +662,45 @@ class PAMProjectExtendCommand(Command):
                 new_uid = self.create_subfolder(params, name, parent_uid, folder_uid=node.get("uid"))
                 node["uid"] = new_uid
                 path_to_folder_uid[full_path] = new_uid
-            api.sync_down(params)
+                if is_nested_share_folder(params, new_uid):
+                    new_nsf_uids.append(new_uid)
+
+            if new_nsf_uids:
+                # Plain sync_down drops the NSF folder keys the grant below needs.
+                sync_down_preserving_nsf_keys(params)
+                # NSF children do not inherit the parent's AT_APPLICATION grant,
+                # so the Gateway cannot see records in them until each new folder
+                # is registered on the KSM application.
+                app_uid = project.get("ksm_app_uid") or ""
+                if app_uid:
+                    granted = grant_nsf_folders_to_ksm_app(params, app_uid, new_nsf_uids, editable=True)
+                    print(f"Registered {len(granted)} of {len(new_nsf_uids)} new Nested Share Folder(s) "
+                          f"on KSM Application {app_uid}")
+                    if len(granted) != len(new_nsf_uids):
+                        logging.warning("Records in unregistered Nested Share Folders will not be "
+                                        "visible to the Gateway - add them with "
+                                        "`secrets-manager share add --app %s --secret <folder uid>`", app_uid)
+                else:
+                    logging.warning("KSM Application UID unavailable - new Nested Share Folders "
+                                    "were not registered on the application")
+            else:
+                api.sync_down(params)
 
         existing_msg = f"{x_count} existing folders (skipped)" if x_count else "0 existing folders"
         if dry_run:
             print(f"[DRY RUN] {existing_msg}, {y_count} new folders to be created")
         else:
             print(f"{existing_msg}, {y_count} new folders created")
+
+        if dry_run and not step1_errors and new_nodes_list:
+            nsf_paths = self._nsf_paths_to_be_created(params, new_nodes_list,
+                                                      path_to_folder_uid, ksm_shared_folders)
+            if nsf_paths:
+                app_uid = project.get("ksm_app_uid") or "?"
+                print(f"[DRY RUN] {len(nsf_paths)} new Nested Share Folder(s) would be registered "
+                      f"on KSM Application {app_uid}")
+                for path in nsf_paths:
+                    print(f"[DRY RUN]   • {path}")
 
         if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
             for path, _ in good_paths:
@@ -677,6 +713,25 @@ class PAMProjectExtendCommand(Command):
         folders_out["folder_stats_x"] = x_count
         folders_out["folder_stats_y"] = y_count
         return folders_out
+
+    @staticmethod
+    def _nsf_paths_to_be_created(params, new_nodes_list, path_to_folder_uid, ksm_shared_folders) -> list:
+        """Dry-run helper: which of the folders about to be created land under an NSF parent.
+
+        New folders have pre-generated UIDs that do not exist in the vault yet, so a
+        new child of a new folder cannot be classified by UID - shallow paths are
+        resolved first and deeper ones inherit from their parent path.
+        """
+        sf_name_map = {shf["name"]: shf for shf in ksm_shared_folders}
+        nsf_paths = set()
+        for full_path, parent_path, _name, _node in sorted(new_nodes_list,
+                                                           key=lambda x: str(x[0]).count("/")):
+            parent_uid = path_to_folder_uid.get(parent_path, "")
+            if not parent_uid and parent_path in sf_name_map:
+                parent_uid = sf_name_map[parent_path]["uid"]
+            if parent_path in nsf_paths or is_nested_share_folder(params, parent_uid):
+                nsf_paths.add(full_path)
+        return sorted(nsf_paths)
 
     def map_records(self, params, project: dict) -> tuple:
         """Step 2: Parse resources/users, tag existing vs new, set obj.uid; collect errors.

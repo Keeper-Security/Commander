@@ -208,6 +208,95 @@ def sync_down_preserving_nsf_keys(params) -> None:
     restore_nsf_folder_keys(params, preserved)
 
 
+def collect_nsf_subtree_uids(params, root_uid: str) -> List[str]:
+    """Return *root_uid* plus every NSF folder nested underneath it.
+
+    Breadth-first so parents are granted before their children; dedup'd and
+    cycle-safe.
+    """
+    root_uid = (root_uid or '').strip()
+    if not root_uid:
+        return []
+
+    children = {}
+    for folder_uid, info in (getattr(params, 'nested_share_folders', None) or {}).items():
+        parent_uid = (info.get('parent_uid') if isinstance(info, dict) else None) or ''
+        if parent_uid:
+            children.setdefault(parent_uid, []).append(folder_uid)
+
+    ordered = [root_uid]
+    seen = {root_uid}
+    queue = [root_uid]
+    while queue:
+        current = queue.pop(0)
+        for child_uid in children.get(current, []):
+            if child_uid in seen:
+                continue
+            seen.add(child_uid)
+            ordered.append(child_uid)
+            queue.append(child_uid)
+    return ordered
+
+
+def grant_nsf_folders_to_ksm_app(params, app_uid: str, folder_uids, editable: bool = True) -> List[str]:
+    """Register NSF folders on a KSM application.
+
+    KSM and the Gateway only see records in folders carrying a direct
+    ``AT_APPLICATION`` grant - unlike classic shared-folder children, NSF
+    children have their own folder key and inherit nothing from the parent.
+
+    One batched ``secret add`` is attempted first; on failure the UIDs are
+    retried one at a time so a single unshareable folder does not lose the
+    rest. Returns the UIDs that were granted.
+    """
+    from ..ksm import KSMCommand
+
+    app_uid = (app_uid or '').strip()
+    if not app_uid:
+        return []
+
+    uids: List[str] = []
+    seen = set()
+    for folder_uid in folder_uids or []:
+        folder_uid = (folder_uid or '').strip()
+        if not folder_uid or folder_uid in seen:
+            continue
+        seen.add(folder_uid)
+        uids.append(folder_uid)
+    if not uids:
+        return []
+
+    # add_app_share ends in a sync_down that drops the NSF folder keys, so
+    # restore them before every call - not just once at the end.
+    preserved = snapshot_nsf_folder_keys(params)
+    try:
+        try:
+            KSMCommand().execute(params, command=('secret', 'add'), app=app_uid,
+                                 secret=list(uids), editable=editable)
+            return uids
+        except Exception as exc:
+            if len(uids) == 1:
+                logging.warning('Could not register folder %s on KSM application %s: %s',
+                                uids[0], app_uid, exc)
+                return []
+            logging.debug('Batch KSM share of %d folders failed (%s) - retrying one at a time',
+                          len(uids), exc)
+
+        granted: List[str] = []
+        for folder_uid in uids:
+            restore_nsf_folder_keys(params, preserved)
+            try:
+                KSMCommand().execute(params, command=('secret', 'add'), app=app_uid,
+                                     secret=[folder_uid], editable=editable)
+                granted.append(folder_uid)
+            except Exception as exc:
+                logging.warning('Could not register folder %s on KSM application %s: %s',
+                                folder_uid, app_uid, exc)
+        return granted
+    finally:
+        restore_nsf_folder_keys(params, preserved)
+
+
 def seed_nsf_folder_cache(params, folder_uid: str, name: str,
                           parent_uid: Optional[str] = None,
                           folder_key: Optional[bytes] = None) -> None:

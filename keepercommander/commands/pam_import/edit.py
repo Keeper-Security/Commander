@@ -546,7 +546,9 @@ class PAMProjectImportCommand(Command):
         # Create KSM App and share Resources/Users folders (classic SF or NSF).
         # KSMCommand routes NSF folder UIDs through grant_folder_access_to_application_v3.
         use_nsf = project["options"].get("use_nsf", False) is True
-        from .nsf_helpers import restore_nsf_folder_keys, snapshot_nsf_folder_keys, sync_down_preserving_nsf_keys
+        from .nsf_helpers import (collect_nsf_subtree_uids, grant_nsf_folders_to_ksm_app,
+                                  restore_nsf_folder_keys, snapshot_nsf_folder_keys,
+                                  sync_down_preserving_nsf_keys)
         preserved = snapshot_nsf_folder_keys(params) if use_nsf else None
         res["app_uid"] = self.create_ksm_app(params, res["app_name"])
         if preserved is not None:
@@ -570,18 +572,35 @@ class PAMProjectImportCommand(Command):
             sf_uids_to_grant.append(sf_uid)
 
         folders = project["folders"]
+        # NSF folder keys are per-folder: a child does not inherit the parent's
+        # AT_APPLICATION grant the way a classic shared_folder_folder does. Grant
+        # the whole project subtree so records in any descendant (safe-mode
+        # "{safe} - Resources"/"- Users" subfolders included) stay GW-visible.
+        # The global "PAM Environments" root is deliberately excluded - it is a
+        # container shared across projects and holds no records.
+        if use_nsf and folders.get("project_folder_uid", ""):
+            for nsf_uid in collect_nsf_subtree_uids(params, folders["project_folder_uid"]):
+                _add_sf(nsf_uid)
         _add_sf(folders.get("resources_folder_uid", ""))
         _add_sf(folders.get("users_folder_uid", ""))
         _add_sf(folders.get("config_folder_uid", ""))
         for entry in folders.get("safe_folders", []) or []:
             if isinstance(entry, dict):
                 _add_sf(entry.get("uid", ""))
+                if use_nsf:
+                    # Classic safe subfolders are shared_folder_folder children and
+                    # inherit the safe's key; NSF ones need their own grant.
+                    _add_sf(entry.get("resources_subfolder_uid", ""))
+                    _add_sf(entry.get("users_subfolder_uid", ""))
 
-        for sf_uid in sf_uids_to_grant:
-            KSMCommand().execute(params,
-                                 command=("secret", "add"),
-                                 app=res["app_uid"],
-                                 secret=[sf_uid], editable=True)
+        if use_nsf:
+            grant_nsf_folders_to_ksm_app(params, res["app_uid"], sf_uids_to_grant, editable=True)
+        else:
+            for sf_uid in sf_uids_to_grant:
+                KSMCommand().execute(params,
+                                     command=("secret", "add"),
+                                     app=res["app_uid"],
+                                     secret=[sf_uid], editable=True)
 
         if use_nsf or any(is_nested_share_folder(params, uid)
                           for uid in (project["folders"].get("resources_folder_uid", ""),

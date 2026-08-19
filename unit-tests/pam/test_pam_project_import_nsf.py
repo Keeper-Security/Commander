@@ -316,15 +316,175 @@ def test_process_ksm_app_shares_nsf_folders_and_restores_keys():
 
     with patch('keepercommander.commands.pam_import.edit.api.communicate_rest') as communicate, \
             patch.object(PAMProjectImportCommand, 'create_ksm_app', side_effect=wipe_then_return), \
-            patch('keepercommander.commands.pam_import.edit.KSMCommand') as ksm_cmd, \
+            patch('keepercommander.commands.ksm.KSMCommand') as ksm_cmd, \
             patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
             patch('keepercommander.commands.pam_import.edit.api.sync_down'):
         communicate.return_value = MagicMock(applicationSummary=[])
         result = PAMProjectImportCommand().process_ksm_app(params, project)
 
     assert result['app_uid'] == 'app_uid'
-    assert ksm_cmd.return_value.execute.call_count == 2
-    shared = [c.kwargs.get('secret') for c in ksm_cmd.return_value.execute.call_args_list]
-    assert ['res_nsf'] in shared
-    assert ['usr_nsf'] in shared
+    # Without a project_folder_uid the legacy resources/users fallback applies,
+    # batched into a single share call.
+    assert ksm_cmd.return_value.execute.call_count == 1
+    assert ksm_cmd.return_value.execute.call_args.kwargs['secret'] == ['res_nsf', 'usr_nsf']
     assert params.nested_share_folders['res_nsf']['folder_key_unencrypted'] == b'k' * 32
+
+
+def _nsf_project_params():
+    """NSF project tree: root > project > {Resources, Users, Safe > {Safe-Res, Safe-Usr}}."""
+    params = _params()
+    tree = {
+        'proj_nsf': ('Project', 'root_nsf'),
+        'res_nsf': ('Project - Resources', 'proj_nsf'),
+        'usr_nsf': ('Project - Users', 'proj_nsf'),
+        'safe_nsf': ('Safe A', 'proj_nsf'),
+        'safe_res_nsf': ('Safe A - Resources', 'safe_nsf'),
+        'safe_usr_nsf': ('Safe A - Users', 'safe_nsf'),
+    }
+    for uid, (name, parent) in tree.items():
+        params.nested_share_folders[uid] = {
+            'name': name, 'parent_uid': parent, 'folder_key_unencrypted': b'k' * 32,
+        }
+    return params
+
+
+def test_collect_nsf_subtree_uids_walks_descendants_breadth_first():
+    from keepercommander.commands.pam_import.nsf_helpers import collect_nsf_subtree_uids
+
+    params = _nsf_project_params()
+    uids = collect_nsf_subtree_uids(params, 'proj_nsf')
+
+    assert uids[0] == 'proj_nsf'
+    assert set(uids) == {'proj_nsf', 'res_nsf', 'usr_nsf', 'safe_nsf',
+                         'safe_res_nsf', 'safe_usr_nsf'}
+    # The global PAM root is a parent, never a descendant.
+    assert 'root_nsf' not in uids
+    # Parents are granted before their children.
+    assert uids.index('safe_nsf') < uids.index('safe_res_nsf')
+
+
+def test_collect_nsf_subtree_uids_survives_parent_cycle():
+    from keepercommander.commands.pam_import.nsf_helpers import collect_nsf_subtree_uids
+
+    params = _params()
+    params.nested_share_folders['a'] = {'name': 'A', 'parent_uid': 'b'}
+    params.nested_share_folders['b'] = {'name': 'B', 'parent_uid': 'a'}
+
+    assert collect_nsf_subtree_uids(params, 'a') == ['a', 'b']
+    assert collect_nsf_subtree_uids(params, '') == []
+
+
+def test_process_ksm_app_nsf_grants_whole_project_subtree():
+    from unittest.mock import MagicMock
+
+    params = _nsf_project_params()
+    project = {
+        'options': {'project_name': 'NSF App', 'dry_run': False, 'use_nsf': True},
+        'data': {},
+        'folders': {
+            'project_folder_uid': 'proj_nsf',
+            'resources_folder_uid': 'res_nsf',
+            'users_folder_uid': 'usr_nsf',
+            'safe_folders': [{
+                'name': 'Safe A',
+                'uid': 'safe_nsf',
+                'resources_subfolder_uid': 'safe_res_nsf',
+                'users_subfolder_uid': 'safe_usr_nsf',
+            }],
+        },
+    }
+
+    with patch('keepercommander.commands.pam_import.edit.api.communicate_rest') as communicate, \
+            patch.object(PAMProjectImportCommand, 'create_ksm_app', return_value='app_uid'), \
+            patch('keepercommander.commands.ksm.KSMCommand') as ksm_cmd, \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'), \
+            patch('keepercommander.commands.pam_import.edit.api.sync_down'):
+        communicate.return_value = MagicMock(applicationSummary=[])
+        PAMProjectImportCommand().process_ksm_app(params, project)
+
+    assert ksm_cmd.return_value.execute.call_count == 1
+    kwargs = ksm_cmd.return_value.execute.call_args.kwargs
+    assert kwargs['app'] == 'app_uid'
+    assert kwargs['editable'] is True
+    # Project wrapper + both leaves + the safe folder and its two record subfolders.
+    assert set(kwargs['secret']) == {'proj_nsf', 'res_nsf', 'usr_nsf', 'safe_nsf',
+                                     'safe_res_nsf', 'safe_usr_nsf'}
+    assert 'root_nsf' not in kwargs['secret']
+
+
+def test_process_ksm_app_classic_grant_list_unchanged():
+    from unittest.mock import MagicMock
+
+    params = _params()
+    project = {
+        'options': {'project_name': 'Classic App', 'dry_run': False, 'use_nsf': False},
+        'data': {},
+        'folders': {
+            'project_folder_uid': 'proj_sf',
+            'resources_folder_uid': 'res_sf',
+            'users_folder_uid': 'usr_sf',
+            'safe_folders': [{
+                'name': 'Safe A',
+                'uid': 'safe_sf',
+                'resources_subfolder_uid': 'safe_res_sf',
+                'users_subfolder_uid': 'safe_usr_sf',
+            }],
+        },
+    }
+
+    with patch('keepercommander.commands.pam_import.edit.api.communicate_rest') as communicate, \
+            patch.object(PAMProjectImportCommand, 'create_ksm_app', return_value='app_uid'), \
+            patch('keepercommander.commands.pam_import.edit.KSMCommand') as ksm_cmd, \
+            patch('keepercommander.commands.pam_import.edit.api.sync_down'):
+        communicate.return_value = MagicMock(applicationSummary=[])
+        PAMProjectImportCommand().process_ksm_app(params, project)
+
+    # One call per UID, no project wrapper, no shared_folder_folder children.
+    shared = [c.kwargs.get('secret') for c in ksm_cmd.return_value.execute.call_args_list]
+    assert shared == [['res_sf'], ['usr_sf'], ['safe_sf']]
+
+
+def test_grant_nsf_folders_falls_back_to_single_uid_calls():
+    from keepercommander.commands.pam_import.nsf_helpers import grant_nsf_folders_to_ksm_app
+
+    params = _nsf_project_params()
+    calls = []
+
+    class FakeKSM:
+        def execute(self, _params, **kwargs):
+            secret = kwargs.get('secret')
+            calls.append(list(secret))
+            if len(secret) > 1:
+                raise Exception('batch rejected')
+            if secret == ['usr_nsf']:
+                raise Exception('already shared')
+            return None
+
+    with patch('keepercommander.commands.ksm.KSMCommand', FakeKSM):
+        granted = grant_nsf_folders_to_ksm_app(params, 'app_uid', ['res_nsf', 'usr_nsf', 'safe_nsf'])
+
+    assert calls[0] == ['res_nsf', 'usr_nsf', 'safe_nsf']
+    assert calls[1:] == [['res_nsf'], ['usr_nsf'], ['safe_nsf']]
+    # The one folder that failed is reported as not granted; the rest still land.
+    assert granted == ['res_nsf', 'safe_nsf']
+    # Folder keys survive the sync_down inside each share call.
+    assert params.nested_share_folders['res_nsf']['folder_key_unencrypted'] == b'k' * 32
+
+
+def test_grant_nsf_folders_dedups_and_ignores_empty():
+    from keepercommander.commands.pam_import.nsf_helpers import grant_nsf_folders_to_ksm_app
+
+    params = _nsf_project_params()
+    calls = []
+
+    class FakeKSM:
+        def execute(self, _params, **kwargs):
+            calls.append(list(kwargs.get('secret')))
+
+    with patch('keepercommander.commands.ksm.KSMCommand', FakeKSM):
+        granted = grant_nsf_folders_to_ksm_app(params, 'app_uid', ['res_nsf', '', 'res_nsf', None, 'usr_nsf'])
+        assert grant_nsf_folders_to_ksm_app(params, '', ['res_nsf']) == []
+        assert grant_nsf_folders_to_ksm_app(params, 'app_uid', []) == []
+
+    assert calls == [['res_nsf', 'usr_nsf']]
+    assert granted == ['res_nsf', 'usr_nsf']
