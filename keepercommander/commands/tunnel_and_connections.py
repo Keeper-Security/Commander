@@ -45,7 +45,7 @@ from .tunnel_registry import (
     stop_tunnel_process,
     unregister_tunnel,
 )
-from .. import api, vault, record_management
+from .. import api, vault
 from ..display import bcolors
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
@@ -2980,8 +2980,7 @@ class PAMConnectionEditCommand(Command):
                         logging.debug(f'security is already {target_sec} on record={record_uid}')
 
             if dirty:
-                record_management.update_record(params, record)
-                api.sync_down(params)
+                update_pam_record(params, record, command='pam connection edit')
 
                 traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
                 if not traffic_encryption_key:
@@ -4058,7 +4057,6 @@ class PAMRbiEditCommand(Command):
             if not traffic_encryption_key:
                 raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
                                 f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
-            params.sync_data = True
 
         # DAG manipulation options: config, rbi/connections, recording
         dirty = False
@@ -4231,8 +4229,7 @@ class PAMSplitCommand(Command):
                     pam_settings = vault.TypedField.new_field('pamSettings', "", "")
                     record.fields.append(pam_settings)
 
-                record_management.update_record(params, record)
-                params.sync_data = True
+                update_pam_record(params, record, command='pam-split')
 
                 print(f"{bcolors.WARNING}Record {record_uid} has no data to split and "
                     "was converted to the new format. Remember to manually add "
@@ -4287,8 +4284,7 @@ class PAMSplitCommand(Command):
             pam_settings = vault.TypedField.new_field('pamSettings', "", "")
             record.fields.append(pam_settings)
 
-        record_management.update_record(params, record)
-        params.sync_data = True
+        update_pam_record(params, record, command='pam-split')
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)

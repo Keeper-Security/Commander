@@ -386,9 +386,14 @@ def _process_records(params, records):
     """Store DriveRecord metadata (no encrypted content)."""
     for record in records:
         record_uid = utils.base64_url_encode(record.recordUid)
+        existing = params.nested_share_records.get(record_uid) or {}
+        # Classic vault updates can bump revision before NSF drive metadata
+        # catches up. Never allow a lagging DriveRecord to downgrade the cache.
+        incoming_rev = record.revision or 0
+        existing_rev = existing.get('revision', 0) or 0
         record_obj = {
             'record_uid': record_uid,
-            'revision': record.revision,
+            'revision': max(incoming_rev, existing_rev),
             'version': record.version,
             'shared': record.shared if record.shared else False,
             'client_modified_time': record.clientModifiedTime if record.clientModifiedTime else 0,
@@ -397,6 +402,9 @@ def _process_records(params, records):
             record_obj['file_size'] = record.fileSize
         if record.thumbnailSize:
             record_obj['thumbnail_size'] = record.thumbnailSize
+        # Preserve decrypted key material across metadata refreshes.
+        if 'record_key_unencrypted' in existing:
+            record_obj['record_key_unencrypted'] = existing['record_key_unencrypted']
         params.nested_share_records[record_uid] = record_obj
 
 
@@ -1136,9 +1144,34 @@ def _reconstruct_nested_share_folder_entities(params):
         if 'data_json' not in rd_obj:
             continue
 
+        classic = params.record_cache.get(record_uid) or {}
+        classic_rev = classic.get('revision', 0) or 0
+        nsf_rev = record_obj.get('revision', 0) or 0
+        # Prefer the freshest revision across classic sync and NSF metadata.
+        revision = max(classic_rev, nsf_rev)
+        if revision != nsf_rev:
+            record_obj['revision'] = revision
+
+        # Classic response.records payloads use encrypted 'data' and are not tagged
+        # source=nested_share_folder. Prefer that copy when it is at least as fresh
+        # so lagging keeperDriveData cannot roll content/revision backwards after PAM.
+        classic_from_vault = (
+            'data' in classic and classic.get('source') != 'nested_share_folder'
+        )
+        if classic_from_vault and classic_rev >= nsf_rev:
+            if 'record_key_unencrypted' not in classic:
+                classic['record_key_unencrypted'] = record_obj['record_key_unencrypted']
+            # Still backfill meta/owner caches — NSF is often the only source on
+            # fresh login, and this branch is taken whenever classic sync returns
+            # the record (e.g. after PAM edits).
+            _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj)
+            # Leave classic encrypted payload in place; sync_down decrypts it in a
+            # later pass (after nested_share_folder_sync.process at ~L783).
+            continue
+
         record_entry = {
             'record_uid': record_uid,
-            'revision': record_obj.get('revision', 0),
+            'revision': revision,
             'version': record_obj.get('version', 0),
             'shared': record_obj.get('shared', False),
             'record_key_unencrypted': record_obj['record_key_unencrypted'],
@@ -1149,24 +1182,28 @@ def _reconstruct_nested_share_folder_entities(params):
         }
 
         params.record_cache[record_uid] = record_entry
+        _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj)
 
-        if record_uid not in params.meta_data_cache:
-            meta_data = {
-                'record_uid': record_uid,
-                'record_key_unencrypted': record_obj['record_key_unencrypted'],
-                'can_share': True,
-                'can_edit': True,
-            }
-            if 'user_account_uid' in rd_obj:
-                meta_data['owner_account_uid'] = rd_obj['user_account_uid']
-                if rd_obj['user_account_uid'] in params.user_cache:
-                    meta_data['owner_username'] = params.user_cache[rd_obj['user_account_uid']]
-            params.meta_data_cache[record_uid] = meta_data
 
-        if record_uid not in params.record_owner_cache:
-            if 'user_account_uid' in rd_obj:
-                is_owner = (rd_obj['user_account_uid'] == utils.base64_url_encode(params.account_uid_bytes))
-                params.record_owner_cache[record_uid] = RecordOwner(
-                    is_owner,
-                    rd_obj['user_account_uid']
-                )
+def _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj):
+    """Populate meta_data_cache / record_owner_cache from NSF data when missing."""
+    if record_uid not in params.meta_data_cache:
+        meta_data = {
+            'record_uid': record_uid,
+            'record_key_unencrypted': record_obj['record_key_unencrypted'],
+            'can_share': True,
+            'can_edit': True,
+        }
+        if 'user_account_uid' in rd_obj:
+            meta_data['owner_account_uid'] = rd_obj['user_account_uid']
+            if rd_obj['user_account_uid'] in params.user_cache:
+                meta_data['owner_username'] = params.user_cache[rd_obj['user_account_uid']]
+        params.meta_data_cache[record_uid] = meta_data
+
+    if record_uid not in params.record_owner_cache:
+        if 'user_account_uid' in rd_obj:
+            is_owner = (rd_obj['user_account_uid'] == utils.base64_url_encode(params.account_uid_bytes))
+            params.record_owner_cache[record_uid] = RecordOwner(
+                is_owner,
+                rd_obj['user_account_uid']
+            )

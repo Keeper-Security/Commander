@@ -325,7 +325,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         return rec
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -344,7 +344,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         mock_update.assert_called_once()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -361,7 +361,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         mock_tdag.assert_not_called()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
