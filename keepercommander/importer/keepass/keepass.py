@@ -23,6 +23,7 @@ from pykeepass import PyKeePass, create_database
 from pykeepass.exceptions import CredentialsError
 from pykeepass.attachment import Attachment as KeepassAttachment
 from pykeepass.group import Group
+from pykeepass.entry import Entry
 
 from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
     Record, Folder, SharedFolder, BytesAttachment, RecordField
@@ -49,13 +50,6 @@ class XmlUtils(object):
         if not value:
             return ''
         return ''.join((char for char in value if XmlUtils.is_valid_xml_char(char)))
-
-    @staticmethod
-    def escape_string(plain):   # type: (str) -> str
-        if not plain:
-            return ''
-        output = escape(plain)
-        return output.replace('\'', '&apos;').replace('\"', '&quot;')
 
 
 class KeepassImporter(BaseFileImporter):
@@ -296,7 +290,17 @@ class KeepassExporter(BaseExporter, XmlUtils):
                 for k, v in keeper_value.items()
             ))
         else:
-            return XmlUtils.sanitize_xml_text(keeper_value)
+            return XmlUtils.sanitize_xml_text(keeper_value)         
+
+    def keepass_add_entry(destination_group, title, username, password, url=None, notes=None,
+                        tags=None, icon=None, kp=None):
+        """Mirrors pykeepass.PyKeePass.add_entry() but skips its internal
+        find_entries() duplicate-check, which crashes on values containing
+        a double quote (upstream bug: libkeepass/pykeepass#254)."""
+        entry = Entry(title=title, username=username, password=password,
+                      notes=notes, url=url, tags=tags, icon=icon, kp=kp)
+        destination_group.append(entry)
+        return entry
 
     def do_export(self, filename, records, file_password=None, kbdx_key_file=None, **kwargs):
         password = file_password or getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
@@ -349,9 +353,11 @@ class KeepassExporter(BaseExporter, XmlUtils):
                             break
 
                     if entry is None:
-                        entry = kdb.add_entry(node, title=entry_title, username=entry_login,
-                                              password=entry_password, url=entry_url,
-                                              notes=entry_notes)
+                        entry = KeepassExporter.keepass_add_entry(node, title=entry_title, username=entry_login,
+                            password=entry_password, url=entry_url, notes=entry_notes, kp=kdb)
+                        #entry = kdb.add_entry(node, title=entry_title, username=entry_login,
+                        #                      password=entry_password, url=entry_url,
+                        #                      notes=entry_notes)
                         if r.uid:
                             entry.UUID = uuid.UUID(bytes=utils.base64_url_decode(r.uid))
                     if r.type:
