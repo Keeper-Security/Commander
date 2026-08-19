@@ -3,7 +3,7 @@ import argparse
 import logging
 from . import record_lookup
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
-from ...error import CommandError
+from ...display import bcolors
 from ... import vault
 from ...discovery_common.user_service import UserService
 from ...discovery_common.record_link import RecordLink
@@ -11,7 +11,7 @@ from ...discovery_common.constants import PAM_USER, PAM_MACHINE
 from ...discovery_common.types import UserAcl, ServiceEnum
 from ...keeper_dag.types import RefType, EdgeType
 from ... import __version__
-from typing import NoReturn, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...vault import TypedRecord
@@ -40,10 +40,6 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
     def get_parser(self):
         return PAMActionServiceAddCommand.parser
 
-    @staticmethod
-    def _fail(message: str) -> NoReturn:
-        raise CommandError('pam action service add', message)
-
     def execute(self, params: KeeperParams, **kwargs):
 
         gateway = kwargs.get("gateway", "not_set")
@@ -59,15 +55,15 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
                                                           gateway=gateway,
                                                           configuration_uid=kwargs.get('configuration_uid'))
             if gateway_context is None:
-                self._fail(f"Could not find the gateway configuration for {gateway}.")
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
         except MultiConfigurationException as err:
             multi_conf_msg(gateway, err)
-            self._fail(
-                f"Multiple PAM configurations match gateway {gateway}. Use --configuration-uid."
-            )
+            return
 
         if gateway_context is None:
-            self._fail("Cannot get gateway information. Gateway may not be up.")
+            print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
+            return
 
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
@@ -86,45 +82,54 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         # Check to see if the record exists.
         machine_record = vault.KeeperRecord.load(params, machine_uid)  # type: Optional[TypedRecord]
         if machine_record is None:
-            self._fail("The machine record does not exists.")
+            print(self._f("The machine record does not exists."))
+            return
 
         # Make sure the record is a PAM Machine.
         if machine_record.record_type != PAM_MACHINE:
-            self._fail("The machine record is not a PAM Machine.")
+            print(self._f("The machine record is not a PAM Machine."))
+            return
 
         # Make sure this machine is linked to the configuration record.
         machine_rl = record_link.get_record_link(machine_record.record_uid)
         if machine_rl is None:
-            self._fail("The machine record does not exists in the graph.")
+            print(self._f("The machine record does not exists in the graph."))
+            return
 
         # Edges from provider and machine might be wrong.
         # Should be a LINK edge, could be an ACL edge.
         root_vertex = record_link.dag.get_root
         if root_vertex is None:
-            self._fail("Could not get the root of the graph.")
+            print(self._f("Could not get the root of the graph."))
+            return
 
         if (machine_rl.get_edge(root_vertex, edge_type=EdgeType.LINK) is None and
                 machine_rl.get_edge(root_vertex, edge_type=EdgeType.ACL) is None):
-            self._fail("The machine record does not belong to this gateway.")
+            print(self._f("The machine record does not belong to this gateway."))
+            return
 
         ###############
 
         # Check to see if the record exists.
         user_record = vault.KeeperRecord.load(params, user_uid)  # type: Optional[TypedRecord]
         if user_record is None:
-            self._fail("The user record does not exists.")
+            print(self._f("The user record does not exists."))
+            return
 
         # Make sure this user is a PAM User.
         if user_record.record_type != PAM_USER:
-            self._fail("The user record is not a PAM User.")
+            print(self._f("The user record is not a PAM User."))
+            return
 
         record_rotation = params.record_rotation_cache.get(user_record.record_uid)
         if record_rotation is not None:
             controller_uid = record_rotation.get("configuration_uid")
             if controller_uid is None or controller_uid != gateway_context.configuration_uid:
-                self._fail("The user record does not belong to this gateway. Cannot use this user.")
+                print(self._f("The user record does not belong to this gateway. Cannot use this user."))
+                return
         else:
-            self._fail("The user record does not have any rotation settings.")
+            print(self._f("The user record does not have any rotation settings."))
+            return
 
         ########
 
@@ -132,15 +137,18 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         # Linux and Mac do not use passwords in services and cron jobs; no need to link.
         os_field = next((x for x in machine_record.fields if x.label == "operatingSystem"), None)
         if os_field is None:
-            self._fail("Cannot find the operating system field in this record.")
+            print(self._f("Cannot find the operating system field in this record."))
+            return
         os_type = None
         if len(os_field.value) > 0:
             os_type = os_field.value[0]
         if os_type is None:
-            self._fail("The operating system field of the machine record is blank.")
+            print(self._f("The operating system field of the machine record is blank."))
+            return
         if os_type.lower() != "windows":
-            self._fail("The operating system is not Windows. "
-                       "PAM can only rotate the services and scheduled task password on Windows.")
+            print(self._f("The operating system is not Windows. "
+                          "PAM can only rotate the services and scheduled task password on Windows."))
+            return
 
         # Get the machine service vertex.
         # If it doesn't exist, create one.
