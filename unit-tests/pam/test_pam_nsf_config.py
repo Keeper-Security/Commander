@@ -113,6 +113,20 @@ class TestPamVaultTarget(unittest.TestCase):
         self.assertEqual(record.record_uid, 'nsf_record_uid')
         _sync.assert_called_once_with(params)
 
+    @mock.patch('keepercommander.commands.pam.vault_target.record_management.update_record')
+    def test_update_pam_record_classic_sets_sync_data(self, mock_update):
+        from keepercommander.commands.pam.vault_target import update_pam_record
+
+        params = _make_params()
+        params.sync_data = False
+        record = vault.TypedRecord()
+        record.record_uid = 'classic_uid'
+
+        update_pam_record(params, record, command='pam connection edit')
+
+        mock_update.assert_called_once_with(params, record)
+        self.assertTrue(params.sync_data)
+
     def test_resolve_pam_folder_uid_finds_root_nsf_folder_by_name(self):
         params = _make_params()
         folder = NestedShareFolderNode()

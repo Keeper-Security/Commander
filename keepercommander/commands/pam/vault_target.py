@@ -589,6 +589,9 @@ def update_pam_record(params, record, command='pam', force_nsf=False):
         sync_down_preserving_nsf_keys(params)
     else:
         record_management.update_record(params, record)
+        # Defer vault refresh so a second classic edit in the same session does
+        # not send a stale record_cache revision (no immediate sync_down here).
+        params.sync_data = True
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):

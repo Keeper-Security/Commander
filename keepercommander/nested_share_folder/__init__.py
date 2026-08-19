@@ -19,7 +19,8 @@ _SUBMODULE_MAP = {
     ],
     'common': [
         'get_folder_key', 'get_record_key', 'get_user_public_key',
-        'get_record_from_cache', 'parse_sharing_status', 'get_record_key_type',
+        'get_record_from_cache', 'get_record_revision', 'patch_record_revision',
+        'parse_sharing_status', 'get_record_key_type',
         'encrypt_record_key_for_folder', 'encrypt_for_recipient',
         'handle_share_invite', 'resolve_user_uid_bytes',
         'load_user_public_key', 'parse_folder_access_result',
