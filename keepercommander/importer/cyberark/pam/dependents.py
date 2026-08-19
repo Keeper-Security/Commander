@@ -12,9 +12,9 @@
 # scheduled tasks and IIS application pools running on remote hosts. The
 # ``/Accounts/{id}/Dependents`` endpoint returns one entry per (host, service,
 # type) tuple. KeeperPAM models the same relationship via
-# ``pam action service add`` (machine-uid + user-uid + type), so the importer
-# collects dependents during the mapping phase and replays them as service
-# mappings after the vault import succeeds.
+# ``pam action service add`` (--machine-uid, --user-uid, --type, --name), so
+# the importer collects dependents during the mapping phase and replays them
+# as service mappings after the vault import succeeds.
 
 from __future__ import annotations
 
@@ -30,11 +30,14 @@ if TYPE_CHECKING:
     from .client import CyberArkPVWAClient
 
 
-# CyberArk dependent ``type`` / ``platformId`` values → Keeper service-mapping
-# verbs accepted by ``PAMActionServiceAddCommand`` (--type service|task|iis).
-# Keys are matched case-insensitively after stripping non-alphanumerics so
-# spellings like ``Windows Service``, ``Win32Service``, ``WinService``, and
-# the Privilege Cloud ``SchedTask`` platformId all resolve.
+# Exact ``pam action service add --type`` choices.
+PAM_SERVICE_ADD_TYPES = frozenset({"service", "task", "iis_pool"})
+
+# CyberArk dependent ``type`` / ``platformId`` values → Keeper ``--type``
+# values (service | task | iis_pool). Keys are matched case-insensitively
+# after stripping non-alphanumerics so spellings like ``Windows Service``,
+# ``Win32Service``, ``WinService``, and Privilege Cloud ``SchedTask`` /
+# ``IISAppPool`` all resolve.
 _DEPENDENT_TYPE_ALIASES: Dict[str, str] = {
     # Windows services
     "windowsservice": "service",
@@ -47,11 +50,13 @@ _DEPENDENT_TYPE_ALIASES: Dict[str, str] = {
     "windowsscheduledtask": "task",
     "schedtask": "task",
     "task": "task",
-    # IIS application pools
-    "iisapppool": "iis",
-    "iisapplicationpool": "iis",
-    "iisapppools": "iis",
-    "iis": "iis",
+    # IIS application pools → Keeper --type iis_pool
+    "iisapppool": "iis_pool",
+    "iisapplicationpool": "iis_pool",
+    "iisapppools": "iis_pool",
+    "iispool": "iis_pool",
+    "iis_pool": "iis_pool",
+    "iis": "iis_pool",
 }
 
 
@@ -78,10 +83,11 @@ def resolve_account_dependents(client: 'CyberArkPVWAClient',
 
     * ``machine_address`` — host where the service runs (used to find the
       Keeper PAM Machine record).
-    * ``service_type`` — Keeper verb (service|task|iis) or ``None`` for
-      unsupported categories.
+    * ``service_type`` — ``pam action service add --type`` value
+      (service|task|iis_pool) or ``None`` for unsupported categories.
     * ``raw_type`` — original CyberArk ``Type`` string (kept for reporting).
-    * ``service_name`` — informational, surfaced in the report only.
+    * ``service_name`` — ``pam action service add --name`` (Windows
+      service / scheduled-task / IIS pool name).
     * ``master_user_title`` — Keeper title of the pamUser record that holds
       the rotated credential (i.e. the user the service runs as).
     * ``master_account_id`` / ``master_account_name`` — CyberArk source IDs

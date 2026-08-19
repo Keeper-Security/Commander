@@ -1451,7 +1451,42 @@ class TestInteractiveSafePicker:
         safes = [{"safeName": "Alpha"}, {"safeName": "Beta"}, {"safeName": "Gamma"}]
         with patch("builtins.input", return_value="1,3"):
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
-        assert result == "Alpha,Gamma"
+        assert result == ["Alpha", "Gamma"]
+
+    def test_select_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="2-4"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == ["S2", "S3", "S4"]
+
+    def test_select_mixed_ranges_and_indexes(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 21)]
+        with patch("builtins.input", return_value="1,2,3,6-9,11,14-18"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == [
+            "S1", "S2", "S3", "S6", "S7", "S8", "S9", "S11",
+            "S14", "S15", "S16", "S17", "S18",
+        ]
+
+    def test_select_reversed_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="4-1"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == ["S1", "S2", "S3", "S4"]
+
+    def test_select_deduplicates(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="1,1-3,2"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == ["S1", "S2", "S3"]
 
     def test_select_invalid_input(self):
         from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
@@ -1459,7 +1494,24 @@ class TestInteractiveSafePicker:
         safes = [{"safeName": "Safe1"}]
         with patch("builtins.input", return_value="abc"):
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
-        assert result is None  # invalid → all
+        assert result == []  # invalid non-empty → abort, do not import all
+
+    def test_select_invalid_range_syntax_aborts(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 6)]
+        with patch("builtins.input", return_value="1..4"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == []
+
+    def test_partially_invalid_aborts(self, capsys):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        from unittest.mock import patch
+        safes = [{"safeName": f"S{i}"} for i in range(1, 8)]
+        with patch("builtins.input", return_value="1,abc,7"):
+            result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
+        assert result == []
+        assert "abc" in capsys.readouterr().out
 
     def test_eof_returns_none(self):
         from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
@@ -1468,6 +1520,235 @@ class TestInteractiveSafePicker:
         with patch("builtins.input", side_effect=EOFError):
             result = CyberArkPAMImportCommand._interactive_safe_picker(safes)
         assert result is None
+
+
+class TestMaybeInteractiveSafePick:
+    """Picker abort must not emit a second 'No safes selected' message."""
+
+    def _orch(self):
+        from keepercommander.commands.pam_import.cyberark_import import (
+            CyberArkImportOrchestrator, CyberArkPAMImportCommand,
+        )
+        orch = CyberArkImportOrchestrator.__new__(CyberArkImportOrchestrator)
+        orch.options = MagicMock(
+            safe_include="", safe_exclude="", skip_confirm=False,
+            dry_run=False, output_file="",
+        )
+        orch.params = MagicMock(batch_mode=False)
+        orch._cmd = CyberArkPAMImportCommand()
+        return orch
+
+    def test_cancelled_does_not_print_no_safes_selected(self, capsys):
+        orch = self._orch()
+        safes = [{"safeName": "A"}]
+        with patch.object(orch._cmd, "_interactive_safe_picker", return_value=[]):
+            result = orch._maybe_interactive_safe_pick(safes)
+        assert result == []
+        assert "No safes selected" not in capsys.readouterr().out
+
+    def test_all_returns_original(self):
+        orch = self._orch()
+        safes = [{"safeName": "A"}]
+        with patch.object(orch._cmd, "_interactive_safe_picker", return_value=None):
+            assert orch._maybe_interactive_safe_pick(safes) is safes
+
+
+class TestParseIndexSelection:
+    """Unit tests for _parse_index_selection."""
+
+    def test_single_indexes(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,3", 5) == [0, 2]
+
+    def test_range(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1-4", 10) == [0, 1, 2, 3]
+
+    def test_mixed(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,2,3,6-9,11,14-18", 20) == [
+            0, 1, 2, 5, 6, 7, 8, 10, 13, 14, 15, 16, 17
+        ]
+
+    def test_out_of_range_rejected(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        with pytest.raises(ValueError, match="99"):
+            CyberArkPAMImportCommand._parse_index_selection("1,99,2-3,50-60", 5)
+
+    def test_zero_start_rejected(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        with pytest.raises(ValueError, match="0-2"):
+            CyberArkPAMImportCommand._parse_index_selection("0-2", 5)
+
+    def test_partially_invalid_token_rejected(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        with pytest.raises(ValueError, match="abc"):
+            CyberArkPAMImportCommand._parse_index_selection("1,abc,7", 10)
+
+    def test_whitespace_tolerant(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection(" 1 , 3 - 5 , 7 ", 10) == [0, 2, 3, 4, 6]
+
+    def test_huge_range_rejected(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        with pytest.raises(ValueError, match="1-1000000"):
+            CyberArkPAMImportCommand._parse_index_selection("1-1000000", 5)
+
+    def test_unicode_en_dash(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("2–4", 6) == [1, 2, 3]
+
+    def test_rejects_malformed_tokens(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        for bad in ("1-2-3", "1--5", "1..4", "1:4"):
+            with pytest.raises(ValueError, match="invalid or out-of-range"):
+                CyberArkPAMImportCommand._parse_index_selection(bad, 10)
+
+    def test_empty_tokens_ignored(self):
+        from keepercommander.commands.pam_import.cyberark_import import CyberArkPAMImportCommand
+        assert CyberArkPAMImportCommand._parse_index_selection("1,,3", 5) == [0, 2]
+
+
+def _enterprise_params(nodes=None, user_root_nodes=None, enterprise_name="Acme"):
+    params = MagicMock()
+    params.enterprise = {
+        "nodes": nodes if nodes is not None else [
+            {"node_id": 1, "data": {}},
+            {"node_id": 2, "parent_id": 1, "data": {"displayname": "Engineering"}},
+            {"node_id": 3, "parent_id": 1, "data": {"displayname": "R&D"}},
+            {"node_id": 4, "parent_id": 1, "data": {"displayname": "Dup"}},
+            {"node_id": 5, "parent_id": 1, "data": {"displayname": "Dup"}},
+        ],
+        "user_root_nodes": user_root_nodes if user_root_nodes is not None else [1],
+        "enterprise_name": enterprise_name,
+    }
+    return params
+
+
+class TestResolveProvisioningNodeId:
+    """Tests for CyberArkImporter._resolve_provisioning_node_id."""
+
+    def _importer(self):
+        from keepercommander.importer.cyberark.cyberark import CyberArkImporter
+        return CyberArkImporter()
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_resolves_by_name(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "Engineering") == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_resolves_by_numeric_id(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "3") == 3
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_strips_whitespace(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "  Engineering  ") == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_ampersand_name_found(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(_enterprise_params(), "R&D") == 3
+
+    def test_ampersand_name_not_found_raises(self):
+        from keepercommander.error import CommandError
+        importer = self._importer()
+        with pytest.raises(CommandError, match="No&Such"):
+            importer._resolve_provisioning_node_id(_enterprise_params(), "No&Such")
+
+    def test_not_found_raises(self):
+        from keepercommander.error import CommandError
+        importer = self._importer()
+        with pytest.raises(CommandError, match="was not found"):
+            importer._resolve_provisioning_node_id(_enterprise_params(), "Missing")
+
+    def test_ambiguous_name_raises(self):
+        from keepercommander.error import CommandError
+        importer = self._importer()
+        with pytest.raises(CommandError, match="more than one node matches"):
+            importer._resolve_provisioning_node_id(_enterprise_params(), "Dup")
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_default_user_root_node(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(
+            _enterprise_params(user_root_nodes=[99]), None
+        ) == 99
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_default_falls_back_to_tree_root(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(
+            _enterprise_params(user_root_nodes=[]), None
+        ) == 1
+
+    def test_no_enterprise_with_target_node_raises(self):
+        from keepercommander.error import CommandError
+        importer = self._importer()
+        params = MagicMock()
+        params.enterprise = None
+        with pytest.raises(CommandError, match="not an enterprise admin"):
+            importer._resolve_provisioning_node_id(params, "Engineering")
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_no_enterprise_default_path_returns_none(self, _print):
+        importer = self._importer()
+        params = MagicMock()
+        params.enterprise = None
+        assert importer._resolve_provisioning_node_id(params, None) is None
+
+    def test_no_params_with_target_node_raises(self):
+        from keepercommander.error import CommandError
+        importer = self._importer()
+        with pytest.raises(CommandError, match="Keeper session is not available"):
+            importer._resolve_provisioning_node_id(None, "Engineering")
+
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    def test_no_params_default_path_returns_none(self, _print):
+        importer = self._importer()
+        assert importer._resolve_provisioning_node_id(None, None) is None
+
+    def test_success_html_escapes_ampersand(self):
+        from prompt_toolkit import HTML
+        from keepercommander.importer.cyberark.pam import _esc
+        HTML(
+            f"Provisioning teams, roles, and users into node "
+            f"<b>{_esc('R&D')}</b> (id <b>3</b>)"
+        )
+
+
+class TestImportTargetNodeArgparse:
+    """--target-node / --node on the vault import parser."""
+
+    def test_target_node_flag(self):
+        from keepercommander.importer.commands import import_parser
+        ns = import_parser.parse_args(["--format", "cyberark", "--target-node", "Eng", "https://pvwa"])
+        assert ns.target_node == "Eng"
+
+    def test_node_alias(self):
+        from keepercommander.importer.commands import import_parser
+        ns = import_parser.parse_args(["--format", "cyberark", "--node", "Eng", "https://pvwa"])
+        assert ns.target_node == "Eng"
+
+    def test_ignored_for_non_cyberark_format(self):
+        from keepercommander.importer.commands import RecordImportCommand
+        cmd = RecordImportCommand()
+        params = MagicMock()
+        params.enforcements = None
+        with patch("keepercommander.importer.commands.imp_exp._import") as mock_import:
+            cmd.execute(params, format="json", name="vault.json", target_node="Eng")
+        assert mock_import.call_args.kwargs.get("target_node") is None
+
+    def test_kept_for_cyberark_format(self):
+        from keepercommander.importer.commands import RecordImportCommand
+        cmd = RecordImportCommand()
+        params = MagicMock()
+        params.enforcements = None
+        with patch("keepercommander.importer.commands.imp_exp._import") as mock_import:
+            cmd.execute(params, format="cyberark", name="https://pvwa", target_node="Eng")
+        assert mock_import.call_args.kwargs.get("target_node") == "Eng"
 
 
 class TestListSafesDetailed:

@@ -22,6 +22,8 @@ from urllib3.exceptions import InsecureRequestWarning
 from ... import api, crypto, utils
 from ...commands.enterprise_common import EnterpriseCommand
 from ...constants import EMAIL_PATTERN
+from ...error import CommandError
+from .pam import _esc
 from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
@@ -978,6 +980,16 @@ class CyberArkImporter(BaseImporter):
             return
         pvwa_host, authorization_token, query_params = auth
 
+        params = kwargs.get("params")
+        will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
+        will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
+        will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
+        target_node = kwargs.get("target_node")
+
+        provision_node_id = None
+        if will_teams:
+            provision_node_id = self._resolve_provisioning_node_id(params, target_node)
+
         safes = self._resolve_safes(pvwa_host, authorization_token)
         if not safes:
             return
@@ -1012,11 +1024,6 @@ class CyberArkImporter(BaseImporter):
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {safe}</ansiyellow>"))
                 continue
             safe_accounts[safe] = accounts
-
-        params = kwargs.get("params")
-        will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
-        will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
-        will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
 
         # Gather the CyberArk identities (groups + users) that will become Keeper
         # teams, roles and users so they can be previewed before the import. The
@@ -1090,6 +1097,21 @@ class CyberArkImporter(BaseImporter):
             summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams and roles")
         if eligible_users:
             summary_lines.append(f"  - <b>{len(eligible_users)}</b> user(s) provisioned as Keeper users")
+        if will_teams and provision_node_id is not None:
+            if target_node:
+                summary_lines.append(
+                    f'  - provision teams, roles, and users into node <b>{_esc(target_node)}</b> '
+                    f'(id <b>{provision_node_id}</b>)'
+                )
+            else:
+                summary_lines.append(
+                    f'  - provision teams, roles, and users into the default root node '
+                    f'(id <b>{provision_node_id}</b>)'
+                )
+        elif will_teams:
+            summary_lines.append(
+                '  - <ansired>teams/roles/users will be skipped</ansired> (no provisioning node)'
+            )
         if not self._confirm_import(pvwa_host, summary="\n".join(summary_lines)):
             print_formatted_text(HTML("\nImport <ansiyellow>cancelled</ansiyellow> by user"))
             return
@@ -1210,15 +1232,92 @@ class CyberArkImporter(BaseImporter):
         # Import CyberArk User Groups as Keeper Enterprise Teams + Roles, then optionally
         # create Keeper users (using their real CyberArk business emails) and
         # assign them to the matching Keeper Roles.
-        if will_teams:
+        if will_teams and provision_node_id is not None:
             self.import_user_groups(
                 pvwa_host, authorization_token, params,
                 cyberark_users=cyberark_users,
+                target_node=target_node,
+                node_id=provision_node_id,
             )
 
         print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
 
-    def import_user_groups(self, pvwa_host, authorization_token, params, cyberark_users=None):
+    def _resolve_provisioning_node_id(self, params, target_node=None):
+        """Resolve the enterprise node for CyberArk teams/roles/users.
+
+        If ``target_node`` is set (name or numeric ID), resolve it via
+
+        Returns the node id, or ``None`` if the default-node path fails
+        (errors are printed).
+        """
+        if target_node is not None:
+            target_node = str(target_node).strip() or None
+
+        if not params or not getattr(params, "enterprise", None):
+            if params is None:
+                msg = (
+                    "Cannot create Keeper Teams: Keeper session is not "
+                    "available to the importer (no params)."
+                )
+                html = (
+                    "<ansired>Cannot create Keeper Teams:</ansired> Keeper session is not "
+                    "available to the importer (no <i>params</i>)."
+                )
+            else:
+                msg = (
+                    "Cannot create Keeper Teams/users: the logged-in account "
+                    "is not an enterprise admin (no enterprise data loaded)."
+                )
+                html = (
+                    "<ansired>Cannot create Keeper Teams/users:</ansired> the logged-in account "
+                    "is not an enterprise admin (no enterprise data loaded)."
+                )
+            if target_node:
+                raise CommandError("import", msg)
+            print_formatted_text(HTML(html))
+            return None
+
+        if target_node:
+            try:
+                nodes = list(EnterpriseCommand.resolve_nodes(params, target_node))
+            except (KeyError, TypeError) as e:
+                logging.debug("resolve_nodes(%r) failed: %s", target_node, e)
+                nodes = []
+            if len(nodes) == 0:
+                raise CommandError(
+                    "import",
+                    f'Cannot provision into node: node "{target_node}" was not found.',
+                )
+            if len(nodes) > 1:
+                raise CommandError(
+                    "import",
+                    f'Cannot provision into node: more than one node matches "{target_node}". '
+                    "Use the numeric node ID.",
+                )
+            return nodes[0]["node_id"]
+
+        # Default: first user-root node (loads managed nodes if needed), then
+        # the first tree root (parent_id unset/0).
+        try:
+            root_nodes = list(EnterpriseCommand.get_user_root_nodes(params))
+        except Exception as e:
+            logging.debug("Failed to load user root nodes: %s", e)
+            root_nodes = []
+        if root_nodes:
+            return root_nodes[0]
+        for n in params.enterprise.get("nodes", []) or []:
+            if not n.get("parent_id"):
+                return n["node_id"]
+        print_formatted_text(
+            HTML(
+                "<ansired>Cannot create Keeper Teams/users:</ansired> no root node found in the "
+                "enterprise tree."
+            )
+        )
+        return None
+
+    def import_user_groups(self, pvwa_host, authorization_token, params, cyberark_users=None,
+                           target_node=None, node_id=None):
         """Fetch CyberArk User Groups and create them as Keeper Enterprise Teams.
 
         This mirrors the ``enterprise-team --add`` command flow: for each
@@ -1304,25 +1403,18 @@ class CyberArkImporter(BaseImporter):
                 existing_team_names.add(team["name"].lower())
 
         # Determine the target node id (same default as enterprise-team --add):
-        # the first user-root node when no --node was specified.
-        node_id = None
-        for nid in params.enterprise.get("user_root_nodes", []) or []:
-            node_id = nid
-            break
+        # --target-node when specified, otherwise the first user-root node.
         if node_id is None:
-            # Fall back to the first node in the tree (root has parent_id=0)
-            for n in params.enterprise.get("nodes", []) or []:
-                if not n.get("parent_id"):
-                    node_id = n["node_id"]
-                    break
+            node_id = self._resolve_provisioning_node_id(params, target_node)
         if node_id is None:
+            return
+        if target_node:
             print_formatted_text(
                 HTML(
-                    "<ansired>Cannot create Keeper Teams:</ansired> no root node found in the "
-                    "enterprise tree."
+                    f"Provisioning teams, roles, and users into node "
+                    f"<b>{_esc(target_node)}</b> (id <b>{node_id}</b>)"
                 )
             )
-            return
 
         print_formatted_text(
             HTML(f"Importing <b>{len(groups)}</b> user groups as Keeper Teams (members not provisioned):\n"),
@@ -1743,24 +1835,10 @@ class CyberArkImporter(BaseImporter):
             if uname:
                 existing_user_by_email[uname] = u
 
-        # Determine the target node (root node) for new invitations.
-        invite_node_id = None
-        for nid in params.enterprise.get("user_root_nodes", []) or []:
-            invite_node_id = nid
-            break
-        if invite_node_id is None:
-            for n in params.enterprise.get("nodes", []) or []:
-                if not n.get("parent_id"):
-                    invite_node_id = n["node_id"]
-                    break
-        if invite_node_id is None:
-            print_formatted_text(
-                HTML(
-                    "\n<ansired>Cannot invite Keeper users:</ansired> no root node found in "
-                    "the enterprise tree."
-                )
-            )
+        # Caller already resolved --target-node (or the default root).
+        if node_id is None:
             return
+        invite_node_id = node_id
 
         tree_key = params.enterprise.get("unencrypted_tree_key")
         if not tree_key:
