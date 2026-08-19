@@ -1206,7 +1206,7 @@ class CyberArkPVWAClient:
                     self._get_url("account_password").format(account_id=account_id),
                     headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
                     json={
-                        "reason": "test",
+                        "reason": "Keeper Commander Import",
                         **({"TicketingSystemName": environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]}
                            if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ else {}),
                         **({"TicketId": environ["KEEPER_CYBERARK_TICKET_ID"]}
