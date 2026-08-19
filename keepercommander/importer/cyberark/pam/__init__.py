@@ -39,6 +39,7 @@ from .import_builder import (
     validate_import_data,
 )
 from .dependents import (
+    PAM_SERVICE_ADD_TYPES,
     _normalize_dependent_type,
     resolve_account_dependents,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "RecordDecision",
     "MAX_FETCH_RECORDS",
     "MAX_SAFE_NAME_LENGTH",
+    "PAM_SERVICE_ADD_TYPES",
     "PermissionMapper",
     "RecordKind",
     "SafeFolderMapper",
