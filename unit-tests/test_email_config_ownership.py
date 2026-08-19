@@ -103,22 +103,23 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
 
     @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
     @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')
-    def test_accepts_owned_record_when_owner_flag_overwritten(self, mock_load, mock_extract):
+    def test_rejects_shared_record_with_current_account_uid_fallback(self, mock_load, mock_extract):
+        """Shared-in records must not match via ownerAccountUid display fallback."""
         from keepercommander import utils
         from keepercommander.commands.email_commands import find_email_config_record
 
-        mock_load.return_value = self._make_typed_record('OWNED_UID')
+        mock_load.return_value = self._make_typed_record('SHARED_UID')
         mock_extract.return_value = self._email_config_data()
 
         account_uid_bytes = b'current-account'
         current_uid = utils.base64_url_encode(account_uid_bytes)
         params = self._params(
-            {'OWNED_UID': {}},
-            {'OWNED_UID': RecordOwner(False, current_uid)},
+            {'SHARED_UID': {}},
+            {'SHARED_UID': RecordOwner(False, current_uid)},
             account_uid_bytes=account_uid_bytes,
         )
 
-        self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
+        self.assertIsNone(find_email_config_record(params, self.TITLE))
 
     @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
     @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')

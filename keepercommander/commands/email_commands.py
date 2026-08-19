@@ -151,24 +151,13 @@ email_config_delete_parser.add_argument(
 # Helper Functions
 # =============================================================================
 
-def _current_account_uid(params: KeeperParams) -> Optional[str]:
-    account_uid_bytes = getattr(params, 'account_uid_bytes', None)
-    if not account_uid_bytes:
-        return None
-    return utils.base64_url_encode(account_uid_bytes)
-
-
 def _is_owned_email_config_record(params: KeeperParams, record_uid: str) -> bool:
     """True if the current account owns this record.
 
-    Shared-folder sync can overwrite ``record_owner_cache[uid].owner`` to False
-    for a record the user still owns, so account_uid and record metadata are
-    consulted as well. Unknown ownership fails closed.
+    Uses ``record_owner_cache`` first, then ``meta_data_cache`` from
+    recordMetaData (server-asserted). Unknown ownership fails closed.
     """
     owner = (params.record_owner_cache or {}).get(record_uid)
-    current_uid = _current_account_uid(params)
-    if owner and current_uid and owner.account_uid == current_uid:
-        return True
     if owner and owner.owner:
         return True
     meta = (getattr(params, 'meta_data_cache', None) or {}).get(record_uid) or {}
