@@ -19,12 +19,21 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
         record.record_type = 'login'
         return record
 
-    def _email_config_data(self):
-        return {
-            'custom': [
-                {'type': 'text', 'label': '__email_config__', 'value': ['true']},
-            ]
-        }
+    def _email_config_data(self, extra_fields=None):
+        custom = [
+            {'type': 'text', 'label': '__email_config__', 'value': ['true']},
+        ]
+        if extra_fields:
+            custom.extend(extra_fields)
+        return {'custom': custom}
+
+    def _params(self, record_cache, record_owner_cache, account_uid_bytes=None, meta_data_cache=None):
+        params = MagicMock(spec=KeeperParams)
+        params.account_uid_bytes = account_uid_bytes
+        params.record_cache = record_cache
+        params.record_owner_cache = record_owner_cache
+        params.meta_data_cache = meta_data_cache or {}
+        return params
 
     @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
     @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')
@@ -40,12 +49,13 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
         mock_load.side_effect = load_side_effect
         mock_extract.return_value = self._email_config_data()
 
-        params = MagicMock(spec=KeeperParams)
-        params.record_cache = {'SHARED_UID': {}, 'OWNED_UID': {}}
-        params.record_owner_cache = {
-            'SHARED_UID': RecordOwner(False, 'attacker'),
-            'OWNED_UID': RecordOwner(True, 'operator'),
-        }
+        params = self._params(
+            {'SHARED_UID': {}, 'OWNED_UID': {}},
+            {
+                'SHARED_UID': RecordOwner(False, 'attacker'),
+                'OWNED_UID': RecordOwner(True, 'operator'),
+            },
+        )
 
         self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
 
@@ -57,11 +67,10 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
         mock_load.return_value = self._make_typed_record('SHARED_UID')
         mock_extract.return_value = self._email_config_data()
 
-        params = MagicMock(spec=KeeperParams)
-        params.record_cache = {'SHARED_UID': {}}
-        params.record_owner_cache = {
-            'SHARED_UID': RecordOwner(False, 'attacker'),
-        }
+        params = self._params(
+            {'SHARED_UID': {}},
+            {'SHARED_UID': RecordOwner(False, 'attacker')},
+        )
 
         self.assertIsNone(find_email_config_record(params, self.TITLE))
 
@@ -73,9 +82,7 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
         mock_load.return_value = self._make_typed_record('UNKNOWN_UID')
         mock_extract.return_value = self._email_config_data()
 
-        params = MagicMock(spec=KeeperParams)
-        params.record_cache = {'UNKNOWN_UID': {}}
-        params.record_owner_cache = {}
+        params = self._params({'UNKNOWN_UID': {}}, {})
 
         self.assertIsNone(find_email_config_record(params, self.TITLE))
 
@@ -87,11 +94,63 @@ class TestFindEmailConfigRecordOwnership(unittest.TestCase):
         mock_load.return_value = self._make_typed_record('OWNED_UID')
         mock_extract.return_value = self._email_config_data()
 
-        params = MagicMock(spec=KeeperParams)
-        params.record_cache = {'OWNED_UID': {}}
-        params.record_owner_cache = {
-            'OWNED_UID': RecordOwner(True, 'operator'),
-        }
+        params = self._params(
+            {'OWNED_UID': {}},
+            {'OWNED_UID': RecordOwner(True, 'operator')},
+        )
+
+        self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
+
+    @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
+    @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')
+    def test_accepts_owned_record_when_owner_flag_overwritten(self, mock_load, mock_extract):
+        from keepercommander import utils
+        from keepercommander.commands.email_commands import find_email_config_record
+
+        mock_load.return_value = self._make_typed_record('OWNED_UID')
+        mock_extract.return_value = self._email_config_data()
+
+        account_uid_bytes = b'current-account'
+        current_uid = utils.base64_url_encode(account_uid_bytes)
+        params = self._params(
+            {'OWNED_UID': {}},
+            {'OWNED_UID': RecordOwner(False, current_uid)},
+            account_uid_bytes=account_uid_bytes,
+        )
+
+        self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
+
+    @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
+    @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')
+    def test_accepts_owned_record_from_metadata_when_owner_cache_wrong(self, mock_load, mock_extract):
+        from keepercommander.commands.email_commands import find_email_config_record
+
+        mock_load.return_value = self._make_typed_record('OWNED_UID')
+        mock_extract.return_value = self._email_config_data()
+
+        params = self._params(
+            {'OWNED_UID': {}},
+            {'OWNED_UID': RecordOwner(False, 'attacker')},
+            meta_data_cache={'OWNED_UID': {'owner': True}},
+        )
+
+        self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
+
+    @patch('keepercommander.commands.email_commands.vault_extensions.extract_typed_record_data')
+    @patch('keepercommander.commands.email_commands.vault.KeeperRecord.load')
+    def test_matches_when_marker_is_not_last_custom_field(self, mock_load, mock_extract):
+        from keepercommander.commands.email_commands import find_email_config_record
+
+        mock_load.return_value = self._make_typed_record('OWNED_UID')
+        mock_extract.return_value = self._email_config_data(
+            extra_fields=[
+                {'type': 'text', 'label': 'smtp_host', 'value': ['smtp.example.com']},
+            ]
+        )
+        params = self._params(
+            {'OWNED_UID': {}},
+            {'OWNED_UID': RecordOwner(True, 'operator')},
+        )
 
         self.assertEqual(find_email_config_record(params, self.TITLE), 'OWNED_UID')
 
@@ -133,11 +192,13 @@ class TestEmailConfigListOwnership(unittest.TestCase):
         mock_extract.return_value = self._email_config_data()
 
         params = MagicMock(spec=KeeperParams)
+        params.account_uid_bytes = None
         params.record_cache = {'SHARED_UID': {}, 'OWNED_UID': {}}
         params.record_owner_cache = {
             'SHARED_UID': RecordOwner(False, 'attacker'),
             'OWNED_UID': RecordOwner(True, 'operator'),
         }
+        params.meta_data_cache = {}
 
         EmailConfigListCommand().execute(params, format='table')
 

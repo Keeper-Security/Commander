@@ -151,6 +151,30 @@ email_config_delete_parser.add_argument(
 # Helper Functions
 # =============================================================================
 
+def _current_account_uid(params: KeeperParams) -> Optional[str]:
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+    if not account_uid_bytes:
+        return None
+    return utils.base64_url_encode(account_uid_bytes)
+
+
+def _is_owned_email_config_record(params: KeeperParams, record_uid: str) -> bool:
+    """True if the current account owns this record.
+
+    Shared-folder sync can overwrite ``record_owner_cache[uid].owner`` to False
+    for a record the user still owns, so account_uid and record metadata are
+    consulted as well. Unknown ownership fails closed.
+    """
+    owner = (params.record_owner_cache or {}).get(record_uid)
+    current_uid = _current_account_uid(params)
+    if owner and current_uid and owner.account_uid == current_uid:
+        return True
+    if owner and owner.owner:
+        return True
+    meta = (getattr(params, 'meta_data_cache', None) or {}).get(record_uid) or {}
+    return bool(meta.get('owner'))
+
+
 def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
     """
     Find an owned email config record by name.
@@ -158,7 +182,8 @@ def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
     Only records owned by the current account are eligible. Shared or
     non-owned records (even with a matching title and ``__email_config__``
     marker) are ignored so SMTP/provider settings cannot be supplied by
-    another user.
+    another user. A missing or unknown ownership entry is treated the same
+    way (not owned by the current account, or ownership unknown).
 
     Args:
         params: KeeperParams session
@@ -174,25 +199,26 @@ def find_email_config_record(params: KeeperParams, name: str) -> Optional[str]:
         if record.record_type != 'login':
             continue
 
-        # Check if this is an email config by looking for custom field
         try:
             record_dict = vault_extensions.extract_typed_record_data(record)
             custom_fields = record_dict.get('custom', [])
-            for field in custom_fields:
-                if field.get('type') == 'text' and field.get('label') == '__email_config__':
-                    if record.title != name:
-                        continue
-
-                    owner = (params.record_owner_cache or {}).get(record_uid)
-                    if not owner or not owner.owner:
-                        logging.warning(
-                            'Ignoring email configuration "%s" (%s): '
-                            'not owned by the current account (or ownership unknown)',
-                            name, record_uid)
-                        continue
-
-                    return record_uid
-        except:
+            is_email_config = any(
+                field.get('type') == 'text' and field.get('label') == '__email_config__'
+                for field in custom_fields
+            )
+            if not is_email_config:
+                continue
+            if record.title != name:
+                continue
+            if not _is_owned_email_config_record(params, record_uid):
+                logging.warning(
+                    'Ignoring email configuration "%s" (%s): '
+                    'not owned by the current account (or ownership unknown)',
+                    name, record_uid)
+                continue
+            return record_uid
+        except Exception as e:
+            logging.debug('Skipping record %s: %s', record_uid, e)
             continue
 
     return None
@@ -651,9 +677,7 @@ class EmailConfigListCommand(Command):
                 if not is_email_config:
                     continue
 
-                # Match find_email_config_record: only list owned configs
-                owner = (params.record_owner_cache or {}).get(record_uid)
-                if not owner or not owner.owner:
+                if not _is_owned_email_config_record(params, record_uid):
                     logging.debug(
                         'Skipping email configuration "%s" (%s) in list: '
                         'not owned by the current account (or ownership unknown)',
