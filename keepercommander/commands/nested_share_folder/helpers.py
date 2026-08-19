@@ -705,7 +705,7 @@ def load_record_metadata(params, record_uid):
     """Load record metadata from cache, falling back to the v3 details API.
 
     Returns a dict with keys:
-        ``title``, ``type``, ``fields``, ``notes``,
+        ``title``, ``type``, ``fields``, ``custom``, ``notes``,
         ``revision``, ``version``, ``folder_location``
     """
     from ... import nested_share_folder as _nsf
@@ -713,6 +713,7 @@ def load_record_metadata(params, record_uid):
     title = record_uid
     rec_type = ''
     fields = []
+    custom = []
     notes = ''
     revision = 0
     version = 0
@@ -724,7 +725,12 @@ def load_record_metadata(params, record_uid):
             dj = data_obj['data_json']
             title    = dj.get('title', record_uid)
             rec_type = dj.get('type', '')
-            fields   = dj.get('fields', [])
+            fields   = dj.get('fields') or []
+            custom   = dj.get('custom') or []
+            if not isinstance(fields, list):
+                fields = []
+            if not isinstance(custom, list):
+                custom = []
             notes    = dj.get('notes', '') or ''
 
     nsf_records = getattr(params, 'nested_share_records', {})
@@ -749,6 +755,7 @@ def load_record_metadata(params, record_uid):
         'title': title,
         'type': rec_type,
         'fields': fields,
+        'custom': custom,
         'notes': notes,
         'revision': revision,
         'version': version,

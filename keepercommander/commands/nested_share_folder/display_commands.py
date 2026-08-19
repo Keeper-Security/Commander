@@ -87,7 +87,10 @@ class NestedShareRecordGetDetailsCommand(Command):
 class NestedShareGetCommand(Command):
     """Show details of a Nested Share Record or folder."""
 
-    _MASKED_TYPES = frozenset({'password', 'secret', 'pinCode', 'pin_code'})
+    _MASKED_TYPES = frozenset({
+        'password', 'secret', 'pinCode', 'pin_code', 'oneTimeCode', 'otp',
+        'note', 'json',
+    })
 
     def get_parser(self):
         return nested_share_get_parser
@@ -196,10 +199,19 @@ class NestedShareGetCommand(Command):
         if url_val:
             print('{0:>20s}: {1:<20s}'.format('URL', url_val))
 
-        shown_types = {'login', 'password', 'url'}
-        for f in meta['fields']:
+        self._print_typed_fields(meta['fields'], unmask, skip_types={'login', 'password', 'url'})
+        self._print_typed_fields(meta.get('custom') or [], unmask)
+
+        if meta['notes']:
+            for i, line in enumerate(meta['notes'].split('\n')):
+                print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', line.strip()))
+
+        self._print_record_permissions(params, record_uid, verbose)
+
+    def _print_typed_fields(self, fields, unmask, skip_types=()):
+        for f in fields or []:
             ftype = f.get('type', '')
-            if ftype in shown_types:
+            if ftype in skip_types:
                 continue
             label = f.get('label') or ftype.replace('_', ' ').title()
             values = f.get('value', [])
@@ -215,12 +227,6 @@ class NestedShareGetCommand(Command):
                 else:
                     dval = str(val)
                 print('{0:>20s}: {1:<s}'.format(label, dval))
-
-        if meta['notes']:
-            for i, line in enumerate(meta['notes'].split('\n')):
-                print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', line.strip()))
-
-        self._print_record_permissions(params, record_uid, verbose)
 
     @staticmethod
     def _extract_field_value(fields, field_type):
@@ -247,6 +253,8 @@ class NestedShareGetCommand(Command):
             ro['folder'] = meta['folder_location']
         if meta['fields']:
             ro['fields'] = meta['fields']
+        if meta.get('custom'):
+            ro['custom'] = meta['custom']
         if meta['notes']:
             ro['notes'] = meta['notes']
 
