@@ -22,7 +22,8 @@ from urllib3.exceptions import InsecureRequestWarning
 from ... import api, crypto, utils
 from ...commands.enterprise_common import EnterpriseCommand
 from ...constants import EMAIL_PATTERN
-from .pam.ui import _esc
+from ...error import CommandError
+from .pam import _esc
 from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
@@ -984,14 +985,10 @@ class CyberArkImporter(BaseImporter):
         will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
         will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
         target_node = kwargs.get("target_node")
-        if target_node is not None:
-            target_node = str(target_node).strip() or None
 
         provision_node_id = None
         if will_teams:
             provision_node_id = self._resolve_provisioning_node_id(params, target_node)
-            if target_node and provision_node_id is None:
-                return
 
         safes = self._resolve_safes(pvwa_host, authorization_token)
         if not safes:
@@ -1158,7 +1155,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "Keeper Commander Import"},
+                                json={"reason": "test"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
@@ -1249,10 +1246,9 @@ class CyberArkImporter(BaseImporter):
         """Resolve the enterprise node for CyberArk teams/roles/users.
 
         If ``target_node`` is set (name or numeric ID), resolve it via
-        ``EnterpriseCommand.resolve_nodes``. Otherwise fall back to the first
-        user-root node (same default as ``enterprise-user --add`` / ``enterprise-team --add``).
 
-        Returns the node id, or ``None`` if resolution fails (errors are printed).
+        Returns the node id, or ``None`` if the default-node path fails
+        (errors are printed).
         """
         if target_node is not None:
             target_node = str(target_node).strip() or None
@@ -1260,39 +1256,44 @@ class CyberArkImporter(BaseImporter):
         if not params or not getattr(params, "enterprise", None):
             if params is None:
                 msg = (
+                    "Cannot create Keeper Teams: Keeper session is not "
+                    "available to the importer (no params)."
+                )
+                html = (
                     "<ansired>Cannot create Keeper Teams:</ansired> Keeper session is not "
                     "available to the importer (no <i>params</i>)."
                 )
             else:
                 msg = (
+                    "Cannot create Keeper Teams/users: the logged-in account "
+                    "is not an enterprise admin (no enterprise data loaded)."
+                )
+                html = (
                     "<ansired>Cannot create Keeper Teams/users:</ansired> the logged-in account "
                     "is not an enterprise admin (no enterprise data loaded)."
                 )
-            print_formatted_text(HTML(msg))
+            if target_node:
+                raise CommandError("import", msg)
+            print_formatted_text(HTML(html))
             return None
 
         if target_node:
             try:
                 nodes = list(EnterpriseCommand.resolve_nodes(params, target_node))
-            except (KeyError, TypeError):
+            except (KeyError, TypeError) as e:
+                logging.debug("resolve_nodes(%r) failed: %s", target_node, e)
                 nodes = []
             if len(nodes) == 0:
-                print_formatted_text(
-                    HTML(
-                        f"<ansired>Cannot provision into node:</ansired> "
-                        f'node "<b>{_esc(target_node)}</b>" was not found.'
-                    )
+                raise CommandError(
+                    "import",
+                    f'Cannot provision into node: node "{target_node}" was not found.',
                 )
-                return None
             if len(nodes) > 1:
-                print_formatted_text(
-                    HTML(
-                        f"<ansired>Cannot provision into node:</ansired> "
-                        f'more than one node matches "<b>{_esc(target_node)}</b>". '
-                        f"Use the numeric node ID."
-                    )
+                raise CommandError(
+                    "import",
+                    f'Cannot provision into node: more than one node matches "{target_node}". '
+                    "Use the numeric node ID.",
                 )
-                return None
             return nodes[0]["node_id"]
 
         # Default: first user-root node (loads managed nodes if needed), then

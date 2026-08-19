@@ -377,7 +377,9 @@ class CyberArkImportOrchestrator:
         selected = self._cmd._interactive_safe_picker(safes)
         if selected is None:
             return safes
-        selected_set = {n.strip() for n in selected.split(',')}
+        if not selected:
+            return []
+        selected_set = set(selected)
         picked = [s for s in safes if s.get("safeName", "") in selected_set]
         if not picked:
             print_formatted_text(HTML("<ansiyellow>No safes selected</ansiyellow>"))
@@ -1588,6 +1590,8 @@ class CyberArkImportOrchestrator:
         for dep in mapped.dependents:
             # Match pam action service add --type {service,task,iis_pool}
             service_type = dep.get("service_type")
+            # Legacy persisted project state stored CyberArk IIS dependents as
+            # "iis". Fresh imports emit "iis_pool" via _DEPENDENT_TYPE_ALIASES.
             if service_type == "iis":
                 service_type = "iis_pool"
             if service_type not in PAM_SERVICE_ADD_TYPES:
@@ -1656,6 +1660,20 @@ class CyberArkImportOrchestrator:
                     name=service_name,
                 )
                 summary["added"] += 1
+            except CommandError as e:
+                summary["skipped_other"] += 1
+                err_text = (e.message or str(e)).strip() or type(e).__name__
+                logging.warning(
+                    "Failed to register %s mapping for %s on %s: %s",
+                    service_type, service_name,
+                    dep.get("machine_address", "?"), err_text,
+                )
+                summary["details"].append({
+                    "service": service_name,
+                    "host": dep.get("machine_address", ""),
+                    "type": dep.get("raw_type", ""),
+                    "reason": f"pam action service add failed: {err_text.splitlines()[0]}",
+                })
             except Exception as e:  # noqa: BLE001 — never block reporting
                 summary["skipped_other"] += 1
                 err_text = str(e).strip() or type(e).__name__
@@ -2230,12 +2248,13 @@ Examples:
 
     @staticmethod
     def _parse_index_selection(choice: str, count: int) -> list[int]:
-        """Parse a selection string into 0-based indices."""
+        """Parse a 1-based selection string into 0-based indices."""
         selected: list[int] = []
         seen: set[int] = set()
         if count <= 0:
             return selected
         token_re = re.compile(r'^(\d+)(?:-(\d+))?$')
+        errors: list[str] = []
         for part in choice.split(','):
             part = part.strip().translate(_DASH_TRANSLATE)
             part = re.sub(r'\s+', '', part)
@@ -2243,24 +2262,32 @@ Examples:
                 continue
             m = token_re.match(part)
             if not m:
+                errors.append(part)
                 continue
             start = int(m.group(1))
             end = int(m.group(2)) if m.group(2) is not None else start
             lo, hi = min(start, end), max(start, end)
-            lo = max(1, lo)
-            hi = min(count, hi)
-            if lo > hi:
+            if lo < 1 or hi > count:
+                errors.append(part)
                 continue
             for num in range(lo, hi + 1):
                 idx = num - 1
                 if idx not in seen:
                     selected.append(idx)
                     seen.add(idx)
+        if errors:
+            raise ValueError(
+                f"invalid or out-of-range index(es): {', '.join(errors)}"
+            )
         return selected
 
     @staticmethod
-    def _interactive_safe_picker(safes: list[dict]) -> Optional[str]:
-        """Show safes and let user select which to import."""
+    def _interactive_safe_picker(safes: list[dict]) -> Optional[list[str]]:
+        """Show safes and let the user select which to import.
+
+        Returns ``None`` to import all, an empty list if the user cancelled
+        or the selection was invalid, or the list of selected safe names.
+        """
         print(f'\n{bcolors.OKBLUE}CyberArk Safes Found:{bcolors.ENDC}')
         print('─' * 50)
         numbered = []
@@ -2281,19 +2308,23 @@ Examples:
         if not choice or choice.upper() == 'A':
             return None
 
-        selected = [
-            numbered[idx]
-            for idx in CyberArkPAMImportCommand._parse_index_selection(choice, len(numbered))
-        ]
+        try:
+            indices = CyberArkPAMImportCommand._parse_index_selection(
+                choice, len(numbered)
+            )
+        except ValueError as e:
+            print(f'{bcolors.FAIL}{e}. Import cancelled.{bcolors.ENDC}')
+            return []
 
+        selected = [numbered[idx] for idx in indices]
         if not selected:
             print(
                 f'{bcolors.FAIL}No valid indexes in {choice!r}. Import cancelled.{bcolors.ENDC}'
             )
-            return ''
+            return []
 
         logging.warning('Selected safes: %s', ', '.join(selected))
-        return ','.join(selected)
+        return selected
 
 
 class CyberArkPAMCleanupCommand(Command):
