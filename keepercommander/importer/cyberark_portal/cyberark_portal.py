@@ -888,5 +888,3 @@ class CyberArkPortalImporter(BaseImporter):
                     record.fields.append(RecordField(type="note", value=itemData["n"]))
 
                 yield record
-
-        print_formatted_text(HTML("Import <ansigreen>complete</ansigreen>"))

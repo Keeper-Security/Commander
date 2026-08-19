@@ -749,7 +749,9 @@ def _import(params, file_format, filename, **kwargs):
     record_type = kwargs.get('record_type')
     filter_folder = kwargs.get('filter_folder')
     dry_run = kwargs.get('dry_run') is True
-    show_skipped = kwargs.get('show_skipped') is True
+    # For CyberArk imports, users typically expect an explicit "already exists"
+    # message rather than requiring --show-skipped.
+    show_skipped = kwargs.get('show_skipped') is True or file_format in {'cyberark', 'cyberark_portal'}
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
 
@@ -762,6 +764,7 @@ def _import(params, file_format, filename, **kwargs):
     importer = importer_for_format(file_format)()  # type: BaseImporter
 
     records_before = len(params.record_cache)
+    skipped_existing_count = 0
 
     folders = []        # type: List[ImportSharedFolder]
     records = []        # type: List[ImportRecord]
@@ -876,6 +879,42 @@ def _import(params, file_format, filename, **kwargs):
         default_nsf = import_into if (import_into and not nsf_base_parent) else None
         ensure_nsf_record_folders(records, folders, default_nsf)
 
+    # For CyberArk imports, also emit a clear message when the target
+    # folder(s) already exist in Keeper.
+    if file_format in {'cyberark', 'cyberark_portal'}:
+        if use_nsf:
+            from .nsf_import import resolve_nsf_folder
+
+            requested_paths = set()  # type: Set[str]
+            for sf in folders or []:
+                if getattr(sf, 'path', None):
+                    requested_paths.add(sf.path)
+            for rec in records or []:
+                for fol in rec.folders or []:
+                    if getattr(fol, 'path', None):
+                        requested_paths.add(fol.path)
+                    elif getattr(fol, 'domain', None):
+                        requested_paths.add(fol.domain)
+
+            existing_paths = []
+            for p in sorted(requested_paths):
+                p_norm = (p or '').strip(PathDelimiter)
+                if not p_norm:
+                    continue
+                try:
+                    uid = resolve_nsf_folder(params, p_norm)
+                except Exception:
+                    uid = None
+                if uid:
+                    existing_paths.append(p_norm)
+
+            if existing_paths:
+                for p in existing_paths:
+                    logging.info(
+                        'Nested Share Folder "%s" already exists in Keeper - skipping creation',
+                        p,
+                    )
+
     if classic_shared:
         sfol = set()
         for r in records:
@@ -933,6 +972,52 @@ def _import(params, file_format, filename, **kwargs):
                             fol.domain = sf_map[sf_name]
                             fol.path = (path[len(sf_name):]).strip(PathDelimiter)
 
+    if file_format in {'cyberark', 'cyberark_portal'} and not use_nsf:
+        # For classic shared/user folders, use a conservative check based on
+        # folder paths (from cached Keeper folder tree).
+        requested_folders = set()  # type: Set[str]
+        for sf in folders or []:
+            if getattr(sf, 'path', None):
+                requested_folders.add(sf.path)
+        for rec in records or []:
+            for fol in rec.folders or []:
+                if getattr(fol, 'domain', None):
+                    requested_folders.add(fol.domain)
+                if getattr(fol, 'path', None):
+                    requested_folders.add(fol.path)
+
+        existing_folder_paths = set()  # type: Set[str]
+        for uid, node in (params.folder_cache or {}).items():
+            # Root doesn't have a meaningful name in import requests.
+            if not node or getattr(node, 'type', None) == BaseFolderNode.RootFolderType:
+                continue
+            try:
+                p = get_folder_path(params, uid).strip(PathDelimiter)
+            except Exception:
+                continue
+            if p:
+                existing_folder_paths.add(p)
+
+        existing_folder_paths_lc = {p.lower() for p in existing_folder_paths}
+        existing_folder_last_lc = {p.split(PathDelimiter)[-1].lower() for p in existing_folder_paths if p}
+
+        already_exists = []
+        for r in requested_folders:
+            r_norm = (r or '').strip(PathDelimiter)
+            if not r_norm:
+                continue
+            r_last = r_norm.split(PathDelimiter)[-1].lower()
+            if r_norm.lower() in existing_folder_paths_lc or r_last in existing_folder_last_lc:
+                already_exists.append(r_norm)
+
+        already_exists = sorted(set(already_exists))
+        if already_exists:
+            for p in already_exists:
+                logging.info(
+                    'Folder "%s" already exists in Keeper - skipping creation',
+                    p,
+                )
+
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
@@ -956,6 +1041,7 @@ def _import(params, file_format, filename, **kwargs):
         import_uids = {}
 
         records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
+        skipped_existing_count = len(record_exists)
         if show_skipped and record_exists:
             for existing_record in record_exists:
                 folder_name = ''
@@ -966,7 +1052,18 @@ def _import(params, file_format, filename, **kwargs):
                     if f.path:
                         folder_name += f.path
 
-                if folder_name:
+                if file_format in {'cyberark', 'cyberark_portal'}:
+                    if folder_name:
+                        logging.info(
+                            'Record "%s" in folder "%s" already exists in Keeper [%s] - skipped.',
+                            existing_record.title, folder_name, existing_record.uid,
+                        )
+                    else:
+                        logging.info(
+                            'Record "%s" already exists in Keeper [%s] - skipped.',
+                            existing_record.title, existing_record.uid,
+                        )
+                elif folder_name:
                     logging.info('Record "%s" appearing in Folder "%s" was skipped due to a duplicate record [%s] found.',
                                  existing_record.title, folder_name, existing_record.uid)
                 else:
@@ -1315,9 +1412,27 @@ def _import(params, file_format, filename, **kwargs):
         importer.cleanup()
 
     records_after = len(params.record_cache)
-    if records_after > records_before:
+    imported_count = max(0, records_after - records_before)
+    if imported_count > 0:
         params.queue_audit_event('imported_records', file_format=file_format.upper())
-        logging.info("%d records imported successfully", records_after - records_before)
+        if file_format not in {'cyberark', 'cyberark_portal'}:
+            logging.info("%d records imported successfully", imported_count)
+
+    if file_format in {'cyberark', 'cyberark_portal'} and not dry_run and records:
+        if imported_count == 0 and skipped_existing_count > 0:
+            logging.info(
+                'Import finished: no new records imported; %d record(s) already exist in Keeper.',
+                skipped_existing_count,
+            )
+        elif imported_count > 0 and skipped_existing_count > 0:
+            logging.info(
+                'Import finished: %d record(s) imported; %d record(s) already exist in Keeper (skipped).',
+                imported_count, skipped_existing_count,
+            )
+        elif imported_count > 0:
+            logging.info('Import finished: %d record(s) imported successfully.', imported_count)
+        else:
+            logging.info('Import finished: no records were imported.')
 
 
 def report_statuses(status_type, status_iter):

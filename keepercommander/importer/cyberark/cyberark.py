@@ -735,64 +735,21 @@ class CyberArkImporter(BaseImporter):
                 query_params["search"] = query_string
         if not self._maybe_configure_client_cert(pvwa_host):
             return None
-        if pvwa_host.endswith(".cyberark.cloud"):
-            pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
+        if pvwa_host.endswith(".cyberark.cloud") or ".privilegecloud." in pvwa_host:
+            from .pam.client import CyberArkPVWAClient
+
+            try:
+                client = CyberArkPVWAClient(filename)
+            except ValueError as exc:
+                print_formatted_text(HTML(f"<ansired>{exc}</ansired>"))
+                return None
+            if not client.authenticate():
+                return None
+            pvwa_host = client.pvwa_host
+            if client.query_params:
+                query_params.update(client.query_params)
+            authorization_token = client.auth_token
             self._verify_tls = True
-            id_tenant = environ.get("_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
-            if re.match(r"^[A-Za-z]{3}\d{4}$", id_tenant):
-                id_tenant += ".id"
-            client_id = environ.get("_CYBERARK_USERNAME") or prompt("CyberArk service user name: ")
-            client_secret = environ.get("_CYBERARK_PASSWORD") or prompt(
-                "CyberArk service user password: ", is_password=True
-            )
-            token_url = f"https://{id_tenant}.cyberark.cloud/oauth2/platformtoken"
-            try:
-                response = self._request(
-                    "POST",
-                    token_url,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                    },
-                    timeout=self.TIMEOUT,
-                )
-            except requests.exceptions.ConnectionError as e:
-                print_formatted_text(
-                    HTML(
-                        "OAuth2 authorization token request <ansired>failed</ansired>: "
-                        f"could not connect to <b>{id_tenant}.cyberark.cloud</b>.\n"
-                        "Verify the CyberArk Identity Tenant ID is correct (check the CyberArk Identity "
-                        "Admin Portal URL — the first label of the hostname is your tenant ID) and that "
-                        "your machine has network/DNS access to it."
-                    )
-                )
-                print_formatted_text(HTML(f"<ansired>Details:</ansired> {e}"))
-                return None
-            except requests.exceptions.RequestException as e:
-                print_formatted_text(
-                    HTML(f"OAuth2 authorization token request <ansired>failed</ansired>: {e}")
-                )
-                return None
-            if response.status_code != 200:
-                print_formatted_text(
-                    HTML(
-                        f"OAuth2 authorization token request <ansired>failed</ansired> with status code <b>{response.status_code}</b>"
-                    )
-                )
-                try:
-                    print_formatted_text(HTML(f"<ansired>Response:</ansired> {response.text[:500]}"))
-                except Exception:
-                    pass
-                return None
-            try:
-                access_token = response.json()["access_token"]
-            except (ValueError, KeyError) as e:
-                print_formatted_text(
-                    HTML(f"OAuth2 response did not contain an access_token: <ansired>{e}</ansired>")
-                )
-                return None
-            authorization_token = f"Bearer {access_token}"
         else:
             login_type = environ.get("_CYBERARK_LOGON_TYPE") or prompt(
                 "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
@@ -826,7 +783,7 @@ class CyberArkImporter(BaseImporter):
                 )
                 return None
             authorization_token = response.text.strip('"')
-        print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
+            print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return pvwa_host, authorization_token, query_params
 
     def _resolve_safes(self, pvwa_host, authorization_token):

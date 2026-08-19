@@ -251,6 +251,10 @@ class CyberArkPVWAClient:
             return self._auth_privilege_cloud_interactive(id_host)
         return self._auth_privilege_cloud_service(id_host)
 
+    def _privilege_cloud_tenant_name(self) -> str:
+        """Return the Privilege Cloud tenant id used by StartAuthentication."""
+        return self.pvwa_host.split(".")[0]
+
     def _resolve_identity_host(self) -> Optional[str]:
         """Resolve the CyberArk Identity host for the configured tenant.
 
@@ -260,8 +264,25 @@ class CyberArkPVWAClient:
           - 'abc1234.id'       → abc1234.id.cyberark.cloud (already qualified)
           - 'https://...'      → extracted hostname used directly
           - 'tenant.my.idaptive.app' → tenant.my.idaptive.app (legacy Idaptive)
+
+        When no tenant override env var is set, the tenant subdomain is taken
+        from the PVWA hostname (e.g. ``metron.privilegecloud.cyberark.cloud``
+        → ``metron``) and resolved via platform discovery — same as
+        ``import --format=cyberark_portal``.
         """
-        id_tenant_raw = environ.get("KEEPER_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
+        id_tenant_raw = (
+            environ.get("KEEPER_CYBERARK_ID_TENANT")
+            or environ.get("_CYBERARK_ID_TENANT")
+        )
+        if not id_tenant_raw:
+            tenant_subdomain = self._privilege_cloud_tenant_name()
+            discovered = self._discover_identity_endpoint(tenant_subdomain)
+            if discovered:
+                logging.info("Platform discovery resolved tenant to %s", discovered)
+                return discovered
+            logging.info("Using CyberArk Identity URL: https://%s.cyberark.cloud", tenant_subdomain)
+            return f"{tenant_subdomain}.cyberark.cloud"
+
         id_tenant_raw = id_tenant_raw.strip()
         if id_tenant_raw.startswith("https://"):
             id_tenant_raw = id_tenant_raw[len("https://"):]
@@ -270,11 +291,8 @@ class CyberArkPVWAClient:
         id_tenant_raw = id_tenant_raw.rstrip("/")
 
         if "." in id_tenant_raw:
-           
             id_host = id_tenant_raw
-            # But for the OAuth2 URL we need *.cyberark.cloud domain
             if id_tenant_raw.endswith(".my.idaptive.app"):
-                # Legacy Idaptive — extract subdomain for cyberark.cloud OAuth2
                 id_host = id_tenant_raw.split(".")[0] + ".id.cyberark.cloud"
                 logging.info("Legacy Idaptive tenant detected, using %s for OAuth2", id_host)
             elif not id_tenant_raw.endswith(".cyberark.cloud"):
@@ -285,13 +303,11 @@ class CyberArkPVWAClient:
                 id_tenant += ".id"
             id_host = f"{id_tenant}.cyberark.cloud"
 
-        # Validate the base portion (before first dot)
         base_part = id_host.split(".")[0]
         if not re.match(r'^[a-zA-Z0-9]+$', base_part):
             print_formatted_text(HTML("<ansired>Invalid tenant ID format</ansired>"))
             return None
 
-        # Platform discovery — resolve tenant to correct identity endpoint
         discovered_host = self._discover_identity_endpoint(base_part)
         if discovered_host:
             id_host = discovered_host
@@ -300,29 +316,30 @@ class CyberArkPVWAClient:
 
     @staticmethod
     def _choose_cloud_auth_method() -> str:
-        """Return 'service' or 'interactive' for Privilege Cloud authentication.
-        """
-        method = (environ.get("KEEPER_CYBERARK_AUTH_METHOD") or "").strip().lower()
-        if method in ("interactive", "identity", "user", "mfa", "2fa", "up"):
+        """Return 'service' or 'interactive' for Privilege Cloud authentication."""
+        method = (
+            environ.get("KEEPER_CYBERARK_AUTH_METHOD")
+            or environ.get("_CYBERARK_AUTH_METHOD")
+            or ""
+        ).strip().lower()
+        if method in ("interactive", "identity", "user", "mfa", "2fa", "up", "portal"):
             return "interactive"
         if method in ("service", "service_account", "oauth", "oauth2", "client_credentials"):
             return "service"
-        print_formatted_text(HTML(
-            "\nCyberArk Privilege Cloud authentication method:\n"
-            "  <b>[1]</b> Service account (OAuth2 client credentials)\n"
-            "  <b>[2]</b> User login with MFA / 2FA (CyberArk Identity)"
-        ))
-        try:
-            choice = prompt("Select authentication method [1/2] (default 1): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return "service"
-        return "interactive" if choice == "2" else "service"
+        # Default to interactive Identity login (same as cyberark_portal).
+        return "interactive"
 
     def _auth_privilege_cloud_service(self, id_host: str) -> bool:
         """Authenticate to Privilege Cloud via OAuth2 service account (no MFA)."""
-        client_id = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk service user name: ")
-        client_secret = environ.get("KEEPER_CYBERARK_PASSWORD") or prompt(
-            "CyberArk service user password: ", is_password=True
+        client_id = (
+            environ.get("KEEPER_CYBERARK_USERNAME")
+            or environ.get("_CYBERARK_USERNAME")
+            or prompt("CyberArk service user name: ")
+        )
+        client_secret = (
+            environ.get("KEEPER_CYBERARK_PASSWORD")
+            or environ.get("_CYBERARK_PASSWORD")
+            or prompt("CyberArk service user password: ", is_password=True)
         )
         oauth2_url = f"https://{id_host}/oauth2/platformtoken"
         logging.info("Authenticating to Privilege Cloud via %s", oauth2_url)
@@ -365,11 +382,16 @@ class CyberArkPVWAClient:
         """Authenticate to Privilege Cloud as an interactive user with MFA / 2FA.
         """
         identity_base_url = f"https://{id_host}"
-        tenant_name = id_host.split(".")[0]
-        username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk username: ")
+        tenant_name = self._privilege_cloud_tenant_name()
+        username = (
+            environ.get("KEEPER_CYBERARK_USERNAME")
+            or environ.get("_CYBERARK_USERNAME")
+            or prompt("CyberArk User Portal username: ")
+        )
 
         headers = {"X-IDAP-NATIVE-CLIENT": "true"}
         start_payload = {"TenantId": tenant_name, "User": username, "Version": "1.0"}
+        logging.info("Using CyberArk Identity URL: %s", identity_base_url)
         identity_base_url, result = self._start_identity_authentication(
             identity_base_url, start_payload, headers,
         )
@@ -378,9 +400,9 @@ class CyberArkPVWAClient:
 
         if result.get("IdpRedirectUrl") or result.get("IdpRedirectShortUrl"):
             print_formatted_text(HTML(
-                "<ansired>This account signs in through SSO / an external identity provider</ansired>, "
-                "which the interactive importer does not support. Use a CyberArk service account "
-                "(authentication method <b>1</b>) instead."
+                "<ansired>This account signs in through SSO / an external identity provider</ansired>. "
+                "Use a direct CyberArk Identity account, or set "
+                "<i>_CYBERARK_AUTH_METHOD=service</i> for a service account."
             ))
             return False
 
@@ -391,7 +413,7 @@ class CyberArkPVWAClient:
             logging.debug("StartAuthentication result missing SessionId/Challenges")
             return False
 
-        password = environ.get("KEEPER_CYBERARK_PASSWORD")
+        password = environ.get("KEEPER_CYBERARK_PASSWORD") or environ.get("_CYBERARK_PASSWORD")
         advance_result = None
         for challenge in challenges:
             mechanisms = challenge.get("Mechanisms") or []
@@ -541,7 +563,7 @@ class CyberArkPVWAClient:
         # Text answer — password (UP) or a typed code (OTP / authenticator).
         if name == "UP" or answer_type == "text":
             if name == "UP":
-                answer = password or prompt("CyberArk password: ", is_password=True)
+                answer = password or prompt("CyberArk Identity Portal password: ", is_password=True)
             else:
                 answer = prompt(f"{prompt_label}: ")
             return _post(dict(base, Action="Answer", Answer=answer))
