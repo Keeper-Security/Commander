@@ -301,7 +301,12 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                         return
                     self.warnings.clear()
                 result = _nsf.update_record_v3(
-                    params=params, record_uid=record_uid, data=merged,
+                    params=params,
+                    record_uid=record_uid,
+                    title=kwargs.get('title'),
+                    record_type=record_type,
+                    fields=fields or None,
+                    notes=kwargs.get('notes'),
                 )
                 check_result(result, 'nsf-record-update')
             params.sync_data = True

@@ -220,7 +220,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         return rec, ps_field
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -236,7 +236,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         mock_update.assert_called_once()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -251,7 +251,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         self.assertEqual(ps_field.value[0]['connection'].get('ignoreCert'), False)
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -266,7 +266,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         self.assertNotIn('ignoreCert', ps_field.value[0]['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -281,7 +281,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         self.assertEqual(ps_field.value[0]['connection'].get('security'), 'nla')
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -296,7 +296,7 @@ class TestPamConnectionEditSecurityMutation(unittest.TestCase):
         self.assertNotIn('security', ps_field.value[0]['connection'])
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -339,7 +339,7 @@ class TestPamConnectionEditSecurityEarlyReturn(unittest.TestCase):
         return rec
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -356,7 +356,7 @@ class TestPamConnectionEditSecurityEarlyReturn(unittest.TestCase):
         mock_update.assert_called_once()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.record_management.update_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
