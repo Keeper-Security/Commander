@@ -294,15 +294,14 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 # send a stale revision (RS_OUT_OF_SYNC / "This object no longer exists").
                 nsf_records = getattr(params, 'nested_share_records', None)
                 if nsf_records and record_uid in nsf_records:
-                    # Direct assignment is intentional: classic response.records is
-                    # vault-authoritative for this UID after a classic update. NSF
-                    # _process_records uses max() because keeperDriveData can lag;
-                    # here the classic stream is the fresher source of truth.
+                    # Use max(): a deferred classic sync can lag behind a recent
+                    # NSF update that already bumped nested_share_records.revision.
                     nsf_rec = nsf_records[record_uid]
-                    nsf_rec['revision'] = record['revision']
+                    nsf_rec['revision'] = max(
+                        record['revision'],
+                        nsf_rec.get('revision') or 0,
+                    )
                     nsf_rec['version'] = record['version']
-                    # shared/client_modified_time follow the classic payload for the
-                    # same reason; NSF-only sharing state is refreshed from drive data.
                     nsf_rec['shared'] = record['shared']
                     nsf_rec['client_modified_time'] = record['client_modified_time']
 
@@ -919,6 +918,8 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
     to_delete.clear()
 
     logging.debug('Decrypting records')
+    # NSF reconstruct may leave classic encrypted entries with record_key_unencrypted
+    # set but data_unencrypted unset; this pass must run after NSF process (~L783).
     for record_uid, record in params.record_cache.items():
         record_key = record['record_key_unencrypted']
         if 'data_unencrypted' not in record:

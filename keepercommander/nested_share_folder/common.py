@@ -67,8 +67,12 @@ def get_record_revision(params, record_uid: str, default: int = 0) -> int:
         cache = getattr(params, attr, None) or {}
         if record_uid in cache:
             rev = cache[record_uid].get('revision')
-            if rev is not None:
-                revisions.append(rev)
+            if rev is None:
+                continue
+            try:
+                revisions.append(int(rev))
+            except (TypeError, ValueError):
+                continue
     return max(revisions) if revisions else default
 
 

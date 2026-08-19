@@ -4060,7 +4060,6 @@ class PAMRbiEditCommand(Command):
             if not traffic_encryption_key:
                 raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
                                 f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
-            params.sync_data = True
 
         # DAG manipulation options: config, rbi/connections, recording
         dirty = False
@@ -4234,7 +4233,6 @@ class PAMSplitCommand(Command):
                     record.fields.append(pam_settings)
 
                 update_pam_record(params, record, command='pam-split')
-                params.sync_data = True
 
                 print(f"{bcolors.WARNING}Record {record_uid} has no data to split and "
                     "was converted to the new format. Remember to manually add "
@@ -4290,7 +4288,6 @@ class PAMSplitCommand(Command):
             record.fields.append(pam_settings)
 
         update_pam_record(params, record, command='pam-split')
-        params.sync_data = True
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)

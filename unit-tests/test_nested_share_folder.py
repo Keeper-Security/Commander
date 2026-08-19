@@ -1645,6 +1645,68 @@ class TestNestedShareFolderRecordApi(TestCase):
         mock_sync.assert_not_called()
         self.assertEqual(mock_update.call_count, 1)
 
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    @patch('keepercommander.nested_share_folder.record_api._sync_down_for_nsf_update')
+    def test_update_record_v3_caller_data_only_no_retry_on_out_of_sync(
+            self, mock_sync, mock_update):
+        """Full data payload without overrides must not retry (avoid clobbering)."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 4,
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+            }},
+        )
+        payload = {'type': 'login', 'title': 'WholeRecord', 'fields': []}
+        stale = Mock()
+        stale.status = record_pb2.RS_OUT_OF_SYNC
+        stale.message = 'This object no longer exists.'
+        stale_rs = Mock()
+        stale_rs.records = [stale]
+        stale_rs.revision = 0
+        mock_update.return_value = stale_rs
+
+        result = update_record_v3(params, ruid, data=payload)
+        self.assertFalse(result['success'])
+        mock_sync.assert_called_once()
+        self.assertEqual(mock_update.call_count, 1)
+
+    @patch('keepercommander.nested_share_folder.record_api.record_update_v3')
+    @patch('keepercommander.nested_share_folder.record_api._sync_down_for_nsf_update')
+    def test_update_record_v3_retry_still_out_of_sync_returns_failure(
+            self, mock_sync, mock_update):
+        """A second RS_OUT_OF_SYNC after retry must not loop."""
+        from keepercommander.nested_share_folder.record_api import update_record_v3
+        from keepercommander.proto import record_pb2
+
+        ruid, robj = _make_record()
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {
+                'revision': 4,
+                'record_key_unencrypted': robj['record_key_unencrypted'],
+                'data_unencrypted': json.dumps({
+                    'type': 'login', 'title': 'T', 'fields': [],
+                }).encode('utf-8'),
+            }},
+        )
+        stale = Mock()
+        stale.status = record_pb2.RS_OUT_OF_SYNC
+        stale.message = 'still stale'
+        stale_rs = Mock()
+        stale_rs.records = [stale]
+        stale_rs.revision = 0
+        mock_update.return_value = stale_rs
+
+        result = update_record_v3(params, ruid, title='Updated')
+        self.assertFalse(result['success'])
+        mock_sync.assert_called_once()
+        self.assertEqual(mock_update.call_count, 2)
+
     def test_process_records_does_not_downgrade_revision(self):
         from keepercommander.nested_share_folder.sync import _process_records
         from types import SimpleNamespace

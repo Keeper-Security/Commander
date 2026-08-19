@@ -1165,6 +1165,8 @@ def _reconstruct_nested_share_folder_entities(params):
             # fresh login, and this branch is taken whenever classic sync returns
             # the record (e.g. after PAM edits).
             _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj)
+            # Leave classic encrypted payload in place; sync_down decrypts it in a
+            # later pass (after nested_share_folder_sync.process at ~L783).
             continue
 
         record_entry = {
