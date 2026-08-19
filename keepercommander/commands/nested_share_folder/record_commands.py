@@ -54,6 +54,7 @@ def _parse_field_specs(raw_fields, cmd_name):
 
 
 def _apply_password_policy(editor, params, source, force):
+    # Keep parity with record-update: source can be TypedRecord (update) or dict (add).
     pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
     for failure in pw_failures:
         editor.on_warning(failure)

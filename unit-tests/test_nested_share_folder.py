@@ -620,6 +620,45 @@ class TestNestedShareFolderRecordCommands(TestCase):
         cmd.execute(params, record_uids=[ruid], fields=['password=abc'], force=False)
         mock_update.assert_not_called()
 
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
+    @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
+    def test_update_record_gen_password_uses_password_policy(self, mock_perm, mock_update):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
+        ruid, robj = _make_record()
+        params = _make_params(
+            nested_share_records={ruid: robj},
+            record_cache={ruid: {'revision': 1, 'data_unencrypted': json.dumps({
+                'type': 'login', 'title': 'Old',
+                'fields': [{'type': 'password', 'value': ['ExistingPass123']}],
+            })}},
+            enforcements={
+                'jsons': [{
+                    'key': 'generated_password_complexity',
+                    'value': json.dumps([{
+                        'length': 16,
+                        'lower-use': True, 'lower-min': 2,
+                        'upper-use': True, 'upper-min': 2,
+                        'digit-use': True, 'digit-min': 2,
+                        'special-use': True, 'special-min': 1,
+                        'special': '!@#$',
+                    }]),
+                }],
+            },
+        )
+        self._stub_update(mock_update, ruid)
+        cmd = NestedShareRecordUpdateCommand()
+        cmd.execute(params, record_uids=[ruid], fields=['password=$GEN'], force=True)
+        data = self._updated_data(mock_update)
+        password = next(
+            v[0] for f in data['fields']
+            if f.get('type') == 'password' for v in [f.get('value', [])] if v
+        )
+        self.assertGreaterEqual(len(password), 16)
+        self.assertGreaterEqual(sum(1 for c in password if c.islower()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c.isupper()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c.isdigit()), 2)
+        self.assertGreaterEqual(sum(1 for c in password if c in '!@#$'), 1)
+
     def _nsf_update_params(self, data):
         ruid, robj = _make_record()
         payload = json.dumps(data)
