@@ -295,11 +295,16 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     # refreshed cache and re-apply typed field matching once.
                     if (not result.get('success')
                             and result.get('status') == 'RS_OUT_OF_SYNC'):
+                        self.warnings.clear()
+                        self.errors.clear()
                         record = self._apply_update(
                             self._typed_record_from_uid(params, record_uid),
                             kwargs.get('title'), kwargs.get('notes'),
                             record_type, rt_fields, record_fields)
                         if self.abort_if_errors():
+                            continue
+                        _apply_password_policy(self, params, record, force)
+                        if _should_stop_after_warnings(self, force):
                             continue
                         result = self._send_typed_update(params, record_uid, record)
                     check_result(result, 'nsf-record-update')
