@@ -149,7 +149,8 @@ class GChatConstants:
     FIELD_APPROVALS_SPACE_ID = 'chat_approvals_space_id'
     FIELD_COMMAND_REQUEST_RECORD_ID = 'chat_command_request_record_id'
     FIELD_COMMAND_REQUEST_FOLDER_ID = 'chat_command_request_folder_id'
-    FIELD_COMMAND_ONE_TIME_SHARE_ID = 'chat_command_one_time_share_id'
+    FIELD_COMMAND_EXTERNAL_SHARE_ID = 'chat_command_external_share_id'
+    FIELD_COMMAND_CREATE_SECRET_ID = 'chat_command_create_secret_id'
     FIELD_PEDM_ENABLED = 'pedm_enabled'
     FIELD_PEDM_POLLING_INTERVAL = 'pedm_polling_interval'
     FIELD_DEVICE_APPROVAL_ENABLED = 'device_approval_enabled'
@@ -157,7 +158,8 @@ class GChatConstants:
 
     DEFAULT_COMMAND_REQUEST_RECORD_ID = '1'
     DEFAULT_COMMAND_REQUEST_FOLDER_ID = '2'
-    DEFAULT_COMMAND_ONE_TIME_SHARE_ID = '3'
+    DEFAULT_COMMAND_EXTERNAL_SHARE_ID = '3'
+    DEFAULT_COMMAND_CREATE_SECRET_ID = '4'
 
     SPACE_ID_PREFIX = 'spaces/'
     SERVICE_ACCOUNT_TYPE = 'service_account'
@@ -178,7 +180,8 @@ class GChatConfig:
     chat_approvals_space_id: str
     chat_command_request_record_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
     chat_command_request_folder_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
-    chat_command_one_time_share_id: str = GChatConstants.DEFAULT_COMMAND_ONE_TIME_SHARE_ID
+    chat_command_external_share_id: str = GChatConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID
+    chat_command_create_secret_id: str = GChatConstants.DEFAULT_COMMAND_CREATE_SECRET_ID
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False

@@ -881,6 +881,8 @@ class RecordAddCommand(Command, RecordEditMixin):
 
                 email_config_name = kwargs.get('email_config')
                 config_uid = find_email_config_record(params, email_config_name)
+                if not config_uid:
+                    raise CommandError('record-add', f'Email configuration "{email_config_name}" not found')
                 email_config_obj = load_email_config_from_record(params, config_uid)
 
                 # Check if required dependencies are installed for this provider
