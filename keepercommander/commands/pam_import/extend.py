@@ -1300,31 +1300,6 @@ class PAMProjectExtendCommand(Command):
             params.environment_variables[LAST_SHARED_FOLDER_UID] = folder_uid
         return folder_uid
 
-    def find_folders(self, params, parent_uid:str, folder:str, is_shared_folder:bool) -> List[BaseFolderNode]:
-        result: List[BaseFolderNode] = []
-        folders = params.folder_cache if params and params.folder_cache else {}
-        if not isinstance(folders, dict):
-            return result
-
-        puid = parent_uid if parent_uid else None # root folder parent uid is set to None
-        matches = {k: v for k, v in folders.items() if v.parent_uid == puid and v.name == folder}
-        result = [v for k, v in matches.items() if
-                  (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
-                  (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
-        if not is_shared_folder:
-            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
-                nsf_parent = nsf.get('parent_uid') or None
-                if nsf_parent == puid and nsf.get('name') == folder:
-                    result.append(SimpleNamespace(
-                        uid=uid,
-                        name=nsf.get('name'),
-                        parent_uid=nsf_parent,
-                        type=BaseFolderNode.UserFolderType,
-                        UserFolderType=BaseFolderNode.UserFolderType,
-                        SharedFolderType=BaseFolderNode.SharedFolderType,
-                    ))
-        return result
-
     def create_ksm_app(self, params, app_name) -> str:
         app_record_data = {
             "title": app_name,

@@ -49,6 +49,7 @@ from .base import (
 )
 from ..base import Command
 from ..ksm import KSMCommand
+from ..nested_share_folder.helpers import ROOT_FOLDER_UID as NSF_ROOT_FOLDER_UID
 from ..pam import gateway_helper
 from ..pam.config_helper import pam_configurations_get_all
 from ..pam.vault_target import (
@@ -1124,15 +1125,42 @@ class PAMProjectImportCommand(Command):
                   (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
         if not is_shared_folder:
-            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
-                nsf_parent = nsf.get('parent_uid') or None
-                if nsf_parent == puid and nsf.get('name') == folder:
+            seen = {v.uid for v in result}
+            nsf_folders = getattr(params, 'nested_share_folders', None) or {}
+            for uid, nsf in nsf_folders.items():
+                if uid in seen or nsf.get('name') != folder:
+                    continue
+                nsf_parent = self._nsf_effective_parent_uid(nsf, nsf_folders, folders)
+                if nsf_parent == puid:
                     nsf_folder = NestedShareFolderNode()
                     nsf_folder.uid = uid
                     nsf_folder.name = nsf.get('name')
                     nsf_folder.parent_uid = nsf_parent
                     result.append(nsf_folder)
+                    seen.add(uid)
         return result
+
+    @staticmethod
+    def _nsf_effective_parent_uid(nsf: dict, nsf_folders: dict, folder_cache: dict) -> Optional[str]:
+        """Normalize an NSF folder's parent to ``None`` when the folder sits at the root.
+
+        A root-level NSF can be reported three ways: ``None`` (no ``parentUid`` was
+        ever sent - both Commander and the Web Vault omit it on create), the server's
+        drive-root sentinel UID, or - after ``normalize_parent_uid`` - the string
+        ``'root'``. ``sync_down.prepare_folder_tree`` reconciles this on the
+        ``folder_cache`` node but leaves ``params.nested_share_folders`` untouched, so
+        matching on the raw value there misses roots and duplicates them instead.
+        Mirrors the same predicate used by ``tree``/``ls`` in commands/folder.py.
+        """
+        nsf_parent = nsf.get('parent_uid') or None
+        if not nsf_parent:
+            return None
+        if nsf_parent in (NSF_ROOT_FOLDER_UID, 'root'):
+            return None
+        if nsf_parent not in nsf_folders and nsf_parent not in folder_cache:
+            # Parent resolves to no known folder, so it cannot be a real parent.
+            return None
+        return nsf_parent
 
     def create_ksm_app(self, params, app_name) -> str:
         app_record_data = {

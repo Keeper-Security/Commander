@@ -6,8 +6,9 @@ import keepercommander.commands.record  # noqa: F401
 from keepercommander.commands.pam.vault_target import (
     execute_record_add_in_folder, execute_record_v3_add_in_folder, grant_pam_folder_permissions, is_nested_share_folder)
 from keepercommander.commands.pam_import.base import PamUserObject
+from keepercommander.commands.nested_share_folder.helpers import ROOT_FOLDER_UID as NSF_ROOT_FOLDER_UID
 from keepercommander.commands.pam_import.edit import PAMProjectImportCommand
-from keepercommander.subfolder import BaseFolderNode
+from keepercommander.subfolder import BaseFolderNode, NestedShareFolderNode
 
 
 def _params():
@@ -95,6 +96,140 @@ def test_import_record_objects_use_nsf_aware_record_add_helper():
     add_record.assert_called_once()
     assert add_record.call_args.args[2] == 'root_nsf'
     assert add_record.call_args.kwargs == {'command': 'pam-project-import'}
+
+
+ROOT_NAME = PAMProjectImportCommand.PAM_ROOT_FOLDER_NAME
+
+
+def _synced_root_params(root_parent_uid):
+    """Vault state after sync: nested_share_folders keeps the raw parent from the server,
+    while prepare_folder_tree clears it on the folder_cache node for root-level NSF."""
+    params = _params()
+    params.nested_share_folders = {
+        'wv_root': {'name': ROOT_NAME, 'parent_uid': root_parent_uid},
+    }
+    node = NestedShareFolderNode()
+    node.uid = 'wv_root'
+    node.name = ROOT_NAME
+    node.parent_uid = None      # prepare_folder_tree normalized it
+    node.subfolders = []
+    params.folder_cache = {'wv_root': node}
+    params.subfolder_cache = {
+        'wv_root': {'folder_uid': 'wv_root', 'type': 'user_folder', 'name': ROOT_NAME,
+                    'parent_uid': root_parent_uid, 'source': 'nested_share_folder'},
+    }
+    return params
+
+
+def test_find_folders_matches_root_nsf_reported_with_drive_root_sentinel():
+    # The server reports root-level NSF folders with the drive-root sentinel UID, which
+    # is not a vault folder. Such a root must still be found - otherwise --nsf creates a
+    # duplicate "PAM Environments" on every import.
+    params = _synced_root_params(NSF_ROOT_FOLDER_UID)
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+    assert found[0].parent_uid is None
+
+
+def test_find_folders_matches_root_nsf_when_sentinel_is_a_listed_folder():
+    # Defensive: the sentinel is recognized by value, so a root is still matched even if
+    # the drive root ever shows up as a real entry in the NSF caches.
+    params = _synced_root_params(NSF_ROOT_FOLDER_UID)
+    params.nested_share_folders[NSF_ROOT_FOLDER_UID] = {'name': 'Drive Root', 'parent_uid': None}
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+
+
+def test_find_folders_matches_root_nsf_normalized_to_root_string():
+    params = _synced_root_params('root')
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+
+
+def test_find_folders_matches_root_nsf_whose_synced_parent_is_not_a_folder():
+    # Any parent that resolves to no known folder is also treated as root level.
+    params = _synced_root_params('SomeUnknownParentUid__')
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+
+
+def test_find_folders_matches_root_nsf_created_by_commander():
+    # Commander omits parentUid on create, so the same root can also come back as None.
+    params = _synced_root_params(None)
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+
+
+def test_find_folders_returns_both_root_shapes_first_wins():
+    params = _synced_root_params(NSF_ROOT_FOLDER_UID)
+    params.nested_share_folders['kc_root'] = {'name': ROOT_NAME, 'parent_uid': None}
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root', 'kc_root']
+
+
+def test_find_folders_does_not_promote_a_real_nested_child_to_root():
+    params = _synced_root_params(None)
+    params.nested_share_folders['child'] = {'name': 'Project', 'parent_uid': 'wv_root'}
+
+    assert PAMProjectImportCommand().find_folders(params, '', 'Project', False) == []
+    child = PAMProjectImportCommand().find_folders(params, 'wv_root', 'Project', False)
+    assert [f.uid for f in child] == ['child']
+
+
+def test_find_folders_does_not_duplicate_a_uid_present_in_both_caches():
+    params = _synced_root_params(NSF_ROOT_FOLDER_UID)
+    # A user_folder node with the same UID must not yield two results.
+    plain = BaseFolderNode(BaseFolderNode.UserFolderType)
+    plain.uid = 'wv_root'
+    plain.name = ROOT_NAME
+    plain.parent_uid = None
+    plain.subfolders = []
+    params.folder_cache['wv_root'] = plain
+
+    found = PAMProjectImportCommand().find_folders(params, '', ROOT_NAME, False)
+
+    assert [f.uid for f in found] == ['wv_root']
+
+
+def test_process_folders_reuses_synced_nsf_root_instead_of_creating_duplicate():
+    params = _synced_root_params(NSF_ROOT_FOLDER_UID)
+    project = {
+        'options': {'project_name': 'BatchSmokeS', 'dry_run': False, 'use_nsf': True},
+        'data': {},
+        'folders': {},
+    }
+    created = []
+
+    def create_folder(_params, folder_name, parent_uid=None, permissions=None, use_nsf=False):
+        uid = f'new_{len(created)}'
+        created.append((folder_name, parent_uid))
+        _params.nested_share_folders[uid] = {'name': folder_name, 'parent_uid': parent_uid}
+        return uid
+
+    with patch.object(PAMProjectImportCommand, 'create_subfolder', side_effect=create_folder), \
+            patch.object(PAMProjectImportCommand, 'get_folder_permissions', return_value=({}, [])), \
+            patch.object(PAMProjectImportCommand, 'verify_users_and_teams'), \
+            patch.object(PAMProjectImportCommand, 'add_folder_permissions'), \
+            patch('keepercommander.commands.pam_import.nsf_helpers.api.sync_down'):
+        res = PAMProjectImportCommand().process_folders(params, project)
+
+    assert res['root_folder_uid'] == 'wv_root'
+    # Only the project folder and its two leaves are created - no second PAM root.
+    assert [name for name, _ in created] == [
+        'BatchSmokeS', 'BatchSmokeS - Resources', 'BatchSmokeS - Users']
+    assert ROOT_NAME not in [name for name, _ in created]
 
 
 def test_process_folders_uses_existing_nsf_root_and_creates_nsf_children():
