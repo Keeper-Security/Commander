@@ -28,6 +28,16 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
     parser.add_argument('--by-machine', '-m', required=False, dest='do_by_machine', action='store_true',
                         help='List by machine')
 
+    TITLES = {
+        ServiceEnum.service: "Service",
+        ServiceEnum.task: "Scheduled Task",
+        ServiceEnum.iis_pool: "IIS Pool",
+        ServiceEnum.com: "COM (Classic)",
+        ServiceEnum.dcom: "DCOM",
+        ServiceEnum.com_plus: "COM Plus",
+        ServiceEnum.scom: "SCOM",
+    }
+
     def get_parser(self):
         return PAMActionServiceListCommand.parser
 
@@ -76,13 +86,7 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                     items = []
                     if acl.service_names is not None or acl.service_names != "":
                         for service_name in acl.get_service_names(user_record.record_key):
-                            text = ""
-                            if service_name.type == ServiceEnum.service:
-                                text = "Service"
-                            elif service_name.type == ServiceEnum.task:
-                                text = "Scheduled Task"
-                            elif service_name.type == ServiceEnum.iis_pool:
-                                text = "IIS Pool"
+                            text = PAMActionServiceListCommand.TITLES.get(service_name.type)
                             for item in service_name.items:
                                 text += f": {item.name}"
                                 if "Unknown" in item.name:
@@ -159,13 +163,7 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                     items = []
                     if acl.service_names is not None or acl.service_names != "":
                         for service_name in acl.get_service_names(user_record.record_key):
-                            text = ""
-                            if service_name.type == ServiceEnum.service:
-                                text = "Service"
-                            elif service_name.type == ServiceEnum.task:
-                                text = "Scheduled Task"
-                            elif service_name.type == ServiceEnum.iis_pool:
-                                text = "IIS Pool"
+                            text = PAMActionServiceListCommand.TITLES.get(service_name.type)
                             for item in service_name.items:
                                 text += f": {item.name}"
                                 if "Unknown" in item.name:
