@@ -31,8 +31,17 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the User record')
 
     parser.add_argument('--type', '-t', required=True, dest='service_type', action='store',
-                        choices=["service", "task", "iis_pool", "all"],
-                        help='Type of service. "all" will clear all')
+                        choices=[
+                            "all",
+                            "service",
+                            "task",
+                            "iis_pool",
+                            "com",
+                            "dcom",
+                            "com_plus",
+                            "scom"
+                        ],
+                        help='Type of service. "all" will clear all.')
     parser.add_argument('--name', '-n', required=False, dest='name', action='store',
                         help='Name label for reporting. Exclude will remove all service types.')
 

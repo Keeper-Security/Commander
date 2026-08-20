@@ -5,7 +5,7 @@ from ...display import bcolors
 from . import load_pam_record
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.types import UserAcl, DiscoveryObject
+from ...discovery_common.types import UserAcl, DiscoveryObject, ServiceEnum
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...keeper_dag import EdgeType
 import time
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ...vault import TypedRecord
     from ...params import KeeperParams
+    from  ...discovery_common.types import UserAclServiceNames, UserAclServiceNamesItem
 
 
 class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
@@ -28,8 +29,18 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
         PAM_DIRECTORY: "PAM Directory",
     }
 
+    TITLES = {
+        ServiceEnum.service: "Service",
+        ServiceEnum.task: "Scheduled Task",
+        ServiceEnum.iis_pool: "IIS Pool",
+        ServiceEnum.com: "COM (Classic)",
+        ServiceEnum.dcom: "DCOM",
+        ServiceEnum.com_plus: "COM Plus",
+        ServiceEnum.scom: "SCOM",
+    }
+
     # The record to base everything on.
-    parser.add_argument('--record-uid', '-i', required=True, dest='record_uid', action='store',
+    parser.add_argument('--record-uid', '-i', '-r', required=True, dest='record_uid', action='store',
                         help='Keeper PAM record UID.')
 
     def get_parser(self):
@@ -298,7 +309,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
                             # Get the resource record
                             machine_record = load_pam_record(params,
-                                                                     machine_vertex.uid)  # type: TypedRecord | None
+                                                             machine_vertex.uid)  # type: TypedRecord | None
 
                             # If the resource record does not exist.
                             if machine_record is None:
@@ -319,8 +330,18 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
                             # Record exists; just use information from the record.
                             else:
-                                machines.append(f"  * {machine_record.title}, {machine_record.record_uid}, "
-                                                f"vertex {machine_vertex.uid}")
+                                text = f"  * {machine_record.title}, {machine_record.record_uid}, "\
+                                       f"vertex {machine_vertex.uid}"
+                                if acl.service_names is not None:
+                                    for service_name in acl.service_names:  # type: UserAclServiceNames
+                                        if len(service_name.items) > 0:
+                                            text += f"\n       + {PAMDebugInfoCommand.TITLES.get(service_name.type)}\n"
+                                            for service_item in service_name.items:
+                                                text += f"\n          . {service_item.name}"
+                                                if not service_item.via_discovery:
+                                                    text += f" (manual entry)"
+                                                text += "\n"
+                                machines.append(text)
 
                     if len(machines) > 0:
                         print(f"{bcolors.HEADER}Controls Services on Machine{bcolors.ENDC}")
@@ -465,6 +486,35 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                                 print(f"    * {iis_pool.name} = {iis_pool.user}")
                         else:
                             print("    Machines has no IIS Pools that are using non-builtin users.")
+
+                        print(f"  {self._b('COM (classic)')} (Non Builtin Users)")
+                        if len(content.item.facts.coms) > 0:
+                            for com in content.item.facts.coms:
+                                print(f"    * {com.name} = {com.user}")
+                        else:
+                            print("    Machines has no COM (classic) applications that are using non-builtin users.")
+
+                        print(f"  {self._b('DCOM')} (Non Builtin Users)")
+                        if len(content.item.facts.dcoms) > 0:
+                            for dcom in content.item.facts.dcoms:
+                                print(f"    * {dcom.name} = {dcom.user}")
+                        else:
+                            print("    Machines has no DCOM applications that are using non-builtin users.")
+
+                        print(f"  {self._b('COM Plus')} (Non Builtin Users)")
+                        if len(content.item.facts.com_pluses) > 0:
+                            for com in content.item.facts.com_pluses:
+                                print(f"    * {com.name} = {com.user}")
+                        else:
+                            print("    Machines has no COM Plus applications that are using non-builtin users.")
+
+                        print(f"  {self._b('SCOM')} (Non Builtin Users)")
+                        if len(content.item.facts.scoms) > 0:
+                            for scom in content.item.facts.scoms:
+                                print(f"    * {scom.name} = {scom.user}")
+                        else:
+                            print("    Machines has no SCOM applications that are using non-builtin users.")
+
                     else:
                         print(f"{bcolors.FAIL}    Machine facts are not set. Discover inside may not have been "
                               f"performed.{bcolors.ENDC}")
