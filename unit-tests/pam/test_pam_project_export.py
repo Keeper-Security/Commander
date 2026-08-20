@@ -20,7 +20,7 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import keepercommander.commands.record  # noqa: F401
 
@@ -113,8 +113,6 @@ _DEFAULT_ALLOWED = {
 # ── tests ──────────────────────────────────────────────────────────────────
 
 
-from unittest.mock import MagicMock
-
 class TestPAMProjectExportCommand(unittest.TestCase):
 
     def setUp(self):
@@ -127,8 +125,8 @@ class TestPAMProjectExportCommand(unittest.TestCase):
         """Run execute() with load_pam_record mocked."""
         with patch("keepercommander.commands.pam_import.export.load_pam_record",
                    side_effect=_fake_load):
-            with patch.object(self.cmd, "_get_allowed_settings",
-                              return_value=dict(_DEFAULT_ALLOWED)):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
                 kwargs = {"project_uid": project_uid}
                 if output:
                     kwargs["output"] = output
@@ -331,7 +329,6 @@ class TestKCMImportRoundTrip(unittest.TestCase):
 
     def setUp(self):
         from keepercommander.commands.pam_import.export import PAMProjectExportCommand
-        from unittest.mock import MagicMock
         self.cmd = PAMProjectExportCommand()
         self.records = self._make_kcm_records()
         self.params = MagicMock()
@@ -342,8 +339,8 @@ class TestKCMImportRoundTrip(unittest.TestCase):
             return self.records.get(uid)
         with patch("keepercommander.commands.pam_import.export.load_pam_record",
                    side_effect=_load):
-            with patch.object(self.cmd, "_get_allowed_settings",
-                              return_value=dict(_DEFAULT_ALLOWED)):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
                 return self.cmd.execute(self.params, project_uid=self.KCM_CFG)
 
     def test_title_based_user_link_resolved(self):
@@ -452,8 +449,8 @@ class TestPAMProjectExportNSF(unittest.TestCase):
         }
 
     def _execute(self):
-        with patch.object(self.cmd, "_get_allowed_settings",
-                          return_value=dict(_DEFAULT_ALLOWED)):
+        with patch.object(self.cmd, "_load_dag_context",
+                          return_value=(dict(_DEFAULT_ALLOWED), [])):
             return self.cmd.execute(self.params, project_uid=self.NSF_CFG)
 
     def test_nsf_config_export_succeeds(self):
@@ -471,6 +468,254 @@ class TestPAMProjectExportNSF(unittest.TestCase):
         self.assertEqual(res["users"][0]["uid"], self.NSF_USER)
         self.assertEqual(len(parsed["pam_data"]["users"]), 1)
         self.assertEqual(parsed["pam_data"]["users"][0]["login"], "root")
+
+
+class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
+    """Modern projects leave resourceRef empty; export must walk folderUid."""
+
+    CFG = "fold-cfg-001"
+    MACHINE = "fold-res-machine"
+    USER = "fold-usr-admin"
+    ORPHAN_USER = "fold-usr-orphan"
+    PROJECT_FOLDER = "fold-project"
+    RES_FOLDER = "fold-resources"
+    USR_FOLDER = "fold-users"
+
+    def setUp(self):
+        from keepercommander.commands.pam_import.export import PAMProjectExportCommand
+        from types import SimpleNamespace
+
+        self.cmd = PAMProjectExportCommand()
+        self.params = MagicMock()
+
+        # Config with empty resourceRef (modern import layout)
+        cfg = vault.TypedRecord(version=6)
+        cfg.type_name = "pamNetworkConfiguration"
+        cfg.title = "Folder Project"
+        cfg.record_uid = self.CFG
+        cfg.fields.append(_make_typed_field("pamResources", [{
+            "controllerUid": "gw-1",
+            "folderUid": self.USR_FOLDER,
+            "resourceRef": [],
+        }]))
+
+        machine = vault.TypedRecord(version=3)
+        machine.type_name = "pamMachine"
+        machine.title = "App Server"
+        machine.record_uid = self.MACHINE
+        machine.fields.append(_make_typed_field("pamHostname", [{
+            "hostName": "10.0.0.5",
+            "port": "22",
+        }]))
+        machine.fields.append(_make_typed_field("pamSettings", [{
+            "connection": {
+                "userRecords": [self.USER],
+                "protocol": "ssh",
+                "port": "22",
+            },
+        }]))
+        machine.fields.append(_make_typed_field("text", ["Linux"], label="operatingSystem"))
+
+        user = _make_user_record(self.USER, "Admin", "root")
+        user.fields.append(_make_typed_field("password", ["s3cret"]))
+
+        orphan = _make_user_record(self.ORPHAN_USER, "Orphan User", "orphan")
+
+        self.records = {
+            self.CFG: cfg,
+            self.MACHINE: machine,
+            self.USER: user,
+            self.ORPHAN_USER: orphan,
+        }
+        self.params.record_cache = {uid: {} for uid in self.records}
+        self.params.nested_share_records = {}
+        self.params.nested_share_record_data = {}
+        self.params.nested_share_folders = {}
+        self.params.shared_folder_cache = {
+            self.RES_FOLDER: {
+                "default_manage_users": True,
+                "default_manage_records": True,
+                "default_can_edit": True,
+                "default_can_share": False,
+                "users": [{
+                    "username": "admin@example.com",
+                    "manage_users": True,
+                    "manage_records": True,
+                }],
+                "teams": [{
+                    "name": "Ops Team",
+                    "team_uid": "team-uid-1",
+                    "manage_users": False,
+                    "manage_records": True,
+                }],
+            },
+            self.USR_FOLDER: {
+                "default_manage_users": False,
+                "default_manage_records": True,
+                "default_can_edit": True,
+                "default_can_share": True,
+                "users": [],
+                "teams": [],
+            },
+        }
+        self.params.subfolder_record_cache = {
+            self.RES_FOLDER: {self.MACHINE},
+            self.USR_FOLDER: {self.USER, self.ORPHAN_USER, self.CFG},
+        }
+        self.params.nested_share_folder_records = {}
+        self.params.folder_cache = {
+            self.PROJECT_FOLDER: SimpleNamespace(
+                uid=self.PROJECT_FOLDER, name="Folder Project",
+                parent_uid="", subfolders=[self.RES_FOLDER, self.USR_FOLDER],
+            ),
+            self.RES_FOLDER: SimpleNamespace(
+                uid=self.RES_FOLDER, name="Folder Project - Resources",
+                parent_uid=self.PROJECT_FOLDER, subfolders=[],
+            ),
+            self.USR_FOLDER: SimpleNamespace(
+                uid=self.USR_FOLDER, name="Folder Project - Users",
+                parent_uid=self.PROJECT_FOLDER, subfolders=[],
+            ),
+        }
+
+    def _execute(self):
+        def _load(_p, uid):
+            return self.records.get(uid)
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=_load):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
+                return self.cmd.execute(self.params, project_uid=self.CFG)
+
+    def test_empty_resource_ref_discovers_folder_resources(self):
+        parsed = json.loads(self._execute())
+        self.assertEqual(len(parsed["pam_data"]["resources"]), 1)
+        res = parsed["pam_data"]["resources"][0]
+        self.assertEqual(res["uid"], self.MACHINE)
+        self.assertEqual(res["host"], "10.0.0.5")
+        self.assertEqual(res["port"], "22")
+        self.assertEqual(res["operating_system"], "Linux")
+
+    def test_folder_users_exported_including_orphan(self):
+        parsed = json.loads(self._execute())
+        logins = {u["login"] for u in parsed["pam_data"]["users"]}
+        self.assertEqual(logins, {"root", "orphan"})
+        root = next(u for u in parsed["pam_data"]["users"] if u["login"] == "root")
+        self.assertEqual(root.get("password"), "s3cret")
+
+    def test_shared_folder_permissions_exported(self):
+        parsed = json.loads(self._execute())
+        sfr = parsed["shared_folder_resources"]
+        self.assertTrue(sfr.get("manage_users"))
+        self.assertTrue(sfr.get("manage_records"))
+        self.assertFalse(sfr.get("can_share"))
+        names = {p.get("name") for p in sfr.get("permissions") or []}
+        self.assertIn("admin@example.com", names)
+        self.assertIn("Ops Team", names)
+
+        sfu = parsed["shared_folder_users"]
+        self.assertFalse(sfu.get("manage_users"))
+        self.assertTrue(sfu.get("can_share"))
+
+    def test_does_not_scan_sibling_projects_under_pam_root(self):
+        """Sibling projects under PAM Environments must not be exported."""
+        from types import SimpleNamespace
+
+        pam_root = "fold-pam-root"
+        sibling_project = "fold-sibling-project"
+        sibling_res = "fold-sibling-resources"
+        sibling_machine = "fold-sibling-machine"
+
+        other = vault.TypedRecord(version=3)
+        other.type_name = "pamMachine"
+        other.title = "Other Project Machine"
+        other.record_uid = sibling_machine
+        other.fields.append(_make_typed_field("pamSettings", [{"connection": {}}]))
+        self.records[sibling_machine] = other
+        self.params.record_cache[sibling_machine] = {}
+        self.params.subfolder_record_cache[sibling_res] = {sibling_machine}
+
+        self.params.folder_cache[self.PROJECT_FOLDER].parent_uid = pam_root
+        self.params.folder_cache[pam_root] = SimpleNamespace(
+            uid=pam_root, name="PAM Environments",
+            parent_uid="", subfolders=[self.PROJECT_FOLDER, sibling_project],
+        )
+        self.params.folder_cache[sibling_project] = SimpleNamespace(
+            uid=sibling_project, name="Other Project",
+            parent_uid=pam_root, subfolders=[sibling_res],
+        )
+        self.params.folder_cache[sibling_res] = SimpleNamespace(
+            uid=sibling_res, name="Other Project - Resources",
+            parent_uid=sibling_project, subfolders=[],
+        )
+
+        parsed = json.loads(self._execute())
+        uids = {r["uid"] for r in parsed["pam_data"]["resources"]}
+        self.assertEqual(uids, {self.MACHINE})
+        self.assertNotIn(sibling_machine, uids)
+
+    def test_nested_safe_mode_resources_discovered(self):
+        """Safe-mode: Resources/Users nested under per-safe folders."""
+        from types import SimpleNamespace
+
+        config_folder = "fold-config"
+        safe_folder = "fold-safe-a"
+        safe_res = "fold-safe-a-resources"
+        safe_usr = "fold-safe-a-users"
+        safe_machine = "fold-safe-machine"
+        safe_user = "fold-safe-user"
+
+        cfg = self.records[self.CFG]
+        pam = cfg.get_typed_field("pamResources").value[0]
+        pam["folderUid"] = config_folder
+
+        machine = vault.TypedRecord(version=3)
+        machine.type_name = "pamMachine"
+        machine.title = "Safe Machine"
+        machine.record_uid = safe_machine
+        machine.fields.append(_make_typed_field("pamHostname", [{"hostName": "1.2.3.4", "port": "22"}]))
+        machine.fields.append(_make_typed_field("pamSettings", [{
+            "connection": {"userRecords": [safe_user], "protocol": "ssh"},
+        }]))
+        user = _make_user_record(safe_user, "Safe Admin", "safeadmin")
+
+        self.records[safe_machine] = machine
+        self.records[safe_user] = user
+        self.params.record_cache[safe_machine] = {}
+        self.params.record_cache[safe_user] = {}
+        self.params.subfolder_record_cache = {
+            config_folder: {self.CFG},
+            safe_res: {safe_machine},
+            safe_usr: {safe_user},
+        }
+        self.params.folder_cache = {
+            self.PROJECT_FOLDER: SimpleNamespace(
+                uid=self.PROJECT_FOLDER, name="Folder Project",
+                parent_uid="", subfolders=[config_folder, safe_folder],
+            ),
+            config_folder: SimpleNamespace(
+                uid=config_folder, name="Folder Project - Config",
+                parent_uid=self.PROJECT_FOLDER, subfolders=[],
+            ),
+            safe_folder: SimpleNamespace(
+                uid=safe_folder, name="SafeA",
+                parent_uid=self.PROJECT_FOLDER, subfolders=[safe_res, safe_usr],
+            ),
+            safe_res: SimpleNamespace(
+                uid=safe_res, name="SafeA - Resources",
+                parent_uid=safe_folder, subfolders=[],
+            ),
+            safe_usr: SimpleNamespace(
+                uid=safe_usr, name="SafeA - Users",
+                parent_uid=safe_folder, subfolders=[],
+            ),
+        }
+
+        parsed = json.loads(self._execute())
+        uids = {r["uid"] for r in parsed["pam_data"]["resources"]}
+        self.assertEqual(uids, {safe_machine})
+        logins = {u["login"] for u in parsed["pam_data"]["users"]}
+        self.assertIn("safeadmin", logins)
 
 
 if __name__ == "__main__":
