@@ -3819,6 +3819,10 @@ class PAMGatewayActionRotateCommand(Command):
             # Find and load email config to validate provider and dependencies
             try:
                 config_uid = find_email_config_record(params, self.email_config)
+                if not config_uid:
+                    raise CommandError(
+                        'pam action rotate',
+                        f'Email configuration "{self.email_config}" not found')
                 email_config_obj = load_email_config_from_record(params, config_uid)
 
                 # Check if required dependencies are installed for this provider

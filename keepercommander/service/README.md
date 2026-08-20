@@ -540,7 +540,8 @@ The command generates a complete `docker-compose.yml` with both Commander servic
 | `chat_approvals_space_id` | text | Google Chat space ID (`spaces/...`) |
 | `chat_command_request_record_id` | text | Slash command ID for `/keeper-request-record` |
 | `chat_command_request_folder_id` | text | Slash command ID for `/keeper-request-folder` |
-| `chat_command_one_time_share_id` | text | Slash command ID for `/keeper-one-time-share` |
+| `chat_command_external_share_id` | text | Slash command ID for `/keeper-external-share` |
+| `chat_command_create_secret_id` | text | Slash command ID for `/keeper-create-secret` |
 | `pedm_enabled` | text | `true` / `false` |
 | `pedm_polling_interval` | text | Seconds |
 | `device_approval_enabled` | text | `true` / `false` |

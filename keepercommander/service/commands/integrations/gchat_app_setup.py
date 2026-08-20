@@ -100,9 +100,13 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             '/keeper-request-folder',
             GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID,
         )
-        chat_command_one_time_share_id = self._prompt_command_id(
-            '/keeper-one-time-share',
-            GChatConstants.DEFAULT_COMMAND_ONE_TIME_SHARE_ID,
+        chat_command_external_share_id = self._prompt_command_id(
+            '/keeper-external-share',
+            GChatConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID,
+        )
+        chat_command_create_secret_id = self._prompt_command_id(
+            '/keeper-create-secret',
+            GChatConstants.DEFAULT_COMMAND_CREATE_SECRET_ID,
         )
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
@@ -118,7 +122,8 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             chat_approvals_space_id=chat_approvals_space_id,
             chat_command_request_record_id=chat_command_request_record_id,
             chat_command_request_folder_id=chat_command_request_folder_id,
-            chat_command_one_time_share_id=chat_command_one_time_share_id,
+            chat_command_external_share_id=chat_command_external_share_id,
+            chat_command_create_secret_id=chat_command_create_secret_id,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -158,8 +163,13 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             ),
             vault.TypedField.new_field(
                 'text',
-                config.chat_command_one_time_share_id,
-                GChatConstants.FIELD_COMMAND_ONE_TIME_SHARE_ID,
+                config.chat_command_external_share_id,
+                GChatConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_create_secret_id,
+                GChatConstants.FIELD_COMMAND_CREATE_SECRET_ID,
             ),
             vault.TypedField.new_field(
                 'text',
@@ -205,8 +215,12 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             f"{bcolors.OKBLUE}{config.chat_command_request_folder_id}{bcolors.ENDC}"
         )
         print(
-            f"    • /keeper-one-time-share ID: "
-            f"{bcolors.OKBLUE}{config.chat_command_one_time_share_id}{bcolors.ENDC}"
+            f"    • /keeper-external-share ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_external_share_id}{bcolors.ENDC}"
+        )
+        print(
+            f"    • /keeper-create-secret ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_create_secret_id}{bcolors.ENDC}"
         )
 
     def print_integration_commands(self):
@@ -214,8 +228,12 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         print(f"  {bcolors.OKGREEN}• /keeper-request-record{bcolors.ENDC} - Request access to a record")
         print(f"  {bcolors.OKGREEN}• /keeper-request-folder{bcolors.ENDC} - Request access to a folder")
         print(
-            f"  {bcolors.OKGREEN}• /keeper-one-time-share{bcolors.ENDC} "
-            f"- Request a one-time share link\n"
+            f"  {bcolors.OKGREEN}• /keeper-external-share{bcolors.ENDC} "
+            f"- Request an external share link"
+        )
+        print(
+            f"  {bcolors.OKGREEN}• /keeper-create-secret{bcolors.ENDC} "
+            f"- Request creation of a secret\n"
         )
 
     # ── Validation helpers ────────────────────────────────────────
