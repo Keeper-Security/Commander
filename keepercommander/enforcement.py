@@ -586,7 +586,7 @@ class PasswordComplexityEnforcer:
                 return []
         if not isinstance(data, dict):
             return []
-        for fld in data.get('fields') or []:
+        for fld in itertools.chain(data.get('fields') or [], data.get('custom') or []):
             if isinstance(fld, dict) and fld.get('type') == 'password':
                 val = fld.get('value')
                 if isinstance(val, list):
