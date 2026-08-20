@@ -153,11 +153,11 @@ class PAMProjectExportCommand(Command):
         }
 
         output_json = json.dumps(result, indent=2, sort_keys=True)
+        if any(u.get("password") for u in top_level_users):
+            logging.warning(
+                f"{bcolors.WARNING}Export includes passwords; treat output as sensitive.{bcolors.ENDC}"
+            )
         if not output_file:
-            if any(u.get("password") for u in top_level_users):
-                logging.warning(
-                    f"{bcolors.WARNING}Export includes passwords; treat output as sensitive.{bcolors.ENDC}"
-                )
             return output_json
 
         try:
@@ -192,8 +192,11 @@ class PAMProjectExportCommand(Command):
 
         folder_user_uids: List[str] = []
         seen_users: Set[str] = set()
+        skipped_loads = 0
         for root_uid in scan_roots:
-            for rec_uid, rtype in self._iter_folder_record_types(params, root_uid):
+            rows, skipped = self._collect_folder_record_types(params, root_uid)
+            skipped_loads += skipped
+            for rec_uid, rtype in rows:
                 if not rec_uid or rec_uid == config_uid:
                     continue
                 if rtype in PAM_RESOURCES_RECORD_TYPES:
@@ -201,6 +204,11 @@ class PAMProjectExportCommand(Command):
                 elif rtype in _USER_RECORD_TYPES and rec_uid not in seen_users:
                     seen_users.add(rec_uid)
                     folder_user_uids.append(rec_uid)
+
+        if skipped_loads:
+            logging.warning(
+                f"{bcolors.WARNING}Export: skipped {skipped_loads} unloadable record(s) during folder scan{bcolors.ENDC}"
+            )
 
         return resource_uids, folder_user_uids, resources_folder_uid, users_folder_uid
 
@@ -325,10 +333,12 @@ class PAMProjectExportCommand(Command):
             logging.debug("PAMProjectExportCommand: DAG context unavailable: %s", exc)
         return allowed, resource_uids
 
-    def _iter_folder_record_types(self, params, folder_uid):
-        """Yield (uid, record_type) for records under folder_uid (recursive)."""
+    def _collect_folder_record_types(self, params, folder_uid):
+        """Return ([(uid, record_type), ...], skipped_unloadable_count)."""
+        rows: List[tuple] = []
+        skipped = 0
         if not folder_uid:
-            return
+            return rows, skipped
         seen_folders: Set[str] = set()
         stack = [folder_uid]
         while stack:
@@ -339,9 +349,11 @@ class PAMProjectExportCommand(Command):
             for rec_uid in get_folder_record_uids(params, fuid):
                 rec = load_pam_record(params, rec_uid)
                 if not rec:
+                    skipped += 1
                     continue
-                yield rec_uid, (getattr(rec, "record_type", None) or "")
+                rows.append((rec_uid, getattr(rec, "record_type", None) or ""))
             stack.extend(self._child_folder_uids(params, fuid))
+        return rows, skipped
 
     @staticmethod
     def _folder_parent_uid(params, folder_uid):

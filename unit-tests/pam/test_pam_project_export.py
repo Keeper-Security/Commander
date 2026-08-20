@@ -717,6 +717,28 @@ class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
         logins = {u["login"] for u in parsed["pam_data"]["users"]}
         self.assertIn("safeadmin", logins)
 
+    def test_unloadable_folder_records_warn_once(self):
+        missing_uid = "fold-missing-rec"
+        self.params.subfolder_record_cache[self.RES_FOLDER].add(missing_uid)
+        with self.assertLogs(level="WARNING") as logs:
+            self._execute()
+        self.assertTrue(any("skipped 1 unloadable" in m for m in logs.output))
+
+    def test_password_warning_on_file_output(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            path = tmp.name
+        try:
+            with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                       side_effect=lambda _p, uid: self.records.get(uid)):
+                with patch.object(self.cmd, "_load_dag_context",
+                                  return_value=(dict(_DEFAULT_ALLOWED), [])):
+                    with self.assertLogs(level="WARNING") as logs:
+                        self.cmd.execute(self.params, project_uid=self.CFG, output=path)
+            self.assertTrue(any("passwords" in m.lower() for m in logs.output))
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
 
 if __name__ == "__main__":
     unittest.main()
