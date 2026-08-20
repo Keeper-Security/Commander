@@ -858,7 +858,7 @@ class TestNestedShareFolderRecordCommands(TestCase):
         for record_type in ('legacy', 'general'):
             with self.assertRaises(CommandError) as ctx:
                 cmd.execute(params, record_uids=[ruid], record_type=record_type, fields=[])
-            self.assertIn('cannot be found', str(ctx.exception).lower())
+            self.assertIn('not valid for nsf', str(ctx.exception).lower())
         mock_update.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')

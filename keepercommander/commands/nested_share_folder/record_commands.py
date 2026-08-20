@@ -248,7 +248,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
         if record_type:
             if record_type in ('legacy', 'general'):
                 raise CommandError('nsf-record-update',
-                                   f'Record type "{record_type}" cannot be found.')
+                                   'Record type not valid for NSF records; '
+                                   'use login or a typed record type.')
             RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-update')
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
@@ -290,9 +291,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                         continue
 
                     result = self._send_typed_update(params, record_uid, record)
-                    # KC-1403: update_record_v3 already synced on RS_OUT_OF_SYNC
-                    # but will not retry a full data payload. Rebuild from the
-                    # refreshed cache and re-apply typed field matching once.
+                    # API syncs on RS_OUT_OF_SYNC but does not retry a full data
+                    # payload; rebuild from refreshed cache and re-apply once.
                     if (not result.get('success')
                             and result.get('status') == 'RS_OUT_OF_SYNC'):
                         self.warnings.clear()
