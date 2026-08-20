@@ -858,14 +858,19 @@ class UserService:
                 self.debug(f"      > {k} = {v}")
 
         # Add mapping from user to machine, that control services.
-        for service_type in [ServiceEnum.service, ServiceEnum.task, ServiceEnum.iis_pool]:
+        for service_type in [ServiceEnum.service, ServiceEnum.task, ServiceEnum.iis_pool,
+                             ServiceEnum.com, ServiceEnum.dcom, ServiceEnum.com_plus, ServiceEnum.scom]:
             self.debug("-" * 40)
             self.debug(f"processing {service_type.value}s for {infra_machine_content.name} "
                        f"({infra_machine_vertex.uid})")
 
             # Get the pair of name of the service and the user that controls it.
             # This is from discovery.
-            service_pairs = getattr(infra_machine_content.item.facts, f"{service_type.value}s")
+            if hasattr(infra_machine_content.item.facts, f"{service_type.value}s"):
+                service_pairs = getattr(infra_machine_content.item.facts, f"{service_type.value}s")
+            else:
+                service_pairs = getattr(infra_machine_content.item.facts, f"{service_type.value}es")
+
             if len(service_pairs) == 0:
                 self.debug("  no users control this type of service, skipping")
                 continue

@@ -75,13 +75,11 @@ from .discover.rule_add import PAMGatewayActionDiscoverRuleAddCommand
 from .discover.rule_list import PAMGatewayActionDiscoverRuleListCommand
 from .discover.rule_remove import PAMGatewayActionDiscoverRuleRemoveCommand
 from .discover.rule_update import PAMGatewayActionDiscoverRuleUpdateCommand
-from .pam_debug.acl import PAMDebugACLCommand
 from .pam_debug.dump import PAMDebugDumpCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.krouter import PAMDebugKRouterCommand
-from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam.cnapp_commands import PAMCnappCommand
@@ -463,11 +461,6 @@ class PAMDebugCommand(GroupCommand):
         self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a gateway', 'g')
         self.register_command('krouter', PAMDebugKRouterCommand(), 'Show connected krouter version', 'k')
         self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
-
-        # Disable for now. Needs more work.
-        # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs')
-        self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
-        self.register_command('link', PAMDebugLinkCommand(), 'Link resource to configuration', 'l')
         self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
                               'Create/reset rotation settings', 'rs')
         self.register_command('vertex', PAMDebugVertexCommand(),

@@ -358,6 +358,9 @@ class ServiceEnum(BaseEnum):
     task = "task"
     iis_pool = "iis_pool"
     dcom = "dcom"
+    com = "com"
+    com_plus = "com_plus"
+    scom = "scom"
 
 
 class UserAclServiceNames(BaseModel):
@@ -550,7 +553,10 @@ class Facts(BaseModel):
     services: List[FactsNameUser] = []
     tasks: List[FactsNameUser] = []
     iis_pools: List[FactsNameUser] = []
+    coms: List[FactsNameUser] = []
     dcoms: List[FactsNameUser] = []
+    com_pluses: List[FactsNameUser] = []
+    scoms: List[FactsNameUser] = []
 
     @property
     def has_services(self):
@@ -565,12 +571,30 @@ class Facts(BaseModel):
         return self.iis_pools is not None and len(self.iis_pools) > 0
 
     @property
+    def has_coms(self):
+        return self.coms is not None and len(self.coms) > 0
+
+    @property
     def has_dcoms(self):
         return self.dcoms is not None and len(self.dcoms) > 0
 
     @property
+    def has_com_pluses(self):
+        return self.com_pluses is not None and len(self.com_pluses) > 0
+
+    @property
+    def has_scoms(self):
+        return self.scoms is not None and len(self.scoms) > 0
+
+    @property
     def has_service_items(self):
-        return self.has_services or self.has_tasks or self.has_iis_pools or self.has_dcoms
+        return self.has_services \
+            or self.has_tasks \
+            or self.has_iis_pools \
+            or self.has_coms \
+            or self.has_dcoms \
+            or self.has_com_pluses \
+            or self.has_scoms
 
 
 class DiscoveryMachine(DiscoveryItem):

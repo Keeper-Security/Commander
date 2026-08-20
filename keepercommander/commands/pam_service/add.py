@@ -32,7 +32,15 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
     parser.add_argument('--type', '-t', required=True, dest='service_type', action='store',
-                        choices=["service", "task", "iis_pool"],
+                        choices=[
+                            "service",
+                            "task",
+                            "iis_pool",
+                            "com",
+                            "dcom",
+                            "com_plus",
+                            "scom"
+                        ],
                         help='Type of service.')
     parser.add_argument('--name', '-n', required=True, dest='name', action='store',
                         help='Name label for reporting.')
