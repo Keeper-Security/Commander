@@ -16,15 +16,16 @@ Single Responsibility: every class here deals with record lifecycle
 (create, update, link/unlink, shortcut management, delete).
 """
 
+import copy
 import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from ..base import Command, GroupCommand
-from ..record_edit import RecordEditMixin, record_fields_description, ParsedFieldValue
+from ..record_edit import RecordEditMixin, record_fields_description
 from ...enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ...error import CommandError
-from ... import nested_share_folder as _nsf, vault
+from ... import nested_share_folder as _nsf, vault, vault_extensions
 from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
@@ -39,6 +40,52 @@ from .parsers import (
     nested_share_record_shortcut_keep_parser,
     nested_share_record_rm_parser,
 )
+
+
+def _parse_field_specs(raw_fields, cmd_name):
+    record_fields = []
+    attachments = []
+    for spec in [f.strip() for f in (raw_fields or []) if f.strip()]:
+        try:
+            parsed = RecordEditMixin.parse_field(spec)
+        except ValueError as e:
+            raise CommandError(cmd_name, f'Invalid field specification: {e}')
+        (attachments if parsed.type == 'file' else record_fields).append(parsed)
+    return record_fields, attachments
+
+
+def _apply_password_policy(editor, params, source, force):
+    # TypedRecord (typed add/update) or v3 dict (legacy add). validate_record accepts both.
+    pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
+    for failure in pw_failures:
+        editor.on_warning(failure)
+    if pw_failures and not force:
+        editor.on_warning('Use --force to bypass password policy warnings.')
+
+
+def _should_stop_after_warnings(editor, force):
+    if not editor.warnings:
+        return False
+    for w in editor.warnings:
+        logging.warning(w)
+    if not force:
+        return True
+    editor.warnings.clear()
+    return False
+
+
+def _unsupported_attachment_warning(attachments, cmd_name):
+    if not attachments:
+        return
+    classic = 'record-add' if cmd_name == 'nsf-record-add' else 'record-update'
+    if any(not a.value for a in attachments):
+        logging.warning(
+            'Attachment removal (file= with an empty value) is not supported in %s. '
+            'Use record-update to remove attachments.', cmd_name)
+    if any(a.value for a in attachments):
+        logging.warning(
+            'File attachments are not yet supported in %s. '
+            'Use %s for attachment support.', cmd_name, classic)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -73,26 +120,18 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         notes = kwargs.get('notes')
-        record_fields, add_attachments = self._parse_fields(kwargs.get('fields', []))
+        record_fields, add_attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-add')
         folder_uid = self._resolve_folder(params, kwargs.get('folder_uid'))
 
-        data = self._build_record_data(params, record_type, title, notes, record_fields)
+        data = self._build_record_data(
+            params, record_type, title, notes, record_fields, kwargs.get('force'))
         if self.abort_if_errors():
             return
-        self._check_password_policy(params, data, **kwargs)
-
-        if self.abort_if_errors():
+        if _should_stop_after_warnings(self, kwargs.get('force')):
             return
-
-        if self.warnings:
-            for w in self.warnings:
-                logging.warning(w)
-            if not kwargs.get('force'):
-                return
 
         if add_attachments:
-            logging.warning('File attachments are not yet supported in nsf-record-add. '
-                            'Use record-add for attachment support.')
+            _unsupported_attachment_warning(add_attachments, 'nsf-record-add')
             if not kwargs.get('force'):
                 return
 
@@ -107,15 +146,6 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             params.sync_data = True
             return result['record_uid']
 
-    def _parse_fields(self, raw_fields):
-        fields = [f.strip() for f in raw_fields if f.strip()]
-        record_fields = []
-        attachments = []
-        for field in fields:
-            parsed = RecordEditMixin.parse_field(field)
-            (attachments if parsed.type == 'file' else record_fields).append(parsed)
-        return record_fields, attachments
-
     @staticmethod
     def _resolve_folder(params, folder_input):
         if not folder_input:
@@ -126,13 +156,15 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         ensure_nested_share_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
-    def _build_record_data(self, params, record_type, title, notes, record_fields):
+    def _build_record_data(self, params, record_type, title, notes, record_fields, force=False):
         if record_type in ('legacy', 'general'):
             record = vault.PasswordRecord()
             self.assign_legacy_fields(record, record_fields)
             record.title = title
             record.notes = self.validate_notes(notes or '')
-            return self._legacy_to_data(record, title, notes)
+            data = self._legacy_to_data(record, title)
+            _apply_password_policy(self, params, data, force)
+            return data
 
         rt_fields = self.get_record_type_fields(params, record_type)
         if not rt_fields:
@@ -151,10 +183,11 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         self.assign_typed_fields(record, record_fields)
         record.title = title
         record.notes = self.validate_notes(notes or '')
-        return self._typed_to_data(record, title, notes)
+        _apply_password_policy(self, params, record, force)
+        return self._typed_to_data(record, title)
 
     @staticmethod
-    def _typed_to_data(record, title, notes=None):
+    def _typed_to_data(record, title):
         data = {
             'type': record.type_name, 'title': title,
             'fields': [{'type': f.type, 'label': f.label or '', 'value': list(f.value)}
@@ -162,12 +195,12 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             'custom': [{'type': f.type, 'label': f.label or '', 'value': list(f.value)}
                         for f in record.custom],
         }
-        if notes:
-            data['notes'] = notes
+        if record.notes:
+            data['notes'] = record.notes
         return data
 
     @staticmethod
-    def _legacy_to_data(record, title, notes=None):
+    def _legacy_to_data(record, title):
         data = {'type': record.get_record_type(), 'title': title, 'fields': []}
         for ftype, val in [('login', record.login), ('password', record.password),
                            ('url', record.link), ('oneTimeCode', record.totp)]:
@@ -179,16 +212,9 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
                 'label': cf.name if hasattr(cf, 'name') else '',
                 'value': [cf.value if hasattr(cf, 'value') else str(cf)],
             })
-        if notes:
-            data['notes'] = notes
+        if record.notes:
+            data['notes'] = record.notes
         return data
-
-    def _check_password_policy(self, params, data, **kwargs):
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for failure in pw_failures:
-            self.on_warning(failure)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -196,7 +222,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
 # ══════════════════════════════════════════════════════════════════════════
 
 class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
-    """Update a Nested Share Record."""
+    """Update a Nested Share Record, matching ``record-update`` field handling."""
 
     def __init__(self):
         super().__init__()
@@ -204,32 +230,6 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
 
     def get_parser(self):
         return nested_share_record_update_parser
-
-    def _resolve_field_value(self, parsed):
-        raw = parsed.value
-        if not raw:
-            return raw
-
-        action_params = []
-        if self.is_json_value(raw, action_params):
-            return action_params[0] if action_params else None
-        action_params.clear()
-        if self.is_generate_value(raw, action_params):
-            if self.warn_wrong_password_gen_field(parsed):
-                return None
-            if parsed.type == 'password':
-                password, gen_error = self.generate_password(action_params, policy=self._password_policy)
-                if gen_error:
-                    self.on_error(gen_error)
-                    return None
-                return password
-            if parsed.type in ('oneTimeCode', 'otp'):
-                return self.generate_totp_url()
-            return raw
-        action_params.clear()
-        if self.is_base64_value(raw, action_params):
-            return action_params[0] if action_params else None
-        return raw
 
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
@@ -244,79 +244,112 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         record_type = kwargs.get('record_type')
-        if record_type and record_type not in ('legacy', 'general'):
+        rt_fields = None
+        if record_type:
+            if record_type in ('legacy', 'general'):
+                raise CommandError('nsf-record-update',
+                                   'Record type not valid for NSF records; '
+                                   'use login or a typed record type.')
             RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-update')
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
-                raise CommandError('nsf-record-update', f'Record type "{record_type}" cannot be found.')
+                raise CommandError('nsf-record-update',
+                                   f'Record type "{record_type}" cannot be found.')
 
-        fields = {}
-        for spec in [f.strip() for f in kwargs.get('fields', []) if f.strip()]:
-            try:
-                parsed = RecordEditMixin.parse_field(spec)
-                if self.warn_wrong_password_gen_field(parsed):
-                    continue
-                value = self._resolve_field_value(parsed)
-                if value is None:
-                    continue
-                if parsed.type in fields:
-                    existing = fields[parsed.type]
-                    fields[parsed.type] = ([existing] if not isinstance(existing, list)
-                                           else existing) + [value]
-                else:
-                    fields[parsed.type] = value
-            except ValueError as e:
-                raise CommandError('nsf-record-update', f'Invalid field specification: {e}')
+        record_fields, attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-update')
 
-        if self.abort_if_errors():
-            return
-
-        if self.warnings:
-            for w in self.warnings:
-                logging.warning(w)
+        if attachments:
+            _unsupported_attachment_warning(attachments, 'nsf-record-update')
             if not kwargs.get('force'):
                 return
 
-        with command_error_handler('nsf-record-update'):
-            for identifier in record_uids:
-                record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
-                if not record_uid:
-                    raise CommandError('nsf-record-update',
-                                       f"Record '{identifier}' not found")
-                ensure_nested_share_record(params, record_uid, 'nsf-record-update',
-                                           identifier=identifier)
-                check_record_edit_permission(params, record_uid, 'nsf-record-update')
-                merged = self._merge_update_data(
-                    params, record_uid,
-                    title=kwargs.get('title'),
-                    record_type=record_type,
-                    fields=fields or None,
-                    notes=kwargs.get('notes'),
-                )
-                self._check_password_policy(params, merged, **kwargs)
-                if self.warnings:
-                    for w in self.warnings:
-                        logging.warning(w)
-                    if not kwargs.get('force'):
-                        return
+        force = kwargs.get('force')
+        updated = 0
+        try:
+            with command_error_handler('nsf-record-update'):
+                for identifier in record_uids:
                     self.warnings.clear()
-                result = _nsf.update_record_v3(
-                    params=params,
-                    record_uid=record_uid,
-                    title=kwargs.get('title'),
-                    record_type=record_type,
-                    fields=fields or None,
-                    notes=kwargs.get('notes'),
-                )
-                check_result(result, 'nsf-record-update')
-            params.sync_data = True
+                    self.errors.clear()
+                    record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+                    if not record_uid:
+                        raise CommandError('nsf-record-update',
+                                           f"Record '{identifier}' not found")
+                    ensure_nested_share_record(params, record_uid, 'nsf-record-update',
+                                               identifier=identifier)
+                    check_record_edit_permission(params, record_uid, 'nsf-record-update')
 
-    def _check_password_policy(self, params, data, **kwargs):
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for failure in pw_failures:
-            self.on_warning(failure)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
+                    record = self._apply_update(
+                        self._typed_record_from_uid(params, record_uid),
+                        kwargs.get('title'), kwargs.get('notes'),
+                        record_type, rt_fields, record_fields)
+
+                    if self.abort_if_errors():
+                        continue
+
+                    _apply_password_policy(self, params, record, force)
+                    if _should_stop_after_warnings(self, force):
+                        continue
+
+                    result = self._send_typed_update(params, record_uid, record)
+                    # API syncs on RS_OUT_OF_SYNC but does not retry a full data
+                    # payload; rebuild from refreshed cache and re-apply once.
+                    if (not result.get('success')
+                            and result.get('status') == 'RS_OUT_OF_SYNC'):
+                        self.warnings.clear()
+                        self.errors.clear()
+                        record = self._apply_update(
+                            self._typed_record_from_uid(params, record_uid),
+                            kwargs.get('title'), kwargs.get('notes'),
+                            record_type, rt_fields, record_fields)
+                        if self.abort_if_errors():
+                            continue
+                        _apply_password_policy(self, params, record, force)
+                        if _should_stop_after_warnings(self, force):
+                            continue
+                        result = self._send_typed_update(params, record_uid, record)
+                    check_result(result, 'nsf-record-update')
+                    updated += 1
+        finally:
+            if updated:
+                params.sync_data = True
+
+    def _apply_update(self, record, title, notes, record_type, rt_fields, record_fields):
+        if title:
+            record.title = title
+        self._apply_notes(record, notes)
+        if record_type:
+            record.type_name = record_type
+            self.adjust_typed_record_fields(record, rt_fields)
+        self.assign_typed_fields(record, record_fields)
+        return record
+
+    @staticmethod
+    def _send_typed_update(params, record_uid, record):
+        return _nsf.update_record_v3(
+            params=params, record_uid=record_uid,
+            data=vault_extensions.extract_typed_record_data(record),
+        )
+
+    def _apply_notes(self, record, notes):
+        if not isinstance(notes, str):
+            return
+        notes = self.validate_notes(notes)
+        if notes.startswith('+'):
+            notes = notes[1:].strip()
+            if record.notes:
+                record.notes += '\n'
+            record.notes += notes
+            return
+        record.notes = notes
+
+    def _typed_record_from_uid(self, params, record_uid):
+        existing = self._load_record_data(params, record_uid)
+        if not existing:
+            raise CommandError('nsf-record-update',
+                               f"Record data for '{record_uid}' is not available in the local cache")
+        record = vault.TypedRecord()
+        record.load_record_data(existing)
+        return record
 
     @staticmethod
     def _load_record_data(params, record_uid):   # type: (Any, str) -> Optional[Dict]
@@ -327,35 +360,21 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             raw = nsf_data.get('data_json')
         if raw is None:
             return None
-        if isinstance(raw, bytes):
-            return json.loads(raw.decode('utf-8'))
-        if isinstance(raw, str):
-            return json.loads(raw)
-        if isinstance(raw, dict):
-            return raw.copy()
-        return None
-
-    @classmethod
-    def _merge_update_data(cls, params, record_uid, title=None, record_type=None,
-                           fields=None, notes=None):   # type: (...) -> Dict
-        existing = cls._load_record_data(params, record_uid)
-        data = existing.copy() if existing else {'fields': []}
-        if title is not None:
-            data['title'] = title
-        if record_type is not None:
-            data['type'] = record_type
-        if fields is not None:
-            by_type = {}
-            for ef in data.get('fields', []):
-                by_type.setdefault(ef.get('type'), []).append(ef)
-            for ft, fv in fields.items():
-                fv = fv if isinstance(fv, list) else [fv]
-                if ft in by_type and by_type[ft]:
-                    by_type[ft][0]['value'] = fv
-                else:
-                    data.setdefault('fields', []).append({'type': ft, 'value': fv})
-        if notes is not None:
-            data['notes'] = notes
+        try:
+            if isinstance(raw, bytes):
+                data = json.loads(raw.decode('utf-8'))
+            elif isinstance(raw, str):
+                data = json.loads(raw)
+            elif isinstance(raw, dict):
+                data = copy.deepcopy(raw)
+            else:
+                return None
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+            raise CommandError('nsf-record-update',
+                               f"Record data for '{record_uid}' could not be decoded")
+        if not isinstance(data, dict):
+            raise CommandError('nsf-record-update',
+                               f"Record data for '{record_uid}' could not be decoded")
         return data
 
 
