@@ -16,6 +16,7 @@ Single Responsibility: every class here deals with record lifecycle
 (create, update, link/unlink, shortcut management, delete).
 """
 
+import copy
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -54,7 +55,7 @@ def _parse_field_specs(raw_fields, cmd_name):
 
 
 def _apply_password_policy(editor, params, source, force):
-    # Keep parity with record-update: source can be TypedRecord (update) or dict (add).
+    # TypedRecord (typed add/update) or v3 dict (legacy add). validate_record accepts both.
     pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
     for failure in pw_failures:
         editor.on_warning(failure)
@@ -71,6 +72,20 @@ def _should_stop_after_warnings(editor, force):
         return True
     editor.warnings.clear()
     return False
+
+
+def _unsupported_attachment_warning(attachments, cmd_name):
+    if not attachments:
+        return
+    classic = 'record-add' if cmd_name == 'nsf-record-add' else 'record-update'
+    if any(not a.value for a in attachments):
+        logging.warning(
+            'Attachment removal (file= with an empty value) is not supported in %s. '
+            'Use record-update to remove attachments.', cmd_name)
+    if any(a.value for a in attachments):
+        logging.warning(
+            'File attachments are not yet supported in %s. '
+            'Use %s for attachment support.', cmd_name, classic)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -108,16 +123,15 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         record_fields, add_attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-add')
         folder_uid = self._resolve_folder(params, kwargs.get('folder_uid'))
 
-        data = self._build_record_data(params, record_type, title, notes, record_fields)
+        data = self._build_record_data(
+            params, record_type, title, notes, record_fields, kwargs.get('force'))
         if self.abort_if_errors():
             return
-        _apply_password_policy(self, params, data, kwargs.get('force'))
         if _should_stop_after_warnings(self, kwargs.get('force')):
             return
 
         if add_attachments:
-            logging.warning('File attachments are not yet supported in nsf-record-add. '
-                            'Use record-add for attachment support.')
+            _unsupported_attachment_warning(add_attachments, 'nsf-record-add')
             if not kwargs.get('force'):
                 return
 
@@ -142,13 +156,15 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         ensure_nested_share_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
-    def _build_record_data(self, params, record_type, title, notes, record_fields):
+    def _build_record_data(self, params, record_type, title, notes, record_fields, force=False):
         if record_type in ('legacy', 'general'):
             record = vault.PasswordRecord()
             self.assign_legacy_fields(record, record_fields)
             record.title = title
             record.notes = self.validate_notes(notes or '')
-            return self._legacy_to_data(record, title, notes)
+            data = self._legacy_to_data(record, title)
+            _apply_password_policy(self, params, data, force)
+            return data
 
         rt_fields = self.get_record_type_fields(params, record_type)
         if not rt_fields:
@@ -167,10 +183,11 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         self.assign_typed_fields(record, record_fields)
         record.title = title
         record.notes = self.validate_notes(notes or '')
-        return self._typed_to_data(record, title, notes)
+        _apply_password_policy(self, params, record, force)
+        return self._typed_to_data(record, title)
 
     @staticmethod
-    def _typed_to_data(record, title, notes=None):
+    def _typed_to_data(record, title):
         data = {
             'type': record.type_name, 'title': title,
             'fields': [{'type': f.type, 'label': f.label or '', 'value': list(f.value)}
@@ -178,12 +195,12 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             'custom': [{'type': f.type, 'label': f.label or '', 'value': list(f.value)}
                         for f in record.custom],
         }
-        if notes:
-            data['notes'] = notes
+        if record.notes:
+            data['notes'] = record.notes
         return data
 
     @staticmethod
-    def _legacy_to_data(record, title, notes=None):
+    def _legacy_to_data(record, title):
         data = {'type': record.get_record_type(), 'title': title, 'fields': []}
         for ftype, val in [('login', record.login), ('password', record.password),
                            ('url', record.link), ('oneTimeCode', record.totp)]:
@@ -195,8 +212,8 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
                 'label': cf.name if hasattr(cf, 'name') else '',
                 'value': [cf.value if hasattr(cf, 'value') else str(cf)],
             })
-        if notes:
-            data['notes'] = notes
+        if record.notes:
+            data['notes'] = record.notes
         return data
 
 
@@ -228,7 +245,10 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
 
         record_type = kwargs.get('record_type')
         rt_fields = None
-        if record_type and record_type not in ('legacy', 'general'):
+        if record_type:
+            if record_type in ('legacy', 'general'):
+                raise CommandError('nsf-record-update',
+                                   f'Record type "{record_type}" cannot be found.')
             RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-update')
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
@@ -238,46 +258,51 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
         record_fields, attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-update')
 
         if attachments:
-            logging.warning('File attachments are not yet supported in nsf-record-update. '
-                            'Use record-update for attachment support.')
+            _unsupported_attachment_warning(attachments, 'nsf-record-update')
             if not kwargs.get('force'):
                 return
 
         force = kwargs.get('force')
-        with command_error_handler('nsf-record-update'):
-            for identifier in record_uids:
-                record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
-                if not record_uid:
-                    raise CommandError('nsf-record-update',
-                                       f"Record '{identifier}' not found")
-                ensure_nested_share_record(params, record_uid, 'nsf-record-update',
-                                           identifier=identifier)
-                check_record_edit_permission(params, record_uid, 'nsf-record-update')
+        updated = 0
+        try:
+            with command_error_handler('nsf-record-update'):
+                for identifier in record_uids:
+                    self.warnings.clear()
+                    self.errors.clear()
+                    record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+                    if not record_uid:
+                        raise CommandError('nsf-record-update',
+                                           f"Record '{identifier}' not found")
+                    ensure_nested_share_record(params, record_uid, 'nsf-record-update',
+                                               identifier=identifier)
+                    check_record_edit_permission(params, record_uid, 'nsf-record-update')
 
-                record = self._typed_record_from_uid(params, record_uid)
-                title = kwargs.get('title')
-                if title is not None:
-                    record.title = title
-                self._apply_notes(record, kwargs.get('notes'))
-                if record_type:
-                    record.type_name = record_type
-                    if rt_fields:
+                    record = self._typed_record_from_uid(params, record_uid)
+                    title = kwargs.get('title')
+                    if title:
+                        record.title = title
+                    self._apply_notes(record, kwargs.get('notes'))
+                    if record_type:
+                        record.type_name = record_type
                         self.adjust_typed_record_fields(record, rt_fields)
-                self.assign_typed_fields(record, record_fields)
+                    self.assign_typed_fields(record, record_fields)
 
-                if self.abort_if_errors():
-                    return
+                    if self.abort_if_errors():
+                        continue
 
-                _apply_password_policy(self, params, record, force)
-                if _should_stop_after_warnings(self, force):
-                    return
+                    _apply_password_policy(self, params, record, force)
+                    if _should_stop_after_warnings(self, force):
+                        continue
 
-                result = _nsf.update_record_v3(
-                    params=params, record_uid=record_uid,
-                    data=vault_extensions.extract_typed_record_data(record),
-                )
-                check_result(result, 'nsf-record-update')
-            params.sync_data = True
+                    result = _nsf.update_record_v3(
+                        params=params, record_uid=record_uid,
+                        data=vault_extensions.extract_typed_record_data(record),
+                    )
+                    check_result(result, 'nsf-record-update')
+                    updated += 1
+        finally:
+            if updated:
+                params.sync_data = True
 
     def _apply_notes(self, record, notes):
         if not isinstance(notes, str):
@@ -315,7 +340,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             elif isinstance(raw, str):
                 data = json.loads(raw)
             elif isinstance(raw, dict):
-                data = raw.copy()
+                data = copy.deepcopy(raw)
             else:
                 return None
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
