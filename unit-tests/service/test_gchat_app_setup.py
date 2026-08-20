@@ -164,7 +164,8 @@ class TestGChatAppSetupValidation(unittest.TestCase):
             chat_approvals_space_id='spaces/AAAA',
             chat_command_request_record_id='1',
             chat_command_request_folder_id='2',
-            chat_command_one_time_share_id='3',
+            chat_command_external_share_id='3',
+            chat_command_create_secret_id='4',
             pedm_enabled=True,
             pedm_polling_interval=60,
             device_approval_enabled=False,
@@ -184,7 +185,8 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(fields[GChatConstants.FIELD_APPROVALS_SPACE_ID], 'spaces/AAAA')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_RECORD_ID], '1')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_FOLDER_ID], '2')
-        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_ONE_TIME_SHARE_ID], '3')
+        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID], '3')
+        self.assertEqual(fields[GChatConstants.FIELD_COMMAND_CREATE_SECRET_ID], '4')
         self.assertEqual(fields[GChatConstants.FIELD_PEDM_ENABLED], 'true')
         self.assertEqual(fields[GChatConstants.FIELD_PEDM_POLLING_INTERVAL], '60')
         self.assertEqual(fields[GChatConstants.FIELD_DEVICE_APPROVAL_ENABLED], 'false')
