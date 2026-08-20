@@ -277,15 +277,10 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                                                identifier=identifier)
                     check_record_edit_permission(params, record_uid, 'nsf-record-update')
 
-                    record = self._typed_record_from_uid(params, record_uid)
-                    title = kwargs.get('title')
-                    if title:
-                        record.title = title
-                    self._apply_notes(record, kwargs.get('notes'))
-                    if record_type:
-                        record.type_name = record_type
-                        self.adjust_typed_record_fields(record, rt_fields)
-                    self.assign_typed_fields(record, record_fields)
+                    record = self._apply_update(
+                        self._typed_record_from_uid(params, record_uid),
+                        kwargs.get('title'), kwargs.get('notes'),
+                        record_type, rt_fields, record_fields)
 
                     if self.abort_if_errors():
                         continue
@@ -294,15 +289,41 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     if _should_stop_after_warnings(self, force):
                         continue
 
-                    result = _nsf.update_record_v3(
-                        params=params, record_uid=record_uid,
-                        data=vault_extensions.extract_typed_record_data(record),
-                    )
+                    result = self._send_typed_update(params, record_uid, record)
+                    # KC-1403: update_record_v3 already synced on RS_OUT_OF_SYNC
+                    # but will not retry a full data payload. Rebuild from the
+                    # refreshed cache and re-apply typed field matching once.
+                    if (not result.get('success')
+                            and result.get('status') == 'RS_OUT_OF_SYNC'):
+                        record = self._apply_update(
+                            self._typed_record_from_uid(params, record_uid),
+                            kwargs.get('title'), kwargs.get('notes'),
+                            record_type, rt_fields, record_fields)
+                        if self.abort_if_errors():
+                            continue
+                        result = self._send_typed_update(params, record_uid, record)
                     check_result(result, 'nsf-record-update')
                     updated += 1
         finally:
             if updated:
                 params.sync_data = True
+
+    def _apply_update(self, record, title, notes, record_type, rt_fields, record_fields):
+        if title:
+            record.title = title
+        self._apply_notes(record, notes)
+        if record_type:
+            record.type_name = record_type
+            self.adjust_typed_record_fields(record, rt_fields)
+        self.assign_typed_fields(record, record_fields)
+        return record
+
+    @staticmethod
+    def _send_typed_update(params, record_uid, record):
+        return _nsf.update_record_v3(
+            params=params, record_uid=record_uid,
+            data=vault_extensions.extract_typed_record_data(record),
+        )
 
     def _apply_notes(self, record, notes):
         if not isinstance(notes, str):

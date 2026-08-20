@@ -887,6 +887,49 @@ class TestNestedShareFolderRecordCommands(TestCase):
 
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
     @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
+    def test_update_retries_out_of_sync_with_typed_fields(self, mock_perm, mock_update):
+        from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
+        ruid, params = self._nsf_update_params({
+            'type': 'pamDatabase',
+            'title': 'DB',
+            'fields': [
+                {'type': 'checkbox', 'label': 'useSSL', 'value': [True]},
+                {'type': 'text', 'label': 'databaseId', 'value': []},
+            ],
+            'custom': [],
+        })
+
+        def _side_effect(**kwargs):
+            if mock_update.call_count == 1:
+                params.record_cache[ruid]['data_unencrypted'] = json.dumps({
+                    'type': 'pamDatabase',
+                    'title': 'DB',
+                    'fields': [
+                        {'type': 'checkbox', 'label': 'useSSL', 'value': [True]},
+                        {'type': 'text', 'label': 'databaseId', 'value': ['from-sync']},
+                    ],
+                    'custom': [],
+                })
+                return {
+                    'success': False, 'status': 'RS_OUT_OF_SYNC',
+                    'message': 'This object no longer exists.',
+                }
+            return {
+                'record_uid': ruid, 'status': 'SUCCESS', 'message': '', 'success': True,
+            }
+
+        mock_update.side_effect = _side_effect
+        NestedShareRecordUpdateCommand().execute(
+            params, record_uids=[ruid], force=True,
+            fields=['f.checkbox.useSSL=false'])
+        self.assertEqual(mock_update.call_count, 2)
+        data = self._updated_data(mock_update)
+        by_label = self._by_label(data['fields'])
+        self.assertEqual(by_label[('checkbox', 'useSSL')]['value'], [False])
+        self.assertEqual(by_label[('text', 'databaseId')]['value'], ['from-sync'])
+
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
+    @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
     def test_update_sets_sync_data_after_partial_batch_failure(self, mock_perm, mock_update):
         from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
         ruid1, params = self._nsf_update_params({
