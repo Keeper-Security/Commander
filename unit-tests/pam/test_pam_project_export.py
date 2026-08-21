@@ -259,6 +259,30 @@ class TestPAMProjectExportCommand(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    def test_output_file_mode_overwrites_existing_world_readable(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            tmp.write("{}")
+            tmp_path = tmp.name
+        try:
+            os.chmod(tmp_path, 0o644)
+            self._execute(output=tmp_path)
+            mode = os.stat(tmp_path).st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    def test_title_index_not_built_when_all_refs_are_uids(self):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=_fake_load):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
+                with patch.object(
+                    self.cmd, "_build_user_title_index", wraps=self.cmd._build_user_title_index
+                ) as mock_index:
+                    self.cmd.execute(self.params, project_uid=CONFIG_UID)
+                    mock_index.assert_not_called()
+
     # ── --output flag ────────────────────────────────────────────
 
     def test_output_flag_writes_file(self):
@@ -391,6 +415,25 @@ class TestKCMImportRoundTrip(unittest.TestCase):
                          "KCM resource must export 1 user (resolved by title)")
         self.assertEqual(res["users"][0]["uid"], self.KCM_USR)
         self.assertEqual(res["users"][0]["title"], "KCM User - prod-db")
+
+    def test_title_index_built_for_non_uid_credential_ref(self):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=lambda _p, uid: self.records.get(uid)):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
+                with patch.object(
+                    self.cmd, "_build_user_title_index", wraps=self.cmd._build_user_title_index
+                ) as mock_index:
+                    self.cmd.execute(self.params, project_uid=self.KCM_CFG)
+                    mock_index.assert_called_once()
+
+    def test_list_launch_credentials_exports_first_entry(self):
+        res = self.records[self.KCM_RES]
+        ps = res.get_typed_field("pamSettings").value[0]
+        ps["connection"]["launch_credentials"] = ["KCM User - prod-db", "ignored"]
+        parsed = json.loads(self._execute())
+        conn = parsed["pam_data"]["resources"][0]["pam_settings"]["connection"]
+        self.assertEqual(conn["launch_credentials"], "KCM User - prod-db")
 
     def test_single_resource_user_not_duplicated_at_top_level(self):
         parsed = json.loads(self._execute())
@@ -796,6 +839,105 @@ class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_unresolvable_admin_uid_warns_with_resource_name(self):
+        missing = "AAAAAAAAAAAAAAAAAAAAAA"
+        machine = self.records[self.MACHINE]
+        ps = machine.get_typed_field("pamSettings").value[0]
+        ps["connection"]["userRecords"] = [missing]
+        with self.assertLogs(level="WARNING") as logs:
+            parsed = json.loads(self._execute())
+        self.assertTrue(
+            any("could not resolve administrative" in m and "App Server" in m
+                for m in logs.output)
+        )
+        conn = parsed["pam_data"]["resources"][0]["pam_settings"]["connection"]
+        self.assertNotIn("administrative_credentials", conn)
+        self.assertNotIn("userRecords", conn)
+
+
+class TestExportImportParseContract(unittest.TestCase):
+    """Parse exported JSON through import loaders (no vault dry-run)."""
+
+    def setUp(self):
+        from keepercommander.commands.pam_import.export import PAMProjectExportCommand
+
+        self.cmd = PAMProjectExportCommand()
+        self.params = MagicMock()
+        # Clone fixture records and attach passwords so import sees them.
+        self.records = {
+            CONFIG_UID: _make_config_record(CONFIG_UID, "Test Project",
+                                            resource_uids=[MACHINE_UID, DB_UID]),
+            MACHINE_UID: _make_resource_record(MACHINE_UID, "Linux Server", "pamMachine",
+                                               user_uids=[USER1_UID]),
+            DB_UID: _make_resource_record(DB_UID, "Postgres DB", "pamDatabase",
+                                          user_uids=[USER1_UID, USER2_UID]),
+            USER1_UID: _make_user_record(USER1_UID, "Admin User", "root"),
+            USER2_UID: _make_user_record(USER2_UID, "DB User", "dbuser"),
+        }
+        for uid in (USER1_UID, USER2_UID):
+            self.records[uid].fields.append(_make_typed_field("password", [f"pw-{uid}"]))
+        self.params.record_cache = {uid: {} for uid in self.records}
+
+    def _export(self):
+        with patch("keepercommander.commands.pam_import.export.load_pam_record",
+                   side_effect=lambda _p, uid: self.records.get(uid)):
+            with patch.object(self.cmd, "_load_dag_context",
+                              return_value=(dict(_DEFAULT_ALLOWED), [])):
+                return json.loads(self.cmd.execute(self.params, project_uid=CONFIG_UID))
+
+    def test_exported_json_loads_via_import_object_loaders(self):
+        from keepercommander.commands.pam_import.base import (
+            PamDatabaseObject,
+            PamMachineObject,
+            PamUserObject,
+            get_admin_credential,
+        )
+
+        parsed = self._export()
+        loaders = {
+            "pamMachine": PamMachineObject.load,
+            "pamDatabase": PamDatabaseObject.load,
+        }
+
+        for res in parsed["pam_data"]["resources"]:
+            # Import regenerates UIDs; drop export UIDs so validators don't fire on fixtures.
+            payload = dict(res)
+            payload.pop("uid", None)
+            nested = []
+            for user in payload.get("users") or []:
+                u = dict(user)
+                u.pop("uid", None)
+                nested.append(u)
+            payload["users"] = nested
+
+            obj = loaders[res["type"]](payload)
+            admin = get_admin_credential(obj)
+            self.assertTrue(
+                admin,
+                f"{res['title']}: administrative_credentials must populate import userRecords",
+            )
+            self.assertNotIn(
+                "userRecords",
+                (res.get("pam_settings") or {}).get("connection") or {},
+            )
+            for nested_user in obj.users or []:
+                self.assertTrue(
+                    nested_user.password,
+                    f"nested user {nested_user.title} missing password",
+                )
+
+        for user in parsed["pam_data"]["users"]:
+            payload = dict(user)
+            payload.pop("uid", None)
+            loaded = PamUserObject.load(payload)
+            self.assertEqual(loaded.title, user["title"])
+            self.assertTrue(loaded.password, f"top-level user {loaded.title} missing password")
+
+        # Shared admin is top-level only; single-resource DB user is nested only.
+        self.assertEqual({u["uid"] for u in parsed["pam_data"]["users"]}, {USER1_UID})
+        db = next(r for r in parsed["pam_data"]["resources"] if r["uid"] == DB_UID)
+        self.assertEqual({u["uid"] for u in db["users"]}, {USER2_UID})
 
 
 if __name__ == "__main__":

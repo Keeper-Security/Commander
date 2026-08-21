@@ -81,6 +81,19 @@ _DEFAULT_ALLOWED_SETTINGS = {
 }
 
 
+class _LazyUserTitleIndex:
+    """Build the vault title→UID map only when a non-UID credential ref is resolved."""
+
+    def __init__(self, build_fn):
+        self._build_fn = build_fn
+        self._index = None
+
+    def get(self, key, default=None):
+        if self._index is None:
+            self._index = self._build_fn() or {}
+        return self._index.get(key, default)
+
+
 class PAMProjectExportCommand(Command):
     """Export a PAM project to JSON for re-import via pam project import."""
 
@@ -166,6 +179,8 @@ class PAMProjectExportCommand(Command):
         path = os.path.expanduser(output_file)
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # O_CREAT mode applies only on create; force private perms on overwrite too.
+            os.chmod(path, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(output_json)
         except OSError as exc:
@@ -486,7 +501,7 @@ class PAMProjectExportCommand(Command):
 
     def _build_resources_and_users(self, params, resource_uids, extra_user_uids=None):
         """Build pam_data for re-import: one full user object per user, credentials by title."""
-        title_to_uid = self._build_user_title_index(params)
+        title_index = _LazyUserTitleIndex(lambda: self._build_user_title_index(params))
 
         # Pass 1: load resources and linked user UIDs
         resource_rows = []  # (res_record, pam_settings, linked_uids)
@@ -503,7 +518,7 @@ class PAMProjectExportCommand(Command):
                 )
                 continue
             pam_settings_dict = self._extract_pam_settings(res_record)
-            linked_uids = self._extract_user_uids(pam_settings_dict, title_to_uid)
+            linked_uids = self._extract_user_uids(pam_settings_dict, title_index)
             resource_rows.append((res_record, pam_settings_dict, linked_uids))
             for uid in linked_uids:
                 user_link_count[uid] = user_link_count.get(uid, 0) + 1
@@ -534,7 +549,9 @@ class PAMProjectExportCommand(Command):
                     seen_top.add(usr_uid)
                     top_level_users.append(dict(user_obj))
 
-            import_settings = self._rewrite_pam_settings_for_import(pam_settings_dict, uid_to_user)
+            import_settings = self._rewrite_pam_settings_for_import(
+                pam_settings_dict, uid_to_user, resource_title=res_record.title or res_record.record_uid
+            )
             resources_list.append(
                 self._load_resource_obj(res_record, import_settings, nested_users)
             )
@@ -555,51 +572,78 @@ class PAMProjectExportCommand(Command):
     def _user_ref_name(user_obj: dict) -> str:
         return (user_obj.get("title") or user_obj.get("login") or user_obj.get("uid") or "").strip()
 
-    def _rewrite_pam_settings_for_import(self, pam_settings_dict, uid_to_user: Dict[str, dict]):
+    def _rewrite_pam_settings_for_import(
+        self, pam_settings_dict, uid_to_user: Dict[str, dict], resource_title: str = ""
+    ):
         """Convert vault wire keys (userRecords UIDs) to import JSON credential titles."""
         settings = copy.deepcopy(pam_settings_dict) if pam_settings_dict else {}
         conn = settings.get("connection")
         if not isinstance(conn, dict):
             return settings
+        res_label = resource_title or "(unknown resource)"
 
-        def resolve_ref(ref) -> str:
+        def warn_unresolved(kind: str, ref: str) -> None:
+            logging.warning(
+                f"{bcolors.WARNING}Export: could not resolve {kind} credential "
+                f"'{ref}' for resource '{res_label}'; omitting from export{bcolors.ENDC}"
+            )
+
+        def resolve_ref(ref, kind: str = "credential") -> str:
             if not isinstance(ref, str) or not ref.strip():
                 return ""
             ref = ref.strip()
             if RecordV3.is_valid_ref_uid(ref):
                 user_obj = uid_to_user.get(ref)
-                return self._user_ref_name(user_obj) if user_obj else ""
+                if user_obj:
+                    return self._user_ref_name(user_obj)
+                warn_unresolved(kind, ref)
+                return ""
             return ref
 
         admin_names: List[str] = []
         for uid in conn.get("userRecords") or []:
-            user_obj = uid_to_user.get(uid) if isinstance(uid, str) else None
-            name = self._user_ref_name(user_obj) if user_obj else ""
+            if not isinstance(uid, str) or not uid:
+                continue
+            user_obj = uid_to_user.get(uid)
+            if not user_obj:
+                warn_unresolved("administrative", uid)
+                continue
+            name = self._user_ref_name(user_obj)
             if name and name not in admin_names:
                 admin_names.append(name)
 
         existing_admin = conn.get("administrative_credentials")
         if isinstance(existing_admin, str) and existing_admin.strip():
-            name = resolve_ref(existing_admin)
+            name = resolve_ref(existing_admin, "administrative")
             if name and name not in admin_names:
                 admin_names.append(name)
         elif isinstance(existing_admin, list):
             for item in existing_admin:
-                name = resolve_ref(item) if isinstance(item, str) else ""
+                name = resolve_ref(item, "administrative") if isinstance(item, str) else ""
                 if name and name not in admin_names:
                     admin_names.append(name)
 
         for key in ("adminRef", "adminCredentialRef"):
             uid = settings.pop(key, None)
-            if isinstance(uid, str) and uid in uid_to_user:
+            if not isinstance(uid, str) or not uid:
+                continue
+            if uid in uid_to_user:
                 name = self._user_ref_name(uid_to_user[uid])
                 if name and name not in admin_names:
                     admin_names.append(name)
+            else:
+                warn_unresolved("administrative", uid)
 
         launch_name = ""
         launch_ref = conn.get("launch_credentials")
+        if isinstance(launch_ref, list):
+            # Import's get_launch_credential uses the first non-empty entry only.
+            launch_ref = next(
+                (item for item in launch_ref if isinstance(item, str) and item.strip()),
+                "",
+            )
         if isinstance(launch_ref, str) and launch_ref.strip():
-            launch_name = resolve_ref(launch_ref)
+            launch_name = resolve_ref(launch_ref, "launch")
 
         conn.pop("userRecords", None)
         if admin_names:
