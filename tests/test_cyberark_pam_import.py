@@ -653,6 +653,162 @@ class TestLoginTypeValidation:
         assert result is False
 
 
+# ── Privilege Cloud Interactive / SSO Auth Tests ─────────────
+
+
+class TestPrivilegeCloudSSOAuth:
+
+    def _client(self):
+        return CyberArkPVWAClient("mycompany.privilegecloud.cyberark.cloud")
+
+    def test_choose_auth_method_sso_alias(self, monkeypatch):
+        monkeypatch.setenv("KEEPER_CYBERARK_AUTH_METHOD", "sso")
+        assert CyberArkPVWAClient._choose_cloud_auth_method() == "interactive"
+
+    def test_choose_auth_method_idp_alias(self, monkeypatch):
+        monkeypatch.setenv("KEEPER_CYBERARK_AUTH_METHOD", "idp")
+        assert CyberArkPVWAClient._choose_cloud_auth_method() == "interactive"
+
+    def test_poll_identity_sso_status_success(self, monkeypatch):
+        client = self._client()
+        client.IDENTITY_IDP_POLL_INTERVAL = 0
+        responses = [
+            {"success": True, "Result": {"State": "Pending"}},
+            {"success": True, "Result": {"State": "Success", "Token": "sso-token-123"}},
+        ]
+
+        class _Resp:
+            def __init__(self, body):
+                self.status_code = 200
+                self._body = body
+
+            def json(self):
+                return self._body
+
+        class _Session:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, *args, **kwargs):
+                body = responses[min(self.calls, len(responses) - 1)]
+                self.calls += 1
+                return _Resp(body)
+
+        session = _Session()
+        monkeypatch.setattr(
+            "keepercommander.importer.cyberark.cyberark_pam.time.sleep",
+            lambda *_: None,
+        )
+        with patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text"):
+            ok = client._poll_identity_sso_status(
+                "https://tenant.id.cyberark.cloud", "idp-session", session=session,
+            )
+        assert ok is True
+        assert client.auth_token == "Bearer sso-token-123"
+        assert session.calls == 2
+
+    def test_poll_identity_sso_status_failed_state(self):
+        client = self._client()
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"success": True, "Result": {"State": "Failed"}}
+
+        class _Session:
+            def post(self, *args, **kwargs):
+                return _Resp()
+
+        with patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text"):
+            ok = client._poll_identity_sso_status(
+                "https://tenant.id.cyberark.cloud", "idp-session", session=_Session(),
+            )
+        assert ok is False
+        assert client.auth_token is None
+
+    def test_complete_identity_sso_pin_success(self, monkeypatch):
+        client = self._client()
+        monkeypatch.setattr(
+            "keepercommander.importer.cyberark.cyberark_pam.prompt",
+            lambda *a, **k: "123456",
+        )
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "success": True,
+                    "Result": {"Summary": "LoginSuccess", "Token": "pin-token"},
+                }
+
+        posted = {}
+
+        class _Session:
+            def post(self, url, json=None, headers=None, timeout=None):
+                posted["url"] = url
+                posted["json"] = json
+                return _Resp()
+
+        with patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text"):
+            ok = client._complete_identity_sso_pin(
+                "https://tenant.id.cyberark.cloud", "idp-login-session", session=_Session(),
+            )
+        assert ok is True
+        assert client.auth_token == "Bearer pin-token"
+        assert posted["json"]["MechanismId"] == "OOBAUTHPIN"
+        assert posted["json"]["SessionId"] == "idp-login-session"
+        assert posted["json"]["Answer"] == "123456"
+
+    def test_complete_identity_sso_opens_browser_and_polls(self, monkeypatch):
+        client = self._client()
+        opened = []
+
+        monkeypatch.setattr(CyberArkPVWAClient, "_open_browser", staticmethod(lambda url: opened.append(url)))
+        monkeypatch.setattr(
+            CyberArkPVWAClient,
+            "_poll_identity_sso_status",
+            lambda self, *a, **k: setattr(self, "auth_token", "Bearer from-poll") or True,
+        )
+
+        start_result = {
+            "IdpRedirectShortUrl": "https://idp.example/sso",
+            "IdpLoginSessionId": "idp-sess",
+            "IdpOobAuthPinRequired": False,
+        }
+        with patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text"):
+            ok = client._complete_identity_sso(
+                "https://tenant.id.cyberark.cloud", start_result, session=object(),
+            )
+        assert ok is True
+        assert opened == ["https://idp.example/sso"]
+        assert client.auth_token == "Bearer from-poll"
+
+    def test_complete_identity_sso_uses_pin_when_required(self, monkeypatch):
+        client = self._client()
+        monkeypatch.setattr(CyberArkPVWAClient, "_open_browser", staticmethod(lambda url: None))
+        called = {"pin": False}
+
+        def _pin(self, *a, **k):
+            called["pin"] = True
+            self.auth_token = "Bearer pin"
+            return True
+
+        monkeypatch.setattr(CyberArkPVWAClient, "_complete_identity_sso_pin", _pin)
+        start_result = {
+            "IdpRedirectUrl": "https://idp.example/long",
+            "IdpLoginSessionId": "idp-sess",
+            "IdpOobAuthPinRequired": True,
+        }
+        with patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text"):
+            ok = client._complete_identity_sso(
+                "https://tenant.id.cyberark.cloud", start_result,
+            )
+        assert ok is True
+        assert called["pin"] is True
+
+
 # ── SSL Verification Tests ───────────────────────────────────
 
 
