@@ -11,17 +11,19 @@
 
 from __future__ import annotations
 import argparse
+import copy
 import itertools
 import json
 import logging
-from typing import List, Set
+import os
+from typing import Dict, List, Optional, Set, Tuple
 
 from .base import PAM_CONFIG_TYPES, PAM_RESOURCES_RECORD_TYPES
 from ..base import Command
 from ..pam.config_facades import PamConfigurationRecordFacade
 from .nsf_helpers import get_folder_record_uids
 from .record_loader import iter_accessible_record_uids, load_pam_record
-from ... import vault
+from ... import utils, vault
 from ...display import bcolors
 from ...recordv3 import RecordV3
 from ...subfolder import find_folders as find_record_folders
@@ -47,7 +49,6 @@ _DAG_KEY_TO_JSON = {
     "aiSessionTerminate": "ai_terminate_session_on_detection",
 }
 
-# Field label / type (casefold) -> import JSON key
 _RESOURCE_FIELD_MAP = {
     "operatingsystem": "operating_system",
     "instancename": "instance_name",
@@ -66,6 +67,7 @@ _RESOURCE_FIELD_MAP = {
 
 _USER_RECORD_TYPES = ("pamUser", "login")
 _PAM_ROOT_FOLDER_NAME = "pam environments"
+_BOOL_EXPORT_KEYS = ("ssl_verification", "use_ssl")
 
 _DEFAULT_ALLOWED_SETTINGS = {
     "connections": "on",
@@ -100,6 +102,7 @@ class PAMProjectExportCommand(Command):
     def execute(self, params, **kwargs):
         project_uid = (kwargs.get("project_uid") or "").strip()
         output_file = (kwargs.get("output") or "").strip()
+        self._nsf_perm_noted = False
 
         if not project_uid:
             logging.warning(f"{bcolors.FAIL}--project-uid is required{bcolors.ENDC}")
@@ -153,22 +156,34 @@ class PAMProjectExportCommand(Command):
         }
 
         output_json = json.dumps(result, indent=2, sort_keys=True)
-        if any(u.get("password") for u in top_level_users):
+        if self._export_contains_password(resources_list, top_level_users):
             logging.warning(
                 f"{bcolors.WARNING}Export includes passwords; treat output as sensitive.{bcolors.ENDC}"
             )
         if not output_file:
             return output_json
 
+        path = os.path.expanduser(output_file)
         try:
-            with open(output_file, "w", encoding="utf-8") as fh:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(output_json)
         except OSError as exc:
             logging.warning(
-                f"{bcolors.FAIL}Failed to write export file '{output_file}': {exc}{bcolors.ENDC}"
+                f"{bcolors.FAIL}Failed to write export file '{path}': {exc}{bcolors.ENDC}"
             )
             return
-        print(f"{bcolors.OKGREEN}PAM project exported to: {output_file}{bcolors.ENDC}")
+        print(f"{bcolors.OKGREEN}PAM project exported to: {path}{bcolors.ENDC}")
+
+    @staticmethod
+    def _export_contains_password(resources_list, top_level_users) -> bool:
+        if any(u.get("password") for u in top_level_users):
+            return True
+        for res in resources_list:
+            for user in res.get("users") or []:
+                if user.get("password"):
+                    return True
+        return False
 
     def _discover_project_record_uids(self, params, facade, config_uid, dag_resource_uids):
         """Merge resourceRef + DAG + folder-tree UIDs under the project wrapper."""
@@ -193,8 +208,9 @@ class PAMProjectExportCommand(Command):
         folder_user_uids: List[str] = []
         seen_users: Set[str] = set()
         skipped_loads = 0
+        seen_folders: Set[str] = set()
         for root_uid in scan_roots:
-            rows, skipped = self._collect_folder_record_types(params, root_uid)
+            rows, skipped = self._collect_folder_record_types(params, root_uid, seen_folders)
             skipped_loads += skipped
             for rec_uid, rtype in rows:
                 if not rec_uid or rec_uid == config_uid:
@@ -215,20 +231,15 @@ class PAMProjectExportCommand(Command):
     @staticmethod
     def _is_pam_content_folder_name(name: str) -> bool:
         n = (name or "").casefold()
-        return (
-            n.endswith(" - resources") or n.endswith(" resources")
-            or n.endswith(" - users") or n.endswith(" users")
-        )
+        return n.endswith(" - resources") or n.endswith(" - users")
 
     @staticmethod
     def _is_resources_folder_name(name: str) -> bool:
-        n = (name or "").casefold()
-        return n.endswith(" - resources") or n.endswith(" resources")
+        return (name or "").casefold().endswith(" - resources")
 
     @staticmethod
     def _is_users_folder_name(name: str) -> bool:
-        n = (name or "").casefold()
-        return n.endswith(" - users") or n.endswith(" users")
+        return (name or "").casefold().endswith(" - users")
 
     def _project_wrapper_uid(self, params, folder_uid):
         """Project folder for folder_uid; never returns the PAM Environments root."""
@@ -243,11 +254,7 @@ class PAMProjectExportCommand(Command):
         return parent_uid
 
     def _resolve_project_folders(self, params, folder_uid, config_uid):
-        """Return (resources_folder_uid, users_folder_uid, scan_roots).
-
-        Collects all descendant *Resources* / *Users* folders under the project
-        wrapper (covers legacy and nested safe-mode). Never walks PAM Environments.
-        """
+        """Return (resources_folder_uid, users_folder_uid, scan_roots)."""
         folder_uid = (folder_uid or "").strip()
         anchors: List[str] = []
         if folder_uid:
@@ -255,8 +262,8 @@ class PAMProjectExportCommand(Command):
         else:
             anchors.extend(uid for uid in (find_record_folders(params, config_uid) or []) if uid)
 
-        resources_folder_uid = ""
-        users_folder_uid = folder_uid
+        resources_candidates: List[str] = []
+        users_candidates: List[str] = []
         scan_roots: List[str] = []
         seen_roots: Set[str] = set()
 
@@ -276,15 +283,28 @@ class PAMProjectExportCommand(Command):
                 if not self._is_pam_content_folder_name(name):
                     continue
                 add_scan_root(fuid)
-                if self._is_resources_folder_name(name) and not resources_folder_uid:
-                    resources_folder_uid = fuid
+                if self._is_resources_folder_name(name):
+                    if fuid not in resources_candidates:
+                        resources_candidates.append(fuid)
                 elif self._is_users_folder_name(name):
-                    users_folder_uid = fuid
+                    if fuid not in users_candidates:
+                        users_candidates.append(fuid)
 
-            if not resources_folder_uid:
-                resources_folder_uid = users_folder_uid or anchor
+        if len(resources_candidates) > 1:
+            logging.warning(
+                f"{bcolors.WARNING}Export: multiple Resources folders found; "
+                f"using first for shared_folder_resources ACL{bcolors.ENDC}"
+            )
+        if len(users_candidates) > 1:
+            logging.warning(
+                f"{bcolors.WARNING}Export: multiple Users folders found; "
+                f"using first for shared_folder_users ACL{bcolors.ENDC}"
+            )
 
-        return resources_folder_uid or "", users_folder_uid or "", scan_roots
+        # Prefer real matches; never invent resources ACL from the users folder.
+        resources_folder_uid = resources_candidates[0] if resources_candidates else ""
+        users_folder_uid = users_candidates[0] if users_candidates else (folder_uid or "")
+        return resources_folder_uid, users_folder_uid, scan_roots
 
     def _iter_descendant_folders(self, params, folder_uid):
         """Yield every folder UID under folder_uid (not including folder_uid)."""
@@ -317,6 +337,7 @@ class PAMProjectExportCommand(Command):
             tmp_dag.linking_dag.load()
             vertex = tmp_dag.linking_dag.get_vertex(config_uid)
             if not vertex:
+                logging.debug("PAMProjectExportCommand: no DAG vertex for config %s", config_uid)
                 return allowed, resource_uids
 
             content = get_vertex_content(vertex) or {}
@@ -329,17 +350,26 @@ class PAMProjectExportCommand(Command):
                 uid = getattr(child, "uid", None)
                 if uid:
                     resource_uids.append(uid)
+        except ImportError as exc:
+            logging.warning(
+                f"{bcolors.WARNING}Export: DAG dependencies unavailable; "
+                f"using default pam_configuration flags ({exc}){bcolors.ENDC}"
+            )
         except Exception as exc:
-            logging.debug("PAMProjectExportCommand: DAG context unavailable: %s", exc)
+            logging.warning(
+                f"{bcolors.WARNING}Export: could not load DAG context; "
+                f"using default pam_configuration flags ({exc}){bcolors.ENDC}"
+            )
         return allowed, resource_uids
 
-    def _collect_folder_record_types(self, params, folder_uid):
+    def _collect_folder_record_types(self, params, folder_uid, seen_folders: Optional[Set[str]] = None):
         """Return ([(uid, record_type), ...], skipped_unloadable_count)."""
-        rows: List[tuple] = []
+        rows: List[Tuple[str, str]] = []
         skipped = 0
         if not folder_uid:
             return rows, skipped
-        seen_folders: Set[str] = set()
+        if seen_folders is None:
+            seen_folders = set()
         stack = [folder_uid]
         while stack:
             fuid = stack.pop()
@@ -361,7 +391,10 @@ class PAMProjectExportCommand(Command):
         if folder and getattr(folder, "parent_uid", None):
             return folder.parent_uid
         nsf = getattr(params, "nested_share_folders", None) or {}
-        return (nsf.get(folder_uid) or {}).get("parent_uid") or ""
+        info = nsf.get(folder_uid)
+        if isinstance(info, dict):
+            return info.get("parent_uid") or ""
+        return ""
 
     @staticmethod
     def _folder_name(params, folder_uid):
@@ -369,9 +402,9 @@ class PAMProjectExportCommand(Command):
         if folder and getattr(folder, "name", None):
             return folder.name
         nsf = getattr(params, "nested_share_folders", None) or {}
-        name = (nsf.get(folder_uid) or {}).get("name")
-        if name:
-            return name
+        info = nsf.get(folder_uid)
+        if isinstance(info, dict) and info.get("name"):
+            return info["name"]
         sf = (getattr(params, "shared_folder_cache", None) or {}).get(folder_uid) or {}
         return sf.get("name_unencrypted") or ""
 
@@ -382,6 +415,8 @@ class PAMProjectExportCommand(Command):
         if folder:
             children.extend(getattr(folder, "subfolders", None) or [])
         for fuid, info in (getattr(params, "nested_share_folders", None) or {}).items():
+            if not isinstance(info, dict):
+                continue
             if (info.get("parent_uid") or "") == folder_uid:
                 children.append(fuid)
         seen: Set[str] = set()
@@ -397,10 +432,19 @@ class PAMProjectExportCommand(Command):
         if not folder_uid:
             return {}
         sf = (getattr(params, "shared_folder_cache", None) or {}).get(folder_uid)
-        if not isinstance(sf, dict):
-            # NSF / non-classic folders: do not invent defaults that would change ACL on re-import.
+        if isinstance(sf, dict):
+            return self._permissions_from_classic_sf(sf)
+
+        nsf = getattr(params, "nested_share_folders", None) or {}
+        if folder_uid in nsf:
+            if not getattr(self, "_nsf_perm_noted", False):
+                logging.info(
+                    f"{bcolors.OKBLUE}Export: NSF folder permissions are not exported "
+                    f"(shared_folder_* left empty){bcolors.ENDC}"
+                )
+                self._nsf_perm_noted = True
             return {}
-        return self._permissions_from_classic_sf(sf)
+        return {}
 
     @staticmethod
     def _permissions_from_classic_sf(sf):
@@ -441,12 +485,12 @@ class PAMProjectExportCommand(Command):
         return result
 
     def _build_resources_and_users(self, params, resource_uids, extra_user_uids=None):
-        """Build pam_data.resources and deduplicated pam_data.users."""
-        resources_list = []
-        top_level_users = []
-        seen_user_uids: Set[str] = set()
+        """Build pam_data for re-import: one full user object per user, credentials by title."""
         title_to_uid = self._build_user_title_index(params)
 
+        # Pass 1: load resources and linked user UIDs
+        resource_rows = []  # (res_record, pam_settings, linked_uids)
+        user_link_count: Dict[str, int] = {}
         for res_uid in resource_uids:
             res_record = load_pam_record(params, res_uid)
             if not res_record or not isinstance(res_record, vault.TypedRecord):
@@ -458,37 +502,117 @@ class PAMProjectExportCommand(Command):
                     res_uid, res_record.record_type,
                 )
                 continue
-
             pam_settings_dict = self._extract_pam_settings(res_record)
-            resource_user_entries = []
-            for usr_uid in self._extract_user_uids(pam_settings_dict, title_to_uid):
-                user_obj = self._load_user_obj(params, usr_uid)
+            linked_uids = self._extract_user_uids(pam_settings_dict, title_to_uid)
+            resource_rows.append((res_record, pam_settings_dict, linked_uids))
+            for uid in linked_uids:
+                user_link_count[uid] = user_link_count.get(uid, 0) + 1
+
+        user_cache: Dict[str, dict] = {}
+
+        def cached_user(uid: str):
+            if uid not in user_cache:
+                user_cache[uid] = self._load_user_obj(params, uid)
+            return user_cache[uid]
+
+        resources_list = []
+        top_level_users = []
+        seen_top: Set[str] = set()
+
+        for res_record, pam_settings_dict, linked_uids in resource_rows:
+            uid_to_user = {}
+            nested_users = []
+            for usr_uid in linked_uids:
+                user_obj = cached_user(usr_uid)
                 if user_obj is None:
                     continue
-                resource_user_entries.append({
-                    "uid": usr_uid,
-                    "type": user_obj["type"],
-                    "title": user_obj["title"],
-                    "login": user_obj["login"],
-                })
-                if usr_uid not in seen_user_uids:
-                    seen_user_uids.add(usr_uid)
-                    top_level_users.append(user_obj)
+                uid_to_user[usr_uid] = user_obj
+                # Single-resource users live fully under the resource; shared → top-level only.
+                if user_link_count.get(usr_uid, 0) == 1:
+                    nested_users.append(dict(user_obj))
+                elif usr_uid not in seen_top:
+                    seen_top.add(usr_uid)
+                    top_level_users.append(dict(user_obj))
 
+            import_settings = self._rewrite_pam_settings_for_import(pam_settings_dict, uid_to_user)
             resources_list.append(
-                self._load_resource_obj(res_record, pam_settings_dict, resource_user_entries)
+                self._load_resource_obj(res_record, import_settings, nested_users)
             )
 
         for usr_uid in extra_user_uids or []:
-            if usr_uid in seen_user_uids:
+            # Orphans only: already-linked users are nested (count==1) or top-level (count>=2).
+            if usr_uid in seen_top or usr_uid in user_link_count:
                 continue
-            user_obj = self._load_user_obj(params, usr_uid)
+            user_obj = cached_user(usr_uid)
             if user_obj is None:
                 continue
-            seen_user_uids.add(usr_uid)
-            top_level_users.append(user_obj)
+            seen_top.add(usr_uid)
+            top_level_users.append(dict(user_obj))
 
         return resources_list, top_level_users
+
+    @staticmethod
+    def _user_ref_name(user_obj: dict) -> str:
+        return (user_obj.get("title") or user_obj.get("login") or user_obj.get("uid") or "").strip()
+
+    def _rewrite_pam_settings_for_import(self, pam_settings_dict, uid_to_user: Dict[str, dict]):
+        """Convert vault wire keys (userRecords UIDs) to import JSON credential titles."""
+        settings = copy.deepcopy(pam_settings_dict) if pam_settings_dict else {}
+        conn = settings.get("connection")
+        if not isinstance(conn, dict):
+            return settings
+
+        def resolve_ref(ref) -> str:
+            if not isinstance(ref, str) or not ref.strip():
+                return ""
+            ref = ref.strip()
+            if RecordV3.is_valid_ref_uid(ref):
+                user_obj = uid_to_user.get(ref)
+                return self._user_ref_name(user_obj) if user_obj else ""
+            return ref
+
+        admin_names: List[str] = []
+        for uid in conn.get("userRecords") or []:
+            user_obj = uid_to_user.get(uid) if isinstance(uid, str) else None
+            name = self._user_ref_name(user_obj) if user_obj else ""
+            if name and name not in admin_names:
+                admin_names.append(name)
+
+        existing_admin = conn.get("administrative_credentials")
+        if isinstance(existing_admin, str) and existing_admin.strip():
+            name = resolve_ref(existing_admin)
+            if name and name not in admin_names:
+                admin_names.append(name)
+        elif isinstance(existing_admin, list):
+            for item in existing_admin:
+                name = resolve_ref(item) if isinstance(item, str) else ""
+                if name and name not in admin_names:
+                    admin_names.append(name)
+
+        for key in ("adminRef", "adminCredentialRef"):
+            uid = settings.pop(key, None)
+            if isinstance(uid, str) and uid in uid_to_user:
+                name = self._user_ref_name(uid_to_user[uid])
+                if name and name not in admin_names:
+                    admin_names.append(name)
+
+        launch_name = ""
+        launch_ref = conn.get("launch_credentials")
+        if isinstance(launch_ref, str) and launch_ref.strip():
+            launch_name = resolve_ref(launch_ref)
+
+        conn.pop("userRecords", None)
+        if admin_names:
+            conn["administrative_credentials"] = admin_names if len(admin_names) > 1 else admin_names[0]
+        else:
+            conn.pop("administrative_credentials", None)
+        if launch_name:
+            conn["launch_credentials"] = launch_name
+        else:
+            conn.pop("launch_credentials", None)
+
+        settings["connection"] = conn
+        return settings
 
     @staticmethod
     def _extract_pam_settings(res_record):
@@ -535,8 +659,10 @@ class PAMProjectExportCommand(Command):
             raw = field.get_default_value() if hasattr(field, "get_default_value") else None
             if raw is None or raw == "":
                 continue
-            if ftype == "checkbox" or isinstance(raw, bool) or key in ("ssl_verification", "use_ssl"):
-                obj[key] = bool(raw)
+            if ftype == "checkbox" or key in _BOOL_EXPORT_KEYS:
+                coerced = utils.value_to_boolean(raw)
+                if coerced is not None:
+                    obj[key] = coerced
             else:
                 obj[key] = str(raw)
 
@@ -567,15 +693,17 @@ class PAMProjectExportCommand(Command):
                     user_uids.append(uid)
             for key in ("launch_credentials", "administrative_credentials"):
                 ref = conn.get(key)
-                if not isinstance(ref, str) or not ref:
-                    continue
-                if RecordV3.is_valid_ref_uid(ref):
-                    if ref not in user_uids:
-                        user_uids.append(ref)
-                    continue
-                resolved = title_to_uid.get(ref.strip().lower())
-                if resolved and resolved not in user_uids:
-                    user_uids.append(resolved)
+                refs = ref if isinstance(ref, list) else ([ref] if isinstance(ref, str) else [])
+                for item in refs:
+                    if not isinstance(item, str) or not item:
+                        continue
+                    if RecordV3.is_valid_ref_uid(item):
+                        if item not in user_uids:
+                            user_uids.append(item)
+                        continue
+                    resolved = title_to_uid.get(item.strip().lower())
+                    if resolved and resolved not in user_uids:
+                        user_uids.append(resolved)
         for key in ("adminRef", "adminCredentialRef"):
             uid = pam_settings_dict.get(key)
             if uid and uid not in user_uids:

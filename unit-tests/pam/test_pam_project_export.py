@@ -211,15 +211,53 @@ class TestPAMProjectExportCommand(unittest.TestCase):
                          "top-level user UIDs must be unique (de-duplicated)")
 
     def test_top_level_users_count(self):
-        # USER1 shared across both resources, USER2 only in DB → 2 unique users
+        # USER1 shared → top-level only; USER2 single-resource → nested under DB
         parsed = json.loads(self._execute())
-        self.assertEqual(len(parsed["pam_data"]["users"]), 2)
+        self.assertEqual(len(parsed["pam_data"]["users"]), 1)
+        self.assertEqual(parsed["pam_data"]["users"][0]["uid"], USER1_UID)
+
+    def test_single_resource_user_nested_with_password_keys(self):
+        parsed = json.loads(self._execute())
+        by_uid = {r["uid"]: r for r in parsed["pam_data"]["resources"]}
+        machine_uids = {u["uid"] for u in by_uid[MACHINE_UID]["users"]}
+        db_uids = {u["uid"] for u in by_uid[DB_UID]["users"]}
+        self.assertNotIn(USER1_UID, machine_uids)
+        self.assertNotIn(USER1_UID, db_uids)
+        self.assertEqual(db_uids, {USER2_UID})
+        db_user = by_uid[DB_UID]["users"][0]
+        for key in ("uid", "type", "title", "login"):
+            self.assertIn(key, db_user)
+
+    def test_user_records_rewritten_to_administrative_credentials(self):
+        parsed = json.loads(self._execute())
+        by_uid = {r["uid"]: r for r in parsed["pam_data"]["resources"]}
+        machine_conn = by_uid[MACHINE_UID]["pam_settings"]["connection"]
+        db_conn = by_uid[DB_UID]["pam_settings"]["connection"]
+        self.assertNotIn("userRecords", machine_conn)
+        self.assertNotIn("userRecords", db_conn)
+        self.assertEqual(machine_conn["administrative_credentials"], "Admin User")
+        self.assertEqual(
+            db_conn["administrative_credentials"],
+            ["Admin User", "DB User"],
+        )
 
     def test_user_has_required_keys(self):
         parsed = json.loads(self._execute())
         for usr in parsed["pam_data"]["users"]:
             for key in ("uid", "type", "title", "login"):
                 self.assertIn(key, usr, f"user missing key: {key}")
+
+    def test_output_file_mode_is_private(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            os.unlink(tmp_path)
+            self._execute(output=tmp_path)
+            mode = os.stat(tmp_path).st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     # ── --output flag ────────────────────────────────────────────
 
@@ -354,23 +392,25 @@ class TestKCMImportRoundTrip(unittest.TestCase):
         self.assertEqual(res["users"][0]["uid"], self.KCM_USR)
         self.assertEqual(res["users"][0]["title"], "KCM User - prod-db")
 
-    def test_top_level_users_includes_resolved_user(self):
+    def test_single_resource_user_not_duplicated_at_top_level(self):
         parsed = json.loads(self._execute())
-        top_users = parsed["pam_data"]["users"]
-        self.assertEqual(len(top_users), 1)
-        self.assertEqual(top_users[0]["uid"], self.KCM_USR)
+        self.assertEqual(parsed["pam_data"]["users"], [])
+        self.assertEqual(
+            parsed["pam_data"]["resources"][0]["users"][0]["uid"], self.KCM_USR
+        )
 
     def test_pam_settings_preserved_for_round_trip(self):
-        """Round-trip safety: KCM-specific pam_settings keys preserved verbatim."""
+        """Round-trip safety: KCM launch_credentials title preserved for import."""
         parsed = json.loads(self._execute())
         res = parsed["pam_data"]["resources"][0]
         conn = res["pam_settings"]["connection"]
         self.assertEqual(conn["protocol"], "ssh")
         self.assertEqual(conn["port"], "22")
         self.assertEqual(conn["launch_credentials"], "KCM User - prod-db")
+        self.assertNotIn("userRecords", conn)
 
-    def test_uid_in_launch_credentials_accepted(self):
-        """If launch_credentials already holds a 22-char UID (non-KCM path), keep it as-is."""
+    def test_uid_in_launch_credentials_rewritten_to_title(self):
+        """Vault UID in launch_credentials must export as title for re-import."""
         uid_22 = "AAAAAAAAAAAAAAAAAAAAAA"  # 22 chars, no slash, no space
         usr = vault.TypedRecord(version=3)
         usr.type_name = "pamUser"
@@ -384,9 +424,14 @@ class TestKCMImportRoundTrip(unittest.TestCase):
         ps = res.get_typed_field("pamSettings").value[0]
         ps["connection"]["launch_credentials"] = uid_22
         parsed = json.loads(self._execute())
-        users = parsed["pam_data"]["resources"][0]["users"]
+        resource = parsed["pam_data"]["resources"][0]
+        users = resource["users"]
         self.assertEqual(len(users), 1)
         self.assertEqual(users[0]["uid"], uid_22)
+        self.assertEqual(
+            resource["pam_settings"]["connection"]["launch_credentials"],
+            "Direct UID User",
+        )
 
 
 class TestPAMProjectExportNSF(unittest.TestCase):
@@ -466,8 +511,11 @@ class TestPAMProjectExportNSF(unittest.TestCase):
         self.assertEqual(res["type"], "pamMachine")
         self.assertEqual(len(res["users"]), 1)
         self.assertEqual(res["users"][0]["uid"], self.NSF_USER)
-        self.assertEqual(len(parsed["pam_data"]["users"]), 1)
-        self.assertEqual(parsed["pam_data"]["users"][0]["login"], "root")
+        self.assertEqual(res["users"][0]["login"], "root")
+        self.assertEqual(parsed["pam_data"]["users"], [])
+        conn = res["pam_settings"]["connection"]
+        self.assertNotIn("userRecords", conn)
+        self.assertEqual(conn["administrative_credentials"], "NSF Admin")
 
 
 class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
@@ -598,10 +646,19 @@ class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
 
     def test_folder_users_exported_including_orphan(self):
         parsed = json.loads(self._execute())
-        logins = {u["login"] for u in parsed["pam_data"]["users"]}
-        self.assertEqual(logins, {"root", "orphan"})
-        root = next(u for u in parsed["pam_data"]["users"] if u["login"] == "root")
+        # Linked admin lives under the resource; orphan stays top-level only.
+        self.assertEqual(
+            {u["login"] for u in parsed["pam_data"]["users"]},
+            {"orphan"},
+        )
+        res = parsed["pam_data"]["resources"][0]
+        self.assertEqual(len(res["users"]), 1)
+        root = res["users"][0]
+        self.assertEqual(root["login"], "root")
         self.assertEqual(root.get("password"), "s3cret")
+        conn = res["pam_settings"]["connection"]
+        self.assertNotIn("userRecords", conn)
+        self.assertEqual(conn["administrative_credentials"], "Admin")
 
     def test_shared_folder_permissions_exported(self):
         parsed = json.loads(self._execute())
@@ -714,8 +771,9 @@ class TestPAMProjectExportFolderDiscovery(unittest.TestCase):
         parsed = json.loads(self._execute())
         uids = {r["uid"] for r in parsed["pam_data"]["resources"]}
         self.assertEqual(uids, {safe_machine})
-        logins = {u["login"] for u in parsed["pam_data"]["users"]}
-        self.assertIn("safeadmin", logins)
+        res = next(r for r in parsed["pam_data"]["resources"] if r["uid"] == safe_machine)
+        self.assertEqual(res["users"][0]["login"], "safeadmin")
+        self.assertEqual(parsed["pam_data"]["users"], [])
 
     def test_unloadable_folder_records_warn_once(self):
         missing_uid = "fold-missing-rec"
