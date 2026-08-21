@@ -188,6 +188,37 @@ def compare_records(record1, record2):
     return status
 
 
+def _sync_cached_record(params, record_uid, revision, client_modified_time,
+                        encrypted_data, decrypted_data,
+                        encrypted_extra=None, decrypted_extra=None, udata=None):
+    # type: (KeeperParams, str, int, int, Optional[bytes], Optional[bytes], Optional[bytes], Optional[bytes], Optional[dict]) -> None
+    """Fold a just-persisted record back into ``params.record_cache``.
+
+    ``update_record`` reads the revision it puts on the wire from the cache, not
+    from the passed-in record object, so leaving the cache at the pre-update
+    revision makes a second update of the same record within one command fail
+    with ``RS_OUT_OF_SYNC``. The payload is written alongside the revision to keep
+    the entry self-consistent - ``KeeperRecord.load`` reads ``data_unencrypted``,
+    so a bumped revision paired with stale data would surface pre-update fields.
+    """
+    storage_record = params.record_cache.get(record_uid)
+    if not isinstance(storage_record, dict) or not revision:
+        return
+    storage_record['revision'] = revision
+    if client_modified_time:
+        storage_record['client_modified_time'] = client_modified_time
+    if encrypted_data is not None:
+        storage_record['data'] = utils.base64_url_encode(encrypted_data)
+    if decrypted_data is not None:
+        storage_record['data_unencrypted'] = decrypted_data
+    if encrypted_extra is not None:
+        storage_record['extra'] = utils.base64_url_encode(encrypted_extra)
+    if decrypted_extra is not None:
+        storage_record['extra_unencrypted'] = decrypted_extra
+    if udata is not None:
+        storage_record['udata'] = udata
+
+
 def update_record(params, record, skip_extra=False):
     # type: (KeeperParams, vault.KeeperRecord, bool) -> None
     storage_record = params.record_cache.get(record.record_uid)
@@ -212,9 +243,12 @@ def update_record(params, record, skip_extra=False):
             record_object.update(path)
 
         data = vault_extensions.extract_password_record_data(record)
-        record_object['data'] = utils.base64_url_encode(
-            crypto.encrypt_aes_v1(json.dumps(data).encode(), record.record_key))
+        decrypted_data = json.dumps(data).encode()
+        encrypted_data = crypto.encrypt_aes_v1(decrypted_data, record.record_key)
+        record_object['data'] = utils.base64_url_encode(encrypted_data)
 
+        decrypted_extra = None
+        encrypted_extra = None
         if not skip_extra:
             existing_extra = None
             try:
@@ -225,8 +259,9 @@ def update_record(params, record, skip_extra=False):
 
             extra = vault_extensions.extract_password_record_extras(record, existing_extra)
             extra_str = json.dumps(extra)
-            record_object['extra'] = utils.base64_url_encode(
-                crypto.encrypt_aes_v1(extra_str.encode('utf-8'), record.record_key))
+            decrypted_extra = extra_str.encode('utf-8')
+            encrypted_extra = crypto.encrypt_aes_v1(decrypted_extra, record.record_key)
+            record_object['extra'] = utils.base64_url_encode(encrypted_extra)
 
             if 'udata' in storage_record:
                 u = storage_record['udata']
@@ -262,6 +297,11 @@ def update_record(params, record, skip_extra=False):
                 raise KeeperApiError(record_status, status.get('message', ''))
 
         record.revision = rs.get('revision', record.revision)
+        _sync_cached_record(params, record.record_uid, record.revision,
+                            record_object.get('client_modified_time'),
+                            encrypted_data, decrypted_data,
+                            encrypted_extra, decrypted_extra,
+                            record_object.get('udata'))
         add_record_audit_data(params, record)
         prev_file_refs = set((x.id for x in existing_record.attachments or []))
         new_file_refs = set((x.id for x in record.attachments or []))
@@ -317,6 +357,8 @@ def update_record(params, record, skip_extra=False):
         if rs_status and rs_status.status != record_pb2.RS_SUCCESS:
             raise KeeperApiError(record_pb2.RecordModifyResult.keys()[rs_status.status], rs_status.message)
         record.revision = rs.revision
+        _sync_cached_record(params, record.record_uid, rs.revision,
+                            ru.client_modified_time, ru.data, json_data)
         for file_id in refs.difference(existing_refs):
             params.queue_audit_event(
                 'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=file_id)

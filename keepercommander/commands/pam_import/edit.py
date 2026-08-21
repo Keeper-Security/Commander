@@ -49,6 +49,7 @@ from .base import (
 )
 from ..base import Command
 from ..ksm import KSMCommand
+from ..nested_share_folder.helpers import ROOT_FOLDER_UID as NSF_ROOT_FOLDER_UID
 from ..pam import gateway_helper
 from ..pam.config_helper import pam_configurations_get_all
 from ..pam.vault_target import (
@@ -546,7 +547,9 @@ class PAMProjectImportCommand(Command):
         # Create KSM App and share Resources/Users folders (classic SF or NSF).
         # KSMCommand routes NSF folder UIDs through grant_folder_access_to_application_v3.
         use_nsf = project["options"].get("use_nsf", False) is True
-        from .nsf_helpers import restore_nsf_folder_keys, snapshot_nsf_folder_keys, sync_down_preserving_nsf_keys
+        from .nsf_helpers import (collect_nsf_subtree_uids, grant_nsf_folders_to_ksm_app,
+                                  restore_nsf_folder_keys, snapshot_nsf_folder_keys,
+                                  sync_down_preserving_nsf_keys)
         preserved = snapshot_nsf_folder_keys(params) if use_nsf else None
         res["app_uid"] = self.create_ksm_app(params, res["app_name"])
         if preserved is not None:
@@ -570,18 +573,35 @@ class PAMProjectImportCommand(Command):
             sf_uids_to_grant.append(sf_uid)
 
         folders = project["folders"]
+        # NSF folder keys are per-folder: a child does not inherit the parent's
+        # AT_APPLICATION grant the way a classic shared_folder_folder does. Grant
+        # the whole project subtree so records in any descendant (safe-mode
+        # "{safe} - Resources"/"- Users" subfolders included) stay GW-visible.
+        # The global "PAM Environments" root is deliberately excluded - it is a
+        # container shared across projects and holds no records.
+        if use_nsf and folders.get("project_folder_uid", ""):
+            for nsf_uid in collect_nsf_subtree_uids(params, folders["project_folder_uid"]):
+                _add_sf(nsf_uid)
         _add_sf(folders.get("resources_folder_uid", ""))
         _add_sf(folders.get("users_folder_uid", ""))
         _add_sf(folders.get("config_folder_uid", ""))
         for entry in folders.get("safe_folders", []) or []:
             if isinstance(entry, dict):
                 _add_sf(entry.get("uid", ""))
+                if use_nsf:
+                    # Classic safe subfolders are shared_folder_folder children and
+                    # inherit the safe's key; NSF ones need their own grant.
+                    _add_sf(entry.get("resources_subfolder_uid", ""))
+                    _add_sf(entry.get("users_subfolder_uid", ""))
 
-        for sf_uid in sf_uids_to_grant:
-            KSMCommand().execute(params,
-                                 command=("secret", "add"),
-                                 app=res["app_uid"],
-                                 secret=[sf_uid], editable=True)
+        if use_nsf:
+            grant_nsf_folders_to_ksm_app(params, res["app_uid"], sf_uids_to_grant, editable=True)
+        else:
+            for sf_uid in sf_uids_to_grant:
+                KSMCommand().execute(params,
+                                     command=("secret", "add"),
+                                     app=res["app_uid"],
+                                     secret=[sf_uid], editable=True)
 
         if use_nsf or any(is_nested_share_folder(params, uid)
                           for uid in (project["folders"].get("resources_folder_uid", ""),
@@ -1105,15 +1125,42 @@ class PAMProjectImportCommand(Command):
                   (is_shared_folder and v.type == BaseFolderNode.SharedFolderType) or
                   (not is_shared_folder and v.type == BaseFolderNode.UserFolderType)]
         if not is_shared_folder:
-            for uid, nsf in getattr(params, 'nested_share_folders', {}).items():
-                nsf_parent = nsf.get('parent_uid') or None
-                if nsf_parent == puid and nsf.get('name') == folder:
+            seen = {v.uid for v in result}
+            nsf_folders = getattr(params, 'nested_share_folders', None) or {}
+            for uid, nsf in nsf_folders.items():
+                if uid in seen or nsf.get('name') != folder:
+                    continue
+                nsf_parent = self._nsf_effective_parent_uid(nsf, nsf_folders, folders)
+                if nsf_parent == puid:
                     nsf_folder = NestedShareFolderNode()
                     nsf_folder.uid = uid
                     nsf_folder.name = nsf.get('name')
                     nsf_folder.parent_uid = nsf_parent
                     result.append(nsf_folder)
+                    seen.add(uid)
         return result
+
+    @staticmethod
+    def _nsf_effective_parent_uid(nsf: dict, nsf_folders: dict, folder_cache: dict) -> Optional[str]:
+        """Normalize an NSF folder's parent to ``None`` when the folder sits at the root.
+
+        A root-level NSF can be reported three ways: ``None`` (no ``parentUid`` was
+        ever sent - both Commander and the Web Vault omit it on create), the server's
+        drive-root sentinel UID, or - after ``normalize_parent_uid`` - the string
+        ``'root'``. ``sync_down.prepare_folder_tree`` reconciles this on the
+        ``folder_cache`` node but leaves ``params.nested_share_folders`` untouched, so
+        matching on the raw value there misses roots and duplicates them instead.
+        Mirrors the same predicate used by ``tree``/``ls`` in commands/folder.py.
+        """
+        nsf_parent = nsf.get('parent_uid') or None
+        if not nsf_parent:
+            return None
+        if nsf_parent in (NSF_ROOT_FOLDER_UID, 'root'):
+            return None
+        if nsf_parent not in nsf_folders and nsf_parent not in folder_cache:
+            # Parent resolves to no known folder, so it cannot be a real parent.
+            return None
+        return nsf_parent
 
     def create_ksm_app(self, params, app_name) -> str:
         app_record_data = {
