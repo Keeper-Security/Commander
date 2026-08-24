@@ -635,7 +635,6 @@ class TestNestedShareFolderRecordCommands(TestCase):
         cmd = NestedShareRecordUpdateCommand()
         cmd.execute(params, record_uids=[ruid], fields=['password=abc'], force=False)
         mock_update.assert_called_once()
-
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
     @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
     def test_update_record_gen_password_uses_password_policy(self, mock_perm, mock_update):
@@ -837,7 +836,6 @@ class TestNestedShareFolderRecordCommands(TestCase):
             cmd.execute(params, record_uids=[ruid], title='X', fields=[])
         self.assertIn('not available', str(ctx.exception).lower())
         mock_update.assert_not_called()
-
     def test_update_rejects_invalid_field_spec(self):
         from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
         cmd = NestedShareRecordUpdateCommand()
