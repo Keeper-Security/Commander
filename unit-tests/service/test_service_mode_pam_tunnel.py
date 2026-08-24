@@ -148,6 +148,28 @@ class TestServiceModeCommandPolicy(TestCase):
         # PAM --config is a vault UID, not a host path
         self.assertIsNone(check(_tokens('pam project extend --config=SOME_UID -f ' + temp_path)))
 
+    def test_command_aliases_do_not_bypass_host_path_checks(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        for cmd in (
+            'gen -o /tmp/passwords.txt',
+            'gen --output /tmp/passwords.txt',
+            'pam p x --project-uid UID -o /tmp/proj.json',
+            'pam p i -f /etc/passwd',
+            'pam p i --filename=/etc/passwd',
+            'pam p e -f /etc/passwd',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Aliased forms of the safe cases (non-path --output, temp-path filename) stay allowed.
+        temp_path = os.path.join(tempfile.gettempdir(), 'service_filedata_alias_test.json')
+        self.assertIsNone(check(_tokens('gen --output stdout')))
+        self.assertIsNone(check(_tokens(f'pam p i -f {temp_path}')))
+        self.assertIsNone(check(_tokens(f'pam p e --filename={temp_path}')))
+
     def test_config_file_blocked_config_base64_allowed(self):
         check = Verifycommand.validate_service_mode_restrictions
         self.assertIsNotNone(

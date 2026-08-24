@@ -27,6 +27,12 @@ class Verifycommand:
     })
     # Positional file input; FILEDATA is rewritten to a temp path before execute.
     _FILE_INPUT_COMMANDS = frozenset({'import', 'enterprise-push'})
+    # generate's registered alias (commands/utils.py: aliases['gen'] = 'generate').
+    _GENERATE_COMMAND_NAMES = frozenset({'generate', 'gen'})
+    # pam's 'project' subcommand alias (discoveryrotation.py: register_command('project', ..., 'p')).
+    _PAM_PROJECT_ALIASES = {'p': 'project'}
+    # pam project's own subcommand aliases (pam_import/commands.py: register_command(...)).
+    _PAM_PROJECT_SUBCOMMAND_ALIASES = {'x': 'export', 'i': 'import', 'e': 'extend'}
     # --output values that select a mode/format, not a host path.
     _NON_PATH_OUTPUT_VALUES = frozenset({
         'clipboard', 'stdout', 'stdouthidden', 'variable',
@@ -186,7 +192,7 @@ class Verifycommand:
                 return Verifycommand._HOST_FS_MSG
 
         # generate / pam project export use -o as a file path (not mode).
-        if cmd0 == 'generate' or Verifycommand._is_pam_project_export(tokens):
+        if cmd0 in Verifycommand._GENERATE_COMMAND_NAMES or Verifycommand._is_pam_project_export(tokens):
             for value in Verifycommand._option_values(tokens, '-o'):
                 if value.lower() not in Verifycommand._NON_PATH_OUTPUT_VALUES:
                     return Verifycommand._HOST_FS_MSG
@@ -216,20 +222,25 @@ class Verifycommand:
         return None
 
     @staticmethod
-    def _is_pam_project_export(command_tokens):
+    def _pam_project_verb(command_tokens):
+        """Resolve 'pam <project|p> <verb>' (alias-aware) to the verb, or None."""
         if len(command_tokens) < 3:
-            return False
+            return None
         t = [x.lower() for x in command_tokens[:3]]
-        return t[0] == 'pam' and t[1] == 'project' and t[2] == 'export'
+        if t[0] != 'pam':
+            return None
+        project = Verifycommand._PAM_PROJECT_ALIASES.get(t[1], t[1])
+        if project != 'project':
+            return None
+        return Verifycommand._PAM_PROJECT_SUBCOMMAND_ALIASES.get(t[2], t[2])
+
+    @staticmethod
+    def _is_pam_project_export(command_tokens):
+        return Verifycommand._pam_project_verb(command_tokens) == 'export'
 
     @staticmethod
     def _is_pam_project_filename_cmd(command_tokens):
-        if len(command_tokens) < 3:
-            return False
-        t = [x.lower() for x in command_tokens[:3]]
-        return t[0] == 'pam' and t[1] == 'project' and t[2] in (
-            'import', 'extend', 'edit',
-        )
+        return Verifycommand._pam_project_verb(command_tokens) in ('import', 'extend')
 
     @staticmethod
     def _has_option(tokens, flag):
