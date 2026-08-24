@@ -172,6 +172,19 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertIsNone(check(_tokens(f'pam p i -f {temp_path}')))
         self.assertIsNone(check(_tokens(f'pam p e --filename={temp_path}')))
 
+    def test_option_values_yields_dash_leading_values(self):
+        is_file = Verifycommand._option_values
+        self.assertEqual(list(is_file(['generate', '--output', '-'], '--output')), ['-'])
+        self.assertEqual(
+            list(is_file(['pam', 'project', 'import', '-f', '-etc/passwd'], '-f')),
+            ['-etc/passwd'],
+        )
+
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        self.assertIn(ban, check(_tokens('pam project import -f -etc/passwd')))
+        self.assertIn(ban, check(_tokens('pam project import --filename -etc/passwd')))
+
     def test_config_file_blocked_config_base64_allowed(self):
         check = Verifycommand.validate_service_mode_restrictions
         self.assertIsNotNone(

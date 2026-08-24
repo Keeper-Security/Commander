@@ -267,7 +267,7 @@ class Verifycommand:
                 i += 1
                 continue
             if lower == flag_l:
-                if i + 1 < len(tokens) and not tokens[i + 1].startswith('-'):
+                if i + 1 < len(tokens):
                     yield tokens[i + 1]
                     i += 2
                     continue
