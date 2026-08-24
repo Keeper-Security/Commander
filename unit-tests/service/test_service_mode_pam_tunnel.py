@@ -136,7 +136,9 @@ class TestServiceModeCommandPolicy(TestCase):
         ban = 'Local filesystem access'
         self.assertIsNotNone(check(_tokens('pam project import --filename=/etc/passwd')))
         self.assertIsNotNone(check(_tokens('pam project import -f /etc/passwd')))
-        self.assertIn(ban, check(_tokens('import --format=json /tmp/vault.json')))
+        # Use a path outside any OS temp dir -- on Linux, tempfile.gettempdir()
+        # often *is* /tmp, so a literal /tmp path would be misclassified as safe.
+        self.assertIn(ban, check(_tokens('import --format=json /etc/vault.json')))
 
         temp_path = os.path.join(tempfile.gettempdir(), 'service_filedata_test.json')
         self.assertIsNone(
