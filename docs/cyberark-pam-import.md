@@ -132,6 +132,8 @@ Every pamUser nested in a resource gets:
 
 ### Privilege Cloud (*.cyberark.cloud)
 - OAuth2 service account via `POST /oauth2/platformtoken`
+- Interactive user login (password + MFA) via CyberArk Identity `StartAuthentication` / `AdvanceAuthentication`
+- SSO / external IdP via native-client `OobIdPAuth` (browser redirect + `/Security/OobAuthStatus` poll, or OOBAUTHPIN)
 - Tenant ID discovery via `platform-discovery.cyberark.cloud`
 - Tenant formats: `abc1234`, `mycompany`, `abc1234.id`, `tenant.my.idaptive.app`, full URL
 - URL rewrite: `tenant.cyberark.cloud` → `tenant.privilegecloud.cyberark.cloud`
@@ -143,6 +145,7 @@ Every pamUser nested in a resource gets:
 | KEEPER_CYBERARK_ID_TENANT | Identity tenant ID (Privilege Cloud) |
 | KEEPER_CYBERARK_USERNAME | Username or service account client ID |
 | KEEPER_CYBERARK_PASSWORD | Password or client secret |
+| KEEPER_CYBERARK_AUTH_METHOD | `service` or `interactive` / `sso` (Privilege Cloud) |
 | KEEPER_CYBERARK_LOGON_TYPE | Logon type for self-hosted (CyberArk/LDAP/RADIUS/Windows) |
 | KEEPER_CYBERARK_SAFES | Comma-separated safe names |
 | KEEPER_CYBERARK_SAFES_PATH | Path to safes.txt file |
@@ -256,7 +259,7 @@ Before building the import JSON, the importer warns about:
 |---|---|---|
 | Self-hosted PVWA (v10.4+) | CyberArk/LDAP/RADIUS/Windows | Implemented |
 | Privilege Cloud (SaaS) | OAuth2 service account | Implemented |
-| Privilege Cloud Shared Services (ISPSS) | OAuth2 with platform discovery | Implemented |
+| Privilege Cloud Shared Services (ISPSS) | OAuth2 / interactive MFA / SSO (OobIdPAuth) | Implemented |
 | User Portal (Identity) | Separate importer (cyberark_portal) | Different scope |
 
 ---

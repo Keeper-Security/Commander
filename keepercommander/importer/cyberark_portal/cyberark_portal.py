@@ -15,7 +15,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Folder, Record, RecordField
+from ..importer import BaseImporter, Folder, PathDelimiter, Record, RecordField, SharedFolder
 import secrets
 import string
 
@@ -118,6 +118,7 @@ class CyberArkPortalImporter(BaseImporter):
         Keeper login type records for Applications and Passwords and secure note records for SecuredItems.
     """
 
+    verbose_import_summary = True
     LOOP_DELAY = 0.025  # Use quarter millisecond delay between requests to avoid hitting the API rate limits
     TIMEOUT = 10  # Wait up to 10 seconds for CyberArk API requests
 
@@ -282,6 +283,18 @@ class CyberArkPortalImporter(BaseImporter):
                 or folder.get("Title") or folder.get("CollectionName")
                 or folder.get("ID") or "")
 
+    @staticmethod
+    def _folders_from_up_data(up_result):
+        """Pull Identity collections/folders from GetUPData when present."""
+        folders = []
+        if not isinstance(up_result, dict):
+            return folders
+        for key in ("Collections", "Folders", "UserCollections"):
+            items = up_result.get(key)
+            if isinstance(items, list):
+                folders.extend(x for x in items if isinstance(x, dict))
+        return folders
+
     def _apply_sharing_and_folders(self, *, record, item, item_key, folder_index,
                                    identity_base_url, authentication_token,
                                    missing_endpoint_cache, item_kind):
@@ -322,7 +335,7 @@ class CyberArkPortalImporter(BaseImporter):
                     if not fname:
                         continue
                     rec_folder = Folder()
-                    rec_folder.path = fname
+                    rec_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
                     # Map CyberArk's coarse folder permissions onto Keeper's
                     perm = (f.get("Permission") or f.get("AccessLevel")
                             or f.get("EffectivePermission") or "")
@@ -396,6 +409,7 @@ class CyberArkPortalImporter(BaseImporter):
         return default_url
 
     def do_import(self, filename, **kwargs):
+        use_nsf = bool(kwargs.get("use_nsf"))
         name = filename.removeprefix("https://").removeprefix("http://")
         host_part = name.split("/")[0]
 
@@ -408,6 +422,13 @@ class CyberArkPortalImporter(BaseImporter):
             identity_base_url = self.discover_identity_url(tenant_name)
 
         logging.info(f"Using CyberArk Identity URL: {identity_base_url}")
+        if use_nsf:
+            print_formatted_text(
+                HTML(
+                    "\n<ansiyellow>NSF mode:</ansiyellow> CyberArk Identity folders will be created as "
+                    "Nested Share Folders and items as NSF records."
+                )
+            )
 
         username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk User Portal username: ")
 
@@ -711,17 +732,39 @@ class CyberArkPortalImporter(BaseImporter):
         if response.status_code != HTTPStatus.OK:
             logging.error(f"HTTP {HTTPStatus(response.status_code).phrase} error getting UP data: {response.text}")
             return
-        apps = response.json()["Result"]["Apps"]
+        up_result = response.json().get("Result") or {}
+        apps = up_result.get("Apps") or []
 
-       
         missing_endpoint_cache = set()
-        folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
+        folders = list(self._folders_from_up_data(up_result))
+        fetched_folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
+        if fetched_folders:
+            folders.extend(fetched_folders)
+        deduped_folders = {}
+        for folder in folders:
+            key = self._folder_display_name(folder).strip().lower()
+            if key:
+                deduped_folders.setdefault(key, folder)
+        folders = list(deduped_folders.values())
         folder_index = self._build_folder_index(folders) if folders else {}
         if folders:
             print_formatted_text(
                 HTML(f"Discovered <b>{len(folders)}</b> CyberArk folder(s) for the current user."),
                 end="\n\n",
             )
+            if use_nsf:
+                seen_names = set()
+                for folder in folders:
+                    fname = self._folder_display_name(folder)
+                    if not fname:
+                        continue
+                    key = fname.lower()
+                    if key in seen_names:
+                        continue
+                    seen_names.add(key)
+                    nsf_folder = SharedFolder()
+                    nsf_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
+                    yield nsf_folder
 
         if len(apps) > 0:
             print_formatted_text(
@@ -852,5 +895,3 @@ class CyberArkPortalImporter(BaseImporter):
                     record.fields.append(RecordField(type="note", value=itemData["n"]))
 
                 yield record
-
-        print_formatted_text(HTML("Import <ansigreen>complete</ansigreen>"))
