@@ -70,6 +70,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-add')
 
         self.warnings.clear()
+        self._generated_password = False
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         notes = kwargs.get('notes')
@@ -79,7 +80,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         data = self._build_record_data(params, record_type, title, notes, record_fields)
         if self.abort_if_errors():
             return
-        self._check_password_policy(params, data, **kwargs)
+        self.apply_password_policy_warnings(params, data, **kwargs)
 
         if self.abort_if_errors():
             return
@@ -183,13 +184,6 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             data['notes'] = notes
         return data
 
-    def _check_password_policy(self, params, data, **kwargs):
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for failure in pw_failures:
-            self.on_warning(failure)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # nsf-record-update
@@ -222,6 +216,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                 if gen_error:
                     self.on_error(gen_error)
                     return None
+                if password is not None:
+                    self._generated_password = True
                 return password
             if parsed.type in ('oneTimeCode', 'otp'):
                 return self.generate_totp_url()
@@ -241,6 +237,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             raise CommandError('nsf-record-update', 'Record UID is required (use -r or --record)')
 
         self.warnings.clear()
+        self._generated_password = False
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         record_type = kwargs.get('record_type')
@@ -293,7 +290,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     fields=fields or None,
                     notes=kwargs.get('notes'),
                 )
-                self._check_password_policy(params, merged, **kwargs)
+                self.apply_password_policy_warnings(params, merged, **kwargs)
                 if self.warnings:
                     for w in self.warnings:
                         logging.warning(w)
@@ -310,13 +307,6 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                 )
                 check_result(result, 'nsf-record-update')
             params.sync_data = True
-
-    def _check_password_policy(self, params, data, **kwargs):
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        for failure in pw_failures:
-            self.on_warning(failure)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
 
     @staticmethod
     def _load_record_data(params, record_uid):   # type: (Any, str) -> Optional[Dict]

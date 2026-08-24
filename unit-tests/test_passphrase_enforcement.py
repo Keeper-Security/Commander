@@ -1,5 +1,7 @@
+from types import SimpleNamespace
 from unittest import TestCase
 
+from keepercommander.commands.record_edit import RecordEditMixin
 from keepercommander.enforcement import PasswordComplexityEnforcer
 
 
@@ -82,3 +84,29 @@ class TestPassphraseEnforcement(TestCase):
         password = 'ABCDE123!!!'
         failures = PasswordComplexityEnforcer.validate_password(password, STRICT_RANDOM_POLICY)
         self.assertEqual(failures, [])
+
+
+class TestGeneratedPasswordPolicyWarnings(TestCase):
+
+    def _params(self):
+        return SimpleNamespace(enforcements={
+            'jsons': [{
+                'key': 'generated_password_complexity',
+                'value': '{"length": 20, "passphrase-allow": true, "passphrase-length": 5}',
+            }],
+        })
+
+    def _record(self, password):
+        return {'fields': [{'type': 'password', 'value': [password]}]}
+
+    def test_manual_password_skips_complexity_warnings(self):
+        mixin = RecordEditMixin()
+        mixin.apply_password_policy_warnings(self._params(), self._record('pass'))
+        self.assertEqual(mixin.warnings, [])
+
+    def test_generated_password_keeps_complexity_warnings(self):
+        mixin = RecordEditMixin()
+        mixin._generated_password = True
+        mixin.apply_password_policy_warnings(self._params(), self._record('pass'))
+        self.assertTrue(any('Passphrase' in w or 'Password' in w for w in mixin.warnings))
+        self.assertTrue(any('--force' in w for w in mixin.warnings))

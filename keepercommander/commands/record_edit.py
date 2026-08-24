@@ -244,6 +244,7 @@ class RecordEditMixin:
         self.warnings = []
         self.errors = []
         self._password_policy = None   # type: Optional[Dict[str, Any]]
+        self._generated_password = False
 
     def on_warning(self, message):
         if message:
@@ -265,6 +266,19 @@ class RecordEditMixin:
 
     def on_info(self, message):
         logging.info(message)
+
+    def apply_password_policy_warnings(self, params, source, **kwargs):
+        """Warn on complexity failures only for passwords produced by $GEN.
+
+        Manually entered passwords are saved as-is; strength is handled by BreachWatch.
+        """
+        if not getattr(self, '_generated_password', False):
+            return
+        pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
+        for failure in pw_failures:
+            self.on_warning(failure)
+        if pw_failures and not kwargs.get('force'):
+            self.on_warning('Use --force to bypass password policy warnings.')
 
     def warn_wrong_password_gen_field(self, parsed_field):
         # type: (ParsedFieldValue) -> bool
@@ -332,6 +346,7 @@ class RecordEditMixin:
                     if gen_error:
                         self.on_error(gen_error)
                     elif password is not None:
+                        self._generated_password = True
                         record.password = password
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
@@ -673,6 +688,8 @@ class RecordEditMixin:
                         if gen_error:
                             self.on_error(gen_error)
                             continue
+                        if value is not None:
+                            self._generated_password = True
                     elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
                     elif record_field.type in ('keyPair', 'privateKey'):
@@ -916,6 +933,7 @@ class RecordAddCommand(Command, RecordEditMixin):
         folder_uid = FolderMixin.resolve_folder(params, kwargs.get('folder'))
 
         self.warnings.clear()
+        self._generated_password = False
         title = kwargs.get('title')
         if not title:
             raise CommandError('record-add', 'Title parameter is required.')
@@ -979,11 +997,7 @@ class RecordAddCommand(Command, RecordEditMixin):
         record.title = title
         record.notes = self.validate_notes(kwargs.get('notes') or '')
 
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
-        for f in pw_failures:
-            self.on_warning(f)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
+        self.apply_password_policy_warnings(params, record, **kwargs)
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:
@@ -1302,6 +1316,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             return
 
         self.warnings.clear()
+        self._generated_password = False
         record_name = kwargs.get('record')
         if not record_name:
             raise CommandError('record-update', 'Record parameter is required.')
@@ -1369,11 +1384,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             return
 
         if isinstance(record, vault.TypedRecord):
-            pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
-            for f in pw_failures:
-                self.on_warning(f)
-            if pw_failures and not kwargs.get('force'):
-                self.on_warning('Use --force to bypass password policy warnings.')
+            self.apply_password_policy_warnings(params, record, **kwargs)
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:

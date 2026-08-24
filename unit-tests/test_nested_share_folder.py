@@ -466,8 +466,12 @@ class TestNestedShareFolderRecordCommands(TestCase):
         mock_create.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
-    def test_add_record_rejects_weak_password_without_force(self, mock_create):
+    def test_add_record_allows_manual_weak_password(self, mock_create):
         from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
+        mock_create.return_value = {
+            'record_uid': utils.generate_uid(), 'status': 'SUCCESS',
+            'message': '', 'success': True, 'revision': 1,
+        }
         fuid, fobj = _make_folder()
         params = _make_params(
             nested_share_folders={fuid: fobj},
@@ -486,7 +490,7 @@ class TestNestedShareFolderRecordCommands(TestCase):
         cmd = NestedShareRecordAddCommand()
         cmd.execute(params, title='Weak', record_type='general',
                     fields=['password=abc'], force=False)
-        mock_create.assert_not_called()
+        mock_create.assert_called_once()
 
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
     def test_add_record_allows_weak_password_with_force(self, mock_create):
@@ -577,8 +581,12 @@ class TestNestedShareFolderRecordCommands(TestCase):
 
     @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.update_record_v3')
     @patch('keepercommander.commands.nested_share_folder.helpers.check_record_edit_permission')
-    def test_update_record_rejects_weak_password_without_force(self, mock_perm, mock_update):
+    def test_update_record_allows_manual_weak_password(self, mock_perm, mock_update):
         from keepercommander.commands.nested_share_folder import NestedShareRecordUpdateCommand
+        mock_update.return_value = {
+            'record_uid': 'x', 'status': 'SUCCESS',
+            'message': '', 'success': True, 'revision': 2,
+        }
         ruid, robj = _make_record()
         params = _make_params(
             nested_share_records={ruid: robj},
@@ -600,7 +608,7 @@ class TestNestedShareFolderRecordCommands(TestCase):
         )
         cmd = NestedShareRecordUpdateCommand()
         cmd.execute(params, record_uids=[ruid], fields=['password=abc'], force=False)
-        mock_update.assert_not_called()
+        mock_update.assert_called_once()
 
     @patch('keepercommander.nested_share_folder.folder_record_api.add_record_to_folder_v3')
     def test_add_record_to_folder(self, mock_add):
