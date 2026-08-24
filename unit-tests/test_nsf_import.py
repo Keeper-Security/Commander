@@ -289,9 +289,10 @@ class TestNsfImport(TestCase):
         fol.path = 'RootSafe'
         rec.folders = [fol]
         folders = []
-        nsf_import.ensure_nsf_record_folders([rec], folders)
+        result = nsf_import.ensure_nsf_record_folders([rec], folders)
         self.assertEqual(fol.path, 'RootSafe')
         self.assertEqual(folders[0].path, 'RootSafe')
+        self.assertIsNone(result)
 
     def test_build_nsf_record_add_at_vault_root(self):
         rec = Record()

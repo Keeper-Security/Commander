@@ -292,6 +292,8 @@ class RecordType:
 
 
 class BaseImporter(abc.ABC):
+    verbose_import_summary = False
+
     def execute(self, name, **kwargs):
         # type: (BaseImporter, str, ...) -> Iterable[Union[Record, SharedFolder, File]]
         yield from self.do_import(name, **kwargs)

@@ -749,22 +749,24 @@ def _import(params, file_format, filename, **kwargs):
     record_type = kwargs.get('record_type')
     filter_folder = kwargs.get('filter_folder')
     dry_run = kwargs.get('dry_run') is True
-    # For CyberArk imports, users typically expect an explicit "already exists"
-    # message rather than requiring --show-skipped.
-    show_skipped = kwargs.get('show_skipped') is True or file_format in {'cyberark', 'cyberark_portal'}
+    show_skipped = kwargs.get('show_skipped') is True
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
 
-    import_into = kwargs.get('import_into') or ''
+    import_into_raw = kwargs.get('import_into') or ''
+    import_into = import_into_raw
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
     update_flag = kwargs.get('update_flag') or False
     no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
+    verbose_import_summary = importer.verbose_import_summary
+    show_skipped = show_skipped or verbose_import_summary
 
     records_before = len(params.record_cache)
     skipped_existing_count = 0
+    successful_import_count = 0
 
     folders = []        # type: List[ImportSharedFolder]
     records = []        # type: List[ImportRecord]
@@ -844,6 +846,8 @@ def _import(params, file_format, filename, **kwargs):
 
             folders.append(x)
 
+    declared_nsf_folders = list(folders)
+
     manage_users = kwargs.get('manage_users') or False
     manage_records = kwargs.get('manage_records') or False
     can_edit = kwargs.get('can_edit') or False
@@ -864,7 +868,7 @@ def _import(params, file_format, filename, **kwargs):
 
     nsf_base_parent = ''
     if import_into:
-        from .nsf_import import resolve_nsf_folder
+        from .nsf_import import is_nsf_folder, resolve_nsf_folder
         resolved_nsf = resolve_nsf_folder(params, import_into)
         if resolved_nsf:
             use_nsf = True
@@ -872,6 +876,13 @@ def _import(params, file_format, filename, **kwargs):
             if import_into == resolved_nsf:
                 nsf_base_parent = resolved_nsf
                 _strip_path_prefix(records, folders, import_into)
+        elif use_nsf:
+            target_folder, unresolved = try_resolve_path(params, import_into_raw)
+            if target_folder and not unresolved and not is_nsf_folder(params, target_folder.uid):
+                raise CommandError(
+                    'import',
+                    '--nsf cannot import into a classic folder. Choose a Nested Share Folder target.',
+                )
 
     if use_nsf:
         from .nsf_import import ensure_nsf_record_folders, flatten_record_folder_paths
@@ -879,34 +890,40 @@ def _import(params, file_format, filename, **kwargs):
         default_nsf = import_into if (import_into and not nsf_base_parent) else None
         ensure_nsf_record_folders(records, folders, default_nsf)
 
-    # For CyberArk imports, also emit a clear message when the target
+    # Importers with verbose summaries also emit a clear message when the target
     # folder(s) already exist in Keeper.
-    if file_format in {'cyberark', 'cyberark_portal'}:
+    if verbose_import_summary:
         if use_nsf:
             from .nsf_import import resolve_nsf_folder
 
-            requested_paths = set()  # type: Set[str]
+            requested_paths = {}  # type: Dict[Tuple[str, ...], str]
             for sf in folders or []:
                 if getattr(sf, 'path', None):
-                    requested_paths.add(sf.path)
+                    comps = tuple(path_components(sf.path))
+                    requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                        x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
             for rec in records or []:
                 for fol in rec.folders or []:
                     if getattr(fol, 'path', None):
-                        requested_paths.add(fol.path)
+                        comps = tuple(path_components(fol.path))
+                        requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                            x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
                     elif getattr(fol, 'domain', None):
-                        requested_paths.add(fol.domain)
+                        comps = tuple(path_components(fol.domain))
+                        requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                            x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
 
             existing_paths = []
-            for p in sorted(requested_paths):
-                p_norm = (p or '').strip(PathDelimiter)
-                if not p_norm:
+            for path_key, display_path in sorted(requested_paths.items()):
+                if not path_key:
                     continue
                 try:
-                    uid = resolve_nsf_folder(params, p_norm)
-                except Exception:
+                    uid = resolve_nsf_folder(params, display_path)
+                except (CommandError, KeeperApiError, ValueError, KeyError) as exc:
+                    logging.debug('Unable to resolve NSF folder "%s": %s', display_path, exc)
                     uid = None
                 if uid:
-                    existing_paths.append(p_norm)
+                    existing_paths.append(display_path)
 
             if existing_paths:
                 for p in existing_paths:
@@ -972,19 +989,26 @@ def _import(params, file_format, filename, **kwargs):
                             fol.domain = sf_map[sf_name]
                             fol.path = (path[len(sf_name):]).strip(PathDelimiter)
 
-    if file_format in {'cyberark', 'cyberark_portal'} and not use_nsf:
+    if verbose_import_summary and not use_nsf:
         # For classic shared/user folders, use a conservative check based on
         # folder paths (from cached Keeper folder tree).
-        requested_folders = set()  # type: Set[str]
+        requested_folders = {}  # type: Dict[Tuple[str, ...], str]
         for sf in folders or []:
             if getattr(sf, 'path', None):
-                requested_folders.add(sf.path)
+                comps = tuple(path_components(sf.path))
+                requested_folders[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                    x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
         for rec in records or []:
             for fol in rec.folders or []:
+                comps = []
                 if getattr(fol, 'domain', None):
-                    requested_folders.add(fol.domain)
+                    comps.extend(path_components(fol.domain))
                 if getattr(fol, 'path', None):
-                    requested_folders.add(fol.path)
+                    comps.extend(path_components(fol.path))
+                if comps:
+                    key = tuple(x.casefold() for x in comps)
+                    requested_folders[key] = PathDelimiter.join(
+                        x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
 
         existing_folder_paths = set()  # type: Set[str]
         for uid, node in (params.folder_cache or {}).items():
@@ -998,23 +1022,21 @@ def _import(params, file_format, filename, **kwargs):
             if p:
                 existing_folder_paths.add(p)
 
-        existing_folder_paths_lc = {p.lower() for p in existing_folder_paths}
-        existing_folder_last_lc = {p.split(PathDelimiter)[-1].lower() for p in existing_folder_paths if p}
+        existing_folder_keys = {
+            tuple(x.casefold() for x in path_components(p))
+            for p in existing_folder_paths
+        }
 
         already_exists = []
-        for r in requested_folders:
-            r_norm = (r or '').strip(PathDelimiter)
-            if not r_norm:
-                continue
-            r_last = r_norm.split(PathDelimiter)[-1].lower()
-            if r_norm.lower() in existing_folder_paths_lc or r_last in existing_folder_last_lc:
-                already_exists.append(r_norm)
+        for path_key, display_path in requested_folders.items():
+            if path_key in existing_folder_keys:
+                already_exists.append(display_path)
 
         already_exists = sorted(set(already_exists))
         if already_exists:
             for p in already_exists:
                 logging.info(
-                    'Folder "%s" already exists in Keeper - skipping creation',
+                    'Folder "%s" already exists in Keeper - records will be added to the existing folder',
                     p,
                 )
 
@@ -1052,7 +1074,7 @@ def _import(params, file_format, filename, **kwargs):
                     if f.path:
                         folder_name += f.path
 
-                if file_format in {'cyberark', 'cyberark_portal'}:
+                if verbose_import_summary:
                     if folder_name:
                         logging.info(
                             'Record "%s" in folder "%s" already exists in Keeper [%s] - skipped.',
@@ -1279,9 +1301,13 @@ def _import(params, file_format, filename, **kwargs):
 
         if nsf_records_to_add:
             from .nsf_import import execute_nsf_records_add
-            execute_nsf_records_add(params, nsf_records_to_add)
+            nsf_rs = execute_nsf_records_add(params, nsf_records_to_add)
+            successful_import_count += sum(
+                1 for result in nsf_rs if result.status == record_pb2.RS_SUCCESS)
         if records_v3_to_add:
-            rec_rs = execute_records_add(params, records_v3_to_add)
+            add_rs = execute_records_add(params, records_v3_to_add)
+            successful_import_count += sum(
+                1 for result in add_rs if result.status == record_pb2.RS_SUCCESS)
         if records_v2_to_update:
             execute_update_v2_record(params, records_v2_to_update)
         if records_v3_to_update:
@@ -1403,10 +1429,10 @@ def _import(params, file_format, filename, **kwargs):
         if len(v3_atts) > 0:
             upload_v3_attachments(params, v3_atts)
 
-    if use_nsf and folders and not dry_run:
+    if use_nsf and declared_nsf_folders and not dry_run:
         from .nsf_import import apply_nsf_folder_permissions
         apply_nsf_folder_permissions(
-            params, folders, manage_users, manage_records, can_edit, can_share)
+            params, declared_nsf_folders, manage_users, manage_records, can_edit, can_share)
 
     if hasattr(importer, 'cleanup') and callable(importer.cleanup):
         importer.cleanup()
@@ -1415,22 +1441,22 @@ def _import(params, file_format, filename, **kwargs):
     imported_count = max(0, records_after - records_before)
     if imported_count > 0:
         params.queue_audit_event('imported_records', file_format=file_format.upper())
-        if file_format not in {'cyberark', 'cyberark_portal'}:
+        if not verbose_import_summary:
             logging.info("%d records imported successfully", imported_count)
 
-    if file_format in {'cyberark', 'cyberark_portal'} and not dry_run and records:
-        if imported_count == 0 and skipped_existing_count > 0:
+    if verbose_import_summary and not dry_run:
+        if successful_import_count == 0 and skipped_existing_count > 0:
             logging.info(
                 'Import finished: no new records imported; %d record(s) already exist in Keeper.',
                 skipped_existing_count,
             )
-        elif imported_count > 0 and skipped_existing_count > 0:
+        elif successful_import_count > 0 and skipped_existing_count > 0:
             logging.info(
                 'Import finished: %d record(s) imported; %d record(s) already exist in Keeper (skipped).',
-                imported_count, skipped_existing_count,
+                successful_import_count, skipped_existing_count,
             )
-        elif imported_count > 0:
-            logging.info('Import finished: %d record(s) imported successfully.', imported_count)
+        elif successful_import_count > 0:
+            logging.info('Import finished: %d record(s) imported successfully.', successful_import_count)
         else:
             logging.info('Import finished: no records were imported.')
 

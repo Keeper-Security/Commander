@@ -261,6 +261,8 @@ class PermissionMapper:
 
 
 class CyberArkImporter(BaseImporter):
+    verbose_import_summary = True
+
     # Delay between requests to avoid hitting the API rate limits
     DELAY = 0.025
     # CyberArk REST API endpoints (relative to the base URL)
@@ -735,7 +737,7 @@ class CyberArkImporter(BaseImporter):
                 query_params["search"] = query_string
         if not self._maybe_configure_client_cert(pvwa_host):
             return None
-        if pvwa_host.endswith(".cyberark.cloud") or ".privilegecloud." in pvwa_host:
+        if pvwa_host.endswith(".cyberark.cloud"):
             from .pam.client import CyberArkPVWAClient
 
             try:
@@ -1097,7 +1099,7 @@ class CyberArkImporter(BaseImporter):
                 # Explicit NSF folder so prepare_nsf_folders has a SharedFolder target;
                 # record folder paths also resolve to the same NSF node.
                 nsf_folder = SharedFolder()
-                nsf_folder.path = safe
+                nsf_folder.path = safe.replace(PathDelimiter, 2 * PathDelimiter)
                 yield nsf_folder
             with _suppress_progressbar_executor_noise(), ProgressBar() as pb:
                 skip_all = {}
@@ -1107,9 +1109,9 @@ class CyberArkImporter(BaseImporter):
                     # Classic import places each safe as a shared-folder domain.
                     # --nsf uses a path so Nested Share Folders are created instead.
                     if use_nsf:
-                        folder.path = r["safeName"]
+                        folder.path = r["safeName"].replace(PathDelimiter, 2 * PathDelimiter)
                     else:
-                        folder.domain = r["safeName"]
+                        folder.domain = r["safeName"].replace(PathDelimiter, 2 * PathDelimiter)
                     record = Record()
                     record.folders = [folder]
                     record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])
@@ -1136,7 +1138,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "Keeper Commander Import"},
+                                json={"reason": "test"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
@@ -2230,7 +2232,7 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
 
                 shared_folder = SharedFolder()
                 shared_folder.uid = str(safe.get("id") or safe_url_id)
-                shared_folder.path = safe_name
+                shared_folder.path = safe_name.replace(PathDelimiter, 2 * PathDelimiter)
                 shared_folder.permissions = []
 
                 skipped_service = 0

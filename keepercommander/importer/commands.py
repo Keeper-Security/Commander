@@ -83,7 +83,7 @@ import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='sto
 import_parser.add_argument('--file-cache', dest='tmpdir', action='store',
                            help='temp directory used to cache encrypted attachment imports')
 import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_true',
-                           help='Display skipped records')
+                           help='display skipped records (always enabled for CyberArk imports)')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
 import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',

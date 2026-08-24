@@ -95,8 +95,8 @@ def flatten_record_folder_paths(records):  # type: (List[ImportRecord]) -> None
 
 
 def ensure_nsf_record_folders(records, folders, default_name=None):
-    # type: (List[ImportRecord], List[ImportSharedFolder], Optional[str]) -> str
-    """Create SharedFolder targets for record folder paths."""
+    # type: (List[ImportRecord], List[ImportSharedFolder], Optional[str]) -> None
+    """Ensure record folder paths also have NSF folder targets."""
     name = (default_name or '').strip()
     existing = {(fol.path or '').lower() for fol in folders or [] if fol.path}
 
@@ -120,7 +120,6 @@ def ensure_nsf_record_folders(records, folders, default_name=None):
                     continue
                 fol.path = name
             _add_shared(fol.path or fol.domain)
-    return name
 
 
 def find_nsf_child(params, folder_name, parent_uid):

@@ -242,7 +242,8 @@ class CyberArkPVWAClient:
 
         Both produce a Bearer token that the Privilege Cloud REST API accepts.
         The method is selected via the ``KEEPER_CYBERARK_AUTH_METHOD`` env var
-        (``service`` / ``interactive``) or an interactive prompt.
+        (``service`` / ``interactive``), supplied service credentials, or the
+        availability of an interactive terminal.
         """
         id_host = self._resolve_identity_host()
         if not id_host:
@@ -280,8 +281,21 @@ class CyberArkPVWAClient:
             if discovered:
                 logging.info("Platform discovery resolved tenant to %s", discovered)
                 return discovered
-            logging.info("Using CyberArk Identity URL: https://%s.cyberark.cloud", tenant_subdomain)
-            return f"{tenant_subdomain}.cyberark.cloud"
+            if sys.stdin and sys.stdin.isatty():
+                id_tenant_raw = prompt("CyberArk Identity Tenant ID: ")
+            else:
+                print_formatted_text(HTML(
+                    "<ansired>Unable to resolve the CyberArk Identity tenant</ansired>. "
+                    "Set <i>KEEPER_CYBERARK_ID_TENANT</i> and retry."
+                ))
+                return None
+
+            if not id_tenant_raw:
+                print_formatted_text(HTML(
+                    "<ansired>CyberArk Identity Tenant ID is required</ansired>. "
+                    "Set <i>KEEPER_CYBERARK_ID_TENANT</i> and retry."
+                ))
+                return None
 
         id_tenant_raw = id_tenant_raw.strip()
         if id_tenant_raw.startswith("https://"):
@@ -326,8 +340,11 @@ class CyberArkPVWAClient:
             return "interactive"
         if method in ("service", "service_account", "oauth", "oauth2", "client_credentials"):
             return "service"
-        # Default to interactive Identity login (same as cyberark_portal).
-        return "interactive"
+        username = environ.get("KEEPER_CYBERARK_USERNAME") or environ.get("_CYBERARK_USERNAME")
+        password = environ.get("KEEPER_CYBERARK_PASSWORD") or environ.get("_CYBERARK_PASSWORD")
+        if username and password:
+            return "service"
+        return "interactive" if sys.stdin and sys.stdin.isatty() else "service"
 
     def _auth_privilege_cloud_service(self, id_host: str) -> bool:
         """Authenticate to Privilege Cloud via OAuth2 service account (no MFA)."""
@@ -360,8 +377,7 @@ class CyberArkPVWAClient:
             print_formatted_text(HTML(
                 "<ansiyellow>Tip:</ansiyellow> the OAuth2 client-credentials flow only works for "
                 "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA, "
-                "re-run and choose authentication method <b>2</b> "
-                "(or set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i>)."
+                "set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i> and retry."
             ))
             return False
         try:
@@ -371,8 +387,7 @@ class CyberArkPVWAClient:
             print_formatted_text(HTML(
                 "<ansiyellow>Tip:</ansiyellow> the OAuth2 client-credentials flow only works for "
                 "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA, "
-                "re-run and choose authentication method <b>2</b> "
-                "(or set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i>)."
+                "set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i> and retry."
             ))
             return False
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
@@ -402,7 +417,7 @@ class CyberArkPVWAClient:
             print_formatted_text(HTML(
                 "<ansired>This account signs in through SSO / an external identity provider</ansired>. "
                 "Use a direct CyberArk Identity account, or set "
-                "<i>_CYBERARK_AUTH_METHOD=service</i> for a service account."
+                "<i>KEEPER_CYBERARK_AUTH_METHOD=service</i> for a service account."
             ))
             return False
 
@@ -1228,7 +1243,7 @@ class CyberArkPVWAClient:
                     self._get_url("account_password").format(account_id=account_id),
                     headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
                     json={
-                        "reason": "Keeper Commander Import",
+                        "reason": "test",
                         **({"TicketingSystemName": environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]}
                            if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ else {}),
                         **({"TicketId": environ["KEEPER_CYBERARK_TICKET_ID"]}
@@ -1275,4 +1290,3 @@ class CyberArkPVWAClient:
                 print_formatted_text(HTML(f"Password retrieval <ansired>aborted</ansired> (status {response.status_code})"))
                 return None
         return None
-

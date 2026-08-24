@@ -15,7 +15,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Folder, Record, RecordField, SharedFolder
+from ..importer import BaseImporter, Folder, PathDelimiter, Record, RecordField, SharedFolder
 import secrets
 import string
 
@@ -118,6 +118,7 @@ class CyberArkPortalImporter(BaseImporter):
         Keeper login type records for Applications and Passwords and secure note records for SecuredItems.
     """
 
+    verbose_import_summary = True
     LOOP_DELAY = 0.025  # Use quarter millisecond delay between requests to avoid hitting the API rate limits
     TIMEOUT = 10  # Wait up to 10 seconds for CyberArk API requests
 
@@ -334,7 +335,7 @@ class CyberArkPortalImporter(BaseImporter):
                     if not fname:
                         continue
                     rec_folder = Folder()
-                    rec_folder.path = fname
+                    rec_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
                     # Map CyberArk's coarse folder permissions onto Keeper's
                     perm = (f.get("Permission") or f.get("AccessLevel")
                             or f.get("EffectivePermission") or "")
@@ -739,6 +740,12 @@ class CyberArkPortalImporter(BaseImporter):
         fetched_folders = self._fetch_folders(identity_base_url, authentication_token, missing_endpoint_cache)
         if fetched_folders:
             folders.extend(fetched_folders)
+        deduped_folders = {}
+        for folder in folders:
+            key = self._folder_display_name(folder).strip().lower()
+            if key:
+                deduped_folders.setdefault(key, folder)
+        folders = list(deduped_folders.values())
         folder_index = self._build_folder_index(folders) if folders else {}
         if folders:
             print_formatted_text(
@@ -756,7 +763,7 @@ class CyberArkPortalImporter(BaseImporter):
                         continue
                     seen_names.add(key)
                     nsf_folder = SharedFolder()
-                    nsf_folder.path = fname
+                    nsf_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
                     yield nsf_folder
 
         if len(apps) > 0:
