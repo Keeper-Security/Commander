@@ -245,6 +245,7 @@ class RecordEditMixin:
         self.errors = []
         self._password_policy = None   # type: Optional[Dict[str, Any]]
         self._generated_password = False
+        self._generated_password_is_passphrase = False
 
     def on_warning(self, message):
         if message:
@@ -267,17 +268,18 @@ class RecordEditMixin:
     def on_info(self, message):
         logging.info(message)
 
-    def apply_password_policy_warnings(self, params, source, **kwargs):
+    def apply_password_policy_warnings(self, params, source, force=False):
         """Warn on complexity failures only for passwords produced by $GEN.
 
         Manually entered passwords are saved as-is; strength is handled by BreachWatch.
         """
         if not getattr(self, '_generated_password', False):
             return
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
+        pw_failures = PasswordComplexityEnforcer.validate_record(
+            params, source, allow_passphrase_fallback=self._generated_password_is_passphrase)
         for failure in pw_failures:
             self.on_warning(failure)
-        if pw_failures and not kwargs.get('force'):
+        if pw_failures and not force:
             self.on_warning('Use --force to bypass password policy warnings.')
 
     def warn_wrong_password_gen_field(self, parsed_field):
@@ -342,6 +344,8 @@ class RecordEditMixin:
             elif parsed_field.type == 'password':
                 action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
+                    algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
+                    self._generated_password_is_passphrase = algorithm == 'passphrase'
                     password, gen_error = self.generate_password(action_params, policy=self._password_policy)
                     if gen_error:
                         self.on_error(gen_error)
@@ -684,6 +688,8 @@ class RecordEditMixin:
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
+                        algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
+                        self._generated_password_is_passphrase = algorithm == 'passphrase'
                         value, gen_error = self.generate_password(action_params, policy=self._password_policy)
                         if gen_error:
                             self.on_error(gen_error)
@@ -696,10 +702,13 @@ class RecordEditMixin:
                         should_encrypt = 'enc' in action_params
                         passphrase = None
                         if should_encrypt:
+                            self._generated_password_is_passphrase = False
                             passphrase, gen_error = self.generate_password()
                             if gen_error:
                                 self.on_error(gen_error)
                                 continue
+                            if passphrase:
+                                self._generated_password = True
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')
                         value = self.generate_key_pair(key_type, passphrase)
                         if passphrase:
@@ -934,6 +943,7 @@ class RecordAddCommand(Command, RecordEditMixin):
 
         self.warnings.clear()
         self._generated_password = False
+        self._generated_password_is_passphrase = False
         title = kwargs.get('title')
         if not title:
             raise CommandError('record-add', 'Title parameter is required.')
@@ -997,7 +1007,7 @@ class RecordAddCommand(Command, RecordEditMixin):
         record.title = title
         record.notes = self.validate_notes(kwargs.get('notes') or '')
 
-        self.apply_password_policy_warnings(params, record, **kwargs)
+        self.apply_password_policy_warnings(params, record, force=kwargs.get('force'))
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:
@@ -1317,6 +1327,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         self.warnings.clear()
         self._generated_password = False
+        self._generated_password_is_passphrase = False
         record_name = kwargs.get('record')
         if not record_name:
             raise CommandError('record-update', 'Record parameter is required.')
@@ -1384,7 +1395,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             return
 
         if isinstance(record, vault.TypedRecord):
-            self.apply_password_policy_warnings(params, record, **kwargs)
+            self.apply_password_policy_warnings(params, record, force=kwargs.get('force'))
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:

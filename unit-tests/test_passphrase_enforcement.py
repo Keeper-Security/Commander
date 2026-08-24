@@ -2,7 +2,9 @@ from types import SimpleNamespace
 from unittest import TestCase
 
 from keepercommander.commands.record_edit import RecordEditMixin
+from keepercommander.commands.recordv3 import enforce_generated_password_policy
 from keepercommander.enforcement import PasswordComplexityEnforcer
+from keepercommander.error import CommandError
 
 
 STRICT_RANDOM_POLICY = {
@@ -85,6 +87,14 @@ class TestPassphraseEnforcement(TestCase):
         failures = PasswordComplexityEnforcer.validate_password(password, STRICT_RANDOM_POLICY)
         self.assertEqual(failures, [])
 
+    def test_invalid_random_password_keeps_random_policy_errors(self):
+        policy = dict(STRICT_RANDOM_POLICY)
+        policy.update({'length': 20, 'passphrase-length': 5, 'passphrase-separator': '!'})
+        failures = PasswordComplexityEnforcer.validate_password(
+            'ABC123!!', policy, allow_passphrase_fallback=False)
+        self.assertTrue(any('Password must be at least 20 characters' in f for f in failures))
+        self.assertFalse(any('Passphrase contains' in f for f in failures))
+
 
 class TestGeneratedPasswordPolicyWarnings(TestCase):
 
@@ -110,3 +120,27 @@ class TestGeneratedPasswordPolicyWarnings(TestCase):
         mixin.apply_password_policy_warnings(self._params(), self._record('pass'))
         self.assertTrue(any('Passphrase' in w or 'Password' in w for w in mixin.warnings))
         self.assertTrue(any('--force' in w for w in mixin.warnings))
+
+
+class TestV3GeneratedPasswordPolicy(TestCase):
+
+    def _params(self):
+        return SimpleNamespace(enforcements={
+            'jsons': [{
+                'key': 'generated_password_complexity',
+                'value': '{"length": 20}',
+            }],
+        })
+
+    def _record(self):
+        return {'fields': [{'type': 'password', 'value': ['pass']}]}
+
+    def test_generated_password_is_rejected_when_policy_fails(self):
+        with self.assertRaises(CommandError):
+            enforce_generated_password_policy(
+                self._params(), self._record(), 'add', generated=True)
+
+    def test_explicit_password_overrides_generation_for_policy(self):
+        enforce_generated_password_policy(
+            self._params(), self._record(), 'edit', generated=True,
+            password='explicit', force=False)

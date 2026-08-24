@@ -205,6 +205,20 @@ class TestGeneratePasswordPassphrase(TestCase):
     self.assertEqual(len(cmd.errors), 1)
     self.assertIn('passphrase', cmd.errors[0])
 
+  def test_encrypted_key_pair_marks_generated_passphrase(self):
+    from keepercommander.commands.record_edit import RecordAddCommand, ParsedFieldValue
+    from keepercommander import vault
+    cmd = RecordAddCommand()
+    record = vault.TypedRecord()
+    record.type_name = 'sshKeys'
+    record.fields.append(vault.TypedField.new_field('keyPair', '', ''))
+    with mock.patch.object(cmd, 'generate_password', return_value=('weak', None)), \
+            mock.patch.object(cmd, 'generate_key_pair', return_value={'privateKey': 'key'}):
+      cmd.assign_typed_fields(record, [
+        ParsedFieldValue('', 'keyPair', '', '$GEN:enc'),
+      ])
+    self.assertTrue(cmd._generated_password)
+
   def test_invalid_passphrase_separator_aborts_generation(self):
     from keepercommander.commands.record_edit import RecordEditMixin
     result, error = RecordEditMixin.generate_password(

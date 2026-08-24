@@ -142,6 +142,21 @@ def get_password_from_rules(generate_rules, generate_length):
     return kpg.generate()
 
 
+def enforce_generated_password_policy(params, data, command, generated, password=None, force=False):
+    if not generated or password:
+        return
+    pw_failures = PasswordComplexityEnforcer.validate_record(
+        params, data, allow_passphrase_fallback=False)
+    if pw_failures:
+        for failure in pw_failures:
+            logging.warning(bcolors.WARNING + failure + bcolors.ENDC)
+        if not force:
+            raise CommandError(
+                command,
+                'Password does not meet enterprise complexity policy. '
+                'Pass --force to bypass these warnings.')
+
+
 class RecordAddCommand(Command, recordv2.RecordUtils):
     def get_parser(self):
         return add_parser
@@ -411,16 +426,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
-        if generated and not kwargs.get('password'):
-            pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-            if pw_failures:
-                for f in pw_failures:
-                    logging.warning(bcolors.WARNING + f + bcolors.ENDC)
-                if not kwargs.get('force'):
-                    raise CommandError(
-                        'add',
-                        'Password does not meet enterprise complexity policy. '
-                        'Pass --force to bypass these warnings.')
+        enforce_generated_password_policy(params, data, 'add', generated, password, kwargs.get('force'))
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -663,16 +669,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
-        if generated and not kwargs.get('password'):
-            pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-            if pw_failures:
-                for f in pw_failures:
-                    logging.warning(bcolors.WARNING + f + bcolors.ENDC)
-                if not kwargs.get('force'):
-                    raise CommandError(
-                        'edit',
-                        'Password does not meet enterprise complexity policy. '
-                        'Pass --force to bypass these warnings.')
+        enforce_generated_password_policy(params, data, 'edit', generated, password, kwargs.get('force'))
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict
