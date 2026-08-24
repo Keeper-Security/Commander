@@ -231,3 +231,93 @@ class TestNsfImport(TestCase):
             self.assertEqual(
                 os.path.abspath(KeeperCsvImporter().resolve_file_path(csv_path)),
                 os.path.abspath(csv_path))
+
+    def test_cyberark_style_nsf_folder_paths(self):
+        """CyberArk --nsf places safes as NSF paths (not classic shared domains)."""
+        rec = Record()
+        fol = Folder()
+        fol.path = 'RootSafe'
+        rec.folders = [fol]
+        sf = SharedFolder()
+        sf.path = 'RootSafe'
+
+        nsf_import.flatten_record_folder_paths([rec])
+        self.assertEqual((fol.domain or '', fol.path), ('', 'RootSafe'))
+
+        params = _params({})
+        with mock.patch(CREATE, return_value=['safe_uid']) as m:
+            nsf_import.prepare_nsf_folders(params, [sf], [rec])
+            m.assert_called_once_with(params, [('RootSafe', '')])
+            self.assertEqual(fol.uid, 'safe_uid')
+            self.assertEqual(sf.uid, 'safe_uid')
+
+    def test_cyberark_portal_style_nsf_folder_paths(self):
+        """CyberArk Portal --nsf uses Identity folder names as NSF paths."""
+        rec = Record()
+        fol = Folder()
+        fol.path = 'Identity Collection'
+        rec.folders = [fol]
+        sf = SharedFolder()
+        sf.path = 'Identity Collection'
+
+        params = _params({})
+        with mock.patch(CREATE, return_value=['portal_uid']) as m:
+            nsf_import.prepare_nsf_folders(params, [sf], [rec])
+            m.assert_called_once_with(params, [('Identity Collection', '')])
+            self.assertEqual((fol.uid, sf.uid), ('portal_uid', 'portal_uid'))
+
+    def test_classic_cyberark_domain_flattens_for_nsf(self):
+        """Legacy domain placement still flattens correctly when --nsf is used."""
+        rec = Record()
+        fol = Folder()
+        fol.domain = 'LegacySafe'
+        rec.folders = [fol]
+        nsf_import.flatten_record_folder_paths([rec])
+        self.assertEqual((fol.domain, fol.path), ('', 'LegacySafe'))
+
+    def test_ensure_nsf_record_folders_leaves_portal_root_empty(self):
+        rec = Record()
+        rec.title = 'GitHub'
+        folders = []
+        nsf_import.ensure_nsf_record_folders([rec], folders)
+        self.assertFalse(rec.folders)
+        self.assertEqual(folders, [])
+
+    def test_ensure_nsf_record_folders_keeps_cyberark_safe_path(self):
+        rec = Record()
+        fol = Folder()
+        fol.path = 'RootSafe'
+        rec.folders = [fol]
+        folders = []
+        result = nsf_import.ensure_nsf_record_folders([rec], folders)
+        self.assertEqual(fol.path, 'RootSafe')
+        self.assertEqual(folders[0].path, 'RootSafe')
+        self.assertIsNone(result)
+
+    def test_build_nsf_record_add_at_vault_root(self):
+        rec = Record()
+        rec.uid = 'rec1'
+        rec.title = 'GitHub'
+        params = _params()
+        params.data_key = b'\x00' * 32
+        with mock.patch('keepercommander.nested_share_folder.record_api.create_record_data_v3',
+                        return_value='payload') as create:
+            payload = nsf_import.build_nsf_record_add(params, rec, b'\x01' * 32, {'title': 'GitHub'})
+            self.assertEqual(payload, 'payload')
+            kwargs = create.call_args.kwargs
+            self.assertIsNone(kwargs['folder_uid'])
+            self.assertIsNone(kwargs['folder_key'])
+            self.assertEqual(kwargs['data_key'], params.data_key)
+
+    def test_prepare_record_link_skips_nsf_root_records(self):
+        from keepercommander.importer.imp_exp import prepare_record_link
+        rec = Record()
+        rec.uid = 'nsf_rec'
+        rec.title = 'GitHub'
+        params = _params()
+        params.nested_share_records = {'nsf_rec': {}}
+        params.record_cache = {'nsf_rec': {'record_key_unencrypted': b'\x00' * 32}}
+        params.subfolder_record_cache = {'AAAAAAAAAAAAAAAAAUIpTQ': {'nsf_rec'}}
+        params.folder_cache = {}
+        params.root_folder = mock.MagicMock(type='/', uid='')
+        self.assertEqual(prepare_record_link(params, [rec]), [])

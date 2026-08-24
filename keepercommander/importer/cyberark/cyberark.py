@@ -27,6 +27,7 @@ from .pam import _esc
 from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
+    Folder,
     Permission,
     Record,
     RecordField,
@@ -260,6 +261,8 @@ class PermissionMapper:
 
 
 class CyberArkImporter(BaseImporter):
+    verbose_import_summary = True
+
     # Delay between requests to avoid hitting the API rate limits
     DELAY = 0.025
     # CyberArk REST API endpoints (relative to the base URL)
@@ -735,63 +738,20 @@ class CyberArkImporter(BaseImporter):
         if not self._maybe_configure_client_cert(pvwa_host):
             return None
         if pvwa_host.endswith(".cyberark.cloud"):
-            pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
+            from .pam.client import CyberArkPVWAClient
+
+            try:
+                client = CyberArkPVWAClient(filename)
+            except ValueError as exc:
+                print_formatted_text(HTML(f"<ansired>{exc}</ansired>"))
+                return None
+            if not client.authenticate():
+                return None
+            pvwa_host = client.pvwa_host
+            if client.query_params:
+                query_params.update(client.query_params)
+            authorization_token = client.auth_token
             self._verify_tls = True
-            id_tenant = environ.get("_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
-            if re.match(r"^[A-Za-z]{3}\d{4}$", id_tenant):
-                id_tenant += ".id"
-            client_id = environ.get("_CYBERARK_USERNAME") or prompt("CyberArk service user name: ")
-            client_secret = environ.get("_CYBERARK_PASSWORD") or prompt(
-                "CyberArk service user password: ", is_password=True
-            )
-            token_url = f"https://{id_tenant}.cyberark.cloud/oauth2/platformtoken"
-            try:
-                response = self._request(
-                    "POST",
-                    token_url,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                    },
-                    timeout=self.TIMEOUT,
-                )
-            except requests.exceptions.ConnectionError as e:
-                print_formatted_text(
-                    HTML(
-                        "OAuth2 authorization token request <ansired>failed</ansired>: "
-                        f"could not connect to <b>{id_tenant}.cyberark.cloud</b>.\n"
-                        "Verify the CyberArk Identity Tenant ID is correct (check the CyberArk Identity "
-                        "Admin Portal URL — the first label of the hostname is your tenant ID) and that "
-                        "your machine has network/DNS access to it."
-                    )
-                )
-                print_formatted_text(HTML(f"<ansired>Details:</ansired> {e}"))
-                return None
-            except requests.exceptions.RequestException as e:
-                print_formatted_text(
-                    HTML(f"OAuth2 authorization token request <ansired>failed</ansired>: {e}")
-                )
-                return None
-            if response.status_code != 200:
-                print_formatted_text(
-                    HTML(
-                        f"OAuth2 authorization token request <ansired>failed</ansired> with status code <b>{response.status_code}</b>"
-                    )
-                )
-                try:
-                    print_formatted_text(HTML(f"<ansired>Response:</ansired> {response.text[:500]}"))
-                except Exception:
-                    pass
-                return None
-            try:
-                access_token = response.json()["access_token"]
-            except (ValueError, KeyError) as e:
-                print_formatted_text(
-                    HTML(f"OAuth2 response did not contain an access_token: <ansired>{e}</ansired>")
-                )
-                return None
-            authorization_token = f"Bearer {access_token}"
         else:
             login_type = environ.get("_CYBERARK_LOGON_TYPE") or prompt(
                 "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
@@ -825,7 +785,7 @@ class CyberArkImporter(BaseImporter):
                 )
                 return None
             authorization_token = response.text.strip('"')
-        print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
+            print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return pvwa_host, authorization_token, query_params
 
     def _resolve_safes(self, pvwa_host, authorization_token):
@@ -979,6 +939,7 @@ class CyberArkImporter(BaseImporter):
         if auth is None:
             return
         pvwa_host, authorization_token, query_params = auth
+        use_nsf = bool(kwargs.get("use_nsf"))
 
         params = kwargs.get("params")
         will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
@@ -994,7 +955,14 @@ class CyberArkImporter(BaseImporter):
         if not safes:
             return
 
-        
+        if use_nsf:
+            print_formatted_text(
+                HTML(
+                    "\n<ansiyellow>NSF mode:</ansiyellow> CyberArk safes will be created as "
+                    "Nested Share Folders and accounts as NSF records."
+                )
+            )
+
         print_formatted_text(HTML("\nScanning CyberArk safes for accounts to migrate..."))
         safe_accounts = {}
         for safe in safes:
@@ -1093,6 +1061,10 @@ class CyberArkImporter(BaseImporter):
             f"\nYou are about to import data from CyberArk PVWA <b>{pvwa_host}</b> into Keeper:",
             f"  - <b>{total_accounts}</b> account(s) across <b>{len(safe_accounts)}</b> safe(s) as Keeper records",
         ]
+        if use_nsf:
+            summary_lines.append(
+                "  - Safes as Nested Share Folders (--nsf); records created with the NSF API"
+            )
         if group_names:
             summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams and roles")
         if eligible_users:
@@ -1123,12 +1095,23 @@ class CyberArkImporter(BaseImporter):
                 tabulate([{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts], headers="keys"),
                 end="\n\n",
             )
+            if use_nsf:
+                # Explicit NSF folder so prepare_nsf_folders has a SharedFolder target;
+                # record folder paths also resolve to the same NSF node.
+                nsf_folder = SharedFolder()
+                nsf_folder.path = safe.replace(PathDelimiter, 2 * PathDelimiter)
+                yield nsf_folder
             with _suppress_progressbar_executor_noise(), ProgressBar() as pb:
                 skip_all = {}
                 skipped_accounts = []
                 for r in pb(accounts, total=len(accounts)):
-                    folder = SharedFolder()
-                    folder.domain = r["safeName"]
+                    folder = Folder()
+                    # Classic import places each safe as a shared-folder domain.
+                    # --nsf uses a path so Nested Share Folders are created instead.
+                    if use_nsf:
+                        folder.path = r["safeName"].replace(PathDelimiter, 2 * PathDelimiter)
+                    else:
+                        folder.domain = r["safeName"].replace(PathDelimiter, 2 * PathDelimiter)
                     record = Record()
                     record.folders = [folder]
                     record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])
@@ -1155,7 +1138,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "Keeper Commander Import"},
+                                json={"reason": "test"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
@@ -2249,7 +2232,7 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
 
                 shared_folder = SharedFolder()
                 shared_folder.uid = str(safe.get("id") or safe_url_id)
-                shared_folder.path = safe_name
+                shared_folder.path = safe_name.replace(PathDelimiter, 2 * PathDelimiter)
                 shared_folder.permissions = []
 
                 skipped_service = 0

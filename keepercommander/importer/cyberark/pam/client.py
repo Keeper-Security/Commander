@@ -16,13 +16,19 @@ import logging
 import math
 import re
 import sys
+import webbrowser
 from os import environ, path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
 
 import requests as _requests_module
 
-from .constants import MAX_FETCH_RECORDS, VALID_LOGON_TYPES, IDENTITY_LOGIN_SUCCESS
+from .constants import (
+    MAX_FETCH_RECORDS,
+    VALID_LOGON_TYPES,
+    IDENTITY_LOGIN_SUCCESS,
+    IDENTITY_IDP_STATE_SUCCESS,
+)
 from .ui import _esc
 
 
@@ -67,6 +73,9 @@ class CyberArkPVWAClient:
     # CyberArk Identity out-of-band (push / SMS / email) MFA polling settings.
     IDENTITY_OOB_POLL_INTERVAL = 2     # seconds between push-notification polls
     IDENTITY_OOB_POLL_TIMEOUT = 120    # give up on an unanswered push after this many seconds
+    # CyberArk Identity SSO / external IdP (OobIdPAuth) polling settings.
+    IDENTITY_IDP_POLL_INTERVAL = 2     # seconds between /Security/OobAuthStatus polls
+    IDENTITY_IDP_POLL_TIMEOUT = 360    # give up waiting for browser SSO after this many seconds
     ENDPOINTS = {
         "accounts": "Accounts",
         "account_password": "Accounts/{account_id}/Password/Retrieve",
@@ -237,12 +246,15 @@ class CyberArkPVWAClient:
         Two methods are supported:
           1. Service account — OAuth2 ``client_credentials`` against
              ``/oauth2/platformtoken`` (non-interactive, no MFA).
-          2. Interactive user login with MFA / 2FA via the CyberArk Identity
-             ``StartAuthentication`` / ``AdvanceAuthentication`` flow.
+          2. Interactive user login via CyberArk Identity
+             ``StartAuthentication`` / ``AdvanceAuthentication``, including
+             password + MFA and SSO / external IdP (``OobIdPAuth`` browser
+             redirect with ``/Security/OobAuthStatus`` polling or PIN).
 
         Both produce a Bearer token that the Privilege Cloud REST API accepts.
         The method is selected via the ``KEEPER_CYBERARK_AUTH_METHOD`` env var
-        (``service`` / ``interactive``) or an interactive prompt.
+        (``service`` / ``interactive``), supplied service credentials, or the
+        availability of an interactive terminal.
         """
         id_host = self._resolve_identity_host()
         if not id_host:
@@ -250,6 +262,10 @@ class CyberArkPVWAClient:
         if self._choose_cloud_auth_method() == "interactive":
             return self._auth_privilege_cloud_interactive(id_host)
         return self._auth_privilege_cloud_service(id_host)
+
+    def _privilege_cloud_tenant_name(self) -> str:
+        """Return the Privilege Cloud tenant id used by StartAuthentication."""
+        return self.pvwa_host.split(".")[0]
 
     def _resolve_identity_host(self) -> Optional[str]:
         """Resolve the CyberArk Identity host for the configured tenant.
@@ -260,8 +276,38 @@ class CyberArkPVWAClient:
           - 'abc1234.id'       → abc1234.id.cyberark.cloud (already qualified)
           - 'https://...'      → extracted hostname used directly
           - 'tenant.my.idaptive.app' → tenant.my.idaptive.app (legacy Idaptive)
+
+        When no tenant override env var is set, the tenant subdomain is taken
+        from the PVWA hostname (e.g. ``metron.privilegecloud.cyberark.cloud``
+        → ``metron``) and resolved via platform discovery — same as
+        ``import --format=cyberark_portal``.
         """
-        id_tenant_raw = environ.get("KEEPER_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
+        id_tenant_raw = (
+            environ.get("KEEPER_CYBERARK_ID_TENANT")
+            or environ.get("_CYBERARK_ID_TENANT")
+        )
+        if not id_tenant_raw:
+            tenant_subdomain = self._privilege_cloud_tenant_name()
+            discovered = self._discover_identity_endpoint(tenant_subdomain)
+            if discovered:
+                logging.info("Platform discovery resolved tenant to %s", discovered)
+                return discovered
+            if sys.stdin and sys.stdin.isatty():
+                id_tenant_raw = prompt("CyberArk Identity Tenant ID: ")
+            else:
+                print_formatted_text(HTML(
+                    "<ansired>Unable to resolve the CyberArk Identity tenant</ansired>. "
+                    "Set <i>KEEPER_CYBERARK_ID_TENANT</i> and retry."
+                ))
+                return None
+
+            if not id_tenant_raw:
+                print_formatted_text(HTML(
+                    "<ansired>CyberArk Identity Tenant ID is required</ansired>. "
+                    "Set <i>KEEPER_CYBERARK_ID_TENANT</i> and retry."
+                ))
+                return None
+
         id_tenant_raw = id_tenant_raw.strip()
         if id_tenant_raw.startswith("https://"):
             id_tenant_raw = id_tenant_raw[len("https://"):]
@@ -270,11 +316,8 @@ class CyberArkPVWAClient:
         id_tenant_raw = id_tenant_raw.rstrip("/")
 
         if "." in id_tenant_raw:
-           
             id_host = id_tenant_raw
-            # But for the OAuth2 URL we need *.cyberark.cloud domain
             if id_tenant_raw.endswith(".my.idaptive.app"):
-                # Legacy Idaptive — extract subdomain for cyberark.cloud OAuth2
                 id_host = id_tenant_raw.split(".")[0] + ".id.cyberark.cloud"
                 logging.info("Legacy Idaptive tenant detected, using %s for OAuth2", id_host)
             elif not id_tenant_raw.endswith(".cyberark.cloud"):
@@ -285,13 +328,11 @@ class CyberArkPVWAClient:
                 id_tenant += ".id"
             id_host = f"{id_tenant}.cyberark.cloud"
 
-        # Validate the base portion (before first dot)
         base_part = id_host.split(".")[0]
         if not re.match(r'^[a-zA-Z0-9]+$', base_part):
             print_formatted_text(HTML("<ansired>Invalid tenant ID format</ansired>"))
             return None
 
-        # Platform discovery — resolve tenant to correct identity endpoint
         discovered_host = self._discover_identity_endpoint(base_part)
         if discovered_host:
             id_host = discovered_host
@@ -300,29 +341,44 @@ class CyberArkPVWAClient:
 
     @staticmethod
     def _choose_cloud_auth_method() -> str:
-        """Return 'service' or 'interactive' for Privilege Cloud authentication.
-        """
-        method = (environ.get("KEEPER_CYBERARK_AUTH_METHOD") or "").strip().lower()
-        if method in ("interactive", "identity", "user", "mfa", "2fa", "up"):
+        """Return 'service' or 'interactive' for Privilege Cloud authentication."""
+        method = (
+            environ.get("KEEPER_CYBERARK_AUTH_METHOD")
+            or environ.get("_CYBERARK_AUTH_METHOD")
+            or ""
+        ).strip().lower()
+        if method in ("interactive", "identity", "user", "mfa", "2fa", "up", "portal", "sso", "idp"):
             return "interactive"
         if method in ("service", "service_account", "oauth", "oauth2", "client_credentials"):
             return "service"
-        print_formatted_text(HTML(
-            "\nCyberArk Privilege Cloud authentication method:\n"
-            "  <b>[1]</b> Service account (OAuth2 client credentials)\n"
-            "  <b>[2]</b> User login with MFA / 2FA (CyberArk Identity)"
-        ))
-        try:
-            choice = prompt("Select authentication method [1/2] (default 1): ").strip()
-        except (EOFError, KeyboardInterrupt):
+        username = environ.get("KEEPER_CYBERARK_USERNAME") or environ.get("_CYBERARK_USERNAME")
+        password = environ.get("KEEPER_CYBERARK_PASSWORD") or environ.get("_CYBERARK_PASSWORD")
+        if username and password:
             return "service"
-        return "interactive" if choice == "2" else "service"
+        if sys.stdin and sys.stdin.isatty():
+            print_formatted_text(HTML(
+                "\nCyberArk Privilege Cloud authentication method:\n"
+                "  <b>[1]</b> Service account (OAuth2 client credentials)\n"
+                "  <b>[2]</b> User login with MFA / 2FA / SSO (CyberArk Identity)"
+            ))
+            try:
+                choice = prompt("Select authentication method [1/2] (default 1): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return "service"
+            return "interactive" if choice == "2" else "service"
+        return "interactive" if sys.stdin and sys.stdin.isatty() else "service"
 
     def _auth_privilege_cloud_service(self, id_host: str) -> bool:
         """Authenticate to Privilege Cloud via OAuth2 service account (no MFA)."""
-        client_id = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk service user name: ")
-        client_secret = environ.get("KEEPER_CYBERARK_PASSWORD") or prompt(
-            "CyberArk service user password: ", is_password=True
+        client_id = (
+            environ.get("KEEPER_CYBERARK_USERNAME")
+            or environ.get("_CYBERARK_USERNAME")
+            or prompt("CyberArk service user name: ")
+        )
+        client_secret = (
+            environ.get("KEEPER_CYBERARK_PASSWORD")
+            or environ.get("_CYBERARK_PASSWORD")
+            or prompt("CyberArk service user password: ", is_password=True)
         )
         oauth2_url = f"https://{id_host}/oauth2/platformtoken"
         logging.info("Authenticating to Privilege Cloud via %s", oauth2_url)
@@ -342,7 +398,7 @@ class CyberArkPVWAClient:
             ))
             print_formatted_text(HTML(
                 "<ansiyellow>Tip:</ansiyellow> the OAuth2 client-credentials flow only works for "
-                "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA, "
+                "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA / SSO, "
                 "re-run and choose authentication method <b>2</b> "
                 "(or set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i>)."
             ))
@@ -353,7 +409,7 @@ class CyberArkPVWAClient:
             print_formatted_text(HTML("<ansired>Failed to parse OAuth2 response</ansired>"))
             print_formatted_text(HTML(
                 "<ansiyellow>Tip:</ansiyellow> the OAuth2 client-credentials flow only works for "
-                "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA, "
+                "CyberArk <b>service accounts</b>. To sign in as a regular user with MFA / 2FA / SSO, "
                 "re-run and choose authentication method <b>2</b> "
                 "(or set <i>KEEPER_CYBERARK_AUTH_METHOD=interactive</i>)."
             ))
@@ -362,27 +418,42 @@ class CyberArkPVWAClient:
         return True
 
     def _auth_privilege_cloud_interactive(self, id_host: str) -> bool:
-        """Authenticate to Privilege Cloud as an interactive user with MFA / 2FA.
+        """Authenticate to Privilege Cloud as an interactive user (MFA / 2FA / SSO).
+
+        Uses the CyberArk Identity native-client flow (``X-IDAP-NATIVE-CLIENT``
+        + ``OobIdPAuth``) so SSO users are redirected to their external IdP in
+        a browser, matching ark-sdk-python / IdentityCommand behavior.
         """
         identity_base_url = f"https://{id_host}"
-        tenant_name = id_host.split(".")[0]
-        username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk username: ")
+        tenant_name = self._privilege_cloud_tenant_name()
+        username = (
+            environ.get("KEEPER_CYBERARK_USERNAME")
+            or environ.get("_CYBERARK_USERNAME")
+            or prompt("CyberArk User Portal username: ")
+        )
 
-        headers = {"X-IDAP-NATIVE-CLIENT": "true"}
-        start_payload = {"TenantId": tenant_name, "User": username, "Version": "1.0"}
+        # Persist cookies across StartAuthentication → OobAuthStatus / AdvanceAuthentication.
+        session = requests.Session()
+        headers = {
+            "Content-Type": "application/json",
+            "X-IDAP-NATIVE-CLIENT": "true",
+            "OobIdPAuth": "true",
+        }
+        start_payload = {
+            "TenantId": tenant_name,
+            "User": username,
+            "Version": "1.0",
+            "PlatformTokenResponse": True,
+        }
+        logging.info("Using CyberArk Identity URL: %s", identity_base_url)
         identity_base_url, result = self._start_identity_authentication(
-            identity_base_url, start_payload, headers,
+            identity_base_url, start_payload, headers, session=session,
         )
         if result is None:
             return False
 
         if result.get("IdpRedirectUrl") or result.get("IdpRedirectShortUrl"):
-            print_formatted_text(HTML(
-                "<ansired>This account signs in through SSO / an external identity provider</ansired>, "
-                "which the interactive importer does not support. Use a CyberArk service account "
-                "(authentication method <b>1</b>) instead."
-            ))
-            return False
+            return self._complete_identity_sso(identity_base_url, result, session=session)
 
         session_id = result.get("SessionId")
         challenges = result.get("Challenges") or []
@@ -391,7 +462,7 @@ class CyberArkPVWAClient:
             logging.debug("StartAuthentication result missing SessionId/Challenges")
             return False
 
-        password = environ.get("KEEPER_CYBERARK_PASSWORD")
+        password = environ.get("KEEPER_CYBERARK_PASSWORD") or environ.get("_CYBERARK_PASSWORD")
         advance_result = None
         for challenge in challenges:
             mechanisms = challenge.get("Mechanisms") or []
@@ -401,7 +472,8 @@ class CyberArkPVWAClient:
             if mechanism is None:
                 return False
             advance_result = self._answer_identity_mechanism(
-                identity_base_url, tenant_name, session_id, mechanism, password=password,
+                identity_base_url, tenant_name, session_id, mechanism,
+                password=password, session=session,
             )
             if advance_result is None:
                 return False
@@ -415,7 +487,7 @@ class CyberArkPVWAClient:
             ))
             return False
 
-        token = advance_result.get("Token")
+        token = advance_result.get("Token") or advance_result.get("Auth")
         if not token:
             print_formatted_text(HTML("<ansired>CyberArk Identity did not return a session token</ansired>"))
             return False
@@ -423,14 +495,144 @@ class CyberArkPVWAClient:
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return True
 
+    def _complete_identity_sso(self, identity_base_url: str, start_result: dict,
+                               session=None) -> bool:
+        """Complete SSO / external IdP authentication after StartAuthentication.
+
+        Opens the IdP redirect URL in the browser, then either:
+          - polls ``/Security/OobAuthStatus`` until the IdP session succeeds, or
+          - prompts for an OOBAUTHPIN when ``IdpOobAuthPinRequired`` is set.
+        """
+        redirect_url = (
+            start_result.get("IdpRedirectShortUrl")
+            or start_result.get("IdpRedirectUrl")
+            or ""
+        )
+        idp_session_id = start_result.get("IdpLoginSessionId") or ""
+        if not redirect_url or not idp_session_id:
+            print_formatted_text(HTML(
+                "<ansired>SSO authentication response is missing the IdP redirect URL or session id</ansired>"
+            ))
+            return False
+
+        print_formatted_text(HTML(
+            "\nYou are being redirected to your external identity provider (SSO).\n"
+            "If the browser does not open, open this URL manually:\n\n"
+            f"  <u>{_esc(redirect_url)}</u>\n"
+        ))
+        self._open_browser(redirect_url)
+
+        if start_result.get("IdpOobAuthPinRequired"):
+            return self._complete_identity_sso_pin(identity_base_url, idp_session_id, session=session)
+        return self._poll_identity_sso_status(identity_base_url, idp_session_id, session=session)
+
+    def _complete_identity_sso_pin(self, identity_base_url: str, idp_session_id: str,
+                                   session=None) -> bool:
+        """Complete SSO when CyberArk Identity requires an OOBAUTHPIN after IdP login."""
+        print_formatted_text(HTML(
+            "After completing SSO in the browser, enter the PIN code shown "
+            "by CyberArk Identity (email / SMS / on-screen)."
+        ))
+        try:
+            pin_code = prompt("SSO PIN code: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if not pin_code:
+            print_formatted_text(HTML("<ansired>PIN code is required to complete SSO login</ansired>"))
+            return False
+
+        http = session or requests
+        url = f"{identity_base_url}/Security/AdvanceAuthentication"
+        headers = {"Content-Type": "application/json", "X-IDAP-NATIVE-CLIENT": "true"}
+        body = {
+            "SessionId": idp_session_id,
+            "MechanismId": "OOBAUTHPIN",
+            "Action": "Answer",
+            "Answer": pin_code,
+        }
+        try:
+            response = http.post(url, json=body, headers=headers, timeout=self.TIMEOUT)
+        except _requests_module.RequestException:
+            print_formatted_text(HTML("SSO PIN submission <ansired>failed</ansired>: connection error"))
+            logging.debug("OOBAUTHPIN AdvanceAuthentication connection error", exc_info=True)
+            return False
+
+        result = self._identity_result(response)
+        if result is None:
+            return False
+        if result.get("Summary") != IDENTITY_LOGIN_SUCCESS:
+            summary = result.get("Summary") or result.get("State") or "unknown"
+            print_formatted_text(HTML(
+                f"<ansired>SSO PIN authentication failed</ansired> (status: {_esc(summary)})"
+            ))
+            return False
+        token = result.get("Token") or result.get("Auth")
+        if not token:
+            print_formatted_text(HTML("<ansired>CyberArk Identity did not return a session token after SSO PIN</ansired>"))
+            return False
+        self.auth_token = f"Bearer {token}"
+        print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
+        return True
+
+    def _poll_identity_sso_status(self, identity_base_url: str, idp_session_id: str,
+                                  session=None) -> bool:
+        """Poll ``/Security/OobAuthStatus`` until browser SSO completes."""
+        http = session or requests
+        url = f"{identity_base_url}/Security/OobAuthStatus"
+        headers = {"Content-Type": "application/json", "X-IDAP-NATIVE-CLIENT": "true"}
+        body = {"SessionId": idp_session_id}
+        print_formatted_text(HTML(
+            "Waiting for SSO to complete in the browser…"
+        ))
+
+        waited = 0
+        while waited < self.IDENTITY_IDP_POLL_TIMEOUT:
+            try:
+                response = http.post(url, json=body, headers=headers, timeout=self.TIMEOUT)
+            except _requests_module.RequestException:
+                print_formatted_text(HTML("SSO status check <ansired>failed</ansired>: connection error"))
+                logging.debug("OobAuthStatus connection error", exc_info=True)
+                return False
+
+            result = self._identity_result(response)
+            if result is None:
+                return False
+
+            state = (result.get("State") or "").strip()
+            token = result.get("Token") or result.get("Auth")
+            if state == IDENTITY_IDP_STATE_SUCCESS and token:
+                self.auth_token = f"Bearer {token}"
+                print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
+                return True
+            if state.lower() in ("failed", "error", "canceled", "cancelled", "expired"):
+                print_formatted_text(HTML(
+                    f"<ansired>SSO authentication failed</ansired> (status: {_esc(state or 'unknown')})"
+                ))
+                return False
+
+            time.sleep(self.IDENTITY_IDP_POLL_INTERVAL)
+            waited += self.IDENTITY_IDP_POLL_INTERVAL
+
+        print_formatted_text(HTML("<ansired>Timed out waiting for SSO authentication to complete</ansired>"))
+        return False
+
+    @staticmethod
+    def _open_browser(url: str) -> None:
+        """Best-effort open of the SSO IdP URL in the user's default browser."""
+        try:
+            webbrowser.open(url, new=0, autoraise=True)
+        except Exception:
+            logging.debug("Failed to open browser for SSO URL", exc_info=True)
+
     def _start_identity_authentication(self, identity_base_url: str, start_payload: dict,
-                                         headers: dict) -> Tuple[Optional[str], Optional[dict]]:
+                                         headers: dict, session=None) -> Tuple[Optional[str], Optional[dict]]:
         """POST ``/Security/StartAuthentication``, following HTTP and pod redirects.
         """
+        http = session or requests
         url = f"{identity_base_url}/Security/StartAuthentication"
         for _ in range(4):
             try:
-                response = requests.post(
+                response = http.post(
                     url, json=start_payload, headers=headers,
                     timeout=self.TIMEOUT, allow_redirects=False,
                 )
@@ -517,9 +719,11 @@ class CyberArkPVWAClient:
 
     def _answer_identity_mechanism(self, identity_base_url: str, tenant_name: str,
                                    session_id: str, mechanism: dict,
-                                   password: Optional[str] = None) -> Optional[dict]:
+                                   password: Optional[str] = None,
+                                   session=None) -> Optional[dict]:
         """Drive one CyberArk Identity challenge mechanism to completion.
         """
+        http = session or requests
         url = f"{identity_base_url}/Security/AdvanceAuthentication"
         headers = {"X-IDAP-NATIVE-CLIENT": "true"}
         name = mechanism.get("Name") or ""
@@ -531,7 +735,7 @@ class CyberArkPVWAClient:
 
         def _post(body: dict) -> Optional[dict]:
             try:
-                resp = requests.post(url, json=body, headers=headers, timeout=self.TIMEOUT)
+                resp = http.post(url, json=body, headers=headers, timeout=self.TIMEOUT)
             except _requests_module.RequestException as e:
                 print_formatted_text(HTML("Authentication request <ansired>failed</ansired>: connection error"))
                 logging.debug("AdvanceAuthentication connection error: %s", type(e).__name__)
@@ -541,7 +745,7 @@ class CyberArkPVWAClient:
         # Text answer — password (UP) or a typed code (OTP / authenticator).
         if name == "UP" or answer_type == "text":
             if name == "UP":
-                answer = password or prompt("CyberArk password: ", is_password=True)
+                answer = password or prompt("CyberArk Identity Portal password: ", is_password=True)
             else:
                 answer = prompt(f"{prompt_label}: ")
             return _post(dict(base, Action="Answer", Answer=answer))
@@ -1206,7 +1410,7 @@ class CyberArkPVWAClient:
                     self._get_url("account_password").format(account_id=account_id),
                     headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
                     json={
-                        "reason": "Keeper Commander Import",
+                        "reason": "test",
                         **({"TicketingSystemName": environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]}
                            if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ else {}),
                         **({"TicketId": environ["KEEPER_CYBERARK_TICKET_ID"]}
@@ -1253,4 +1457,3 @@ class CyberArkPVWAClient:
                 print_formatted_text(HTML(f"Password retrieval <ansired>aborted</ansired> (status {response.status_code})"))
                 return None
         return None
-
