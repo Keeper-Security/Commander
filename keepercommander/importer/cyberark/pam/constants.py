@@ -82,6 +82,9 @@ ROTATION_UNMAPPED = "UNMAPPED"
 # CyberArk Identity AdvanceAuthentication Summary for a completed login
 IDENTITY_LOGIN_SUCCESS = "LoginSuccess"
 
+# CyberArk Identity OOB IdP (SSO) poll status for a completed login
+IDENTITY_IDP_STATE_SUCCESS = "Success"
+
 # Default CyberArk platformId → KeeperPAM record mapping
 DEFAULT_PLATFORM_MAP = {
     # NIX

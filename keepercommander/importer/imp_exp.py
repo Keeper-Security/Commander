@@ -753,15 +753,20 @@ def _import(params, file_format, filename, **kwargs):
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
 
-    import_into = kwargs.get('import_into') or ''
+    import_into_raw = kwargs.get('import_into') or ''
+    import_into = import_into_raw
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
     update_flag = kwargs.get('update_flag') or False
     no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
+    verbose_import_summary = importer.verbose_import_summary
+    show_skipped = show_skipped or verbose_import_summary
 
     records_before = len(params.record_cache)
+    skipped_existing_count = 0
+    successful_import_count = 0
 
     folders = []        # type: List[ImportSharedFolder]
     records = []        # type: List[ImportRecord]
@@ -774,7 +779,7 @@ def _import(params, file_format, filename, **kwargs):
 
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
-                              dry_run=dry_run, target_node=target_node):
+                              dry_run=dry_run, target_node=target_node, use_nsf=use_nsf):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
@@ -841,6 +846,8 @@ def _import(params, file_format, filename, **kwargs):
 
             folders.append(x)
 
+    declared_nsf_folders = list(folders)
+
     manage_users = kwargs.get('manage_users') or False
     manage_records = kwargs.get('manage_records') or False
     can_edit = kwargs.get('can_edit') or False
@@ -861,7 +868,7 @@ def _import(params, file_format, filename, **kwargs):
 
     nsf_base_parent = ''
     if import_into:
-        from .nsf_import import resolve_nsf_folder
+        from .nsf_import import is_nsf_folder, resolve_nsf_folder
         resolved_nsf = resolve_nsf_folder(params, import_into)
         if resolved_nsf:
             use_nsf = True
@@ -869,10 +876,61 @@ def _import(params, file_format, filename, **kwargs):
             if import_into == resolved_nsf:
                 nsf_base_parent = resolved_nsf
                 _strip_path_prefix(records, folders, import_into)
+        elif use_nsf:
+            target_folder, unresolved = try_resolve_path(params, import_into_raw)
+            if target_folder and not unresolved and not is_nsf_folder(params, target_folder.uid):
+                raise CommandError(
+                    'import',
+                    '--nsf cannot import into a classic folder. Choose a Nested Share Folder target.',
+                )
 
     if use_nsf:
-        from .nsf_import import flatten_record_folder_paths
+        from .nsf_import import ensure_nsf_record_folders, flatten_record_folder_paths
         flatten_record_folder_paths(records)
+        default_nsf = import_into if (import_into and not nsf_base_parent) else None
+        ensure_nsf_record_folders(records, folders, default_nsf)
+
+    # Importers with verbose summaries also emit a clear message when the target
+    # folder(s) already exist in Keeper.
+    if verbose_import_summary:
+        if use_nsf:
+            from .nsf_import import resolve_nsf_folder
+
+            requested_paths = {}  # type: Dict[Tuple[str, ...], str]
+            for sf in folders or []:
+                if getattr(sf, 'path', None):
+                    comps = tuple(path_components(sf.path))
+                    requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                        x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
+            for rec in records or []:
+                for fol in rec.folders or []:
+                    if getattr(fol, 'path', None):
+                        comps = tuple(path_components(fol.path))
+                        requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                            x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
+                    elif getattr(fol, 'domain', None):
+                        comps = tuple(path_components(fol.domain))
+                        requested_paths[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                            x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
+
+            existing_paths = []
+            for path_key, display_path in sorted(requested_paths.items()):
+                if not path_key:
+                    continue
+                try:
+                    uid = resolve_nsf_folder(params, display_path)
+                except (CommandError, KeeperApiError, ValueError, KeyError) as exc:
+                    logging.debug('Unable to resolve NSF folder "%s": %s', display_path, exc)
+                    uid = None
+                if uid:
+                    existing_paths.append(display_path)
+
+            if existing_paths:
+                for p in existing_paths:
+                    logging.info(
+                        'Nested Share Folder "%s" already exists in Keeper - skipping creation',
+                        p,
+                    )
 
     if classic_shared:
         sfol = set()
@@ -931,6 +989,57 @@ def _import(params, file_format, filename, **kwargs):
                             fol.domain = sf_map[sf_name]
                             fol.path = (path[len(sf_name):]).strip(PathDelimiter)
 
+    if verbose_import_summary and not use_nsf:
+        # For classic shared/user folders, use a conservative check based on
+        # folder paths (from cached Keeper folder tree).
+        requested_folders = {}  # type: Dict[Tuple[str, ...], str]
+        for sf in folders or []:
+            if getattr(sf, 'path', None):
+                comps = tuple(path_components(sf.path))
+                requested_folders[tuple(x.casefold() for x in comps)] = PathDelimiter.join(
+                    x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
+        for rec in records or []:
+            for fol in rec.folders or []:
+                comps = []
+                if getattr(fol, 'domain', None):
+                    comps.extend(path_components(fol.domain))
+                if getattr(fol, 'path', None):
+                    comps.extend(path_components(fol.path))
+                if comps:
+                    key = tuple(x.casefold() for x in comps)
+                    requested_folders[key] = PathDelimiter.join(
+                        x.replace(PathDelimiter, 2 * PathDelimiter) for x in comps)
+
+        existing_folder_paths = set()  # type: Set[str]
+        for uid, node in (params.folder_cache or {}).items():
+            # Root doesn't have a meaningful name in import requests.
+            if not node or getattr(node, 'type', None) == BaseFolderNode.RootFolderType:
+                continue
+            try:
+                p = get_folder_path(params, uid).strip(PathDelimiter)
+            except Exception:
+                continue
+            if p:
+                existing_folder_paths.add(p)
+
+        existing_folder_keys = {
+            tuple(x.casefold() for x in path_components(p))
+            for p in existing_folder_paths
+        }
+
+        already_exists = []
+        for path_key, display_path in requested_folders.items():
+            if path_key in existing_folder_keys:
+                already_exists.append(display_path)
+
+        already_exists = sorted(set(already_exists))
+        if already_exists:
+            for p in already_exists:
+                logging.info(
+                    'Folder "%s" already exists in Keeper - records will be added to the existing folder',
+                    p,
+                )
+
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
@@ -954,6 +1063,7 @@ def _import(params, file_format, filename, **kwargs):
         import_uids = {}
 
         records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
+        skipped_existing_count = len(record_exists)
         if show_skipped and record_exists:
             for existing_record in record_exists:
                 folder_name = ''
@@ -964,7 +1074,18 @@ def _import(params, file_format, filename, **kwargs):
                     if f.path:
                         folder_name += f.path
 
-                if folder_name:
+                if verbose_import_summary:
+                    if folder_name:
+                        logging.info(
+                            'Record "%s" in folder "%s" already exists in Keeper [%s] - skipped.',
+                            existing_record.title, folder_name, existing_record.uid,
+                        )
+                    else:
+                        logging.info(
+                            'Record "%s" already exists in Keeper [%s] - skipped.',
+                            existing_record.title, existing_record.uid,
+                        )
+                elif folder_name:
                     logging.info('Record "%s" appearing in Folder "%s" was skipped due to a duplicate record [%s] found.',
                                  existing_record.title, folder_name, existing_record.uid)
                 else:
@@ -1096,7 +1217,13 @@ def _import(params, file_format, filename, **kwargs):
                             folder_uid = ''
 
                 from .nsf_import import is_nsf_folder
-                if folder_uid and is_nsf_folder(params, folder_uid):
+                use_nsf_add = use_nsf or (folder_uid and is_nsf_folder(params, folder_uid))
+                if use_nsf_add:
+                    if folder_uid and not is_nsf_folder(params, folder_uid):
+                        logging.warning(
+                            'Skipping NSF record "%s": Nested Share Folder was not created',
+                            import_record.title)
+                        continue
                     data = _construct_record_v3_data(import_record)
                     data_bytes = api.get_record_data_json_bytes(data)
                     if len(data_bytes) > RECORD_MAX_DATA_LEN:
@@ -1174,9 +1301,13 @@ def _import(params, file_format, filename, **kwargs):
 
         if nsf_records_to_add:
             from .nsf_import import execute_nsf_records_add
-            execute_nsf_records_add(params, nsf_records_to_add)
+            nsf_rs = execute_nsf_records_add(params, nsf_records_to_add)
+            successful_import_count += sum(
+                1 for result in nsf_rs if result.status == record_pb2.RS_SUCCESS)
         if records_v3_to_add:
-            rec_rs = execute_records_add(params, records_v3_to_add)
+            add_rs = execute_records_add(params, records_v3_to_add)
+            successful_import_count += sum(
+                1 for result in add_rs if result.status == record_pb2.RS_SUCCESS)
         if records_v2_to_update:
             execute_update_v2_record(params, records_v2_to_update)
         if records_v3_to_update:
@@ -1298,18 +1429,36 @@ def _import(params, file_format, filename, **kwargs):
         if len(v3_atts) > 0:
             upload_v3_attachments(params, v3_atts)
 
-    if use_nsf and folders and not dry_run:
+    if use_nsf and declared_nsf_folders and not dry_run:
         from .nsf_import import apply_nsf_folder_permissions
         apply_nsf_folder_permissions(
-            params, folders, manage_users, manage_records, can_edit, can_share)
+            params, declared_nsf_folders, manage_users, manage_records, can_edit, can_share)
 
     if hasattr(importer, 'cleanup') and callable(importer.cleanup):
         importer.cleanup()
 
     records_after = len(params.record_cache)
-    if records_after > records_before:
+    imported_count = max(0, records_after - records_before)
+    if imported_count > 0:
         params.queue_audit_event('imported_records', file_format=file_format.upper())
-        logging.info("%d records imported successfully", records_after - records_before)
+        if not verbose_import_summary:
+            logging.info("%d records imported successfully", imported_count)
+
+    if verbose_import_summary and not dry_run:
+        if successful_import_count == 0 and skipped_existing_count > 0:
+            logging.info(
+                'Import finished: no new records imported; %d record(s) already exist in Keeper.',
+                skipped_existing_count,
+            )
+        elif successful_import_count > 0 and skipped_existing_count > 0:
+            logging.info(
+                'Import finished: %d record(s) imported; %d record(s) already exist in Keeper (skipped).',
+                successful_import_count, skipped_existing_count,
+            )
+        elif successful_import_count > 0:
+            logging.info('Import finished: %d record(s) imported successfully.', successful_import_count)
+        else:
+            logging.info('Import finished: no records were imported.')
 
 
 def report_statuses(status_type, status_iter):
@@ -2307,8 +2456,11 @@ def prepare_record_link(params, records):
     """Prepare record links to folders."""
     record_folders = {}    # type: [str, [str]]
     record_links = []
+    nsf_records = getattr(params, 'nested_share_records', None) or {}
     for rec in records:
         if rec.uid:
+            if rec.uid in nsf_records:
+                continue
             if rec.uid in params.record_cache:
                 if rec.uid in record_folders:
                     folder_ids = record_folders[rec.uid]
@@ -2327,8 +2479,11 @@ def prepare_record_link(params, records):
                     if folder_uid in folder_ids:
                         continue
                     if len(folder_ids) > 0:
+                        src_uid = folder_ids[0]
+                        if src_uid not in params.folder_cache or is_nsf_folder(params, src_uid):
+                            continue
                         folder_ids.append(folder_uid)
-                        src_folder = params.folder_cache[folder_ids[0]]
+                        src_folder = params.folder_cache[src_uid]
                         dst_folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
                         ft = dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType
                         req = {
