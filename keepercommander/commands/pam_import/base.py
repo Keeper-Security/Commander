@@ -1070,7 +1070,8 @@ class PamUserObject():
                     fields.append(f"file=@{x.file}")
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1165,7 +1166,8 @@ class LoginUserObject():
                     fields.append(f"file=@{x.file}")
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
         return uid
@@ -1435,7 +1437,8 @@ class PamMachineObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1628,7 +1631,8 @@ class PamDatabaseObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1776,7 +1780,8 @@ class PamDirectoryObject():
                 # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
 
@@ -1881,7 +1886,8 @@ class PamRemoteBrowserObject():
             # switch to f.* once RT definition(s) update w/ pamRemoteBrowserSettings field
 
         if fields: args["fields"] = fields
-        uid = execute_record_add_in_folder(params, args, folder_uid, command='pam-project-import')
+        uid = execute_record_add_in_folder(
+            params, args, folder_uid, command='pam-project-import', sync_after=False)
         if uid and isinstance(uid, str):
             self.uid = uid
 

@@ -9,8 +9,6 @@
 import re
 from typing import Dict, Optional, Tuple
 
-from .constants import FALLBACK_PLATFORM_MAP
-
 # Keyword → mapping for custom/renamed CyberArk platforms (e.g. "Custom-WinDomain" → RDP).
 # Matched against platformId and account name; first match wins. Database patterns
 # are checked before generic Windows/Unix to avoid false positives.
@@ -47,7 +45,7 @@ _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
 def _guess_platform_mapping(platform_id: str, raw_name: str) -> Optional[dict]:
     """Map unknown/custom platformIds to a record type via keyword scan.
 
-    Returns a mapping dict on match, or None (caller uses FALLBACK_PLATFORM_MAP).
+    Returns a mapping dict on match, or None (caller imports a standalone login).
     """
     haystack = f"{platform_id or ''}\n{raw_name or ''}".lower()
     if not haystack.strip():
