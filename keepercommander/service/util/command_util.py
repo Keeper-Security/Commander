@@ -27,7 +27,7 @@ from .throttle import (
 )
 from .verified_command import Verifycommand
 from ..core.globals import get_current_params
-from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
+from ..decorators.logging import logger, debug_decorator, sanitize_debug_data, sanitize_command_fields
 from ... import cli, utils
 from ...crypto import encrypt_aes_v2
 from ...error import KeeperApiError
@@ -149,7 +149,7 @@ class CommandExecutor:
 
     @classmethod
     def execute(cls, command: str) -> Tuple[Any, int]:
-        logger.debug(f"Executing command: {command}")
+        logger.debug(f"Executing command: {sanitize_command_fields(command)}")
         
         validation_error = cls.validate_command(command)
         if validation_error:
@@ -209,7 +209,7 @@ class CommandExecutor:
                 try:
                     SailPointService.after_command(params, command, success=True)
                 except Exception as e:
-                    logger.error(f'SailPoint post-process failed: {e}')
+                    logger.error(f'SailPoint post-process failed: {sanitize_debug_data(str(e))}')
                     err = {
                         'status': 'error',
                         'error': (
@@ -224,18 +224,18 @@ class CommandExecutor:
             return response, status_code
         except CommandExecutionError as e:
             # Return the actual command error instead of generic "server busy"
-            logger.error(f"Command execution error: {e}")
+            logger.error(f"Command execution error: {sanitize_debug_data(str(e))}")
             if is_throttle_error(e):
                 return throttle_error_response(str(e))
             return {"status": "error", "error": str(e)}, 400
         except KeeperApiError as e:
             if is_throttle_error(e):
                 return throttle_error_response(e.message or str(e), e.result_code)
-            logger.error(f"Unexpected error during command execution: {e}")
+            logger.error(f"Unexpected error during command execution: {sanitize_debug_data(str(e))}")
             return {"status": "error", "error": f"Unexpected error: {str(e)}"}, 500
         except Exception as e:
             if is_throttle_error(e):
                 return throttle_error_response(str(e))
             # Log unexpected errors and return a proper error response
-            logger.error(f"Unexpected error during command execution: {e}")
+            logger.error(f"Unexpected error during command execution: {sanitize_debug_data(str(e))}")
             return {"status": "error", "error": f"Unexpected error: {str(e)}"}, 500

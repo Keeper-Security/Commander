@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 
 from ..util.command_util import CommandExecutor
-from ..decorators.logging import logger, debug_decorator
+from ..decorators.logging import logger, debug_decorator, sanitize_command_fields, sanitize_debug_data
 
 
 def derive_owner_key(api_key: Optional[str]) -> Optional[str]:
@@ -150,7 +150,7 @@ class RequestQueueManager:
             self.request_queue.put(request, block=False)
             with self.data_lock:
                 self.active_requests[request_id] = request
-            logger.info(f"Request {request_id} queued: {command}")
+            logger.info(f"Request {request_id} queued: {sanitize_command_fields(command)}")
             return request_id
         except queue.Full:
             logger.error("Error: Request queue is full")
@@ -304,7 +304,7 @@ class RequestQueueManager:
                 self._cleanup_expired_requests()
                 continue
             except Exception as e:
-                logger.error(f"Unexpected error in queue worker: {e}")
+                logger.error(f"Unexpected error in queue worker: {sanitize_debug_data(str(e))}")
                 time.sleep(1)
         
         logger.info("Queue worker thread stopped")
@@ -321,7 +321,7 @@ class RequestQueueManager:
         request.status = RequestStatus.PROCESSING
         request.started_at = datetime.now()
         
-        logger.info(f"Processing request {request.request_id}: {request.command}")
+        logger.info(f"Processing request {request.request_id}: {sanitize_command_fields(request.command)}")
         
         try:
             # Execute the command using existing CommandExecutor
@@ -341,7 +341,7 @@ class RequestQueueManager:
             request.completed_at = datetime.now()
             request.error_message = str(e)
             
-            logger.error(f"Request {request.request_id} failed: {e}")
+            logger.error(f"Request {request.request_id} failed: {sanitize_debug_data(str(e))}")
         
         finally:
             # Clean up temporary files

@@ -14,7 +14,7 @@ import sys
 import re
 from pathlib import Path
 from typing import Optional
-from ..decorators.logging import logger, debug_decorator
+from ..decorators.logging import logger, debug_decorator, sanitize_command_fields, sanitize_debug_data
 from ...params import KeeperParams
 
 class CommandHandler:
@@ -32,7 +32,7 @@ class CommandHandler:
             cli.do_command(params, command)
             return output.getvalue()
         except Exception as e:
-            logger.debug(f"Error executing CLI command '{command}': {e}")
+            logger.debug(f"Error executing CLI command '{sanitize_command_fields(command)}': {sanitize_debug_data(str(e))}")
             return ''
         finally:
             sys.stdout = sys.__stdout__
