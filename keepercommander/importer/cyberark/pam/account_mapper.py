@@ -7,6 +7,7 @@
 # Keeper Commander — CyberArk PAM import (split module)
 
 import copy
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +16,8 @@ from .client import CyberArkPVWAClient
 from .constants import (
     DEFAULT_PLATFORM_MAP,
     FALLBACK_PLATFORM_MAP,
+    MAX_ACCOUNT_METADATA_FIELDS,
+    MAX_ACCOUNT_METADATA_VALUE_LEN,
     MAX_PLATFORM_METADATA_FIELDS,
     MAX_PLATFORM_METADATA_VALUE_LEN,
     RECORD_TYPE_LOGIN,
@@ -160,6 +163,74 @@ class AccountMapper:
         "rotateAutomatically", "performPeriodicChange",
         "PerformPeriodicChange", "rotatePasswordsAutomatically",
     )
+
+    # These values are already represented by canonical login fields or by
+    # the CyberArk diagnostic/identity lines stored in notes.
+    _LOGIN_METADATA_TOP_LEVEL_EXCLUSIONS = frozenset({
+        "id", "name", "platformid", "address", "username", "safename",
+        "platformaccountproperties",
+    })
+    _LOGIN_METADATA_PROPERTY_EXCLUSIONS = frozenset({
+        "url", "itemname", "logondomain",
+    })
+    # Retrieved credentials belong only in the Keeper password field. These
+    # exact key names guard against an API variant embedding secret material
+    # in the account payload while allowing safe metadata such as secretType
+    # and secretManagement to be retained.
+    _LOGIN_METADATA_SECRET_KEYS = frozenset({
+        "password", "secret", "content", "credential", "credentials",
+        "privatekey", "privatepemkey", "sshkey",
+    })
+
+    @classmethod
+    def _build_unmapped_login_custom_fields(cls, account: dict) -> List[dict]:
+        """Flatten unused CyberArk account metadata into Keeper text fields."""
+        out: List[dict] = []
+
+        def _add(path: str, value) -> None:
+            if len(out) >= MAX_ACCOUNT_METADATA_FIELDS or value in (None, "", [], {}):
+                return
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    child_name = str(child_key)
+                    if child_name.casefold() in cls._LOGIN_METADATA_SECRET_KEYS:
+                        continue
+                    _add(f"{path}.{child_name}", child_value)
+                return
+            if isinstance(value, (list, tuple)):
+                text = json.dumps(value, ensure_ascii=False, default=str)
+            elif isinstance(value, bool):
+                text = "true" if value else "false"
+            else:
+                text = str(value)
+            text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+            if len(text) > MAX_ACCOUNT_METADATA_VALUE_LEN:
+                text = text[:MAX_ACCOUNT_METADATA_VALUE_LEN]
+            out.append({
+                "type": "text",
+                "label": f"CyberArk {path}"[:120],
+                "value": [text],
+            })
+
+        for key, value in account.items():
+            key_name = str(key)
+            folded = key_name.casefold()
+            if folded in cls._LOGIN_METADATA_TOP_LEVEL_EXCLUSIONS:
+                continue
+            if folded in cls._LOGIN_METADATA_SECRET_KEYS:
+                continue
+            _add(key_name, value)
+
+        props = account.get("platformAccountProperties")
+        if isinstance(props, dict):
+            for key, value in props.items():
+                key_name = str(key)
+                folded = key_name.casefold()
+                if (folded in cls._LOGIN_METADATA_PROPERTY_EXCLUSIONS
+                        or folded in cls._LOGIN_METADATA_SECRET_KEYS):
+                    continue
+                _add(f"platformAccountProperties.{key_name}", value)
+        return out
 
     @staticmethod
     def _flatten_rotation_policy(data: dict) -> Dict[str, Any]:
@@ -836,7 +907,8 @@ class AccountMapper:
                     safe_name: str = "") -> Optional[dict]:
         """Convert a CyberArk account dict → pam_data record dict.
 
-        Returns None if the platformId is completely unknown and has no default.
+        Accounts with no resolvable platform mapping are returned as standalone
+        login records instead of speculative PAM resources.
         """
         platform_id = account.get("platformId", "")
         mapping = self.platform_map.get(platform_id) if platform_id else None
@@ -847,7 +919,7 @@ class AccountMapper:
             #   1. PVWA platform metadata — PlatformBaseID → DEFAULT_PLATFORM_MAP,
             #      or SystemType → _SYSTEM_TYPE_MAP. Authoritative.
             #   2. Substring keyword match on platformId / name.
-            #   3. pamMachine/SSH fallback.
+            #   3. Standalone login fallback (no PAM resource or nested user).
             label = platform_id if platform_id else "(empty)"
             self.unmapped_platforms[label] = self.unmapped_platforms.get(label, 0) + 1
 
@@ -884,20 +956,20 @@ class AccountMapper:
                         )
                 else:
                     mapping = dict(FALLBACK_PLATFORM_MAP)
-                    mapping_source = "fallback-ssh"
+                    mapping_source = "fallback-login"
                     if platform_id:
                         logging.warning(
-                            "Unknown platformId '%s' for account '%s' — defaulting to "
-                            "pamMachine/SSH. Use --platform-map to override.",
+                            "Unknown platformId '%s' for account '%s' — importing as "
+                            "a standalone login. Use --platform-map to create a PAM resource.",
                             platform_id, account.get("name", ""))
                     else:
-                        logging.debug("Empty platformId for account '%s' — defaulting to pamMachine/SSH.",
+                        logging.debug("Empty platformId for account '%s' — importing as a standalone login.",
                                       account.get("name", ""))
 
-            # When the mapping came from a fallback path we trust PVWA's
+            # When the mapping came from an inferred resolution path we trust PVWA's
             # per-platform Details endpoint over our static defaults for the
             # port. Cheap with caching — one call per unique custom platform.
-            if mapping_source in ("pvwa-platform", "keyword-guess", "fallback-ssh"):
+            if mapping_source in ("pvwa-platform", "keyword-guess"):
                 mapping = self._enrich_port_from_details(platform_id, mapping)
 
         record_type = mapping.get("record_type", RECORD_TYPE_PAM_MACHINE)
@@ -937,7 +1009,8 @@ class AccountMapper:
         )
 
         if record_type == RECORD_TYPE_LOGIN:
-            # BusinessWebsite → login record (not pamMachine)
+            # Explicit website mappings and unresolved platforms become
+            # standalone login records, never PAM resources with nested users.
             record = {
                 "type": RECORD_TYPE_LOGIN,
                 "title": item_name or title,
@@ -946,6 +1019,17 @@ class AccountMapper:
             }
             if url:
                 record["url"] = url
+            if mapping_source == "fallback-login":
+                notes = [f"CyberArk platform: {platform_id or '(empty)'}",
+                         "No platform mapping found - imported as login"]
+                if address:
+                    notes.append(f"CyberArk address: {address}")
+                else:
+                    notes.append("No address was provided")
+                record["notes"] = "\n".join(notes)
+                custom = self._build_unmapped_login_custom_fields(account)
+                if custom:
+                    record["custom"] = custom
             return record
 
         if record_type in (RECORD_TYPE_PAM_MACHINE, RECORD_TYPE_PAM_DATABASE):
@@ -1149,4 +1233,3 @@ class AccountMapper:
         if reasons:
             return True, "; ".join(reasons)
         return False, ""
-

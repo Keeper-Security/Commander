@@ -171,7 +171,7 @@ class TestAccountMapper:
         assert result["password"] == "webpass"
         assert "users" not in result  # login records don't have nested users
 
-    def test_unknown_platform_defaults_to_pam_machine(self):
+    def test_unknown_platform_pattern_match_maps_to_pam_machine(self):
         mapper = AccountMapper()
         account = {
             "id": "10", "name": "CustomPlatform-server", "platformId": "CustomLinux",
@@ -182,6 +182,55 @@ class TestAccountMapper:
         assert result["type"] == "pamMachine"
         assert result["users"][0]["rotation_settings"]["rotation"] == "general"
         assert mapper.unmapped_platforms["CustomLinux"] == 1
+
+    def test_unmapped_platform_creates_login_only(self):
+        mapper = AccountMapper()
+        account = {
+            "id": "10b", "name": "opaque-account", "platformId": "CustomOpaque",
+            "address": "10.0.0.99", "userName": "admin",
+            "platformAccountProperties": {},
+        }
+        result = mapper.map_account(account, "pass")
+        assert result["type"] == "login"
+        assert result["login"] == "admin"
+        assert result["password"] == "pass"
+        assert "users" not in result
+        assert "pam_settings" not in result
+        assert mapper.unmapped_platforms["CustomOpaque"] == 1
+
+    def test_unmapped_platform_preserves_other_fields_as_custom(self):
+        mapper = AccountMapper()
+        account = {
+            "id": "10c", "name": "opaque-account", "platformId": "CustomOpaque",
+            "safeName": "CustomSafe", "address": "opaque.example.com",
+            "userName": "admin", "secretType": "password", "createdTime": 1700000000,
+            "secretManagement": {
+                "automaticManagementEnabled": False,
+                "status": "failure",
+            },
+            "platformAccountProperties": {
+                "URL": "https://opaque.example.com", "ItemName": "Opaque Login",
+                "LogonDomain": "CORP", "Port": "8443", "Environment": "prod",
+            },
+            "password": "must-not-be-copied",
+        }
+        result = mapper.map_account(account, "actual-password")
+
+        assert result["type"] == "login"
+        assert result["title"] == "Opaque Login"
+        assert result["login"] == "CORP\\admin"
+        assert result["password"] == "actual-password"
+        assert result["url"] == "https://opaque.example.com"
+        custom = {field["label"]: field["value"][0] for field in result["custom"]}
+        assert custom["CyberArk secretType"] == "password"
+        assert custom["CyberArk createdTime"] == "1700000000"
+        assert custom["CyberArk secretManagement.automaticManagementEnabled"] == "false"
+        assert custom["CyberArk secretManagement.status"] == "failure"
+        assert custom["CyberArk platformAccountProperties.Port"] == "8443"
+        assert custom["CyberArk platformAccountProperties.Environment"] == "prod"
+        assert all("password" not in label.casefold() for label in custom)
+        assert all(not label.endswith(("id", "name", "address", "username"))
+                   for label in (item.casefold() for item in custom))
 
     def test_platform_map_override(self):
         override = {
@@ -3294,7 +3343,7 @@ class TestRealDataEdgeCases:
         assert result["type"] == "pamMachine"
         assert result["users"][0]["private_pem_key"] == fake_key
 
-    def test_missing_platform_id_uses_fallback(self):
+    def test_missing_platform_id_without_pattern_maps_to_login(self):
         mapper = AccountMapper()
         account = {
             "id": "36_3", "name": "PSMServer",
@@ -3302,7 +3351,8 @@ class TestRealDataEdgeCases:
         }
         result = mapper.map_account(account, "pass")
         assert result is not None
-        assert result["type"] == "pamMachine"
+        assert result["type"] == "login"
+        assert "users" not in result
 
     def test_palo_alto_maps_to_ssh(self):
         mapper = AccountMapper()

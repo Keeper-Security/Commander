@@ -61,6 +61,11 @@ MAX_PLATFORM_METADATA_FIELDS = 50
 # Maximum character length for a single custom metadata field value.
 MAX_PLATFORM_METADATA_VALUE_LEN = 500
 
+# Equivalent limits for source-account metadata preserved on standalone login
+# records when no CyberArk platform mapping can be resolved.
+MAX_ACCOUNT_METADATA_FIELDS = 50
+MAX_ACCOUNT_METADATA_VALUE_LEN = 500
+
 # Maximum safe name length for Keeper shared folder names
 MAX_SAFE_NAME_LENGTH = 28
 
@@ -123,7 +128,11 @@ DEFAULT_PLATFORM_MAP = {
     "BusinessWebsite": {"record_type": RECORD_TYPE_LOGIN, "rotation": None, "protocol": None, "port": None},
 }
 
-# Fallback mapping for accounts with empty or unknown platformId
+# Fallback mapping for accounts that cannot be resolved through the explicit
+# platform map, CyberArk platform metadata, or keyword matching.  Without a
+# reliable platform mapping there is not enough information to create a PAM
+# resource and its nested pamUser safely, so preserve the credential as a
+# standalone login record.
 FALLBACK_PLATFORM_MAP = {
-    "record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh", "port": "22",
+    "record_type": RECORD_TYPE_LOGIN, "rotation": None, "protocol": None, "port": None,
 }

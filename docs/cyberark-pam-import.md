@@ -62,8 +62,13 @@ Keeper Vault/
 | PaloAltoNetworks, CiscoIOS, CiscoASA, JuniperJunos, F5BigIP, CheckPointGAIA | pamMachine | ssh | 22 |
 | CyberArk (internal) | pamMachine | ssh | 22 |
 | BusinessWebsite | login | — | — |
-| (empty platformId) | pamMachine | ssh | 22 |
-| (unknown platformId) | pamMachine | ssh | 22 |
+| Custom/renamed platform resolved by CyberArk metadata or keyword matching | inferred PAM type | inferred | inferred |
+| Empty/unknown platform with no metadata or keyword match | login | — | — |
+
+For an unresolved platform, fields not already represented by the login's title,
+login, password, URL, or CyberArk notes are preserved as text custom fields.
+Nested account metadata is flattened using dotted field names. Raw secret-bearing
+payload keys are excluded from custom fields.
 
 ### Field Mapping
 
@@ -274,5 +279,3 @@ Before building the import JSON, the importer warns about:
 - Rate limit handling: automatic retry on HTTP 429 with exponential backoff
 - Pagination cap: MAX_FETCH_RECORDS (50,000) prevents OOM attacks
 ---
-
-
