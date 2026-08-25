@@ -254,7 +254,7 @@ Sub-commands:
 
   this-device timeout <duration>
       Set auto-logout timer
-      Examples: this-device timeout 10m   (10 minutes)
+      Examples: this-device timeout 10mi  (10 minutes)
                 this-device timeout 1h    (1 hour)
                 this-device timeout 7d    (7 days)
                 this-device timeout 30d   (30 days)
