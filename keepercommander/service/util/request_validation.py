@@ -71,9 +71,11 @@ class RequestValidator:
                 logger.warning("filedata must be a JSON object or array")
                 return processed_command, temp_files
             
+            request_temp_dir = None
             try:
-                # Create temporary file with the filedata content
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as temp_file:
+                request_temp_dir = tempfile.mkdtemp(prefix='keeper_svc_')
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False,
+                                                  encoding='utf-8', dir=request_temp_dir) as temp_file:
                     json.dump(filedata, temp_file, indent=2)
                     temp_file_path = temp_file.name
                     temp_files.append(temp_file_path)
@@ -97,14 +99,19 @@ class RequestValidator:
                         os.unlink(temp_path)
                     except Exception:
                         pass
+                if request_temp_dir:
+                    try:
+                        os.rmdir(request_temp_dir)
+                    except Exception:
+                        pass
                 return command, []
         
         return processed_command, temp_files
     
     @staticmethod
     def cleanup_temp_files(temp_files: list) -> None:
-        """Clean up temporary files.
-        
+        """Clean up temporary files and the per-request directory each one lives in.
+
         Args:
             temp_files: List of temporary file paths to clean up
         """
@@ -115,6 +122,12 @@ class RequestValidator:
                     logger.debug(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary file {temp_path}: {e}")
+            # Each temp_path lives in a dedicated per-request directory (see
+            # process_file_data) -- remove it too, best-effort.
+            try:
+                os.rmdir(os.path.dirname(temp_path))
+            except Exception:
+                pass
     
     @staticmethod
     def validate_request_json() -> Optional[Tuple]:

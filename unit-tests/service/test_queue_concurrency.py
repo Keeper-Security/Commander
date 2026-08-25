@@ -52,7 +52,7 @@ class TestQueueConcurrency(unittest.TestCase):
         inflight = {"count": 0, "max": 0}
         results = {}
 
-        def fake_execute(command):
+        def fake_execute(command, **kwargs):
             with state_lock:
                 inflight["count"] += 1
                 inflight["max"] = max(inflight["max"], inflight["count"])
@@ -91,7 +91,7 @@ class TestQueueConcurrency(unittest.TestCase):
         outputs = {}
         start_barrier = threading.Barrier(3)
 
-        def fake_execute(command):
+        def fake_execute(command, **kwargs):
             with state_lock:
                 inflight["count"] += 1
                 inflight["max"] = max(inflight["max"], inflight["count"])
@@ -148,7 +148,7 @@ class TestQueueConcurrency(unittest.TestCase):
         executed_commands = []
         executed_lock = threading.Lock()
 
-        def fake_execute(command):
+        def fake_execute(command, **kwargs):
             with executed_lock:
                 executed_commands.append(command)
 
@@ -189,7 +189,7 @@ class TestQueueConcurrency(unittest.TestCase):
 
         started_processing = threading.Event()
 
-        def fake_execute(command):
+        def fake_execute(command, **kwargs):
             started_processing.set()
             time.sleep(request_timeout + 0.15)
             return {"status": "success", "data": {"command": command}}, 200

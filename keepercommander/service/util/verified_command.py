@@ -1,5 +1,6 @@
+import contextlib
+import io
 import os
-import tempfile
 
 
 class Verifycommand:
@@ -16,6 +17,11 @@ class Verifycommand:
     # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
     _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
 
+    # WARNING: everything below is a DENYLIST. Any command/flag that reads or
+    # writes a host file and is NOT enumerated here is allowed by default.
+    # Adding a new command with local file I/O? Add it here, or it silently
+    # bypasses Service Mode's "no host filesystem access" boundary.
+    #
     # Commands that always read/write host files (no safe Service Mode form).
     _HOST_FS_COMMANDS = frozenset({
         'run-batch', 'run',
@@ -27,6 +33,11 @@ class Verifycommand:
     })
     # Positional file input; FILEDATA is rewritten to a temp path before execute.
     _FILE_INPUT_COMMANDS = frozenset({'import', 'enterprise-push'})
+    # import --format values that name an account/API/URL source, not a local
+    # file (importer/commands.py choices). Any format NOT in this set is treated as file-based by default.
+    _IMPORT_FORMATS_WITHOUT_FILE = frozenset({
+        'lastpass', 'manageengine', 'thycotic', 'cyberark', 'cyberark_portal',
+    })
     # generate's registered alias (commands/utils.py: aliases['gen'] = 'generate').
     _GENERATE_COMMAND_NAMES = frozenset({'generate', 'gen'})
     # pam's 'project' subcommand alias (discoveryrotation.py: register_command('project', ..., 'p')).
@@ -48,8 +59,14 @@ class Verifycommand:
     )
 
     @staticmethod
-    def validate_service_mode_restrictions(command_tokens):
-        """Run Service Mode bans on executor tokens (shlex); error string or None."""
+    def validate_service_mode_restrictions(command_tokens, request_temp_dir=None):
+        """Run Service Mode bans on executor tokens (shlex); error string or None.
+
+        request_temp_dir: the directory created for *this* request's FILEDATA
+        file (see RequestValidator.process_file_data). Only paths under this
+        exact directory are treated as safe -- not the whole shared OS temp
+        root, which other processes/users may also write to.
+        """
         if not command_tokens:
             return None
 
@@ -62,13 +79,13 @@ class Verifycommand:
             Verifycommand.validate_service_mode_host_path_args,
             Verifycommand.validate_service_mode_file_input_command,
         ):
-            error = validator(command_tokens)
+            error = validator(command_tokens, request_temp_dir)
             if error:
                 return error
         return None
 
     @staticmethod
-    def validate_service_mode_pam_tunnel_command(command_tokens):
+    def validate_service_mode_pam_tunnel_command(command_tokens, request_temp_dir=None):
         """Allow only pam tunnel edit in Service Mode; error string or None."""
         if not command_tokens or len(command_tokens) < 2:
             return None
@@ -87,7 +104,7 @@ class Verifycommand:
         )
 
     @staticmethod
-    def validate_service_mode_download_attachment_command(command_tokens):
+    def validate_service_mode_download_attachment_command(command_tokens, request_temp_dir=None):
         """Block download-attachment in Service Mode; error string or None."""
         if not command_tokens:
             return None
@@ -99,7 +116,7 @@ class Verifycommand:
         )
 
     @staticmethod
-    def validate_service_mode_upload_attachment_command(command_tokens):
+    def validate_service_mode_upload_attachment_command(command_tokens, request_temp_dir=None):
         """Block upload-attachment in Service Mode; error string or None."""
         if not command_tokens:
             return None
@@ -111,7 +128,7 @@ class Verifycommand:
         )
 
     @staticmethod
-    def validate_service_mode_record_file_attachment_command(command_tokens):
+    def validate_service_mode_record_file_attachment_command(command_tokens, request_temp_dir=None):
         """Block record-add/update (and ra/ru) file fields in Service Mode; error or None."""
         if not command_tokens:
             return None
@@ -136,7 +153,7 @@ class Verifycommand:
         return name.split('.', 1)[0] == 'file'
 
     @staticmethod
-    def validate_service_mode_host_filesystem_command(command_tokens):
+    def validate_service_mode_host_filesystem_command(command_tokens, request_temp_dir=None):
         """Block commands that always touch the host filesystem; error or None."""
         if not command_tokens:
             return None
@@ -145,7 +162,7 @@ class Verifycommand:
         return Verifycommand._HOST_FS_MSG
 
     @staticmethod
-    def validate_service_mode_host_path_args(command_tokens):
+    def validate_service_mode_host_path_args(command_tokens, request_temp_dir=None):
         """Block host-path flags (--output, --filename, …); error or None."""
         if not command_tokens:
             return None
@@ -153,14 +170,11 @@ class Verifycommand:
         tokens = command_tokens
         cmd0 = tokens[0].lower()
 
-        # PDF always requires an on-disk output file.
-        for i, tok in enumerate(tokens[1:], start=1):
-            lower = tok.lower()
-            if lower == '--format=pdf':
+        # PDF always requires an on-disk output file. Routed through
+        # _option_values so abbreviations (--form, --fmt=pdf, …) are caught too.
+        for value in Verifycommand._option_values(tokens, '--format'):
+            if value.lower() == 'pdf':
                 return Verifycommand._HOST_FS_MSG
-            if lower == '--format' and i + 1 < len(tokens):
-                if tokens[i + 1].lower() == 'pdf':
-                    return Verifycommand._HOST_FS_MSG
 
         for flag in ('--out-dir', '--output-dir', '--from-file', '--file-cache',
                      '--keepass-key-file', '-v3f'):
@@ -173,18 +187,18 @@ class Verifycommand:
             return Verifycommand._HOST_FS_MSG
 
         for value in Verifycommand._option_values(tokens, '--filename'):
-            if not Verifycommand._is_service_temp_path(value):
+            if not Verifycommand._is_service_temp_path(value, request_temp_dir):
                 return Verifycommand._HOST_FS_MSG
 
-        # pam project import/extend/edit use -f as --filename (not --force).
+        # pam project import/extend use -f as --filename (not --force).
         if Verifycommand._is_pam_project_filename_cmd(tokens):
             for value in Verifycommand._option_values(tokens, '-f'):
-                if not Verifycommand._is_service_temp_path(value):
+                if not Verifycommand._is_service_temp_path(value, request_temp_dir):
                     return Verifycommand._HOST_FS_MSG
 
         for value in Verifycommand._option_values(tokens, '--file'):
             if Verifycommand._looks_like_local_path(value):
-                if not Verifycommand._is_service_temp_path(value):
+                if not Verifycommand._is_service_temp_path(value, request_temp_dir):
                     return Verifycommand._HOST_FS_MSG
 
         for value in Verifycommand._option_values(tokens, '--output'):
@@ -197,29 +211,64 @@ class Verifycommand:
                 if value.lower() not in Verifycommand._NON_PATH_OUTPUT_VALUES:
                     return Verifycommand._HOST_FS_MSG
 
-        # transfer-user @filename mapping files
-        for tok in tokens[1:]:
-            if tok.startswith('@') and Verifycommand._looks_like_local_path(tok[1:]):
-                return Verifycommand._HOST_FS_MSG
+        # transfer-user (tu) @filename mapping files -- scoped to that command
+        # only, since '@value' is a legitimate argument shape elsewhere.
+        if cmd0 in ('transfer-user', 'tu'):
+            for tok in tokens[1:]:
+                if tok.startswith('@') and Verifycommand._looks_like_local_path(tok[1:]):
+                    return Verifycommand._HOST_FS_MSG
 
         return None
 
     @staticmethod
-    def validate_service_mode_file_input_command(command_tokens):
+    def validate_service_mode_file_input_command(command_tokens, request_temp_dir=None):
         """Allow import/enterprise-push only with FILEDATA temp paths; error or None."""
         if not command_tokens:
             return None
-        if command_tokens[0].lower() not in Verifycommand._FILE_INPUT_COMMANDS:
+        cmd0 = command_tokens[0].lower()
+        if cmd0 not in Verifycommand._FILE_INPUT_COMMANDS:
             return None
 
-        for tok in command_tokens[1:]:
-            if tok.startswith('-'):
-                continue
-            if not Verifycommand._looks_like_local_path(tok):
-                continue
-            if not Verifycommand._is_service_temp_path(tok):
+        if cmd0 == 'import':
+            from ...importer.commands import import_parser
+            ns = Verifycommand._safe_parse(import_parser, command_tokens[1:])
+            if ns is None:
+                # Malformed for the real parser too; it will reject this itself.
+                return None
+            fmt = (ns.format or '').lower()
+            if fmt in Verifycommand._IMPORT_FORMATS_WITHOUT_FILE:
+                return None
+            if ns.name and not Verifycommand._is_service_temp_path(ns.name, request_temp_dir):
                 return Verifycommand._HOST_FS_MSG
+            return None
+
+        if cmd0 == 'enterprise-push':
+            from ...commands.enterprise_push import enterprise_push_parser
+            ns = Verifycommand._safe_parse(enterprise_push_parser, command_tokens[1:])
+            if ns is None:
+                return None
+            if ns.file and not Verifycommand._is_service_temp_path(ns.file, request_temp_dir):
+                return Verifycommand._HOST_FS_MSG
+            return None
+
         return None
+
+    @staticmethod
+    def _safe_parse(parser, tokens):
+        """Resolve tokens via the command's real argparse parser; None if it can't be resolved.
+
+        Used instead of hand-scanning tokens so we get the parser's own
+        distinction between a positional value and a flag's value -- the
+        raw tokens alone don't tell you that.
+        """
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                ns, _ = parser.parse_known_args(tokens)
+            return ns
+        except SystemExit:
+            return None
+        except Exception:
+            return None
 
     @staticmethod
     def _pam_project_verb(command_tokens):
@@ -242,31 +291,66 @@ class Verifycommand:
     def _is_pam_project_filename_cmd(command_tokens):
         return Verifycommand._pam_project_verb(command_tokens) in ('import', 'extend')
 
+    # Flags we separately check for. Some are literal prefixes of others
+    # (--output/--output-dir, --file/--filename, --file/--file-cache) -- a
+    # token that's a *complete* match for one of these is a distinct flag in
+    # its own right, never an abbreviation attempt at a different one.
+    _KNOWN_DANGEROUS_FLAGS = frozenset({
+        '--output', '--filename', '--file', '--format',
+        '--out-dir', '--output-dir', '--from-file', '--file-cache',
+        '--keepass-key-file', '--config',
+    })
+
+    @staticmethod
+    def _flag_matches(tok_name, flag):
+        """True if tok_name is exactly flag, or an unambiguous long-option
+        abbreviation of it (argparse's allow_abbrev default -- almost no
+        parser in this codebase opts out of it, so '--out' really does mean
+        '--output' to the command that will actually run).
+
+        Short options ('-o', '-f') are never abbreviated by argparse, so
+        those only ever match exactly.
+        """
+        if tok_name == flag:
+            return True
+        # Reject bare '--' (argparse's "end of options" marker), anything
+        # that isn't a '--long' option on both sides, and anything that's
+        # already a complete, distinct flag of its own.
+        if len(tok_name) <= 2 or not tok_name.startswith('--') or not flag.startswith('--'):
+            return False
+        if tok_name in Verifycommand._KNOWN_DANGEROUS_FLAGS:
+            return False
+        return flag.startswith(tok_name)
+
     @staticmethod
     def _has_option(tokens, flag):
-        """True if flag or flag=value appears in tokens."""
+        """True if flag, flag=value, or an abbreviation of flag appears in tokens."""
         flag_l = flag.lower()
-        prefix = flag_l + '='
         for tok in tokens[1:]:
-            lower = tok.lower()
-            if lower == flag_l or lower.startswith(prefix):
+            name = tok.lower().split('=', 1)[0]
+            if Verifycommand._flag_matches(name, flag_l):
                 return True
         return False
 
     @staticmethod
     def _option_values(tokens, flag):
-        """Yield values for --flag value / --flag=value (and short -o value)."""
+        """Yield values for --flag value / --flag=value (and short -o value),
+        matching flag itself or an unambiguous abbreviation of it."""
         flag_l = flag.lower()
-        prefix = flag_l + '='
         i = 1
         while i < len(tokens):
             tok = tokens[i]
             lower = tok.lower()
-            if lower.startswith(prefix):
+            name, sep, _ = lower.partition('=')
+            if sep and Verifycommand._flag_matches(name, flag_l):
                 yield tok.split('=', 1)[1]
                 i += 1
                 continue
-            if lower == flag_l:
+            if not sep and Verifycommand._flag_matches(name, flag_l):
+                # Consume the next token as the value even if it starts with
+                # '-' (e.g. a path or FILEDATA placeholder) -- these flags are
+                # all required-argument (action='store'), so skipping a
+                # dash-leading value here let it slip past every check below.
                 if i + 1 < len(tokens):
                     yield tokens[i + 1]
                     i += 2
@@ -285,14 +369,17 @@ class Verifycommand:
         return ext.lower() in Verifycommand._LOCAL_FILE_EXTENSIONS
 
     @staticmethod
-    def _is_service_temp_path(path):
-        """True when path resolves under the process temp dir (FILEDATA sink)."""
-        if not path:
+    def _is_service_temp_path(path, request_temp_dir):
+        """True when path resolves under *this request's* own temp directory
+        (see RequestValidator.process_file_data), not just anywhere under the
+        shared OS temp root -- other processes/users can also write there.
+        """
+        if not path or not request_temp_dir:
             return False
         try:
             resolved = os.path.realpath(os.path.expanduser(path))
-            temp_root = os.path.realpath(tempfile.gettempdir())
-            return resolved == temp_root or resolved.startswith(temp_root + os.sep)
+            root = os.path.realpath(request_temp_dir)
+            return resolved == root or resolved.startswith(root + os.sep)
         except (OSError, ValueError):
             return False
 

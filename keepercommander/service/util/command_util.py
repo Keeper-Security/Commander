@@ -148,13 +148,12 @@ class CommandExecutor:
         return response, status_code
 
     @classmethod
-    def execute(cls, command: str) -> Tuple[Any, int]:
+    def execute(cls, command: str, temp_files: Optional[list] = None) -> Tuple[Any, int]:
         logger.debug(f"Executing command: {sanitize_command_fields(command)}")
-        
         validation_error = cls.validate_command(command)
         if validation_error:
             return validation_error
-        
+
         from ..core.globals import ensure_params_loaded
         try:
             params = ensure_params_loaded()
@@ -169,11 +168,20 @@ class CommandExecutor:
             except ValueError:
                 command_tokens = command.split()
 
+            # This request's own FILEDATA directory (see
+            # RequestValidator.process_file_data) -- the only paths Service
+            # Mode will treat as safe, not the whole shared OS temp root.
+            request_temp_dir = os.path.dirname(temp_files[0]) if temp_files else None
+
             # Same tokens the CLI will run — do not use raw HTTP split(" ")
             service_mode_error = Verifycommand.validate_service_mode_restrictions(
-                command_tokens
+                command_tokens, request_temp_dir
             )
             if service_mode_error:
+                logger.warning(
+                    f"Service Mode blocked command '{command_tokens[0] if command_tokens else ''}': "
+                    f"{service_mode_error}"
+                )
                 return {"status": "error", "error": service_mode_error}, 403
 
             force_error = Verifycommand.validate_enterprise_user_add_role_force(
