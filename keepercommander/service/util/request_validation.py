@@ -15,7 +15,7 @@ from html import escape
 import tempfile
 import os
 import json
-from ..decorators.logging import logger
+from ..decorators.logging import logger, sanitize_command_fields
 
 
 class RequestValidator:
@@ -46,7 +46,7 @@ class RequestValidator:
             
         # Escape HTML to prevent XSS
         escaped_command = escape(command)
-        logger.debug(f"Command validated and escaped: {escaped_command}")
+        logger.debug(f"Command validated and escaped: {sanitize_command_fields(escaped_command)}")
         return escaped_command, None
     
     @staticmethod

@@ -14,8 +14,11 @@ from functools import wraps
 from typing import Callable, Any
 from flask import request
 import time
-import re
-from .logging import logger
+from .logging import logger, sanitize_command_fields, SENSITIVE_FIELD_TYPES
+
+# Legacy generic keys (kept for JSON payloads that aren't shaped like Keeper
+# record fields, e.g. arbitrary nested config blobs).
+_SENSITIVE_DICT_KEYS = frozenset({'password', 'login', 'secret', 'token', 'key'}) | SENSITIVE_FIELD_TYPES
 
 
 class SSLHandshakeFilter(logging.Filter):
@@ -29,32 +32,44 @@ class SSLHandshakeFilter(logging.Filter):
         return True
 
 def sanitize_password_in_command(data):
-    """Sanitize password values in command string and filedata"""
+    """Sanitize password, login, secret and TOTP (oneTimeCode) values in command string and filedata"""
     if not data:
         return data
-    
+
     sanitized = data.copy()
-    
+
     # Sanitize command string if present
-    if 'command' in sanitized:
-        command = sanitized['command']
-        # Pattern to match password=value (with or without quotes)
-        password_pattern = r"password=(['\"]?)([^'\"\s]{1,1024})\1"
-        sanitized['command'] = re.sub(password_pattern, r"password=\1***\1", command)
-    
+    if 'command' in sanitized and isinstance(sanitized['command'], str):
+        sanitized['command'] = sanitize_command_fields(sanitized['command'])
+
     # Sanitize filedata if present
     if 'filedata' in sanitized:
         sanitized['filedata'] = _sanitize_nested_data(sanitized['filedata'])
     
     return sanitized
 
+def _mask_field_value(value):
+    """Mask a Keeper record field's `value`, preserving its container shape."""
+    if isinstance(value, list):
+        return ['***' for _ in value]
+    if isinstance(value, dict):
+        return {k: '***' for k in value}
+    return '***'
+
+
 def _sanitize_nested_data(data):
     """Recursively sanitize nested data structures"""
     if isinstance(data, dict):
+        field_type = data.get('type')
+        if isinstance(field_type, str) and field_type.lower() in SENSITIVE_FIELD_TYPES and 'value' in data:
+            sanitized = dict(data)
+            sanitized['value'] = _mask_field_value(data['value'])
+            return sanitized
+
         sanitized = {}
         for key, value in data.items():
             # Sanitize sensitive field names
-            if key.lower() in ['password', 'login', 'secret', 'token', 'key']:
+            if key.lower() in _SENSITIVE_DICT_KEYS:
                 if isinstance(value, str) and len(value) > 0:
                     sanitized[key] = '*' * min(len(value), 15)
                 else:
