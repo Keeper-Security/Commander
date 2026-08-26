@@ -80,14 +80,17 @@ class AdCrmDataSource(ICrmDataSource):
             logging.debug('AD connect: Kerberos auth method. Requires Windows, domain user, and domain computer')
             auth_method = ldap3.SASL
         server = ldap3.Server(self.ad_url, tls=tls)
-        with ldap3.Connection(server, user=self.ad_user, password=self.ad_password,
+        with ldap3.Connection(server, raise_exceptions=True,
+                                      user=self.ad_user, password=self.ad_password,
                                       authentication=auth_method,
                                       sasl_mechanism=ldap3.KERBEROS if auth_method == ldap3.SASL else None) as connection:
-            connection.open()
-            connection.bind()
-            if not connection.bind():
-                raise Exception('Invalid AD username or password')
-            yield connection
+            try:
+                connection.open()
+                if not connection.bind():
+                    raise Exception('Invalid AD username or password')
+                yield connection
+            finally:
+                connection.unbind()
 
     def _build_domain_lookup(self, connection) -> Dict[str, str]:
         """Build a mapping of DNS domain names to NetBIOS names.
