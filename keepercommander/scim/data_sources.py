@@ -289,26 +289,18 @@ class AdCrmDataSource(ICrmDataSource):
                     if u.get('type') != 'searchResEntry':
                         continue
                     attrs = u.get('attributes') or {}
-                    user_id = attrs.get('objectGUID')
+                    user_id = attrs.get('objectGUID') or ''
                     if not user_id:
                         continue
                     su = ScimUser()
                     su.id = user_id
                     su.external_id = user_id
-                    login = ''
-                    if 'sAMAccountName' in attrs:
-                        login = attrs['sAMAccountName'] or ''
-                    email = ''
-                    if 'mail' in attrs:
-                        email = attrs['mail']
-                    if not email and 'userPrincipalName' in attrs:
-                        email = attrs['userPrincipalName']
-                    su.email = email
-                    su.login = login
-                    if 'userPrincipalName' in attrs and attrs['userPrincipalName']:
-                        upn = attrs['userPrincipalName']
-                        if isinstance(upn, str) and '@' in upn:
-                            upn_domain = upn.split('@', 1)[1]
+                    su.upn = attrs.get('userPrincipalName') or ''
+                    su.login = attrs.get('sAMAccountName') or ''
+                    su.email = attrs.get('mail') or ''
+                    if su.upn:
+                        if isinstance(su.upn, str) and '@' in su.upn:
+                            upn_domain = su.upn.split('@', 1)[1]
                             # Convert DNS domain to NetBIOS if requested
                             if self.use_netbios_domain and self._domain_lookup and upn_domain in self._domain_lookup:
                                 su.domain = self._domain_lookup[upn_domain]

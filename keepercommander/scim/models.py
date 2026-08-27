@@ -7,6 +7,7 @@ from typing import List
 class ScimUser:
     id: str = ''
     external_id: str = ''
+    upn: str = ''
     login: str = ''
     email: str = ''
     domain: str = ''

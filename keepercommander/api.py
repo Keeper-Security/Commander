@@ -845,9 +845,10 @@ def execute_router(params, endpoint, request, *, rs_type=None):
 
     payload = request.SerializeToString() if request else None
     rs_bytes = execute_router_rest(params, endpoint, payload)
-    if rs_type and rs_bytes:
+    if rs_type and rs_bytes is not None:
         response = rs_type()
-        response.ParseFromString(rs_bytes)
+        if rs_bytes:
+            response.ParseFromString(rs_bytes)
         if logger.level <= logging.DEBUG:
             js = google.protobuf.json_format.MessageToJson(response)
             logger.debug('>>> [ROUTER RS] \"%s\": %s', endpoint, js)
