@@ -45,6 +45,7 @@ from ..base import Command, GroupCommand, dump_report_data
 from ... import vault
 from ...display import bcolors
 from ...error import CommandError
+from ...proto import cnapp_pb2
 
 logger = logging.getLogger(__name__)
 
@@ -228,19 +229,49 @@ def _add_configuration_args(parser, require_secret=True, optional_secret_on_set=
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
     parser.add_argument('--provider', '-p', required=True, dest='provider',
-                        help='CNAPP provider keyword: wiz (case-insensitive).')
-    parser.add_argument('--client-id', required=True, dest='client_id',
-                        help='Provider API client ID / app ID.')
+                        help='CNAPP provider keyword: wiz, tenable (case-insensitive).')
+    parser.add_argument('--client-id', required=False, default=None, dest='client_id',
+                        help='Provider API client ID / app ID. Optional for Tenable.')
     if optional_secret_on_set:
         parser.add_argument('--client-secret', required=False, default=None, dest='client_secret',
                             help='Provider API client secret. Omit on `config set` to keep the existing secret.')
     else:
-        parser.add_argument('--client-secret', required=require_secret, dest='client_secret',
-                            help='Provider API client secret.')
+        parser.add_argument('--client-secret', required=False, default=None, dest='client_secret',
+                            help='Provider API client secret. Optional for Tenable.')
     parser.add_argument('--api-endpoint', required=True, dest='api_endpoint_url',
-                        help='Provider API endpoint URL (e.g. https://api.us1.app.wiz.io/graphql).')
+                        help='Provider API endpoint URL (e.g. https://api.us1.app.wiz.io/graphql, '
+                             'https://us.app.ermetic.com/api/graph).')
     parser.add_argument('--auth-endpoint', required=True, dest='auth_endpoint_url',
                         help='Provider OAuth2 token endpoint URL (e.g. https://auth.app.wiz.io/oauth/token).')
+    parser.add_argument('--url-base-encrypter', required=False, dest='url_base_encrypter',
+                        help='Customer-deployed Encrypter base URL used to hash provider-specific '
+                             'identifiers (e.g. Tenable asset/plugin ids) before queuing.')
+    parser.add_argument('--api-token-encrypter', required=False, dest='api_token_encrypter',
+                        help='Auth token for the customer-deployed Encrypter, if it requires one.')
+
+
+def _configuration_credentials(provider, client_id, client_secret, require_secret):
+    """Validate provider-specific credential requirements and normalize omitted values.
+
+    Tenable configurations authenticate through the customer Encrypter and intentionally
+    allow both generic credential fields to be empty. Wiz still requires a client ID and,
+    for `config test`, a secret. Smart quotes are rejected because `--client-id=“”` is a
+    two-character credential, not an empty shell value.
+    """
+    for option, value in (('--client-id', client_id), ('--client-secret', client_secret)):
+        if value in ('“”', '‘’'):
+            raise CommandError(
+                'pam cnapp config',
+                f'{option} contains smart quotes. Use {option}="" for an empty value.',
+            )
+    client_id = '' if client_id is None else client_id
+    client_secret = '' if client_secret is None else client_secret
+    if provider == cnapp_pb2.CNAPP_PROVIDER_WIZ:
+        if not client_id:
+            raise CommandError('pam cnapp config', '--client-id is required for Wiz.')
+        if require_secret and not client_secret:
+            raise CommandError('pam cnapp config', '--client-secret is required when testing Wiz.')
+    return client_id, client_secret
 
 
 class PAMCnappConfigSetCommand(Command):
@@ -254,15 +285,19 @@ class PAMCnappConfigSetCommand(Command):
 
     def execute(self, params, **kwargs):
         provider = cnapp_helper.provider_from_name(kwargs.get('provider'))
+        client_id, client_secret = _configuration_credentials(
+            provider, kwargs.get('client_id'), kwargs.get('client_secret'), require_secret=False)
         response = cnapp_helper.set_cnapp_configuration(
             params,
             network_uid=kwargs.get('network_uid'),
             provider=provider,
-            client_id=kwargs.get('client_id'),
-            client_secret='' if kwargs.get('client_secret') is None else kwargs.get('client_secret'),
+            client_id=client_id,
+            client_secret=client_secret,
             api_endpoint_url=kwargs.get('api_endpoint_url'),
             cnapp_config_record_uid=kwargs.get('cnapp_config_record_uid'),
             auth_endpoint_url=kwargs.get('auth_endpoint_url'),
+            url_base_encrypter=kwargs.get('url_base_encrypter'),
+            api_token_encrypter=kwargs.get('api_token_encrypter'),
         )
         print(f"{bcolors.OKGREEN}CNAPP configuration saved.{bcolors.ENDC}")
         if response is not None:
@@ -279,14 +314,18 @@ class PAMCnappConfigTestCommand(Command):
 
     def execute(self, params, **kwargs):
         provider = cnapp_helper.provider_from_name(kwargs.get('provider'))
+        client_id, client_secret = _configuration_credentials(
+            provider, kwargs.get('client_id'), kwargs.get('client_secret'), require_secret=True)
         cnapp_helper.test_cnapp_configuration(
             params,
             network_uid=kwargs.get('network_uid'),
             provider=provider,
-            client_id=kwargs.get('client_id'),
-            client_secret=kwargs.get('client_secret'),
+            client_id=client_id,
+            client_secret=client_secret,
             api_endpoint_url=kwargs.get('api_endpoint_url'),
             auth_endpoint_url=kwargs.get('auth_endpoint_url'),
+            url_base_encrypter=kwargs.get('url_base_encrypter'),
+            api_token_encrypter=kwargs.get('api_token_encrypter'),
         )
         print(f"{bcolors.OKGREEN}CNAPP credentials validated successfully.{bcolors.ENDC}")
 
@@ -309,7 +348,7 @@ class PAMCnappConfigReadCommand(Command):
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
     parser.add_argument('--provider', '-p', required=True, dest='provider',
-                        help='CNAPP provider keyword: wiz.')
+                        help='CNAPP provider keyword: wiz, tenable.')
     parser.add_argument('--format', dest='format', choices=['table', 'json'], default='table',
                         help='Output format.')
 
@@ -371,8 +410,9 @@ class PAMCnappQueueListCommand(Command):
                         help='Network record UID (base64url).')
     parser.add_argument('--status', '-s', required=False, dest='status', default=0,
                         help='Filter by status name or id (pending/in_progress/resolved/failed/cancelled). Default: all.')
-    parser.add_argument('--provider', '-p', required=False, dest='provider', default='wiz',
-                        help='CNAPP provider keyword for the config lookup (default: wiz).')
+    parser.add_argument('--provider', '-p', required=False, dest='provider', default=None,
+                        help='Override the provider used for config lookup (wiz or tenable). '
+                             'By default, each queue item selects its own provider configuration.')
     parser.add_argument('--config-record', required=False, dest='config_record_uid',
                         help='Explicit encrypter vault record UID. Overrides the lookup via `config read`.')
     parser.add_argument('--no-decrypt', dest='no_decrypt', action='store_true',
@@ -383,25 +423,50 @@ class PAMCnappQueueListCommand(Command):
     def get_parser(self):
         return PAMCnappQueueListCommand.parser
 
-    def _resolve_encrypter_key(self, params, kwargs):
-        """Resolve the AES key: --config-record wins; otherwise fetch `config read` to get
-        the cnappConfigRecordUid and load the encrypter record from the local vault."""
+    def _resolve_encrypter_keys(self, params, kwargs, items):
+        """Resolve AES keys by queue-item provider.
+
+        `--config-record` wins and supplies one key for every item. `--provider` similarly
+        forces a single provider configuration. With neither override, mixed Wiz/Tenable
+        responses load the configuration associated with each item's provider.
+        """
         if kwargs.get('no_decrypt'):
-            return None, None
+            return {}
+        item_provider_ids = {item.cnappProviderId for item in items if item.payload}
+        if not item_provider_ids:
+            return {}
         config_record_uid = kwargs.get('config_record_uid')
-        if not config_record_uid:
+        if config_record_uid:
+            key = _load_encrypter_key(params, config_record_uid)
+            return {provider_id: key for provider_id in item_provider_ids if key}
+
+        provider_override = kwargs.get('provider')
+        provider_ids = item_provider_ids
+        if provider_override:
+            provider_ids = {cnapp_helper.provider_from_name(provider_override)}
+
+        keys_by_provider = {}
+        for provider_id in provider_ids:
             try:
-                provider = cnapp_helper.provider_from_name(kwargs.get('provider') or 'wiz')
                 config = cnapp_helper.read_cnapp_configuration(
-                    params, network_uid=kwargs.get('network_uid'), provider=provider)
+                    params, network_uid=kwargs.get('network_uid'), provider=provider_id)
             except Exception as e:
-                logger.debug('CNAPP: could not read configuration for decryption: %s', e)
-                return None, None
+                logger.debug(
+                    'CNAPP: could not read %s configuration for decryption: %s',
+                    cnapp_helper.CnappProvider.Name(provider_id), e,
+                )
+                continue
             if config is None or not config.cnappConfigRecordUid:
-                return None, None
+                continue
             config_record_uid = bytes_to_base64(config.cnappConfigRecordUid)
-        key = _load_encrypter_key(params, config_record_uid)
-        return key, config_record_uid
+            key = _load_encrypter_key(params, config_record_uid)
+            if key:
+                keys_by_provider[provider_id] = key
+
+        if provider_override and keys_by_provider:
+            override_key = keys_by_provider[next(iter(provider_ids))]
+            return {provider_id: override_key for provider_id in item_provider_ids}
+        return keys_by_provider
 
     @staticmethod
     def _decrypted_summary(decrypted):
@@ -434,13 +499,12 @@ class PAMCnappQueueListCommand(Command):
         items = list(response.items) if response is not None else []
         has_more = bool(response.hasMore) if response is not None else False
 
-        encrypter_key, encrypter_uid = self._resolve_encrypter_key(params, kwargs)
+        encrypter_keys = self._resolve_encrypter_keys(params, kwargs, items)
         decrypted_by_id = {}
         decrypt_errors = {}  # type: dict[int, str]
-        if encrypter_key:
-            for item in items:
-                if not item.payload:
-                    continue
+        for item in items:
+            encrypter_key = encrypter_keys.get(item.cnappProviderId)
+            if item.payload and encrypter_key:
                 try:
                     decrypted_by_id[item.cnappQueueId] = _decrypt_cnapp_payload(item.payload, encrypter_key)
                 except Exception as e:
@@ -464,7 +528,9 @@ class PAMCnappQueueListCommand(Command):
             print('No CNAPP queue items.')
             return None
 
-        if encrypter_key is None and not kwargs.get('no_decrypt'):
+        encrypted_without_key = any(
+            item.payload and item.cnappProviderId not in encrypter_keys for item in items)
+        if encrypted_without_key and not kwargs.get('no_decrypt'):
             print(f"{bcolors.WARNING}No encrypter key resolved — payloads will be shown as 'encrypted'. "
                   f"Pass --config-record <UID> or run after `pam cnapp config read` succeeds.{bcolors.ENDC}")
 
@@ -523,7 +589,7 @@ class PAMCnappQueueRemediateCommand(Command):
     parser.add_argument('--action', '-a', required=True, dest='action_type',
                         help='Remediation action: rotate_credentials, manage_access, jit_access, remove_standing_privilege.')
     parser.add_argument('--provider', '-p', required=False, dest='provider',
-                        help='Provider keyword (wiz). Optional — krouter resolves from queue item if omitted.')
+                        help='Provider keyword (wiz or tenable). Optional — krouter resolves from queue item if omitted.')
     parser.add_argument('--config-record', required=False, dest='cnapp_config_record_uid',
                         help='Configuration record UID (only required for some action types).')
     parser.add_argument('--resource-ref', required=False, dest='resource_ref',
@@ -620,6 +686,8 @@ def _configuration_to_dict(config):
         'apiEndpointUrl': config.apiEndpointUrl,
         'authEndpointUrl': config.authEndpointUrl,
         'cnappConfigRecordUid': bytes_to_base64(config.cnappConfigRecordUid) if config.cnappConfigRecordUid else '',
+        'urlBaseEncrypter': config.urlBaseEncrypter,
+        'apiTokenEncrypterSet': bool(config.apiTokenEncrypter),
     }
 
 
@@ -648,3 +716,5 @@ def _print_configuration(config):
     print(f"  API Endpoint   : {config.apiEndpointUrl or '(none)'}")
     print(f"  Auth Endpoint  : {config.authEndpointUrl or '(none)'}")
     print(f"  Config Record  : {_uid_display(config.cnappConfigRecordUid)}")
+    print(f"  URL Base Encr. : {config.urlBaseEncrypter or '(none)'}")
+    print(f"  API Token Encr.: {'(set)' if config.apiTokenEncrypter else '(none)'}")
