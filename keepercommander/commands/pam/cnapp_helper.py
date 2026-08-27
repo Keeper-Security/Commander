@@ -115,8 +115,9 @@ def action_from_name(name):  # type: (str) -> int
 
 def _build_configuration(network_uid, provider, client_id=None, client_secret=None,
                          api_endpoint_url=None, cnapp_config_record_uid=None,
-                         auth_endpoint_url=None):
-    # type: (str, int, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappConfiguration
+                         auth_endpoint_url=None, url_base_encrypter=None,
+                         api_token_encrypter=None):
+    # type: (str, int, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappConfiguration
     rq = cnapp_pb2.CnappConfiguration()
     rq.networkUid = _to_uid_bytes(network_uid)
     rq.provider = provider
@@ -130,12 +131,17 @@ def _build_configuration(network_uid, provider, client_id=None, client_secret=No
         rq.cnappConfigRecordUid = _to_uid_bytes(cnapp_config_record_uid)
     if auth_endpoint_url:
         rq.authEndpointUrl = auth_endpoint_url
+    if url_base_encrypter:
+        rq.urlBaseEncrypter = url_base_encrypter
+    if api_token_encrypter:
+        rq.apiTokenEncrypter = api_token_encrypter
     return rq
 
 
 def set_cnapp_configuration(params, network_uid, provider, client_id, client_secret,
-                            api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url=None):
-    # type: (KeeperParams, str, int, str, str, str, str, Optional[str]) -> cnapp_pb2.CnappConfiguration
+                            api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url=None,
+                            url_base_encrypter=None, api_token_encrypter=None):
+    # type: (KeeperParams, str, int, str, str, str, str, Optional[str], Optional[str], Optional[str]) -> cnapp_pb2.CnappConfiguration
     """Create or update the CNAPP provider configuration on a network.
 
     krouter validates the credentials against the provider before persisting; an empty
@@ -143,23 +149,31 @@ def set_cnapp_configuration(params, network_uid, provider, client_id, client_sec
     that only change the endpoint or record UID).
 
     `auth_endpoint_url` is the provider's OAuth2 token endpoint, letting customers point
-    at their own tenant/region (e.g. EU vs US Wiz auth host) without a code change."""
+    at their own tenant/region (e.g. EU vs US Wiz auth host) without a code change.
+
+    `url_base_encrypter`/`api_token_encrypter` identify the customer-deployed Encrypter
+    used to hash provider-specific identifiers (e.g. Tenable asset/plugin ids) before
+    they're queued, so raw provider data never reaches Keeper's servers."""
     rq = _build_configuration(network_uid, provider, client_id, client_secret,
-                              api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url)
+                              api_endpoint_url, cnapp_config_record_uid, auth_endpoint_url,
+                              url_base_encrypter, api_token_encrypter)
     return _post_request_to_router(params, 'cnapp/configuration/set', rq_proto=rq,
                                    rs_type=cnapp_pb2.CnappConfiguration)
 
 
 def test_cnapp_configuration(params, network_uid, provider, client_id, client_secret,
-                             api_endpoint_url, auth_endpoint_url=None):
-    # type: (KeeperParams, str, int, str, str, str, Optional[str]) -> None
+                             api_endpoint_url, auth_endpoint_url=None,
+                             url_base_encrypter=None, api_token_encrypter=None):
+    # type: (KeeperParams, str, int, str, str, str, Optional[str], Optional[str], Optional[str]) -> None
     """Probe the provider with the supplied credentials without persisting anything.
 
     Returns None on success; raises on validation failure (RRC_BAD_REQUEST with the
     provider's reason in the message)."""
     rq = _build_configuration(network_uid, provider, client_id, client_secret,
                               api_endpoint_url, cnapp_config_record_uid=None,
-                              auth_endpoint_url=auth_endpoint_url)
+                              auth_endpoint_url=auth_endpoint_url,
+                              url_base_encrypter=url_base_encrypter,
+                              api_token_encrypter=api_token_encrypter)
     return _post_request_to_router(params, 'cnapp/configuration/test', rq_proto=rq)
 
 
