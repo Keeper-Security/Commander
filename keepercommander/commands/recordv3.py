@@ -142,8 +142,9 @@ def get_password_from_rules(generate_rules, generate_length):
     return kpg.generate()
 
 
-def enforce_generated_password_policy(params, data, command, generated, password=None, force=False):
-    if not generated or password:
+def enforce_generated_password_policy(params, data, command, generated, manual_password=None, force=False):
+    # Skip if user explicitly provided a password (overrides generation)
+    if not generated or manual_password:
         return
     pw_failures = PasswordComplexityEnforcer.validate_record(
         params, data, allow_passphrase_fallback=False)
@@ -419,14 +420,15 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
         # For compatibility w/ legacy: --password overrides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
-        password = kwargs.get('password')
+        manual_password = kwargs.get('password')
+        password = manual_password
         if not password and (kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length')):
             password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
-        enforce_generated_password_policy(params, data, 'add', generated, password, kwargs.get('force'))
+        enforce_generated_password_policy(params, data, 'add', generated, manual_password=manual_password, force=kwargs.get('force'))
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -661,7 +663,8 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
 
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
-        password = kwargs.get('password')
+        manual_password = kwargs.get('password')
+        password = manual_password
         if not password and generate:
             password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
@@ -669,7 +672,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
-        enforce_generated_password_policy(params, data, 'edit', generated, password, kwargs.get('force'))
+        enforce_generated_password_policy(params, data, 'edit', generated, manual_password=manual_password, force=kwargs.get('force'))
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict

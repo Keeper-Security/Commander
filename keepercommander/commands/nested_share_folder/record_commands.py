@@ -70,8 +70,6 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-add')
 
         self.warnings.clear()
-        self._generated_password = False
-        self._generated_password_is_passphrase = False
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         notes = kwargs.get('notes')
@@ -81,7 +79,6 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         data = self._build_record_data(params, record_type, title, notes, record_fields)
         if self.abort_if_errors():
             return
-        self.apply_password_policy_warnings(params, data, force=kwargs.get('force'))
 
         if self.abort_if_errors():
             return
@@ -214,13 +211,12 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                 return None
             if parsed.type == 'password':
                 algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
-                self._generated_password_is_passphrase = algorithm == 'passphrase'
                 password, gen_error = self.generate_password(action_params, policy=self._password_policy)
                 if gen_error:
                     self.on_error(gen_error)
                     return None
                 if password is not None:
-                    self._generated_password = True
+                    self.validate_generated_password(password, algorithm)
                 return password
             if parsed.type in ('oneTimeCode', 'otp'):
                 return self.generate_totp_url()
@@ -240,8 +236,6 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             raise CommandError('nsf-record-update', 'Record UID is required (use -r or --record)')
 
         self.warnings.clear()
-        self._generated_password = False
-        self._generated_password_is_passphrase = False
         self._password_policy = PasswordComplexityEnforcer.get_policy(params)
 
         record_type = kwargs.get('record_type')
@@ -294,13 +288,6 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     fields=fields or None,
                     notes=kwargs.get('notes'),
                 )
-                self.apply_password_policy_warnings(params, merged, force=kwargs.get('force'))
-                if self.warnings:
-                    for w in self.warnings:
-                        logging.warning(w)
-                    if not kwargs.get('force'):
-                        return
-                    self.warnings.clear()
                 result = _nsf.update_record_v3(
                     params=params,
                     record_uid=record_uid,
