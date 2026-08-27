@@ -78,6 +78,44 @@ class TestThrottleResponse(unittest.TestCase):
             'Due to repeated attempts, your request has been throttled.',
         )
 
+    def test_parser_treats_share_invitation_as_success(self):
+        result = KeeperResponseParser._parse_logging_based_command(
+            'share-folder',
+            "Share invitation has been sent to 'user@example.com'\n"
+            "Please repeat this command when invitation is accepted.\n"
+            "User user@example.com not found",
+        )
+        self.assertEqual(result['status'], 'success')
+        self.assertNotIn('error', result)
+        self.assertIn('Share invitation has been sent', str(result['message']))
+
+    def test_parser_treats_nsf_share_record_invitation_as_success(self):
+        result = KeeperResponseParser._parse_logging_based_command(
+            'nsf-share-record',
+            "nsf-share-record: Share invitation has been sent to 'user@example.com'. "
+            "Please repeat this command once the invitation is accepted.",
+        )
+        self.assertEqual(result['status'], 'success')
+        self.assertIn('Share invitation has been sent', str(result['message']))
+
+    def test_parser_keeps_throttle_precedence_over_invitation(self):
+        result = KeeperResponseParser._parse_logging_based_command(
+            'share-folder',
+            "Share invitation has been sent to 'user@example.com'\n"
+            "throttled: Due to repeated attempts, your request has been throttled.",
+        )
+        self.assertEqual(result['status_code'], 429)
+        self.assertEqual(result['result_code'], RESULT_THROTTLED)
+
+    def test_parser_keeps_forbidden_precedence_over_invitation(self):
+        result = KeeperResponseParser._parse_logging_based_command(
+            'share-record',
+            "Share invitation has been sent to 'user@example.com'\n"
+            "Permission denied",
+        )
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result.get('status_code'), 403)
+
     def test_parser_does_not_treat_rate_limit_config_text_as_throttle(self):
         result = KeeperResponseParser._parse_logging_based_command(
             'help',

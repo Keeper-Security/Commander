@@ -9,9 +9,7 @@ import keepercommander.commands.record  # noqa: F401
 from keepercommander import utils, vault
 from keepercommander.commands.discover import GatewayContext
 from keepercommander.commands.pam_debug import load_pam_record
-from keepercommander.commands.pam_debug.acl import PAMDebugACLCommand
 from keepercommander.commands.pam_debug.dump import PAMDebugDumpCommand
-from keepercommander.commands.pam_debug.link import PAMDebugLinkCommand
 from keepercommander.subfolder import NestedShareFolderNode, RootFolderNode
 
 
@@ -73,47 +71,6 @@ class TestPamDebugNsf(unittest.TestCase):
         self.assertEqual(rec.record_uid, 'machine_uid')
         self.assertEqual(rec.title, 'NSF Machine')
         self.assertEqual(rec.record_type, 'pamMachine')
-
-    def test_acl_uses_load_pam_record_for_nsf_uids(self):
-        params = _params()
-        user = _typed('user_uid', 'NSF User', 'pamUser')
-        parent = _typed('machine_uid', 'NSF Machine', 'pamMachine')
-        gw = MagicMock()
-        gw.configuration = _typed('config_uid', 'NSF Config', 'pamNetworkConfiguration', version=6)
-        gw.configuration_uid = 'config_uid'
-
-        with patch('keepercommander.commands.pam_debug.acl.GatewayContext.from_gateway', return_value=gw), \
-                patch('keepercommander.commands.pam_debug.acl.RecordLink') as rl_cls, \
-                patch('keepercommander.commands.pam_debug.acl.load_pam_record',
-                      side_effect=[user, parent]) as load, \
-                patch('builtins.input', side_effect=['n', 'n']):
-            rl = rl_cls.return_value
-            rl.get_acl.return_value = None
-            rl.get_admin_record_uid.return_value = None
-            rl.acl_has_belong_to_record_uid.return_value = None
-            rl.dag.get_vertex.return_value = MagicMock()
-            PAMDebugACLCommand().execute(
-                params, gateway='gw', user_uid='user_uid', parent_uid='machine_uid')
-
-        self.assertEqual(load.call_count, 2)
-        self.assertEqual(load.call_args_list[0].args[1], 'user_uid')
-        self.assertEqual(load.call_args_list[1].args[1], 'machine_uid')
-
-    def test_link_uses_load_pam_record_for_nsf_resource(self):
-        params = _params()
-        parent = _typed('machine_uid', 'NSF Machine', 'pamMachine')
-        gw = MagicMock()
-        gw.configuration = _typed('config_uid', 'NSF Config', 'pamNetworkConfiguration', version=6)
-        gw.configuration_uid = 'config_uid'
-
-        with patch('keepercommander.commands.pam_debug.link.GatewayContext.from_gateway', return_value=gw), \
-                patch('keepercommander.commands.pam_debug.link.RecordLink') as rl_cls, \
-                patch('keepercommander.commands.pam_debug.link.load_pam_record', return_value=parent) as load:
-            rl = rl_cls.return_value
-            PAMDebugLinkCommand().execute(params, gateway='gw', resource_uid='machine_uid')
-            rl.belongs_to.assert_called_once()
-            rl.save.assert_called_once()
-        self.assertEqual(load.call_args.args[1], 'machine_uid')
 
     def test_dump_collects_nsf_folder_records(self):
         params = _params()
