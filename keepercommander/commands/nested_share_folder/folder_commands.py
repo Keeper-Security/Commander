@@ -38,6 +38,7 @@ from .parsers import (
     nested_share_folder_list_parser,
     nested_share_folder_share_parser,
     nested_share_folder_rmdir_parser,
+    nested_share_move_parser
 )
 
 
@@ -657,3 +658,18 @@ class NestedShareFolderRemoveCommand(Command):
             for w in impact.get('warnings', []):
                 lines.append(f"  Warning: {w}")
         return lines
+
+
+class NestedSharedMoveCommander(Command):
+    """ Move a Nested Share Folder or record. """
+
+    def get_parser(self):
+        return nested_share_move_parser
+
+    def execute(self, params, **kwargs):
+        from .helpers import move_nested_share_item
+        source = kwargs.get('src')
+        destination = kwargs.get('dst')
+        if not source or not destination:
+            raise CommandError('nsf-move', 'Both source and destination are required.')
+        move_nested_share_item(params, source, destination)
