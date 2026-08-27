@@ -1882,20 +1882,21 @@ class RecordListSfCommand(Command):
         fmt = kwargs.get('format', 'table')
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_shared_folders(params, pattern or '')
+        nsf_results = []
+
         if kwargs.get('roe_eligible'):
             results = [sf for sf in results
                        if vault_extensions.shared_folder_has_pam_user_with_rotation(params, sf.shared_folder_uid)]
 
-        nsf_results = api.search_nested_share_folders(params, pattern or '')
-        if kwargs.get('roe_eligible'):
+            nsf_results = api.search_nested_share_folders(params, pattern or '')
             nsf_results = [(folder_uid, name) for folder_uid, name in nsf_results
                            if vault_extensions.nested_share_folder_has_pam_user_with_rotation(params, folder_uid)]
 
-        table = [[sf.shared_folder_uid, sf.name] for sf in results]
-        table.extend([folder_uid, name] for folder_uid, name in nsf_results)
+        table = [[sf.shared_folder_uid, sf.name, 'Classic'] for sf in results]
+        table.extend([[folder_uid, name, 'Nested'] for folder_uid, name in nsf_results])
 
         if table:
-            headers = ['shared_folder_uid', 'name'] if fmt == 'json' else ['Shared Folder UID', 'Name']
+            headers = ['shared_folder_uid', 'name', 'folder_type'] if fmt == 'json' else ['Shared Folder UID', 'Name', 'Type']
             table.sort(key=lambda x: (x[1] or '').lower())
 
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),

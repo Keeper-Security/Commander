@@ -61,6 +61,37 @@ class TestSearch(TestCase):
         sfs = api.search_shared_folders(params, 'INVALID')
         self.assertEqual(len(sfs), 0)
 
+    def test_search_nested_share_folders(self):
+        params = get_synced_params()
+        params.nested_share_folders = {
+            'nsf_uid_1': {'name': 'Test Folder 1'},
+            'nsf_uid_2': {'name': 'Test Folder 2'},
+            'nsf_uid_3': {'name': 'Another Folder'},
+        }
+
+        # Empty search returns all NSF folders
+        nsfs = api.search_nested_share_folders(params, '')
+        self.assertEqual(len(nsfs), 3)
+
+        # Token search matches name
+        nsfs = api.search_nested_share_folders(params, 'test')
+        self.assertEqual(len(nsfs), 2)
+
+        # UID match
+        nsfs = api.search_nested_share_folders(params, 'nsf_uid_1')
+        self.assertEqual(len(nsfs), 1)
+        self.assertEqual(nsfs[0], ('nsf_uid_1', 'Test Folder 1'))
+
+        # No match
+        nsfs = api.search_nested_share_folders(params, 'INVALID')
+        self.assertEqual(len(nsfs), 0)
+
+        # Missing nested_share_folders attribute
+        params_no_nsf = get_synced_params()
+        delattr(params_no_nsf, 'nested_share_folders')
+        nsfs = api.search_nested_share_folders(params_no_nsf, '')
+        self.assertEqual(len(nsfs), 0)
+
     def test_search_teams(self):
         params = get_synced_params()
 
