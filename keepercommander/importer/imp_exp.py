@@ -617,7 +617,7 @@ def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[
 
 def import_user_permissions(params,
                             shared_folders,
-                            full_sync=False):  # type: (KeeperParams, List[ImportSharedFolder], bool) -> None
+                            full_sync=False, unsafe=False):  # type: (KeeperParams, List[ImportSharedFolder], bool) -> None
     if not shared_folders:
         return
 
@@ -654,7 +654,7 @@ def import_user_permissions(params,
 
     folders = [x for x in folders if x.uid in params.shared_folder_cache]
     if folders:
-        permissions = prepare_folder_permission(params, folders, full_sync)
+        permissions = prepare_folder_permission(params, folders, full_sync, unsafe)
         if permissions:
             teams_added = 0
             users_added = 0
@@ -2536,7 +2536,7 @@ def prepare_record_link(params, records):
     return record_links
 
 
-def prepare_folder_permission(params, folders, full_sync):
+def prepare_folder_permission(params, folders, full_sync, unsafe=False):
     # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
     """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
@@ -2632,6 +2632,9 @@ def prepare_folder_permission(params, folders, full_sync):
             existing_users.update((x['username'] for x in shared_folder['users']))
             if params.user in existing_users:
                 existing_users.remove(params.user)
+                if unsafe:
+                    # Set user to end of array to be removed last
+                    existing_users.add(params.user)
         keep_teams = set()
         keep_users = set()
 
