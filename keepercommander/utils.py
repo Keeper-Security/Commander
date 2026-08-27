@@ -109,6 +109,9 @@ def set_file_permissions(file_path):     # type: (str) -> None
     This ensures only the owner can read and write the file.
     """
     file_path = os.path.abspath(file_path)
+    real_path = os.path.realpath(file_path)
+    if file_path != real_path:
+        return
     
     try:
         if os.path.islink(file_path):

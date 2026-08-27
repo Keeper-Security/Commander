@@ -433,7 +433,7 @@ class PedmScimCommand(base.ArgparseCommand):
         update_map: Dict[str, admin_types.CollectionData] = {}
 
         def build_user(user: ScimUser) -> Optional[Tuple[admin_types.CollectionData, bool]]:
-            user_login = user.login
+            user_login = user.login or user.upn
             if not user_login:
                 return None
             if source == 'azure':
@@ -455,6 +455,8 @@ class PedmScimCommand(base.ArgparseCommand):
                 data['FullName'] = user.full_name
             if user.email:
                 data['Email'] = user.email
+            if user.upn:
+                data['UPN'] = user.upn
 
             key_value = ''.join(key)
             collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, int(pedm_shared.CollectionType.UserAccount), key_value)
