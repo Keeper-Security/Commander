@@ -807,7 +807,9 @@ class ShareFolderCommand(Command):
                                 uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
 
                         rq.sharedFolderAddUser.append(uo)
-                    else:
+                    elif not invited:
+                        # After a successful invite, keys are unavailable until accepted.
+                        # Do not emit "User not found" — Service Mode treats that as failure.
                         logging.warning('User %s not found', email)
 
         if len(teams) > 0:
