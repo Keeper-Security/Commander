@@ -60,13 +60,7 @@ class Verifycommand:
 
     @staticmethod
     def validate_service_mode_restrictions(command_tokens, request_temp_dir=None):
-        """Run Service Mode bans on executor tokens (shlex); error string or None.
-
-        request_temp_dir: the directory created for *this* request's FILEDATA
-        file (see RequestValidator.process_file_data). Only paths under this
-        exact directory are treated as safe -- not the whole shared OS temp
-        root, which other processes/users may also write to.
-        """
+        """Run Service Mode bans on executor tokens (shlex); error string or None."""
         if not command_tokens:
             return None
 
@@ -211,7 +205,7 @@ class Verifycommand:
                 if value.lower() not in Verifycommand._NON_PATH_OUTPUT_VALUES:
                     return Verifycommand._HOST_FS_MSG
 
-        # transfer-user (tu) @filename mapping files -- scoped to that command
+        # transfer-user (tu) @filename mapping files - scoped to that command
         # only, since '@value' is a legitimate argument shape elsewhere.
         if cmd0 in ('transfer-user', 'tu'):
             for tok in tokens[1:]:
@@ -292,7 +286,7 @@ class Verifycommand:
         return Verifycommand._pam_project_verb(command_tokens) in ('import', 'extend')
 
     # Flags we separately check for. Some are literal prefixes of others
-    # (--output/--output-dir, --file/--filename, --file/--file-cache) -- a
+    # (--output/--output-dir, --file/--filename, --file/--file-cache) - a
     # token that's a *complete* match for one of these is a distinct flag in
     # its own right, never an abbreviation attempt at a different one.
     _KNOWN_DANGEROUS_FLAGS = frozenset({
@@ -370,8 +364,7 @@ class Verifycommand:
 
     @staticmethod
     def _is_service_temp_path(path, request_temp_dir):
-        """True when path resolves under *this request's* own temp directory
-        (see RequestValidator.process_file_data), not just anywhere under the
+        """True when path resolves under *this request's* own temp directory, not just anywhere under the
         shared OS temp root -- other processes/users can also write there.
         """
         if not path or not request_temp_dir:

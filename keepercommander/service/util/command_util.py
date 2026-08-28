@@ -168,8 +168,7 @@ class CommandExecutor:
             except ValueError:
                 command_tokens = command.split()
 
-            # This request's own FILEDATA directory (see
-            # RequestValidator.process_file_data) -- the only paths Service
+            # This request's own FILEDATA directory - the only paths Service
             # Mode will treat as safe, not the whole shared OS temp root.
             request_temp_dir = os.path.dirname(temp_files[0]) if temp_files else None
 

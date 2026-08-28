@@ -122,8 +122,7 @@ class RequestValidator:
                     logger.debug(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary file {temp_path}: {e}")
-            # Each temp_path lives in a dedicated per-request directory (see
-            # process_file_data) -- remove it too, best-effort.
+            # Each temp_path lives in a dedicated per-request directory
             try:
                 os.rmdir(os.path.dirname(temp_path))
             except Exception:
