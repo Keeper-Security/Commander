@@ -452,7 +452,7 @@ class TestNestedShareFolderRecordCommands(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
-    @patch('keepercommander.nested_share_folder.record_api.create_record_v3')
+    @patch('keepercommander.commands.nested_share_folder.record_commands._nsf.create_record_v3')
     def test_add_record(self, mock_create):
         from keepercommander.commands.nested_share_folder import NestedShareRecordAddCommand
         mock_create.return_value = {
