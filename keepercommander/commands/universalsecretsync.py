@@ -79,7 +79,7 @@ class PAMUniversalSyncConfigListCommand(Command):
 
             # Only process these specific configuration types
             uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
-                                   'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration')
+                                   'pamGitHubConfiguration', 'pamHashiCorpConfiguration')
 
             configs_data = []
             for record in configurations:
@@ -290,7 +290,7 @@ class PAMUniversalSyncConfigListCommand(Command):
 
         # Check if it's a supported USS configuration type
         uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
-                               'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration')
+                               'pamGitHubConfiguration', 'pamHashiCorpConfiguration')
         if not isinstance(network, vault.TypedRecord) or network.record_type not in uss_supported_types:
             if format_type == 'json':
                 return json.dumps({"error": f'Record "{network_uid}" is not a USS configuration'})
