@@ -2429,7 +2429,7 @@ class PAMConfigurationListCommand(Command):
         for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
                                  'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
-                                 'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration'):
+                                 'pamGitHubConfiguration', 'pamHashiCorpConfiguration'):
                 facade.record = c
                 folder_info = resolve_pam_config_folder_info(
                     params, facade, c.record_uid)
@@ -2570,7 +2570,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
     PAM_CONFIG_RECORD_TYPES = frozenset({
         'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
         'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
-        'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration',
+        'pamGitHubConfiguration', 'pamHashiCorpConfiguration',
     })
     PAM_RESOURCE_RECORD_TYPES = frozenset({
         'pamDatabase', 'pamDirectory', 'pamMachine', 'pamRemoteBrowser',
@@ -2869,7 +2869,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
             oci_region = kwargs.get('oci_region')
             if oci_region:
                 extra_properties.append(f'text.regionOci={oci_region}')
-        elif record.record_type == 'pamHashiCorpVaultConfiguration':
+        elif record.record_type == 'pamHashiCorpConfiguration':
             vault_base_url = kwargs.get('vault_base_url')
             if vault_base_url:
                 extra_properties.append(f'text.pamHashiCorpVaultBaseUrl={vault_base_url}')
@@ -2960,7 +2960,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
         elif config_type == 'hashicorp':
-            record_type = 'pamHashiCorpVaultConfiguration'
+            record_type = 'pamHashiCorpConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
                                                  ' - supported options: local, aws, azure, gcp, domain, oci, github, hashicorp')
