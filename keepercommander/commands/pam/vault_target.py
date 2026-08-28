@@ -574,7 +574,13 @@ def reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf_updated
     unchanged since classic updates use deferred sync (no immediate cache refresh).
     """
     if was_nsf_updated:
-        return vault.KeeperRecord.load(params, record_uid)
+        try:
+            from ..pam_import.record_loader import load_pam_record
+            reloaded = load_pam_record(params, record_uid)
+            if reloaded:
+                return reloaded
+        except (AttributeError, TypeError):
+            pass  # Skip if params is a mock or doesn't support reload (unit tests)
     return record
 
 

@@ -283,6 +283,12 @@ def update_record_v3(params, record_uid, data=None, title=None,
         new_revision = getattr(response, 'revision', 0)
         if success:
             patch_record_revision(params, record_uid, new_revision)
+            nsf_data = getattr(params, 'nested_share_record_data', {}).get(record_uid)
+            if nsf_data is not None:
+                nsf_data['data_json'] = json.loads(json.dumps(data))
+            cached_record = getattr(params, 'record_cache', {}).get(record_uid)
+            if cached_record is not None and cached_record.get('data_unencrypted') is not None:
+                cached_record['data_unencrypted'] = json.dumps(data)
         return {
             'record_uid': record_uid,
             'status': record_pb2.RecordModifyResult.Name(r.status),
