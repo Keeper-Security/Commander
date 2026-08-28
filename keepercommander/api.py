@@ -550,6 +550,42 @@ def search_shared_folders(params, searchstring, use_regex=False):
     return search_results
 
 
+def search_nested_share_folders(params, searchstring, use_regex=False):
+    """Search Nested Share Folders (v3 folder tree).
+
+    Args:
+        params: KeeperParams
+        searchstring: Search string (tokens or regex depending on use_regex)
+        use_regex: If True, treat as regex. If False (default), token-based search.
+                   If searchstring is empty, returns all Nested Share Folders.
+
+    Returns:
+        List of (folder_uid, name) tuples.
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+
+    if not searchstring:
+        match_func = lambda target: True
+    elif use_regex:
+        p = re.compile(searchstring.lower())
+        match_func = lambda target: p.search(target)
+    else:
+        tokens = [t.lower() for t in searchstring.split() if t.strip()]
+        if not tokens:
+            match_func = lambda target: True
+        else:
+            match_func = lambda target: all(token in target for token in tokens)
+
+    search_results = []
+    for folder_uid, folder in nsf_folders.items():
+        name = folder.get('name', '')
+        target = (folder_uid + ' ' + name).lower()
+        if match_func(target):
+            search_results.append((folder_uid, name))
+
+    return search_results
+
+
 def search_teams(params, searchstring, use_regex=False):
     """Search teams.
 

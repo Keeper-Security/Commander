@@ -309,6 +309,39 @@ class TestRecord(TestCase):
                 cmd.execute(params, roe_eligible=True)
                 mock_print.assert_called()
 
+    def test_shared_list_nsf_only_when_roe_eligible(self):
+        params = get_synced_params()
+        params.nested_share_folders = {'nsf_uid_1': {'name': 'Test NSF Folder'}}
+        params.shared_folder_cache = {}  # Clear classic folders to isolate NSF
+        cmd = record.RecordListSfCommand()
+
+        # Without roe_eligible, NSF should not be included
+        with mock.patch('keepercommander.commands.base.dump_report_data') as dump:
+            cmd.execute(params, roe_eligible=False)
+        self.assertEqual(dump.call_count, 0, "NSF should not be searched when roe_eligible=False (no results)")
+
+        # With roe_eligible, NSF should be included if it has PAM rotation
+        with mock.patch('keepercommander.commands.base.dump_report_data') as dump:
+            with mock.patch(
+                    'keepercommander.vault_extensions.nested_share_folder_has_pam_user_with_rotation',
+                    return_value=True):
+                cmd.execute(params, roe_eligible=True)
+        rows = dump.call_args[0][0]
+        self.assertEqual(len(rows), 1, "NSF should be included when roe_eligible=True and has PAM rotation")
+        self.assertEqual(rows[0][2], 'Nested', "NSF rows should have folder_type='Nested'")
+
+    def test_shared_list_folder_type_column(self):
+        params = get_synced_params()
+        cmd = record.RecordListSfCommand()
+
+        with mock.patch(
+                'keepercommander.vault_extensions.shared_folder_has_pam_user_with_rotation',
+                return_value=True):
+            with mock.patch('keepercommander.commands.base.dump_report_data') as dump:
+                cmd.execute(params, roe_eligible=True, format='json')
+        headers = dump.call_args[0][1]
+        self.assertIn('folder_type', headers, "JSON output should include folder_type column")
+
     def test_team_list_command(self):
         params = get_synced_params()
         cmd = record.RecordListTeamCommand()
