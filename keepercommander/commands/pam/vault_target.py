@@ -568,6 +568,8 @@ def is_pam_nsf_record(params, record_uid):
 
 def update_pam_record(params, record, command='pam', force_nsf=False):
     """Update a PAM record via NSF v3 API or classic record_management.
+
+    Returns True if the record was updated via NSF and needs to be reloaded from cache.
     """
     from ..nested_share_folder.helpers import normalize_nsf_user_message
     from ...nested_share_folder.record_api import update_record_v3
@@ -587,11 +589,13 @@ def update_pam_record(params, record, command='pam', force_nsf=False):
                                'Failed to update record in Nested Share Folder')
         from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
         sync_down_preserving_nsf_keys(params)
+        return True
     else:
         record_management.update_record(params, record)
         # Defer vault refresh so a second classic edit in the same session does
         # not send a stale record_cache revision (no immediate sync_down here).
         params.sync_data = True
+        return False
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):

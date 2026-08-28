@@ -269,7 +269,9 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 attachment.upload_attachments(params, existing_record, [task])
 
                 # upload_attachments updates fileRef on existing_record via facade
-                update_pam_record(params, existing_record, command='pam action saas config')
+                was_nsf = update_pam_record(params, existing_record, command='pam action saas config')
+                if was_nsf:
+                    existing_record = vault.KeeperRecord.load(params, existing_record.record_uid)
 
         print("")
         print(f"{bcolors.OKGREEN}Created SaaS configuration record with UID of {record.record_uid}{bcolors.ENDC}")

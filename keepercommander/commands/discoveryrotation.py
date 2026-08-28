@@ -3121,7 +3121,9 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         self.parse_properties(params, configuration, config_edit=True, **kwargs)
         self.verify_required(configuration, command='pam-config-edit')
 
-        update_pam_record(params, configuration, command='pam-config-edit')
+        was_nsf = update_pam_record(params, configuration, command='pam-config-edit')
+        if was_nsf:
+            configuration = vault.KeeperRecord.load(params, configuration.record_uid)
 
         admin_cred_ref = ''
         value = field.get_default_value(dict)

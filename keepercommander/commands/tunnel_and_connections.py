@@ -460,7 +460,9 @@ class PAMTunnelEditCommand(Command):
                     record.custom.append(record_seed)
                 dirty = True
             if dirty:
-                update_pam_record(params, record, command='pam tunnel edit')
+                was_nsf = update_pam_record(params, record, command='pam tunnel edit')
+                if was_nsf:
+                    record = RecordMixin.resolve_single_record(params, record_uid)
 
                 traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
                 if not traffic_encryption_key:
@@ -532,7 +534,9 @@ class PAMTunnelEditCommand(Command):
                     dirty = True
             # Persist the record changes (new pamSettings field or port modifications)
             if dirty:
-                update_pam_record(params, record, command='pam tunnel edit')
+                was_nsf = update_pam_record(params, record, command='pam tunnel edit')
+                if was_nsf:
+                    record = RecordMixin.resolve_single_record(params, record_uid)
                 dirty = False
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
@@ -582,11 +586,15 @@ class PAMTunnelEditCommand(Command):
 
             if dirty:
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
-                update_pam_record(params, record, command='pam tunnel edit')
+                was_nsf = update_pam_record(params, record, command='pam tunnel edit')
+                if was_nsf:
+                    record = RecordMixin.resolve_single_record(params, record_uid)
 
             # Print out the tunnel settings
             if not kwargs.get('silent'):
                 tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+
+        api.sync_down(params)
 
 
 class PAMTunnelStartCommand(Command):
@@ -2980,7 +2988,9 @@ class PAMConnectionEditCommand(Command):
                         logging.debug(f'security is already {target_sec} on record={record_uid}')
 
             if dirty:
-                update_pam_record(params, record, command='pam connection edit')
+                was_nsf = update_pam_record(params, record, command='pam connection edit')
+                if was_nsf:
+                    record = RecordMixin.resolve_single_record(params, record_uid)
 
                 traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
                 if not traffic_encryption_key:
@@ -3144,6 +3154,8 @@ class PAMConnectionEditCommand(Command):
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+
+        api.sync_down(params)
 
 
 class PAMConnectionJitCommand(Command):
@@ -4051,7 +4063,9 @@ class PAMRbiEditCommand(Command):
             update_connection_choice('sessionPersistence', session_persistence)
 
         if dirty:
-            update_pam_record(params, record, command='pam rbi edit')
+            was_nsf = update_pam_record(params, record, command='pam rbi edit')
+            if was_nsf:
+                record = RecordMixin.resolve_single_record(params, record_uid)
 
             traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
             if not traffic_encryption_key:
@@ -4155,6 +4169,7 @@ class PAMRbiEditCommand(Command):
         # if not kwargs.get("silent", False):
         #     tdag.print_tunneling_config(record_uid, record.get_typed_field('pamRemoteBrowserSettings'), config_uid)
         params.sync_data = True
+        api.sync_down(params)
 
 class PAMSplitCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
