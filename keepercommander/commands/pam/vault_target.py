@@ -566,10 +566,23 @@ def is_pam_nsf_record(params, record_uid):
     return False
 
 
-def update_pam_record(params, record, command='pam', force_nsf=False):
+def reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf_updated):
+    """Reload a PAM record from cache if it was updated via NSF.
+
+    After NSF updates, the in-memory record object becomes stale. This helper
+    reloads it from the refreshed cache. For classic updates, returns the record
+    unchanged since classic updates use deferred sync (no immediate cache refresh).
+    """
+    if was_nsf_updated:
+        return vault.KeeperRecord.load(params, record_uid)
+    return record
+
+
+def update_pam_record(params, record, command='pam', force_nsf=False) -> bool:
     """Update a PAM record via NSF v3 API or classic record_management.
 
-    Returns True if the record was updated via NSF and needs to be reloaded from cache.
+    Returns True if the record was updated via NSF and the in-memory object is now stale
+    and must be reloaded from cache. Returns False for classic updates using deferred sync.
     """
     from ..nested_share_folder.helpers import normalize_nsf_user_message
     from ...nested_share_folder.record_api import update_record_v3

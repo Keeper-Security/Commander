@@ -181,6 +181,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                        plugin_code_bytes: bytes | None = None):
         from ..pam.vault_target import (
             create_record_in_folder, update_pam_record, is_nested_share_folder,
+            reload_pam_record_if_nsf_updated,
         )
         from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 
@@ -270,8 +271,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
                 # upload_attachments updates fileRef on existing_record via facade
                 was_nsf = update_pam_record(params, existing_record, command='pam action saas config')
-                if was_nsf:
-                    existing_record = vault.KeeperRecord.load(params, existing_record.record_uid)
+                existing_record = reload_pam_record_if_nsf_updated(params, existing_record, existing_record.record_uid, was_nsf)
 
         print("")
         print(f"{bcolors.OKGREEN}Created SaaS configuration record with UID of {record.record_uid}{bcolors.ENDC}")
