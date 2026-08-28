@@ -28,6 +28,7 @@ from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
     Folder,
+    PathDelimiter,
     Permission,
     Record,
     RecordField,
