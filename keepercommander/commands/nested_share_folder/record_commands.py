@@ -54,26 +54,6 @@ def _parse_field_specs(raw_fields, cmd_name):
     return record_fields, attachments
 
 
-def _apply_password_policy(editor, params, source, force):
-    # TypedRecord (typed add/update) or v3 dict (legacy add). validate_record accepts both.
-    pw_failures = PasswordComplexityEnforcer.validate_record(params, source)
-    for failure in pw_failures:
-        editor.on_warning(failure)
-    if pw_failures and not force:
-        editor.on_warning('Use --force to bypass password policy warnings.')
-
-
-def _should_stop_after_warnings(editor, force):
-    if not editor.warnings:
-        return False
-    for w in editor.warnings:
-        logging.warning(w)
-    if not force:
-        return True
-    editor.warnings.clear()
-    return False
-
-
 def _unsupported_attachment_warning(attachments, cmd_name):
     if not attachments:
         return
@@ -124,11 +104,14 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         folder_uid = self._resolve_folder(params, kwargs.get('folder_uid'))
 
         data = self._build_record_data(
-            params, record_type, title, notes, record_fields, kwargs.get('force'))
+            params, record_type, title, notes, record_fields)
         if self.abort_if_errors():
             return
-        if _should_stop_after_warnings(self, kwargs.get('force')):
-            return
+        if self.warnings:
+            for w in self.warnings:
+                logging.warning(w)
+            if not kwargs.get('force'):
+                return
 
         if add_attachments:
             _unsupported_attachment_warning(add_attachments, 'nsf-record-add')
@@ -156,14 +139,13 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         ensure_nested_share_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
-    def _build_record_data(self, params, record_type, title, notes, record_fields, force=False):
+    def _build_record_data(self, params, record_type, title, notes, record_fields):
         if record_type in ('legacy', 'general'):
             record = vault.PasswordRecord()
             self.assign_legacy_fields(record, record_fields)
             record.title = title
             record.notes = self.validate_notes(notes or '')
             data = self._legacy_to_data(record, title)
-            _apply_password_policy(self, params, data, force)
             return data
 
         rt_fields = self.get_record_type_fields(params, record_type)
@@ -183,7 +165,6 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         self.assign_typed_fields(record, record_fields)
         record.title = title
         record.notes = self.validate_notes(notes or '')
-        _apply_password_policy(self, params, record, force)
         return self._typed_to_data(record, title)
 
     @staticmethod
@@ -314,9 +295,12 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     if self.abort_if_errors():
                         continue
 
-                    _apply_password_policy(self, params, record, force)
-                    if _should_stop_after_warnings(self, force):
-                        continue
+                    if self.warnings:
+                        for w in self.warnings:
+                            logging.warning(w)
+                        if not force:
+                            continue
+                        self.warnings.clear()
 
                     result = self._send_typed_update(params, record_uid, record)
                     # API syncs on RS_OUT_OF_SYNC but does not retry a full data
@@ -331,9 +315,12 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                             record_type, rt_fields, record_fields)
                         if self.abort_if_errors():
                             continue
-                        _apply_password_policy(self, params, record, force)
-                        if _should_stop_after_warnings(self, force):
-                            continue
+                        if self.warnings:
+                            for w in self.warnings:
+                                logging.warning(w)
+                            if not force:
+                                continue
+                            self.warnings.clear()
                         result = self._send_typed_update(params, record_uid, record)
                     check_result(result, 'nsf-record-update')
                     updated += 1
