@@ -231,7 +231,7 @@ class FolderListCommand(Command, RecordMixin):
             rec = vault.TypedRecord(version=3)
             rec.record_uid = uid
             rec.title = dj.get('title', uid)
-            rec.record_type = dj.get('type', '')
+            rec.type_name = dj.get('type', '')
             rec.load_record_data(dj, None)
             return rec
         return None
