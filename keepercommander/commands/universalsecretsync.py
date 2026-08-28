@@ -79,7 +79,7 @@ class PAMUniversalSyncConfigListCommand(Command):
 
             # Only process these specific configuration types
             uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
-                                   'pamGitHubConfiguration')
+                                   'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration')
 
             configs_data = []
             for record in configurations:
@@ -114,6 +114,21 @@ class PAMUniversalSyncConfigListCommand(Command):
 
                     # GitHub-specific fields are nested under the 'github' key.
                     github_data = config_data.get('github') or {}
+
+                    # HashiCorp-specific fields are nested under the 'hashicorp' key.
+                    hashicorp_data = config_data.get('hashicorp') or {}
+
+                    # Decrypt HashiCorp vault_base_url if present
+                    vault_base_url = 'N/A'
+                    vault_base_url_encrypted = hashicorp_data.get('vaultBaseUrl')
+                    if vault_base_url_encrypted:
+                        try:
+                            vault_base_url_bytes = crypto.decrypt_aes_v2(
+                                utils.base64_url_decode(vault_base_url_encrypted), record.record_key)
+                            vault_base_url = vault_base_url_bytes.decode('utf-8')
+                        except Exception as e:
+                            logging.debug(f"Failed to decrypt vault_base_url for record {record.record_uid}: {e}")
+                            vault_base_url = 'N/A'
 
                     # Decrypt vault_name if present. The router stores it under the
                     # 'vaultName' key as a base64-url string of the encrypted bytes.
@@ -206,6 +221,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                         'owner': owner,
                         'organization_visibility': org_visibility_str,
                         'repos': repo_names,
+                        'vault_base_url': vault_base_url,
                     })
                 except Exception as e:
                     # Skip records that fail to load or don't have USS config
@@ -227,7 +243,7 @@ class PAMUniversalSyncConfigListCommand(Command):
         # Display as simple summary table
         table = []
         headers = ['Network UID', 'Title', 'Type', 'Enabled', 'Dry Run', 'Folders', 'Vault Name', 'Sync Identity',
-                   'Scope', 'Owner', 'Org Visibility', 'Repos']
+                   'Scope', 'Owner', 'Org Visibility', 'Repos', 'Vault Base URL']
 
         for config in configs_data:
             enabled_str = f"{bcolors.OKGREEN}Yes{bcolors.ENDC}" if config['enabled'] else f"{bcolors.FAIL}No{bcolors.ENDC}"
@@ -249,7 +265,8 @@ class PAMUniversalSyncConfigListCommand(Command):
                 config.get('scope', 'N/A'),
                 config.get('owner', 'N/A'),
                 config.get('organization_visibility', 'N/A'),
-                repos_str
+                repos_str,
+                config.get('vault_base_url', 'N/A')
             ]
             table.append(row)
 
@@ -273,7 +290,7 @@ class PAMUniversalSyncConfigListCommand(Command):
 
         # Check if it's a supported USS configuration type
         uss_supported_types = ('pamGcpConfiguration', 'pamAzureConfiguration', 'pamAwsConfiguration',
-                               'pamGitHubConfiguration')
+                               'pamGitHubConfiguration', 'pamHashiCorpVaultConfiguration')
         if not isinstance(network, vault.TypedRecord) or network.record_type not in uss_supported_types:
             if format_type == 'json':
                 return json.dumps({"error": f'Record "{network_uid}" is not a USS configuration'})
@@ -309,6 +326,21 @@ class PAMUniversalSyncConfigListCommand(Command):
 
             # GitHub-specific fields are nested under the 'github' key.
             github_data = config_data.get('github') or {}
+
+            # HashiCorp-specific fields are nested under the 'hashicorp' key.
+            hashicorp_data = config_data.get('hashicorp') or {}
+
+            # Decrypt HashiCorp vault_base_url if present
+            vault_base_url = 'N/A'
+            vault_base_url_encrypted = hashicorp_data.get('vaultBaseUrl')
+            if vault_base_url_encrypted:
+                try:
+                    vault_base_url_bytes = crypto.decrypt_aes_v2(
+                        utils.base64_url_decode(vault_base_url_encrypted), network.record_key)
+                    vault_base_url = vault_base_url_bytes.decode('utf-8')
+                except Exception as e:
+                    logging.debug(f"Failed to decrypt vault_base_url for network {network.record_uid}: {e}")
+                    vault_base_url = 'N/A'
 
             # Decrypt vault_name if present. The router stores it under the
             # 'vaultName' key as a base64-url string of the encrypted bytes.
@@ -438,6 +470,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                 'owner': owner,
                 'organization_visibility': org_visibility_str,
                 'repos': repo_names,
+                'vault_base_url': vault_base_url,
                 'folders': []
             }
 
@@ -473,6 +506,7 @@ class PAMUniversalSyncConfigListCommand(Command):
             table.append(['Owner', owner])
             table.append(['Org Visibility', org_visibility_str])
             table.append(['Repos', ', '.join(repo_names) if repo_names else 'None'])
+            table.append(['Vault Base URL', vault_base_url])
             table.append(['', ''])  # Blank row separator
 
             # Display folder sync details
@@ -521,6 +555,7 @@ class PAMUniversalSyncConfigListCommand(Command):
 
 class PAMUniversalSyncConfigAddCommand(Command):
     parser = argparse.ArgumentParser(prog='pam universal-sync-config add')
+
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
                         help='Network UID or name to configure universal sync')
     parser.add_argument('--enabled', '-e', dest='enabled', action='store',
@@ -543,6 +578,14 @@ class PAMUniversalSyncConfigAddCommand(Command):
                         help='Repository visibility to sync when scope is organization')
     parser.add_argument('--repo', '-r', dest='repo', action='append',
                         help='GitHub repository name to sync (can be specified multiple times; scope must be repository)')
+    parser.add_argument('--vault-base-url', '-vbu', dest='vault_base_url', action='store',
+                        help='HashiCorp Vault Base URL (e.g., https://vault.company.com:8200)')
+    parser.add_argument('--vault-token', '-vt', dest='vault_token', action='store',
+                        help='HashiCorp Vault Token (optional; syncIdentity takes precedence)')
+    parser.add_argument('--vault-namespace', '-vns', dest='vault_namespace', action='store',
+                        help='HashiCorp Vault Namespace (optional; leave blank for Community Edition)')
+    parser.add_argument('--vault-mount-path', '-vmp', dest='vault_mount_path', action='store',
+                        help='HashiCorp Vault KV Mount Path (optional; defaults to "secret")')
 
     def get_parser(self):
         return PAMUniversalSyncConfigAddCommand.parser
@@ -616,6 +659,30 @@ class PAMUniversalSyncConfigAddCommand(Command):
                 repo_obj.name = crypto.encrypt_aes_v2(repo_bytes, network.record_key)
                 rq.github.repos.append(repo_obj)
 
+        vault_base_url = kwargs.get('vault_base_url')
+        if vault_base_url:
+            vault_base_url_bytes = string_to_bytes(vault_base_url)
+            encrypted_vault_base_url = crypto.encrypt_aes_v2(vault_base_url_bytes, network.record_key)
+            rq.hashicorp.vaultBaseUrl = encrypted_vault_base_url
+
+        vault_token = kwargs.get('vault_token')
+        if vault_token:
+            vault_token_bytes = string_to_bytes(vault_token)
+            encrypted_vault_token = crypto.encrypt_aes_v2(vault_token_bytes, network.record_key)
+            rq.hashicorp.vaultToken = encrypted_vault_token
+
+        vault_namespace = kwargs.get('vault_namespace')
+        if vault_namespace:
+            vault_namespace_bytes = string_to_bytes(vault_namespace)
+            encrypted_vault_namespace = crypto.encrypt_aes_v2(vault_namespace_bytes, network.record_key)
+            rq.hashicorp.vaultNamespace = encrypted_vault_namespace
+
+        vault_mount_path = kwargs.get('vault_mount_path')
+        if vault_mount_path:
+            vault_mount_path_bytes = string_to_bytes(vault_mount_path)
+            encrypted_vault_mount_path = crypto.encrypt_aes_v2(vault_mount_path_bytes, network.record_key)
+            rq.hashicorp.vaultMountPath = encrypted_vault_mount_path
+
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         try:
@@ -651,6 +718,14 @@ class PAMUniversalSyncConfigEditCommand(Command):
                         help='Repository visibility to sync when scope is organization')
     parser.add_argument('--repo', '-r', dest='repo', action='append',
                         help='GitHub repository name to sync (can be specified multiple times; scope must be repository)')
+    parser.add_argument('--vault-base-url', '-vbu', dest='vault_base_url', action='store',
+                        help='HashiCorp Vault Base URL (e.g., https://vault.company.com:8200)')
+    parser.add_argument('--vault-token', '-vt', dest='vault_token', action='store',
+                        help='HashiCorp Vault Token (optional; syncIdentity takes precedence)')
+    parser.add_argument('--vault-namespace', '-vns', dest='vault_namespace', action='store',
+                        help='HashiCorp Vault Namespace (optional; leave blank for Community Edition)')
+    parser.add_argument('--vault-mount-path', '-vmp', dest='vault_mount_path', action='store',
+                        help='HashiCorp Vault KV Mount Path (optional; defaults to "secret")')
 
     def get_parser(self):
         return PAMUniversalSyncConfigEditCommand.parser
@@ -785,6 +860,41 @@ class PAMUniversalSyncConfigEditCommand(Command):
                 repo_obj = pam_pb2.GitHubRepository()
                 repo_obj.name = utils.base64_url_decode(existing_repo)
                 rq.github.repos.append(repo_obj)
+
+        # HashiCorp-specific fields live under the nested 'hashicorp' object
+        existing_hashicorp = existing_config.get('hashicorp') or {}
+
+        vault_base_url = kwargs.get('vault_base_url')
+        if vault_base_url:
+            vault_base_url_bytes = string_to_bytes(vault_base_url)
+            encrypted_vault_base_url = crypto.encrypt_aes_v2(vault_base_url_bytes, network.record_key)
+            rq.hashicorp.vaultBaseUrl = encrypted_vault_base_url
+        elif existing_hashicorp.get('vaultBaseUrl'):
+            rq.hashicorp.vaultBaseUrl = utils.base64_url_decode(existing_hashicorp['vaultBaseUrl'])
+
+        vault_token = kwargs.get('vault_token')
+        if vault_token:
+            vault_token_bytes = string_to_bytes(vault_token)
+            encrypted_vault_token = crypto.encrypt_aes_v2(vault_token_bytes, network.record_key)
+            rq.hashicorp.vaultToken = encrypted_vault_token
+        elif existing_hashicorp.get('vaultToken'):
+            rq.hashicorp.vaultToken = utils.base64_url_decode(existing_hashicorp['vaultToken'])
+
+        vault_namespace = kwargs.get('vault_namespace')
+        if vault_namespace:
+            vault_namespace_bytes = string_to_bytes(vault_namespace)
+            encrypted_vault_namespace = crypto.encrypt_aes_v2(vault_namespace_bytes, network.record_key)
+            rq.hashicorp.vaultNamespace = encrypted_vault_namespace
+        elif existing_hashicorp.get('vaultNamespace'):
+            rq.hashicorp.vaultNamespace = utils.base64_url_decode(existing_hashicorp['vaultNamespace'])
+
+        vault_mount_path = kwargs.get('vault_mount_path')
+        if vault_mount_path:
+            vault_mount_path_bytes = string_to_bytes(vault_mount_path)
+            encrypted_vault_mount_path = crypto.encrypt_aes_v2(vault_mount_path_bytes, network.record_key)
+            rq.hashicorp.vaultMountPath = encrypted_vault_mount_path
+        elif existing_hashicorp.get('vaultMountPath'):
+            rq.hashicorp.vaultMountPath = utils.base64_url_decode(existing_hashicorp['vaultMountPath'])
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
