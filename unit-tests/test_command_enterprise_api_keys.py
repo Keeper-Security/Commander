@@ -29,6 +29,14 @@ class TestEnterpriseApiKeys(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
+    @staticmethod
+    def execute_with_fixed_time(cmd, params, **kwargs):
+        """Execute a command with time fixed before the active test token expires."""
+        fixed_now = datetime.datetime(2026, 1, 1)
+        with mock.patch.object(enterprise_api_keys, 'datetime', wraps=datetime) as mocked_datetime:
+            mocked_datetime.datetime.now.return_value = fixed_now
+            return cmd.execute(params, **kwargs)
+
     def test_api_key_list_success(self):
         """Test successful listing of API keys matching Commander terminal output"""
         params = get_connected_params()
@@ -65,7 +73,7 @@ class TestEnterpriseApiKeys(TestCase):
         cmd = enterprise_api_keys.ApiKeyListCommand()
         TestEnterpriseApiKeys.expected_commands = ['list_token']
         
-        result = cmd.execute(params, format='json')
+        result = self.execute_with_fixed_time(cmd, params, format='json')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         self.assertIsNotNone(result)
@@ -585,7 +593,7 @@ class TestEnterpriseApiKeys(TestCase):
         
         captured_output = io.StringIO()
         with mock.patch('sys.stdout', captured_output):
-            result = cmd.execute(params)
+            result = self.execute_with_fixed_time(cmd, params)
         
         output = captured_output.getvalue()
         
