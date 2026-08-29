@@ -1,0 +1,99 @@
+name: Build and publish Commander ECR image
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version_label:
+        description: Immutable image label (blank uses branch and SHA)
+        required: false
+      python_image:
+        description: Approved Python runtime image
+        required: false
+        default: python:3.11-slim
+      ecr_registry:
+        description: ECR registry hostname
+        required: true
+        default: 629781671340.dkr.ecr.us-east-1.amazonaws.com
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ECR_REGISTRY: ${{ inputs.ecr_registry || vars.ECR_REGISTRY || '629781671340.dkr.ecr.us-east-1.amazonaws.com' }}
+  PYTHON_IMAGE: ${{ inputs.python_image || vars.COMMANDER_PYTHON_IMAGE || 'python:3.11-slim' }}
+
+jobs:
+  test:
+    name: Test Commander
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and test
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install '.[test]'
+          python -m keepercommander.__main__ --version
+          python -m keepercommander.__main__ --help >/dev/null
+          pytest unit-tests/
+
+  publish:
+    name: Build and publish immutable image
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    environment: commander-ecr
+    steps:
+      - uses: actions/checkout@v4
+      - name: Derive immutable tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="${{ inputs.version_label }}"
+          if [[ -z "$label" ]]; then
+            label="${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::12}"
+          fi
+          echo "tag=$label" >> "$GITHUB_OUTPUT"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg PYTHON_IMAGE="$PYTHON_IMAGE" \
+            -t "$ECR_REGISTRY/commander:${{ steps.tag.outputs.tag }}" .
+      - name: Smoke test image
+        run: |
+          docker run --rm "$ECR_REGISTRY/commander:${{ steps.tag.outputs.tag }}" --version
+          docker run --rm "$ECR_REGISTRY/commander:${{ steps.tag.outputs.tag }}" --help >/dev/null
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/commander:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Push image
+        run: docker push "$ECR_REGISTRY/commander:${{ steps.tag.outputs.tag }}"
+      - name: Write image metadata
+        run: |
+          docker inspect "$ECR_REGISTRY/commander:${{ steps.tag.outputs.tag }}" > commander-image-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commander-image-metadata-${{ steps.tag.outputs.tag }}
+          path: commander-image-metadata.json
