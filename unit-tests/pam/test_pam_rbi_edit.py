@@ -27,6 +27,31 @@ except ImportError as e:
     skip_reason = f"Cannot import tunnel_and_connections: {e}"
 
 
+def mock_sync_decorator(cls):
+    """Decorator to add sync mocking to test classes that execute PAM commands."""
+    original_setup = cls.setUp if hasattr(cls, 'setUp') else None
+    original_teardown = cls.tearDown if hasattr(cls, 'tearDown') else None
+
+    def new_setup(self):
+        if original_setup:
+            original_setup(self)
+        # Mock sync and load operations
+        self.sync_patcher = mock.patch('keepercommander.commands.tunnel_and_connections.sync_down_preserving_nsf_keys')
+        self.sync_patcher.start()
+        self.load_patcher = mock.patch('keepercommander.commands.pam_import.record_loader.load_pam_record')
+        self.load_patcher.start()
+
+    def new_teardown(self):
+        self.sync_patcher.stop()
+        self.load_patcher.stop()
+        if original_teardown:
+            original_teardown(self)
+
+    cls.setUp = new_setup
+    cls.tearDown = new_teardown
+    return cls
+
+
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditArguments(unittest.TestCase):
     """Tests for PAMRbiEditCommand argument parsing."""
@@ -228,6 +253,7 @@ class TestPamRbiEditArguments(unittest.TestCase):
         self.assertIsNone(args.session_persistence)
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditExecute(unittest.TestCase):
     """Tests for PAMRbiEditCommand.execute() method."""
@@ -242,7 +268,11 @@ class TestPamRbiEditExecute(unittest.TestCase):
         self.mock_field.value = [self.pam_settings]
         self.mock_record.get_typed_field.return_value = self.mock_field
         self.mock_params = mock.MagicMock()
+        # Use REAL dicts for caches so sync/reload operations work
         self.mock_params.record_cache = {'test-record-uid': self.mock_record}
+        self.mock_params.nested_share_record_data = {}
+        self.mock_params.nested_share_records = {}
+        # Parent class decorator handles sync/load mocking in setUp
 
     def test_no_param_raises_error_with_new_settings_check(self):
         with self.assertRaises(CommandError) as context:
@@ -376,6 +406,7 @@ class TestPamRbiEditExecute(unittest.TestCase):
         self.assertNotIn('sessionPersistence', self.pam_settings['connection'])
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditClipboardInversion(unittest.TestCase):
     """Tests for clipboard inversion logic."""
@@ -444,6 +475,7 @@ class TestPamRbiEditClipboardInversion(unittest.TestCase):
         self.assertEqual(self.pam_settings['connection'].get('disablePaste'), True)
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditRecordUpdate(unittest.TestCase):
     """Tests for record update behavior."""
@@ -598,6 +630,7 @@ class TestPamRbiEditAliases(unittest.TestCase):
         self.assertEqual(args.audio_sample_rate, 44100)
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamRbiEditAudioSettings(unittest.TestCase):
     """Tests for audio settings."""

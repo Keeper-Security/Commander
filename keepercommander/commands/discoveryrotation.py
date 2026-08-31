@@ -35,6 +35,7 @@ from .pam.vault_target import (
     get_vault_record_title_type, find_pam_records_by_search,
     resolve_pam_config_folder_info, pam_folder_json_payload, place_record_in_folder,
     create_pam_configuration_in_folder, update_pam_record, records_in_folder,
+    reload_pam_record_if_nsf_updated,
 )
 from .pam.config_helper import configuration_controller_get, \
     pam_configurations_get_all, pam_configuration_remove, \
@@ -3121,7 +3122,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         self.parse_properties(params, configuration, config_edit=True, **kwargs)
         self.verify_required(configuration, command='pam-config-edit')
 
-        update_pam_record(params, configuration, command='pam-config-edit')
+        was_nsf = update_pam_record(params, configuration, command='pam-config-edit')
+        configuration = reload_pam_record_if_nsf_updated(params, configuration, configuration.record_uid, was_nsf)
 
         admin_cred_ref = ''
         value = field.get_default_value(dict)

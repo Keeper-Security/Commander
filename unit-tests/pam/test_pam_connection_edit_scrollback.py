@@ -11,6 +11,30 @@ from unittest import mock
 
 skip_tests = False
 skip_reason = ""
+
+
+def mock_sync_decorator(cls):
+    """Decorator to add sync mocking to test classes that execute PAM commands."""
+    original_setup = cls.setUp if hasattr(cls, 'setUp') else None
+    original_teardown = cls.tearDown if hasattr(cls, 'tearDown') else None
+
+    def new_setup(self):
+        if original_setup:
+            original_setup(self)
+        self.sync_patcher = __import__('unittest.mock', fromlist=['patch']).patch('keepercommander.commands.tunnel_and_connections.sync_down_preserving_nsf_keys')
+        self.sync_patcher.start()
+        self.load_patcher = __import__('unittest.mock', fromlist=['patch']).patch('keepercommander.commands.pam_import.record_loader.load_pam_record')
+        self.load_patcher.start()
+
+    def new_teardown(self):
+        self.sync_patcher.stop()
+        self.load_patcher.stop()
+        if original_teardown:
+            original_teardown(self)
+
+    cls.setUp = new_setup
+    cls.tearDown = new_teardown
+    return cls
 try:
     from keepercommander.commands.tunnel_and_connections import PAMConnectionEditCommand
     from keepercommander.error import CommandError
@@ -91,6 +115,7 @@ class TestPamConnectionEditProtocolChoices(unittest.TestCase):
             self.assertIn(proto, PAMConnectionEditCommand.protocols)
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditScrollbackValidation(unittest.TestCase):
     """Validation runs before DAG / token operations, so we can drive execute()
@@ -233,6 +258,7 @@ class TestPamConnectionEditScrollbackValidation(unittest.TestCase):
         self.assertNotIn('not supported for protocol', str(ctx.exception))
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditScrollbackAllowedCombinations(unittest.TestCase):
     """For each allowed (record_type, protocol) pair, validation must not raise
@@ -325,7 +351,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         return rec
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record', return_value=False)
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -344,7 +370,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         mock_update.assert_called_once()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record', return_value=False)
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -361,7 +387,7 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         mock_tdag.assert_not_called()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record', return_value=False)
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))

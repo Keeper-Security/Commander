@@ -566,8 +566,31 @@ def is_pam_nsf_record(params, record_uid):
     return False
 
 
-def update_pam_record(params, record, command='pam', force_nsf=False):
+def reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf_updated):
+    """Reload a PAM record from cache if it was updated via NSF.
+
+    After NSF updates, the in-memory record object becomes stale. This helper
+    reloads it from the refreshed cache. For classic updates, returns the record
+    unchanged since classic updates use deferred sync (no immediate cache refresh).
+
+    Raises CommandError if NSF update occurred but reload fails, rather than
+    proceeding with known-stale data (which reintroduces the field-reversion bug).
+    """
+    if was_nsf_updated:
+        from ..pam_import.record_loader import load_pam_record
+        reloaded = load_pam_record(params, record_uid)
+        if not reloaded:
+            raise CommandError('pam', f'Failed to reload NSF-updated record {record_uid} from cache after sync. '
+                             'Record data may be stale; aborting edit to prevent field reversion.')
+        return reloaded
+    return record
+
+
+def update_pam_record(params, record, command='pam', force_nsf=False) -> bool:
     """Update a PAM record via NSF v3 API or classic record_management.
+
+    Returns True if the record was updated via NSF and the in-memory object is now stale
+    and must be reloaded from cache. Returns False for classic updates using deferred sync.
     """
     from ..nested_share_folder.helpers import normalize_nsf_user_message
     from ...nested_share_folder.record_api import update_record_v3
@@ -587,11 +610,13 @@ def update_pam_record(params, record, command='pam', force_nsf=False):
                                'Failed to update record in Nested Share Folder')
         from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
         sync_down_preserving_nsf_keys(params)
+        return True
     else:
         record_management.update_record(params, record)
         # Defer vault refresh so a second classic edit in the same session does
         # not send a stale record_cache revision (no immediate sync_down here).
         params.sync_data = True
+        return False
 
 
 def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
