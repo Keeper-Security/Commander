@@ -574,13 +574,16 @@ def reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf_updated
     unchanged since classic updates use deferred sync (no immediate cache refresh).
     """
     if was_nsf_updated:
+        # Skip reload for mock/test params that lack real cache structures
+        if getattr(params, 'record_cache', None) is None and getattr(params, 'nested_share_record_data', None) is None:
+            return record
         try:
             from ..pam_import.record_loader import load_pam_record
             reloaded = load_pam_record(params, record_uid)
             if reloaded:
                 return reloaded
-        except (AttributeError, TypeError):
-            pass  # Skip if params is a mock or doesn't support reload (unit tests)
+        except (AttributeError, TypeError, KeyError, ValueError) as e:
+            logging.warning(f'Failed to reload PAM record {record_uid}: {e}. Using stale record.')
     return record
 
 

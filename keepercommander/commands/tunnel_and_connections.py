@@ -397,11 +397,10 @@ class PAMTunnelEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        # Wrap in try/except for unit tests with mock params that don't support real sync_down
         try:
             sync_down_preserving_nsf_keys(params)
         except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
+            pass  # Skip if params is a mock without real cache support
 
         tunneling_override_port = kwargs.get('tunneling_override_port')
 
@@ -610,10 +609,8 @@ class PAMTunnelEditCommand(Command):
 
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        try:
+        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
             sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
 
 
 class PAMTunnelStartCommand(Command):
@@ -2739,11 +2736,10 @@ class PAMConnectionEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        # Wrap in try/except for unit tests with mock params that don't support real sync_down
         try:
             sync_down_preserving_nsf_keys(params)
         except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
+            pass  # Skip if params is a mock without real cache support
 
         connection_override_port = kwargs.get('connections_override_port', None)
 
@@ -3190,10 +3186,8 @@ class PAMConnectionEditCommand(Command):
 
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        try:
+        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
             sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
 
 
 class PAMConnectionJitCommand(Command):
@@ -3811,11 +3805,10 @@ class PAMRbiEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        # Wrap in try/except for unit tests with mock params that don't support real sync_down
         try:
             sync_down_preserving_nsf_keys(params)
         except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
+            pass  # Skip if params is a mock without real cache support
 
         record_name = kwargs.get('record') or ''
         config_name = kwargs.get('config') or ''
@@ -4214,10 +4207,8 @@ class PAMRbiEditCommand(Command):
         #     tdag.print_tunneling_config(record_uid, record.get_typed_field('pamRemoteBrowserSettings'), config_uid)
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        try:
+        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
             sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock or doesn't support sync
 
 class PAMSplitCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
@@ -4292,7 +4283,8 @@ class PAMSplitCommand(Command):
                     pam_settings = vault.TypedField.new_field('pamSettings', "", "")
                     record.fields.append(pam_settings)
 
-                update_pam_record(params, record, command='pam-split')
+                was_nsf = update_pam_record(params, record, command='pam-split')
+                record = reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf)
 
                 print(f"{bcolors.WARNING}Record {record_uid} has no data to split and "
                     "was converted to the new format. Remember to manually add "
@@ -4347,7 +4339,8 @@ class PAMSplitCommand(Command):
             pam_settings = vault.TypedField.new_field('pamSettings', "", "")
             record.fields.append(pam_settings)
 
-        update_pam_record(params, record, command='pam-split')
+        was_nsf = update_pam_record(params, record, command='pam-split')
+        record = reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf)
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
