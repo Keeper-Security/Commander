@@ -20,29 +20,12 @@ from .....utils import is_email
 from .command_parse import SailPointCommandParser
 from .constants import SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS
 
-_ENTERPRISE_ROLE_CMDS = frozenset({'enterprise-role', 'er'})
 _ENTERPRISE_USER_CMDS = frozenset({'enterprise-user', 'eu'})
 
-# Destinations SailPoint may set on enterprise-role (argparse dest names).
-# Anything else that resolves on the real parser is refused — spelling-independent.
-_ER_ALLOWED_DESTS = frozenset({
-    'role',
-    'force',
-    'verbose',
-    'format',
-    'output',
-    'node',
-    'cascade',
-    'add_admin',
-    'remove_admin',
-    'add_privilege',
-    'remove_privilege',
+_EU_BANNED_DESTS = frozenset({
+    'disable_2fa',
+    'expire',
 })
-
-_ER_ALLOWED_HINT = (
-    '--add-admin, --remove-admin, --add-privilege, --remove-privilege '
-    '(plus --node, --cascade, -f)'
-)
 
 
 def _arg_is_set(value: Any) -> bool:
@@ -88,45 +71,8 @@ class SailPointCommandPolicy:
         return cls.sanitize(','.join(SAILPOINT_ALLOWED_COMMANDS))
 
     @classmethod
-    def validate_enterprise_role(cls, command: str) -> Optional[str]:
-        """
-        Restrict enterprise-role to admin/privilege ops only.
-
-        Uses Commander's ``enterprise_role_parser`` so ``--add-user``,
-        ``--add-user=``, ``--add-us``, and ``-au=`` are treated identically.
-        """
-        tokens = SailPointCommandParser.tokenize(command)
-        if not tokens or tokens[0].lower() not in _ENTERPRISE_ROLE_CMDS:
-            return None
-
-        from .....commands.enterprise import enterprise_role_parser
-
-        parsed = SailPointCommandParser.parse_known(enterprise_role_parser, tokens[1:])
-        if not parsed:
-            return None
-        ns, unknown = parsed
-
-        for token in unknown:
-            if token.startswith('-'):
-                flag = token.split('=', 1)[0]
-                return (
-                    f'SailPoint mode does not allow enterprise-role {flag}. '
-                    f'Allowed: {_ER_ALLOWED_HINT}.'
-                )
-
-        for dest, value in vars(ns).items():
-            if dest in _ER_ALLOWED_DESTS or not _arg_is_set(value):
-                continue
-            flag = f'--{dest.replace("_", "-")}'
-            return (
-                f'SailPoint mode does not allow enterprise-role {flag}. '
-                f'Allowed: {_ER_ALLOWED_HINT}.'
-            )
-        return None
-
-    @classmethod
-    def validate_enterprise_user_delete(cls, command: str) -> Optional[str]:
-        """Ban enterprise-user --delete; offboard must use transfer-user."""
+    def validate_enterprise_user(cls, command: str) -> Optional[str]:
+        """Restrict enterprise-user from dangerous operations like --disable-2fa and --expire."""
         tokens = SailPointCommandParser.tokenize(command)
         if not tokens or tokens[0].lower() not in _ENTERPRISE_USER_CMDS:
             return None
@@ -137,12 +83,30 @@ class SailPointCommandPolicy:
         if not parsed:
             return None
         ns, _unknown = parsed
+
         if ns.delete:
             return (
                 'SailPoint mode does not allow enterprise-user --delete. '
                 'Use transfer-user with the configured vault transfer target instead.'
             )
+
+        for dest in _EU_BANNED_DESTS:
+            if _arg_is_set(getattr(ns, dest, None)):
+                flag = f'--{dest.replace("_", "-")}'
+                return f'SailPoint mode does not allow enterprise-user {flag}.'
+
         return None
+
+    @classmethod
+    def validate_share_record(cls, command: str) -> Optional[str]:
+        """Prevent ownership transfer in share-record and nsf-share-record."""
+        share = SailPointCommandParser.parse_share(command)
+        if share is None or share.action != 'owner':
+            return None
+        return (
+            'SailPoint mode does not allow share-record --action owner. '
+            'Record ownership transfer is not permitted.'
+        )
 
     @classmethod
     def prepare_transfer(cls, command: str, target_email: str) -> Tuple[str, Optional[str]]:

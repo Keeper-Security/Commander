@@ -224,19 +224,9 @@ class SailPointPolicyTest(unittest.TestCase):
         self.assertIn('enterprise-user', cleaned.split(','))
         self.assertIn('share-record', cleaned.split(','))
 
-    def test_sanitize_adds_enterprise_role_when_missing(self):
-        cleaned = SailPointCommandPolicy.sanitize(
-            'whoami,sync-down,get,enterprise-info,enterprise-user,enterprise-down,'
-            'share-folder,share-record,nsf-share-folder,nsf-share-record,tree'
-        )
-        parts = cleaned.split(',')
-        self.assertNotIn('get', parts)
-        self.assertIn('enterprise-role', parts)
-        self.assertNotIn('er', parts)
-
     def test_default_allowlist_matches_integration_list(self):
         expected = [
-            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user', 'enterprise-role',
+            'whoami', 'sync-down', 'enterprise-info', 'enterprise-user',
             'enterprise-down', 'transfer-user',
             'share-folder', 'share-record', 'nsf-share-folder', 'nsf-share-record',
             'tree',
@@ -252,62 +242,48 @@ class SailPointPolicyTest(unittest.TestCase):
         self.assertIn('transfer-user', parts)
         self.assertNotIn('tu', parts)
 
-    def test_enterprise_role_blocks_add_delete_add_user(self):
-        for cmd in (
-            "enterprise-role --add 'New Role'",
-            "er 'QA Role' --delete",
-            "er 'QA Role' --add-user user@co.com",
-            "enterprise-role 'QA Role' --copy",
-            "er 'QA Role' --name 'Renamed'",
-            "er 'QA Role' --enforcement restrict_sharing:true",
-            # Equals / abbrev / short= forms must resolve the same as blocked long flags.
-            "enterprise-role 'QA Role' --add-user=user@co.com",
-            "enterprise-role 'QA Role' --add-us user@co.com",
-            "enterprise-role 'QA Role' -au=user@co.com",
-            "enterprise-role 'QA Role' --dele -f",
-            "enterprise-role 'QA Role' --nam=Pwned",
-            "enterprise-role 'QA Role' --enforce=restrict_sharing_all:true",
-        ):
-            err = SailPointCommandPolicy.validate_enterprise_role(cmd)
-            self.assertIsNotNone(err, cmd)
-            self.assertIn('does not allow enterprise-role', err)
-
-    def test_enterprise_role_allows_admin_and_privilege(self):
-        for cmd in (
-            "er 'QA Role'",
-            "enterprise-role 'QA Role' -aa 'Metron Security' --cascade on",
-            "er 'QA Role' --node 'Metron Security' -ap MANAGE_USER -ap MANAGE_NODES",
-            "er -f 'QA Role' -ra 'Metron Security'",
-            "er 'QA Role' --node 'Metron Security' -rp MANAGE_TEAMS",
-        ):
-            self.assertIsNone(SailPointCommandPolicy.validate_enterprise_role(cmd), cmd)
-
-    def test_enterprise_role_gate_ignores_other_commands(self):
-        self.assertIsNone(
-            SailPointCommandPolicy.validate_enterprise_role(
-                'enterprise-user user@co.com --add-role Admin'
-            )
-        )
-
     def test_enterprise_user_delete_blocked(self):
         for cmd in (
             'enterprise-user leaving@co.com --delete',
             'eu leaving@co.com --delete',
         ):
-            err = SailPointCommandPolicy.validate_enterprise_user_delete(cmd)
+            err = SailPointCommandPolicy.validate_enterprise_user(cmd)
             self.assertIsNotNone(err, cmd)
             self.assertIn('--delete', err)
             self.assertIn('transfer-user', err)
 
-    def test_enterprise_user_delete_allows_other_ops(self):
+    def test_enterprise_user_disable_2fa_blocked(self):
+        for cmd in (
+            'enterprise-user user@co.com --disable-2fa',
+            'eu user@co.com --disable-2fa',
+        ):
+            err = SailPointCommandPolicy.validate_enterprise_user(cmd)
+            self.assertIsNotNone(err, cmd)
+            self.assertIn('--disable-2fa', err)
+
+    def test_enterprise_user_expire_blocked(self):
+        for cmd in (
+            'enterprise-user user@co.com --expire',
+            'eu user@co.com --expire',
+        ):
+            err = SailPointCommandPolicy.validate_enterprise_user(cmd)
+            self.assertIsNotNone(err, cmd)
+            self.assertIn('--expire', err)
+
+    def test_enterprise_user_allows_safe_ops(self):
         self.assertIsNone(
-            SailPointCommandPolicy.validate_enterprise_user_delete(
+            SailPointCommandPolicy.validate_enterprise_user(
                 'eu user@co.com --add-role Admin'
             )
         )
         self.assertIsNone(
-            SailPointCommandPolicy.validate_enterprise_user_delete(
+            SailPointCommandPolicy.validate_enterprise_user(
                 'enterprise-user user@co.com --delete-alias old@co.com'
+            )
+        )
+        self.assertIsNone(
+            SailPointCommandPolicy.validate_enterprise_user(
+                'enterprise-user user@co.com --add-team AWS'
             )
         )
 
@@ -354,6 +330,24 @@ class SailPointPolicyTest(unittest.TestCase):
         rewritten, err = SailPointCommandPolicy.prepare_transfer(cmd, 'target@co.com')
         self.assertEqual(rewritten, cmd)
         self.assertIsNone(err)
+
+    def test_share_record_ownership_transfer_blocked(self):
+        for cmd in (
+            'share-record record@uid --action owner -e user@co.com',
+            'share-record record@uid -a owner -e user@co.com',
+        ):
+            err = SailPointCommandPolicy.validate_share_record(cmd)
+            self.assertIsNotNone(err, cmd)
+            self.assertIn('owner', err)
+
+    def test_share_record_grant_allowed(self):
+        for cmd in (
+            'share-record record@uid -e user@co.com',
+            'share-record record@uid --action grant -e user@co.com',
+            'nsf-share-record record@uid -e user@co.com -r viewer',
+        ):
+            err = SailPointCommandPolicy.validate_share_record(cmd)
+            self.assertIsNone(err, cmd)
 
 
 class SailPointPendingMergeTest(unittest.TestCase):
@@ -639,7 +633,7 @@ class EnterpriseUserForceValidationTest(unittest.TestCase):
 
 
 class SailPointCapabilityGateTest(unittest.TestCase):
-    def test_roles_off_blocks_invite_add_role_and_er(self):
+    def test_roles_off_blocks_invite_add_role(self):
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (
             SailPointCommandHook,
         )
@@ -653,12 +647,6 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         )
         self.assertIsNotNone(err)
         self.assertIn('allow_roles', err)
-
-        err = SailPointCommandHook._check_capability_gates(
-            "er 'Demo Role' -aa 'Node'", caps
-        )
-        self.assertIsNotNone(err)
-        self.assertIn('enterprise-role', err)
 
     def test_teams_off_blocks_add_team_allows_node(self):
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (

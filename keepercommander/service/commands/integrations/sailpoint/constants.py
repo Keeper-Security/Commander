@@ -37,7 +37,6 @@ SAILPOINT_ALLOWED_COMMANDS = (
     'sync-down',
     'enterprise-info',
     'enterprise-user',
-    'enterprise-role',
     'enterprise-down',
     'transfer-user',
     'share-folder',

@@ -25,8 +25,6 @@ from .pending_store import SailPointPendingStore
 from .scim_guard import SailPointScimGuard
 from .share_targets import validate_share_targets
 
-_ER_CMDS = frozenset({'enterprise-role', 'er'})
-
 
 class SailPointCommandHook:
     """Pre/post hooks around Service Mode command execution for SailPoint."""
@@ -49,8 +47,8 @@ class SailPointCommandHook:
             return self._reject(command, scope_error, 403)
 
         policy_error = (
-            SailPointCommandPolicy.validate_enterprise_role(command)
-            or SailPointCommandPolicy.validate_enterprise_user_delete(command)
+            SailPointCommandPolicy.validate_enterprise_user(command)
+            or SailPointCommandPolicy.validate_share_record(command)
         )
         if policy_error:
             return self._reject(command, policy_error, 403)
@@ -96,12 +94,6 @@ class SailPointCommandHook:
         tokens = SailPointCommandParser.tokenize(command)
         if not tokens:
             return None
-        name = tokens[0].lower()
-
-        if name in _ER_CMDS and not caps.allow_roles:
-            return (
-                'SailPoint allow_roles is disabled; enterprise-role / er is not allowed.'
-            )
 
         invite = SailPointCommandParser.parse_invite(command)
         if invite:
