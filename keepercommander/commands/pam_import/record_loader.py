@@ -35,11 +35,27 @@ def iter_accessible_record_uids(params) -> Iterator[str]:
 
 
 def load_pam_record(params, record_uid: str) -> Optional[vault.KeeperRecord]:
-    """Load a vault record from classic cache, NSF cache, or NSF record data."""
+    """Load a vault record from classic cache, NSF cache, or NSF record data.
+
+    Priority: classic cache (highest revision) > NSF cache > NSF record data (lowest).
+    """
     record_uid = (record_uid or '').strip()
     if not record_uid:
         return None
 
+    # Try classic cache first (most reliable, has encryption keys and metadata)
+    cached = get_record_from_cache(params, record_uid)
+    if cached and cached.get('data_unencrypted'):
+        rec = vault.KeeperRecord.load(params, cached)
+        if rec:
+            return rec
+
+    # Try loading by UID from classic vault (may trigger decryption from cached key material)
+    rec = vault.KeeperRecord.load(params, record_uid)
+    if rec:
+        return rec
+
+    # Fall back to NSF cache (record_key=None, may be stale, but better than nothing)
     nsf_record_data = getattr(params, 'nested_share_record_data', None) or {}
     nsf_records = getattr(params, 'nested_share_records', None) or {}
     rd = nsf_record_data.get(record_uid) or {}

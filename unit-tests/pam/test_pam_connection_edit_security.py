@@ -21,6 +21,30 @@ except ImportError as e:
     skip_reason = f"Cannot import tunnel_and_connections: {e}"
 
 
+def mock_sync_decorator(cls):
+    """Decorator to add sync mocking to test classes that execute PAM commands."""
+    original_setup = cls.setUp if hasattr(cls, 'setUp') else None
+    original_teardown = cls.tearDown if hasattr(cls, 'tearDown') else None
+
+    def new_setup(self):
+        if original_setup:
+            original_setup(self)
+        self.sync_patcher = mock.patch('keepercommander.commands.tunnel_and_connections.sync_down_preserving_nsf_keys')
+        self.sync_patcher.start()
+        self.load_patcher = mock.patch('keepercommander.commands.pam_import.record_loader.load_pam_record')
+        self.load_patcher.start()
+
+    def new_teardown(self):
+        self.sync_patcher.stop()
+        self.load_patcher.stop()
+        if original_teardown:
+            original_teardown(self)
+
+    cls.setUp = new_setup
+    cls.tearDown = new_teardown
+    return cls
+
+
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditSecurityArgs(unittest.TestCase):
     def setUp(self):
@@ -76,6 +100,7 @@ class TestPamConnectionEditSecurityArgs(unittest.TestCase):
         self.assertIn('-sm', help_text)
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditSecurityValidation(unittest.TestCase):
     """Validation runs before DAG / token operations, so we can drive execute()
@@ -197,6 +222,7 @@ class TestPamConnectionEditSecurityValidation(unittest.TestCase):
         self.assertIn('not supported for protocol "ssh"', str(ctx.exception))
 
 
+@mock_sync_decorator
 @unittest.skipIf(skip_tests, skip_reason)
 class TestPamConnectionEditSecurityMutation(unittest.TestCase):
     """Verifies the actual JSON keys written to pamSettings.connection."""
@@ -339,7 +365,7 @@ class TestPamConnectionEditSecurityEarlyReturn(unittest.TestCase):
         return rec
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record', return_value=False)
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))
@@ -356,7 +382,7 @@ class TestPamConnectionEditSecurityEarlyReturn(unittest.TestCase):
         mock_update.assert_called_once()
 
     @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
-    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record', return_value=False)
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_keeper_tokens',
                 return_value=(b'st', b'tk', b'tr'))

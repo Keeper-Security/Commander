@@ -572,18 +572,17 @@ def reload_pam_record_if_nsf_updated(params, record, record_uid, was_nsf_updated
     After NSF updates, the in-memory record object becomes stale. This helper
     reloads it from the refreshed cache. For classic updates, returns the record
     unchanged since classic updates use deferred sync (no immediate cache refresh).
+
+    Raises CommandError if NSF update occurred but reload fails, rather than
+    proceeding with known-stale data (which reintroduces the field-reversion bug).
     """
     if was_nsf_updated:
-        # Skip reload for mock/test params that lack real cache structures
-        if getattr(params, 'record_cache', None) is None and getattr(params, 'nested_share_record_data', None) is None:
-            return record
-        try:
-            from ..pam_import.record_loader import load_pam_record
-            reloaded = load_pam_record(params, record_uid)
-            if reloaded:
-                return reloaded
-        except (AttributeError, TypeError, KeyError, ValueError) as e:
-            logging.warning(f'Failed to reload PAM record {record_uid}: {e}. Using stale record.')
+        from ..pam_import.record_loader import load_pam_record
+        reloaded = load_pam_record(params, record_uid)
+        if not reloaded:
+            raise CommandError('pam', f'Failed to reload NSF-updated record {record_uid} from cache after sync. '
+                             'Record data may be stale; aborting edit to prevent field reversion.')
+        return reloaded
     return record
 
 

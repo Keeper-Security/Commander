@@ -397,10 +397,7 @@ class PAMTunnelEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        try:
-            sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock without real cache support
+        sync_down_preserving_nsf_keys(params)
 
         tunneling_override_port = kwargs.get('tunneling_override_port')
 
@@ -431,10 +428,6 @@ class PAMTunnelEditCommand(Command):
             raise CommandError('pam tunnel edit', f'Record \"{record_name}\" can not be edited.')
 
         record_uid = record.record_uid
-
-        # After sync, reload record to ensure we have latest field data (sync refreshes cache but
-        # TypedRecord instances may be stale). Force reload by treating as if NSF was just updated.
-        record = reload_pam_record_if_nsf_updated(params, record, record_uid, True)
 
         # config parameter is optional and maybe (auto)resolved from PAM record
         config_name = kwargs.get('config', None)
@@ -609,8 +602,7 @@ class PAMTunnelEditCommand(Command):
 
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
-            sync_down_preserving_nsf_keys(params)
+        sync_down_preserving_nsf_keys(params)
 
 
 class PAMTunnelStartCommand(Command):
@@ -2736,10 +2728,7 @@ class PAMConnectionEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        try:
-            sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock without real cache support
+        sync_down_preserving_nsf_keys(params)
 
         connection_override_port = kwargs.get('connections_override_port', None)
 
@@ -2766,10 +2755,6 @@ class PAMConnectionEditCommand(Command):
             raise CommandError('pam connection edit', f'Record \"{record_name}\" can not be edited.')
 
         record_uid = record.record_uid
-
-        # After sync, reload record to ensure we have latest field data (sync refreshes cache but
-        # TypedRecord instances may be stale). Force reload by treating as if NSF was just updated.
-        record = reload_pam_record_if_nsf_updated(params, record, record_uid, True)
 
         # config parameter is optional and maybe (auto)resolved from PAM record
         config_name = kwargs.get('config', None)
@@ -3186,8 +3171,7 @@ class PAMConnectionEditCommand(Command):
 
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
-            sync_down_preserving_nsf_keys(params)
+        sync_down_preserving_nsf_keys(params)
 
 
 class PAMConnectionJitCommand(Command):
@@ -3805,10 +3789,7 @@ class PAMRbiEditCommand(Command):
 
     def execute(self, params, **kwargs):
         # Ensure cache is fresh to avoid stale data from concurrent nsf-record-update calls
-        try:
-            sync_down_preserving_nsf_keys(params)
-        except (TypeError, AttributeError):
-            pass  # Skip if params is a mock without real cache support
+        sync_down_preserving_nsf_keys(params)
 
         record_name = kwargs.get('record') or ''
         config_name = kwargs.get('config') or ''
@@ -4207,8 +4188,7 @@ class PAMRbiEditCommand(Command):
         #     tdag.print_tunneling_config(record_uid, record.get_typed_field('pamRemoteBrowserSettings'), config_uid)
         # Final sync ensures NSF record updates are fully propagated. (First sync occurs within
         # update_pam_record for NSF updates; this is a belt-and-suspenders safety flush.)
-        if hasattr(params, 'record_cache') and hasattr(params, 'nested_share_record_data'):
-            sync_down_preserving_nsf_keys(params)
+        sync_down_preserving_nsf_keys(params)
 
 class PAMSplitCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
