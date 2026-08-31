@@ -169,3 +169,12 @@ class TestAuthSecurity(TestCase):
         )
         self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'login=user']))
         self.assertIsNone(check(['record-add', '--title', 't', '-rt', 'login', 'my.file=x']))
+
+    def test_validate_service_mode_restrictions_host_filesystem(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        self.assertIn(ban, check(['run-batch', '--dry-run', '/etc/passwd']))
+        self.assertIn(ban, check(['export', '--format=json', '/tmp/out.json']))
+        self.assertIn(ban, check(['audit-report', '--format=json', '--output=/tmp/r.json']))
+        self.assertIsNone(check(['audit-report', '--format=json']))
+        self.assertIsNone(check(['clipboard-copy', 'uid', '--output=stdout']))
