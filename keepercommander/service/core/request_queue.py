@@ -325,7 +325,7 @@ class RequestQueueManager:
         
         try:
             # Execute the command using existing CommandExecutor
-            result, status_code = CommandExecutor.execute(request.command)
+            result, status_code = CommandExecutor.execute(request.command, temp_files=request.temp_files)
             
             # Mark as completed
             request.status = RequestStatus.COMPLETED
