@@ -70,5 +70,5 @@ class TestServiceApiRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get('X-API-Legacy'), 'true')
         self.assertEqual(response.get_json(), {"status": "success", "data": {"command": "ls"}})
-        mock_execute.assert_called_once_with('ls')
+        mock_execute.assert_called_once_with('ls', temp_files=[])
         mock_submit.assert_not_called()
