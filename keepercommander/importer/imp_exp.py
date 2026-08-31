@@ -1045,6 +1045,8 @@ def _import(params, file_format, filename, **kwargs):
         if not dry_run:
             prepare_nsf_folders(params, folders, records, nsf_base_parent)
     else:
+        if not dry_run:
+            resolve_shared_folder_uid_relocation(params, folders)
         folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
         if folder_add:
             if not dry_run:
@@ -1845,6 +1847,138 @@ def upload_attachment(params, attachments):
                     sync_down.sync_down(params)
             except Exception as e:
                 logging.debug(e)
+
+
+def _ensure_user_folder_path(params, comps):
+    # type: (KeeperParams, List[str]) -> str
+    """Ensure a chain of plain (non-shared) folders exists under root, creating
+    any missing folders along the way, and return the uid of the deepest
+    folder in the chain ('' means root itself).
+
+    Shared folders can only be nested under plain user folders (never under
+    another shared folder), so this is sufficient for building the parent
+    chain of a shared folder's destination path.
+    """
+    parent_uid = ''
+    for comp in comps:
+        if not comp:
+            continue
+        existing_uid = None
+        for f_uid, f in params.folder_cache.items():
+            if f.type != BaseFolderNode.UserFolderType:
+                continue
+            if (f.parent_uid or '') != parent_uid:
+                continue
+            if (f.name or '').casefold() == comp.casefold():
+                existing_uid = f_uid
+                break
+
+        if not existing_uid:
+            folder_uid = api.generate_record_uid()
+            fol_req = folder_pb2.FolderRequest()
+            fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
+            fol_req.folderType = 1  # user_folder
+            if parent_uid:
+                fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
+            folder_key = utils.generate_aes_key()
+            fol_req.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, params.data_key)
+            data = {'name': comp}
+            fol_req.folderData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), folder_key)
+
+            execute_import_folder_record(params, [fol_req], None)
+            sync_down.sync_down(params)
+            existing_uid = folder_uid
+
+        parent_uid = existing_uid
+
+    return parent_uid
+
+
+def resolve_shared_folder_uid_relocation(params, folders):
+    # type: (KeeperParams, List[ImportSharedFolder]) -> None
+    """
+    If an imported shared folder record carries a `uid` that matches a shared
+    folder that already exists in the vault, but the vault's copy currently
+    lives at a different path than the one requested in the import file, move
+    the *existing* shared folder to the requested path instead of letting
+    prepare_folder_add() create a brand-new (duplicate) shared folder there.
+
+    Any ImportSharedFolder entries that are resolved this way (moved, or
+    already sitting at the correct path) are removed from `folders` in place,
+    so prepare_folder_add() does not try to create them again.
+    """
+    if not folders:
+        return
+
+    resolved = []
+    for fol in folders:
+        uid = getattr(fol, 'uid', None)
+        if not uid:
+            continue
+        if uid not in params.shared_folder_cache or uid not in params.folder_cache:
+            # A uid was supplied but no such shared folder exists in this
+            # vault (deleted, wrong vault, etc.) - fall back to normal
+            # path-based creation for it.
+            continue
+
+        desired_path = (fol.path or '').strip(PathDelimiter)
+        current_path = get_folder_path(params, uid).strip(PathDelimiter)
+
+        if desired_path.casefold() == current_path.casefold():
+            resolved.append(fol)
+            continue
+
+        comps = list(path_components(fol.path)) if fol.path else []
+        if not comps:
+            continue
+        parent_comps = comps[:-1]
+
+        try:
+            parent_uid = _ensure_user_folder_path(params, parent_comps)
+        except Exception as e:
+            logging.warning('Unable to prepare destination path for shared folder "%s": %s',
+                             desired_path, e)
+            continue
+
+        folder_node = params.folder_cache[uid]
+        if (folder_node.parent_uid or '') == (parent_uid or ''):
+            # Already directly under the correct parent folder.
+            resolved.append(fol)
+            continue
+
+        rq = {
+            'command': 'move',
+            'link': False,
+            'move': [{
+                'uid': uid,
+                'type': BaseFolderNode.SharedFolderType,
+                'cascade': True,
+            }],
+        }
+        if folder_node.parent_uid:
+            parent_folder = params.folder_cache.get(folder_node.parent_uid)
+            rq['move'][0]['from_type'] = parent_folder.type if parent_folder else BaseFolderNode.UserFolderType
+            rq['move'][0]['from_uid'] = folder_node.parent_uid
+        else:
+            rq['move'][0]['from_type'] = BaseFolderNode.UserFolderType
+
+        if parent_uid:
+            dst_folder = params.folder_cache.get(parent_uid)
+            rq['to_type'] = dst_folder.type if dst_folder else BaseFolderNode.UserFolderType
+            rq['to_uid'] = parent_uid
+        else:
+            rq['to_type'] = BaseFolderNode.UserFolderType
+
+        try:
+            api.communicate(params, rq)
+            logging.debug('Shared folder "%s" (%s) moved to "%s"', current_path, uid, desired_path)
+            resolved.append(fol)
+        except Exception as e:
+            logging.warning('Failed to move shared folder "%s" to "%s": %s', uid, desired_path, e)
+
+    if resolved:
+        sync_down.sync_down(params)
+        folders[:] = [f for f in folders if f not in resolved]
 
 
 def prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share):
