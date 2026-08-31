@@ -2556,6 +2556,7 @@ github_group.add_argument('--github-base-url', dest='github_base_url', action='s
                        help='GitHub Base URL')
 
 hashicorp_group = common_parser.add_argument_group('hashicorp', 'HashiCorp Vault configuration')
+hashicorp_group.add_argument('--hashicorp-id', dest='hashicorp_id', action='store', help='HashiCorp Id')
 hashicorp_group.add_argument('--vault-base-url', dest='vault_base_url', action='store',
                             help='Vault Base URL (e.g., https://vault.company.com:8200)')
 hashicorp_group.add_argument('--vault-token', dest='vault_token', action='store',
