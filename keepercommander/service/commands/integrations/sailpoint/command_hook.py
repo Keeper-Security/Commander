@@ -21,6 +21,7 @@ from ....decorators.logging import logger
 from .command_parse import ParsedShare, SailPointCommandParser
 from .command_policy import SailPointCommandPolicy
 from .config_fields import SailPointCapabilities, read_capabilities
+from .constants import SAILPOINT_BANNED_COMMANDS
 from .pending_store import SailPointPendingStore
 from .scim_guard import SailPointScimGuard
 from .share_targets import validate_share_targets
@@ -40,6 +41,14 @@ class SailPointCommandHook:
         set, do not execute the command. ``command_to_run`` may be rewritten
         (e.g. transfer-user target injection).
         """
+        tokens = SailPointCommandParser.tokenize(command)
+        if tokens and tokens[0].lower() in SAILPOINT_BANNED_COMMANDS:
+            return self._reject(
+                command,
+                f'SailPoint does not allow command: {tokens[0]}',
+                403
+            )
+
         caps = read_capabilities(params, self.record_uid)
 
         scope_error = self._check_capability_gates(command, caps)

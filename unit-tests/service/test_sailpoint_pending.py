@@ -868,6 +868,31 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         self.assertEqual(short[1], 403)
         self.assertIn('--delete', short[0]['error'])
 
+    def test_before_command_rejects_banned_commands_at_runtime(self):
+        """Banned commands rejected even if present in stored config (in-place upgrade scenario)."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        hook = SailPointCommandHook('config_uid')
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+
+        for cmd in (
+            "enterprise-role 'Role' -aa 'Node'",
+            "er 'Role' --add-privilege MANAGE_USERS",
+        ):
+            with mock.patch(
+                'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+                return_value=caps,
+            ):
+                command, short = hook.before_command(mock.Mock(), cmd)
+            self.assertIsNotNone(short, cmd)
+            self.assertEqual(short[1], 403, cmd)
+            self.assertIn('does not allow', short[0]['error'], cmd)
+
     def test_after_command_skips_missing_user(self):
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (
             SailPointCommandHook,

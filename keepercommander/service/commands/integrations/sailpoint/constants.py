@@ -61,4 +61,6 @@ SAILPOINT_BANNED_COMMANDS = frozenset({
     'one-time-share',
     'connect',
     'ssh',
+    'enterprise-role',
+    'er',
 })
