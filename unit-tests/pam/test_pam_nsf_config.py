@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest import mock
 
@@ -9,6 +10,7 @@ from keepercommander.commands.discoveryrotation import (
 from keepercommander.commands.pam.vault_target import (
     create_pam_configuration_in_folder, create_record_in_folder, place_record_in_folder,
     resolve_pam_folder_uid, records_in_folder)
+from keepercommander.commands.pam_import.record_loader import load_pam_record
 from keepercommander.error import CommandError
 from keepercommander.subfolder import NestedShareFolderNode, RootFolderNode, SharedFolderNode
 
@@ -26,6 +28,35 @@ def _make_params():
 
 
 class TestPamVaultTarget(unittest.TestCase):
+
+    def test_load_pam_record_prefers_fresh_nsf_data_over_classic_cache(self):
+        params = _make_params()
+        record_uid = 'nsf_record_uid'
+        params.nested_share_records = {}
+        params.nested_share_record_data = {}
+        params.record_cache[record_uid] = {
+            'version': 3,
+            'data_unencrypted': json.dumps({
+                'type': 'pamMachine',
+                'title': 'Stale',
+                'fields': [{'type': 'text', 'value': ['before']}],
+                'custom': [],
+            }),
+        }
+        params.nested_share_records[record_uid] = {'version': 3}
+        params.nested_share_record_data[record_uid] = {
+            'data_json': {
+                'type': 'pamMachine',
+                'title': 'Fresh',
+                'fields': [{'type': 'text', 'value': ['after']}],
+                'custom': [],
+            },
+        }
+
+        record = load_pam_record(params, record_uid)
+
+        self.assertEqual(record.title, 'Fresh')
+        self.assertEqual(record.fields[0].value, ['after'])
 
     @mock.patch('keepercommander.commands.pam.vault_target.api.sync_down')
     @mock.patch('keepercommander.commands.pam.vault_target.move_record_v3')
