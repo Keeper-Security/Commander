@@ -2869,6 +2869,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if oci_region:
                 extra_properties.append(f'text.regionOci={oci_region}')
         elif record.record_type == 'pamHashiCorpConfiguration':
+            hashicorp_id = kwargs.get('hashicorp_id')
+            if hashicorp_id:
+                extra_properties.append(f'text.pamHashiCorpId={hashicorp_id}')
             vault_base_url = kwargs.get('vault_base_url')
             if vault_base_url:
                 extra_properties.append(f'text.pamHashiCorpVaultBaseUrl={vault_base_url}')
