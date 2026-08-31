@@ -15,6 +15,7 @@ from html import escape
 import tempfile
 import os
 import json
+import shutil
 from ..decorators.logging import logger, sanitize_command_fields
 
 
@@ -93,28 +94,24 @@ class RequestValidator:
                     
             except Exception as e:
                 logger.error(f"Error creating temporary file for filedata: {e}")
-                # Clean up any created temp files
-                for temp_path in temp_files:
-                    try:
-                        os.unlink(temp_path)
-                    except Exception:
-                        pass
                 if request_temp_dir:
                     try:
-                        os.rmdir(request_temp_dir)
-                    except Exception:
-                        pass
+                        shutil.rmtree(request_temp_dir)
+                        logger.debug(f"Cleaned up request temp directory: {request_temp_dir}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to clean up request temp directory {request_temp_dir}: {cleanup_error}")
                 return command, []
         
         return processed_command, temp_files
     
     @staticmethod
     def cleanup_temp_files(temp_files: list) -> None:
-        """Clean up temporary files and the per-request directory each one lives in.
+        """Clean up temporary files and their parent per-request directories.
 
         Args:
             temp_files: List of temporary file paths to clean up
         """
+        parent_dirs = set()
         for temp_path in temp_files:
             try:
                 if os.path.exists(temp_path):
@@ -122,11 +119,16 @@ class RequestValidator:
                     logger.debug(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary file {temp_path}: {e}")
-            # Each temp_path lives in a dedicated per-request directory
+            parent_dirs.add(os.path.dirname(temp_path))
+
+        # Remove parent directories (each file has one dedicated per-request directory)
+        for parent_dir in parent_dirs:
             try:
-                os.rmdir(os.path.dirname(temp_path))
-            except Exception:
-                pass
+                if os.path.exists(parent_dir):
+                    shutil.rmtree(parent_dir)
+                    logger.debug(f"Cleaned up request temp directory: {parent_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up request temp directory {parent_dir}: {e}")
     
     @staticmethod
     def validate_request_json() -> Optional[Tuple]:
