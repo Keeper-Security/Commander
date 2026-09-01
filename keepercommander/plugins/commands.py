@@ -95,11 +95,30 @@ _UNSAFE_SHELL_ROTATION_PASSWORD_LABELS = {
 
 SHELL_ROTATION_PLUGINS = {'ssh', 'pspasswd'}
 
+# Shell-unsafe characters: guard against command injection in shell-interpolated commands
+UNSAFE_SHELL_CHARACTERS = '<>^&|$(){}!;"\'\\\n'
+
+
+def validate_shell_command_parameter(param, param_name):
+    # type: (str, str) -> bool
+    if not isinstance(param, str):
+        logging.error(f'{param_name} must be a string')
+        return False
+
+    for char in UNSAFE_SHELL_CHARACTERS:
+        if char in param:
+            logging.error(f'{param_name} contains shell metacharacter: {repr(char)}')
+            return False
+    return True
+
 
 def validate_rotation_password(new_password, is_shell_plugin):
     # type: (str, bool) -> bool
     if not isinstance(new_password, str):
         logging.error('Password must be a string')
+        return False
+
+    if is_shell_plugin and not validate_shell_command_parameter(new_password, 'Password'):
         return False
 
     pattern = UNSAFE_SHELL_ROTATION_PASSWORD_PATTERN if is_shell_plugin else UNSAFE_DATABASE_ROTATION_PASSWORD_PATTERN

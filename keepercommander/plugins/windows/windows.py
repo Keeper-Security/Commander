@@ -14,8 +14,8 @@ import logging
 import subprocess
 
 
-# These characters don't work for Windows password rotation or shell command execution
-DISALLOW_WINDOWS_SPECIAL_CHARACTERS = '<>^&|$(){}!;"\'\\\n'
+# Characters that break net user arg parsing (subprocess list, no shell)
+DISALLOW_WINDOWS_SPECIAL_CHARACTERS = '<>^&|'
 
 
 class Rotator:

@@ -58,9 +58,15 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
     old_password(str): old password
     new_password(str): new password
     timeout(int): SSH connection timeout in seconds
-    revert(bool): True if the new_password is the original password to revert a previous rotation.
-                  This is used to print log messages that make more sense.
+    revert(bool): True to revert a previous rotation
     """
+    from ..commands import validate_shell_command_parameter
+
+    if not validate_shell_command_parameter(user, 'User login'):
+        return False
+    if not validate_shell_command_parameter(new_password, 'New password'):
+        return False
+
     rotate_success = False
     ssh_logger = logging.getLogger('paramiko')
     ssh_logger.setLevel(logging.WARNING)
