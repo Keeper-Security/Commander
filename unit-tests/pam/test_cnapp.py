@@ -58,6 +58,15 @@ class TestEnumParsing(unittest.TestCase):
             cnapp_pb2.CNAPP_PROVIDER_WIZ,
         )
 
+    def test_provider_tenable_short_name(self):
+        self.assertEqual(cnapp_helper.provider_from_name('tenable'), cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+
+    def test_provider_tenable_full_name_case_insensitive(self):
+        self.assertEqual(
+            cnapp_helper.provider_from_name('CNAPP_PROVIDER_TENABLE'),
+            cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+        )
+
     def test_provider_empty_returns_unspecified(self):
         self.assertEqual(cnapp_helper.provider_from_name(''), cnapp_pb2.CNAPP_PROVIDER_UNSPECIFIED)
 
@@ -144,6 +153,72 @@ class TestConfigurationHelpers(unittest.TestCase):
             )
         rq = post.call_args.kwargs['rq_proto']
         self.assertEqual(rq.clientSecret, '')
+
+    def test_set_configuration_tenable_with_encrypter_fields(self):
+        """Tenable configurations round-trip the new urlBaseEncrypter/apiTokenEncrypter
+        fields alongside the CNAPP_PROVIDER_TENABLE provider value."""
+        expected_response = cnapp_pb2.CnappConfiguration(
+            apiEndpointUrl='https://us.app.ermetic.com/api/graph',
+            provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        with self._patch_post(return_value=expected_response) as post:
+            result = cnapp_helper.set_cnapp_configuration(
+                self.params,
+                network_uid=NETWORK_UID,
+                provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+                client_id='',
+                client_secret='',
+                api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                cnapp_config_record_uid=CONFIG_RECORD_UID,
+                auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+                url_base_encrypter='https://encrypter.internal',
+                api_token_encrypter='encrypter-token-abc',
+            )
+        self.assertIs(result, expected_response)
+        rq = post.call_args.kwargs['rq_proto']
+        self.assertEqual(rq.provider, cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        self.assertEqual(rq.clientId, '')
+        self.assertEqual(rq.clientSecret, '')
+        self.assertEqual(rq.apiEndpointUrl, 'https://us.app.ermetic.com/api/graph')
+        self.assertEqual(rq.urlBaseEncrypter, 'https://encrypter.internal')
+        self.assertEqual(rq.apiTokenEncrypter, 'encrypter-token-abc')
+
+    def test_set_configuration_omits_encrypter_fields_when_not_provided(self):
+        """Edge case: encrypter fields are optional — a Wiz configuration that doesn't
+        set them must leave both blank on the wire rather than sending garbage defaults."""
+        with self._patch_post() as post:
+            cnapp_helper.set_cnapp_configuration(
+                self.params,
+                network_uid=NETWORK_UID,
+                provider=cnapp_pb2.CNAPP_PROVIDER_WIZ,
+                client_id='abc',
+                client_secret='secret',
+                api_endpoint_url='https://api.wiz.io',
+                cnapp_config_record_uid=CONFIG_RECORD_UID,
+            )
+        rq = post.call_args.kwargs['rq_proto']
+        self.assertEqual(rq.urlBaseEncrypter, '')
+        self.assertEqual(rq.apiTokenEncrypter, '')
+
+    def test_test_configuration_tenable_dispatches_with_encrypter_fields(self):
+        with self._patch_post() as post:
+            cnapp_helper.test_cnapp_configuration(
+                self.params,
+                network_uid=NETWORK_UID,
+                provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+                client_id='',
+                client_secret='',
+                api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+                url_base_encrypter='https://encrypter.internal',
+                api_token_encrypter='encrypter-token-abc',
+            )
+        rq = post.call_args.kwargs['rq_proto']
+        self.assertEqual(post.call_args.args[1], 'cnapp/configuration/test')
+        self.assertEqual(rq.provider, cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        self.assertEqual(rq.urlBaseEncrypter, 'https://encrypter.internal')
+        self.assertEqual(rq.apiTokenEncrypter, 'encrypter-token-abc')
+        # test endpoint never persists, so it must not require / send config record UID
+        self.assertEqual(rq.cnappConfigRecordUid, b'')
 
     def test_test_configuration_dispatches_to_test_endpoint(self):
         with self._patch_post() as post:
@@ -356,6 +431,37 @@ class TestConfigCommands(unittest.TestCase):
         self.assertEqual(kwargs['auth_endpoint_url'], 'https://auth.wiz.io/oauth/token')
         self.assertIn('saved', buf.getvalue().lower())
 
+    def test_config_set_tenable_forwards_encrypter_fields(self):
+        """CLI-level test: `pam cnapp config set --provider tenable` must resolve the
+        Tenable enum and forward the new --url-base-encrypter/--api-token-encrypter
+        flags through to the helper unchanged."""
+        with patch.object(cnapp_commands.cnapp_helper, 'set_cnapp_configuration',
+                          return_value=cnapp_pb2.CnappConfiguration(
+                              apiEndpointUrl='https://us.app.ermetic.com/api/graph',
+                              provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE)) as helper:
+            buf, ctx = self._capture_stdout()
+            with ctx:
+                cnapp_commands.PAMCnappConfigSetCommand().execute(
+                    self.params,
+                    network_uid=NETWORK_UID,
+                    provider='tenable',
+                    client_id='',
+                    client_secret='',
+                    api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                    cnapp_config_record_uid=CONFIG_RECORD_UID,
+                    auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+                    url_base_encrypter='https://encrypter.internal',
+                    api_token_encrypter='encrypter-token-abc',
+                )
+        helper.assert_called_once()
+        kwargs = helper.call_args.kwargs
+        self.assertEqual(kwargs['provider'], cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        self.assertEqual(kwargs['client_id'], '')
+        self.assertEqual(kwargs['client_secret'], '')
+        self.assertEqual(kwargs['url_base_encrypter'], 'https://encrypter.internal')
+        self.assertEqual(kwargs['api_token_encrypter'], 'encrypter-token-abc')
+        self.assertIn('saved', buf.getvalue().lower())
+
     def test_config_set_blank_secret_passes_through(self):
         """Edge case: the CLI must forward an empty secret unchanged so krouter can
         keep the existing value."""
@@ -416,6 +522,60 @@ class TestConfigCommands(unittest.TestCase):
             self.assertEqual(helper.call_args.kwargs['auth_endpoint_url'], 'https://auth.wiz.io/oauth/token')
             self.assertIn('validated', buf.getvalue().lower())
 
+    def test_config_test_tenable_forwards_encrypter_fields(self):
+        """CLI-level test: `pam cnapp config test --provider tenable` resolves the
+        Tenable enum and forwards the Encrypter settings to the helper."""
+        with patch.object(cnapp_commands.cnapp_helper, 'test_cnapp_configuration', return_value=None) as helper:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappConfigTestCommand().execute(
+                    self.params,
+                    network_uid=NETWORK_UID,
+                    provider='tenable',
+                    client_id='',
+                    client_secret='',
+                    api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                    auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+                    url_base_encrypter='https://encrypter.internal',
+                    api_token_encrypter='encrypter-token-abc',
+                )
+        helper.assert_called_once()
+        kwargs = helper.call_args.kwargs
+        self.assertEqual(kwargs['provider'], cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        self.assertEqual(kwargs['client_id'], '')
+        self.assertEqual(kwargs['client_secret'], '')
+        self.assertEqual(kwargs['url_base_encrypter'], 'https://encrypter.internal')
+        self.assertEqual(kwargs['api_token_encrypter'], 'encrypter-token-abc')
+        self.assertIn('validated', buf.getvalue().lower())
+
+    def test_config_test_tenable_allows_omitted_credentials(self):
+        with patch.object(cnapp_commands.cnapp_helper, 'test_cnapp_configuration', return_value=None) as helper:
+            with redirect_stdout(io.StringIO()):
+                cnapp_commands.PAMCnappConfigTestCommand().execute(
+                    self.params,
+                    network_uid=NETWORK_UID,
+                    provider='tenable',
+                    api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                    auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+                    url_base_encrypter='http://localhost:9099',
+                    api_token_encrypter='test-token',
+                )
+        self.assertEqual(helper.call_args.kwargs['client_id'], '')
+        self.assertEqual(helper.call_args.kwargs['client_secret'], '')
+
+    def test_config_test_rejects_smart_quote_placeholder(self):
+        with self.assertRaises(CommandError) as ctx:
+            cnapp_commands.PAMCnappConfigTestCommand().execute(
+                self.params,
+                network_uid=NETWORK_UID,
+                provider='tenable',
+                client_id='“”',
+                client_secret='',
+                api_endpoint_url='https://us.app.ermetic.com/api/graph',
+                auth_endpoint_url='https://cloud.tenable.com/oauth/token',
+            )
+        self.assertIn('smart quotes', str(ctx.exception))
+
     def test_config_test_propagates_helper_error(self):
         with patch.object(cnapp_commands.cnapp_helper, 'test_cnapp_configuration',
                           side_effect=Exception('Credential validation failed: bad')):
@@ -474,6 +634,47 @@ class TestConfigCommands(unittest.TestCase):
             self.assertEqual(payload['authEndpointUrl'], 'https://auth.wiz.io/oauth/token')
             self.assertIsNone(result, 'JSON output is the channel — no value returned to the REPL')
 
+    def test_config_read_table_format_tenable_with_encrypter_fields(self):
+        config = cnapp_pb2.CnappConfiguration(
+            apiEndpointUrl='https://us.app.ermetic.com/api/graph',
+            authEndpointUrl='https://cloud.tenable.com/oauth/token',
+            provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+            urlBaseEncrypter='https://encrypter.internal',
+            apiTokenEncrypter='encrypter-token-abc',
+        )
+        with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=config):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappConfigReadCommand().execute(
+                    self.params, network_uid=NETWORK_UID, provider='tenable', format='table')
+            output = buf.getvalue()
+            self.assertIn('https://us.app.ermetic.com/api/graph', output)
+            self.assertIn('https://encrypter.internal', output)
+            # the encrypter token is a secret — must be masked, never printed in the clear
+            self.assertNotIn('encrypter-token-abc', output)
+            self.assertIn('(set)', output)
+
+    def test_config_read_json_format_tenable_includes_new_fields(self):
+        config = cnapp_pb2.CnappConfiguration(
+            apiEndpointUrl='https://us.app.ermetic.com/api/graph',
+            authEndpointUrl='https://cloud.tenable.com/oauth/token',
+            provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+            urlBaseEncrypter='https://encrypter.internal',
+            apiTokenEncrypter='encrypter-token-abc',
+        )
+        with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=config):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappConfigReadCommand().execute(
+                    self.params, network_uid=NETWORK_UID, provider='tenable', format='json')
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload['provider'], 'CNAPP_PROVIDER_TENABLE')
+            self.assertEqual(payload['clientId'], '')
+            self.assertEqual(payload['apiEndpointUrl'], 'https://us.app.ermetic.com/api/graph')
+            self.assertEqual(payload['urlBaseEncrypter'], 'https://encrypter.internal')
+            self.assertTrue(payload['apiTokenEncrypterSet'])
+            self.assertNotIn('apiTokenEncrypter', payload)
+
     def test_config_read_handles_none_response(self):
         with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration', return_value=None):
             self.assertIsNone(cnapp_commands.PAMCnappConfigReadCommand().execute(
@@ -495,14 +696,16 @@ class TestQueueCommands(unittest.TestCase):
     def _queue_response(self, items=None, has_more=False):
         return cnapp_pb2.CnappQueueListResponse(items=items or [], hasMore=has_more)
 
-    def _queue_item(self, queue_id=1, status_id=1, record_uid=b''):
+    def _queue_item(self, queue_id=1, status_id=1, record_uid=b'',
+                    provider=cnapp_pb2.CNAPP_PROVIDER_WIZ, payload=b''):
         return cnapp_pb2.CnappQueueItem(
             cnappQueueId=queue_id,
-            cnappProviderId=cnapp_pb2.CNAPP_PROVIDER_WIZ,
+            cnappProviderId=provider,
             cnappQueueStatusId=status_id,
             receivedAt=1700000000000,
             networkId=b'\x00' * 16,
             recordUid=record_uid,
+            payload=payload,
         )
 
     def test_queue_list_empty(self):
@@ -530,6 +733,45 @@ class TestQueueCommands(unittest.TestCase):
             self.assertIn('IN_PROGRESS', output)
             self.assertIn('CNAPP_PROVIDER_WIZ', output)
             self.assertIsNone(result)
+
+    def test_queue_list_with_tenable_item_table(self):
+        item = self._queue_item(queue_id=100, provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE)
+        with patch.object(cnapp_commands.cnapp_helper, 'list_cnapp_queue',
+                          return_value=self._queue_response([item])):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cnapp_commands.PAMCnappQueueListCommand().execute(
+                    self.params, network_uid=NETWORK_UID, status=0, format='table',
+                    no_decrypt=True)
+        self.assertIn('CNAPP_PROVIDER_TENABLE', buf.getvalue())
+
+    def test_queue_list_auto_resolves_each_provider_configuration(self):
+        items = [
+            self._queue_item(queue_id=1, provider=cnapp_pb2.CNAPP_PROVIDER_WIZ, payload=b'payload'),
+            self._queue_item(queue_id=2, provider=cnapp_pb2.CNAPP_PROVIDER_TENABLE, payload=b'payload'),
+        ]
+
+        def read_config(params, network_uid, provider):
+            uid = b'\x01' * 16 if provider == cnapp_pb2.CNAPP_PROVIDER_WIZ else b'\x02' * 16
+            return cnapp_pb2.CnappConfiguration(cnappConfigRecordUid=uid)
+
+        command = cnapp_commands.PAMCnappQueueListCommand()
+        with patch.object(cnapp_commands.cnapp_helper, 'read_cnapp_configuration',
+                          side_effect=read_config) as read, \
+                patch.object(cnapp_commands, '_load_encrypter_key', return_value=b'k' * 32):
+            keys = command._resolve_encrypter_keys(
+                self.params,
+                {'network_uid': NETWORK_UID, 'provider': None, 'no_decrypt': False},
+                items,
+            )
+        self.assertEqual(set(keys), {
+            cnapp_pb2.CNAPP_PROVIDER_WIZ,
+            cnapp_pb2.CNAPP_PROVIDER_TENABLE,
+        })
+        self.assertEqual(
+            {call.kwargs['provider'] for call in read.call_args_list},
+            {cnapp_pb2.CNAPP_PROVIDER_WIZ, cnapp_pb2.CNAPP_PROVIDER_TENABLE},
+        )
 
     def test_queue_list_filter_resolves_named_status(self):
         with patch.object(cnapp_commands.cnapp_helper, 'list_cnapp_queue',
@@ -599,6 +841,22 @@ class TestQueueCommands(unittest.TestCase):
             self.assertIn('ROTATE_CREDENTIALS', output)
             self.assertIn('IN_PROGRESS', output)
             self.assertIn('Scheduled', output)
+
+    def test_queue_remediate_forwards_tenable_provider(self):
+        response = cnapp_pb2.CnappRemediateResponse(
+            actionType=cnapp_pb2.ROTATE_CREDENTIALS,
+            cnappQueueStatusId=2,
+        )
+        with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',
+                          return_value=response) as helper:
+            with redirect_stdout(io.StringIO()):
+                cnapp_commands.PAMCnappQueueRemediateCommand().execute(
+                    self.params,
+                    cnapp_queue_id=4,
+                    action_type='rotate_credentials',
+                    provider='tenable',
+                )
+        self.assertEqual(helper.call_args.kwargs['provider'], cnapp_pb2.CNAPP_PROVIDER_TENABLE)
 
     def test_queue_remediate_unsupported_action_propagates(self):
         with patch.object(cnapp_commands.cnapp_helper, 'remediate_cnapp_queue_item',
