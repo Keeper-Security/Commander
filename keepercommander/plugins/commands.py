@@ -71,7 +71,7 @@ _UNSAFE_DATABASE_ROTATION_PASSWORD_LABELS = {
     '--': 'double hyphen (--)',
 }
 
-UNSAFE_SHELL_ROTATION_PASSWORD_PATTERN = re.compile(r"""[';"\\&|<>^`]|--|\n""")
+UNSAFE_SHELL_ROTATION_PASSWORD_PATTERN = re.compile(r"""[';"\\&|<>^`$(){}!]|--|\n""")
 _UNSAFE_SHELL_ROTATION_PASSWORD_LABELS = {
     "'": "single quote (')",
     '"': 'double quote (")',
@@ -83,14 +83,30 @@ _UNSAFE_SHELL_ROTATION_PASSWORD_LABELS = {
     '>': 'greater-than (>)',
     '^': 'caret (^)',
     '`': 'backtick (`)',
+    '$': 'dollar sign ($)',
+    '(': 'opening parenthesis (()',
+    ')': 'closing parenthesis ())',
+    '{': 'opening brace ({)',
+    '}': 'closing brace (})',
+    '!': 'exclamation mark (!)',
     '--': 'double hyphen (--)',
     '\n': 'newline',
 }
 
+SHELL_ROTATION_PLUGINS = {'ssh', 'pspasswd'}
 
-def validate_database_rotation_password(new_password):
-    # type: (str) -> bool
-    matches = UNSAFE_DATABASE_ROTATION_PASSWORD_PATTERN.findall(new_password)
+
+def validate_rotation_password(new_password, is_shell_plugin):
+    # type: (str, bool) -> bool
+    if not isinstance(new_password, str):
+        logging.error('Password must be a string')
+        return False
+
+    pattern = UNSAFE_SHELL_ROTATION_PASSWORD_PATTERN if is_shell_plugin else UNSAFE_DATABASE_ROTATION_PASSWORD_PATTERN
+    labels_map = _UNSAFE_SHELL_ROTATION_PASSWORD_LABELS if is_shell_plugin else _UNSAFE_DATABASE_ROTATION_PASSWORD_LABELS
+    context = 'shell' if is_shell_plugin else 'database'
+
+    matches = pattern.findall(new_password)
     if not matches:
         return True
 
@@ -100,46 +116,29 @@ def validate_database_rotation_password(new_password):
         if match in seen:
             continue
         seen.add(match)
-        labels.append(_UNSAFE_DATABASE_ROTATION_PASSWORD_LABELS.get(match, repr(match)))
+        labels.append(labels_map.get(match, repr(match)))
 
     if len(labels) == 1:
         logging.error(
-            'Password contains character unsafe for database rotation: %s',
-            labels[0],
+            'Password contains character unsafe for %s rotation: %s',
+            context, labels[0],
         )
     else:
         logging.error(
-            'Password contains characters unsafe for database rotation: %s',
-            ', '.join(labels),
+            'Password contains characters unsafe for %s rotation: %s',
+            context, ', '.join(labels),
         )
     return False
+
+
+def validate_database_rotation_password(new_password):
+    # type: (str) -> bool
+    return validate_rotation_password(new_password, is_shell_plugin=False)
 
 
 def validate_shell_rotation_password(new_password):
     # type: (str) -> bool
-    matches = UNSAFE_SHELL_ROTATION_PASSWORD_PATTERN.findall(new_password)
-    if not matches:
-        return True
-
-    labels = []
-    seen = set()
-    for match in matches:
-        if match in seen:
-            continue
-        seen.add(match)
-        labels.append(_UNSAFE_SHELL_ROTATION_PASSWORD_LABELS.get(match, repr(match)))
-
-    if len(labels) == 1:
-        logging.error(
-            'Password contains character unsafe for shell rotation: %s',
-            labels[0],
-        )
-    else:
-        logging.error(
-            'Password contains characters unsafe for shell rotation: %s',
-            ', '.join(labels),
-        )
-    return False
+    return validate_rotation_password(new_password, is_shell_plugin=True)
 
 
 def adjust_password(password):   # type: (str) -> str
@@ -257,14 +256,15 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         if not length:
             length = plugin_kwargs.get('length')
         new_password = get_new_password(plugin, rules, length)
-    else:
-        # Use shell-specific validation for plugins that build shell commands
-        if plugin_name in ('ssh', 'pspasswd'):
-            if not validate_shell_rotation_password(new_password):
-                return False
-        else:
-            if not validate_database_rotation_password(new_password):
-                return False
+
+    # Validate password regardless of source (auto-generated or user-supplied)
+    if not new_password or not isinstance(new_password, str):
+        logging.error('Password generation or validation failed: invalid password')
+        return False
+
+    is_shell_plugin = plugin_name in SHELL_ROTATION_PLUGINS
+    if not validate_rotation_password(new_password, is_shell_plugin):
+        return False
 
     if plugin_kwargs.get('password') == new_password:
         logging.warning('Rotation aborted because the old and new passwords are the same.')
