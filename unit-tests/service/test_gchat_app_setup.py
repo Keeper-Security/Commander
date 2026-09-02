@@ -166,6 +166,32 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(config.chat_approvals_space_id, 'spaces/TEST')
         self.assertEqual(config.chat_approvals_space_id, config.approvals.single_channel_id)
 
+    def test_multi_channel_approval_config_serialization(self):
+        from keepercommander.service.docker import ApprovalsConfig, ApproverTeam
+        from keepercommander.service.commands.integrations.approvals_setup import (
+            approvals_config_to_record_fields,
+        )
+
+        config = ApprovalsConfig(
+            multi_channel_enabled=True,
+            single_channel_id='spaces/DEFAULT',
+            teams=[
+                ApproverTeam(team_uid='team1', name='Team A', channel_id='spaces/A'),
+                ApproverTeam(team_uid='team2', name='Team B', channel_id='spaces/B',
+                            folder_uids=['folder1']),
+            ]
+        )
+        fields = {
+            field.label: field.get_default_value()
+            for field in approvals_config_to_record_fields(config)
+        }
+        self.assertEqual(fields[FIELD_MULTI_CHANNEL_ENABLED], 'true')
+        self.assertEqual(fields[FIELD_APPROVALS_CHANNEL_ID], 'spaces/DEFAULT')
+        teams_json = json.loads(fields[FIELD_APPROVALS_TEAMS])
+        self.assertEqual(len(teams_json), 2)
+        self.assertEqual(teams_json[0]['team_uid'], 'team1')
+        self.assertEqual(teams_json[1]['folder_uids'], ['folder1'])
+
     def test_build_record_custom_fields(self):
         from keepercommander.service.docker import ApprovalsConfig
         config = GChatConfig(
@@ -194,7 +220,7 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(fields[GChatConstants.FIELD_PROJECT_ID], 'my-gcp-project')
         self.assertEqual(fields[GChatConstants.FIELD_SUBSCRIPTION_ID], 'keeper-chat-events')
         self.assertEqual(fields[GChatConstants.FIELD_TOPIC_ID], 'keeper-chat-topic')
-        self.assertEqual(fields[GChatConstants.FIELD_APPROVALS_SPACE_ID], 'spaces/AAAA')
+        self.assertEqual(fields[FIELD_APPROVALS_CHANNEL_ID], 'spaces/AAAA')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_RECORD_ID], '1')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_FOLDER_ID], '2')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID], '3')

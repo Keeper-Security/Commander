@@ -19,6 +19,7 @@ import re
 
 from .... import vault
 from ....display import bcolors
+from ....error import CommandError
 from ...docker import GChatConfig, GChatConstants
 from .approvals_setup import (
     ApprovalsChannelProfile,
@@ -128,7 +129,11 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         )
 
         profile = self.get_approvals_profile()
-        assert profile is not None
+        if profile is None:
+            raise CommandError(
+                self.get_command_name(),
+                'Internal error: Google Chat approvals profile not configured'
+            )
         approvals = self._collect_approvals_config(params, profile)
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
@@ -167,11 +172,6 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             ),
             vault.TypedField.new_field(
                 'text', config.google_topic_id, GChatConstants.FIELD_TOPIC_ID
-            ),
-            vault.TypedField.new_field(
-                'text',
-                config.chat_approvals_space_id,
-                GChatConstants.FIELD_APPROVALS_SPACE_ID,
             ),
             vault.TypedField.new_field(
                 'text',
@@ -335,7 +335,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
         return cls._validate_service_account_dict(data)
 
     @staticmethod
-    def _validate_service_account_dict(data: any) -> tuple[dict | None, str | None]:
+    def _validate_service_account_dict(data: object) -> tuple[dict | None, str | None]:
         if not isinstance(data, dict):
             return None, 'Service account JSON must be a JSON object'
 
