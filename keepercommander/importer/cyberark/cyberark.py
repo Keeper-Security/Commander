@@ -287,6 +287,12 @@ class CyberArkImporter(BaseImporter):
         self._tmp_cert_files = []
         # ``verify`` value used for every PVWA request. Defaults to False (self-hosted PVWAs typically use a private CA), but can be overridden by the ``_CYBERARK_CA_BUNDLE`` env var to point at a CA file/dir.
         self._verify_tls = False
+        timeout_env = environ.get("_CYBERARK_TIMEOUT")
+        if timeout_env:
+            try:
+                self.TIMEOUT = int(timeout_env)
+            except ValueError:
+                pass
 
     @classmethod
     def _normalize_property_key(cls, key):
@@ -444,6 +450,33 @@ class CyberArkImporter(BaseImporter):
                 warnings.simplefilter("ignore", InsecureRequestWarning)
                 return requests.request(method, url, **kwargs)
         return requests.request(method, url, **kwargs)
+
+    @staticmethod
+    def _connection_error_hint(pvwa_host, error):
+        """Return user-facing guidance for a PVWA connection failure."""
+        err = str(error).lower()
+        host = _esc(pvwa_host)
+        if "getaddrinfo failed" in err or "failed to resolve" in err or "name resolution" in err:
+            return (
+                f"Could not resolve hostname <b>{host}</b>.\n"
+                "For self-hosted PVWA, use the exact hostname or IP from your CyberArk admin, "
+                "connect to VPN, or add an entry to your hosts file."
+            )
+        if "timed out" in err or "timeout" in err:
+            return (
+                f"Connection to <b>{host}</b> timed out.\n"
+                "Ensure VPN is connected, the PVWA is running, and the port is reachable. "
+                "If PVWA uses a non-standard port, specify it as <b>hostname:port</b>."
+            )
+        if "connection refused" in err:
+            return (
+                f"Connection to <b>{host}</b> was refused.\n"
+                "Verify the PVWA service is running and the port is correct."
+            )
+        return (
+            f"Could not connect to <b>{host}</b>.\n"
+            "Verify the PVWA hostname is correct and reachable from this machine."
+        )
 
     def _load_p12_client_cert(self, p12_path, p12_password):
         """Convert a PKCS#12 bundle to a temporary PEM cert+key pair for ``requests``.
@@ -614,7 +647,7 @@ class CyberArkImporter(BaseImporter):
             )
         except requests.exceptions.RequestException as e:
             print_formatted_text(
-                HTML(f"Request to <b>{url}</b> <ansired>failed</ansired>: {e}")
+                HTML(f"Request to <b>{_esc(url)}</b> <ansired>failed</ansired>: {_esc(e)}")
             )
             return None
 
@@ -914,14 +947,16 @@ class CyberArkImporter(BaseImporter):
             except requests.exceptions.ConnectionError as e:
                 print_formatted_text(
                     HTML(
-                        f"CyberArk Log on <ansired>failed</ansired>: could not connect to <b>{pvwa_host}</b>.\n"
-                        "Verify the PVWA hostname is correct and reachable from this machine."
+                        f"CyberArk Log on <ansired>failed</ansired>: "
+                        f"{self._connection_error_hint(pvwa_host, e)}"
                     )
                 )
-                print_formatted_text(HTML(f"<ansired>Details:</ansired> {e}"))
+                print_formatted_text(HTML(f"<ansired>Details:</ansired> {_esc(e)}"))
                 return None
             except requests.exceptions.RequestException as e:
-                print_formatted_text(HTML(f"CyberArk Log on <ansired>failed</ansired>: {e}"))
+                print_formatted_text(
+                    HTML(f"CyberArk Log on <ansired>failed</ansired>: {_esc(e)}")
+                )
                 return None
             if response.status_code != 200:
                 print_formatted_text(
@@ -1306,7 +1341,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "test"},
+                                json={"reason": "Keeper Commander Import"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,

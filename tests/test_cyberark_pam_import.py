@@ -836,6 +836,74 @@ class TestSSLVerification:
         assert client.verify_ssl is True
 
 
+class TestSelfHostedClientCert:
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.requests")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.prompt")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_auth_self_hosted_sends_client_cert(self, mock_dns, mock_prompt, mock_requests, mock_print):
+        mock_prompt.side_effect = ["Cyberark", "admin", "pass"]
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = "token123"
+        mock_requests.post.return_value = mock_resp
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client.client_cert = ("cert.pem", "key.pem")
+
+        assert client._auth_self_hosted() is True
+        _, kwargs = mock_requests.post.call_args
+        assert kwargs.get("cert") == ("cert.pem", "key.pem")
+        assert kwargs.get("verify") is True
+        assert kwargs.get("allow_redirects") is not False
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.requests")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_retrieve_password_sends_client_cert(self, mock_dns, mock_requests, mock_print):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = "secret"
+        mock_requests.post.return_value = mock_resp
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client.client_cert = ("cert.pem", "key.pem")
+        client.auth_token = "session-token"
+        assert client.retrieve_password("12_3", "acct", "Safe") == "secret"
+        _, kwargs = mock_requests.post.call_args
+        assert kwargs.get("cert") == ("cert.pem", "key.pem")
+        assert kwargs.get("json") == {"reason": "test"}
+        assert kwargs.get("allow_redirects") is False
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text")
+    @patch("keepercommander.importer.cyberark.pam.client.CyberArkPVWAClient._load_p12_client_cert",
+           return_value=("cert.pem", "key.pem"))
+    @patch("keepercommander.importer.cyberark.pam.client.path.isfile", return_value=True)
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_maybe_configure_client_cert_from_env(self, mock_dns, mock_isfile, mock_load, mock_print, monkeypatch):
+        monkeypatch.setenv("KEEPER_CYBERARK_CLIENT_CERT_P12", "client.p12")
+        monkeypatch.setenv("KEEPER_CYBERARK_CLIENT_CERT_PASSWORD", "p12-secret")
+        client = CyberArkPVWAClient("pvwa.example.com")
+        assert client._maybe_configure_client_cert() is True
+        assert client.client_cert == ("cert.pem", "key.pem")
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.print_formatted_text")
+    @patch("keepercommander.importer.cyberark.pam.client.CyberArkPVWAClient._load_p12_client_cert",
+           return_value=("cert.pem", "key.pem"))
+    @patch("keepercommander.importer.cyberark.pam.client.path.isfile", return_value=True)
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_maybe_configure_client_cert_from_legacy_env(self, mock_dns, mock_isfile, mock_load, mock_print, monkeypatch):
+        monkeypatch.setenv("_CYBERARK_CLIENT_CERT_P12", "legacy-client.p12")
+        monkeypatch.setenv("_CYBERARK_CLIENT_CERT_PASSWORD", "legacy-secret")
+        client = CyberArkPVWAClient("pvwa.example.com")
+        assert client._maybe_configure_client_cert() is True
+        assert client.client_cert == ("cert.pem", "key.pem")
+
+
 # ── CyberArkPAMImportCommand Tests ──────────────────────────
 
 
@@ -867,6 +935,8 @@ class TestCyberArkPAMImportCommandParser:
             "--platform-map", "map.json",
             "--state-filter", "active,inactive",
             "--no-verify-ssl",
+            "--client-cert-p12", "client.p12",
+            "--client-cert-password", "secret",
         ])
         assert args.server == "pvwa.example.com"
         assert args.project_name == "My Project"
@@ -891,6 +961,8 @@ class TestCyberArkPAMImportCommandParser:
         assert args.platform_map == "map.json"
         assert args.state_filter == "active,inactive"
         assert args.no_verify_ssl is True
+        assert args.client_cert_p12 == "client.p12"
+        assert args.client_cert_password == "secret"
 
     def test_minimal_args(self):
         cmd = CyberArkPAMImportCommand()

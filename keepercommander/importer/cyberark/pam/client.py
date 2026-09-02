@@ -14,14 +14,19 @@ import ipaddress
 import json
 import logging
 import math
+import os
 import re
+import stat
 import sys
+import tempfile
 import webbrowser
+import warnings
 from os import environ, path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
 
 import requests as _requests_module
+from urllib3.exceptions import InsecureRequestWarning
 
 from .constants import (
     MAX_FETCH_RECORDS,
@@ -89,6 +94,8 @@ class CyberArkPVWAClient:
         host, query_params = self._normalize_host(pvwa_host)
         self.pvwa_host = host
         self.query_params = query_params
+        self.client_cert = None
+        self._tmp_cert_files: List[str] = []
         # SSL verification: always True for Privilege Cloud.
         # For self-hosted: default True, caller can disable with verify_ssl=False.
         if self.pvwa_host.endswith(".cyberark.cloud"):
@@ -99,7 +106,209 @@ class CyberArkPVWAClient:
                 logging.warning("SSL certificate verification is disabled for self-hosted PVWA. "
                                 "This is insecure and vulnerable to man-in-the-middle attacks.")
         self.auth_token = None
+        timeout_env = environ.get("KEEPER_CYBERARK_TIMEOUT") or environ.get("_CYBERARK_TIMEOUT")
+        if timeout_env:
+            try:
+                self.TIMEOUT = int(timeout_env)
+            except ValueError:
+                pass
         self._validate_host(self.pvwa_host)
+
+    def _pvwa_request(self, method: str, url: str, **kwargs):
+        """Send a PVWA request the same way as ``import --format=cyberark``.
+
+        Applies mTLS client cert, timeout, TLS verify, and suppresses the
+        urllib3 warning when verification is intentionally disabled.
+        GET/POST go through ``requests.get``/``requests.post`` so unit tests
+        that patch those helpers still intercept PVWA traffic.
+        """
+        kwargs.setdefault("timeout", self.TIMEOUT)
+        kwargs.setdefault("verify", self.verify_ssl)
+        if self.client_cert and "cert" not in kwargs:
+            kwargs["cert"] = self.client_cert
+        method_u = method.upper()
+
+        def _do():
+            if method_u == "GET":
+                return requests.get(url, **kwargs)
+            if method_u == "POST":
+                return requests.post(url, **kwargs)
+            return requests.request(method_u, url, **kwargs)
+
+        if kwargs.get("verify") is False:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                return _do()
+        return _do()
+
+    @staticmethod
+    def _connection_error_hint(pvwa_host, error):
+        """Return user-facing guidance for a PVWA connection failure."""
+        err = str(error).lower()
+        host = _esc(pvwa_host)
+        if "getaddrinfo failed" in err or "failed to resolve" in err or "name resolution" in err:
+            return (
+                f"Could not resolve hostname <b>{host}</b>.\n"
+                "For self-hosted PVWA, use the exact hostname or IP from your CyberArk admin, "
+                "connect to VPN, or add an entry to your hosts file."
+            )
+        if "ssl" in err or "certificate" in err:
+            return (
+                f"TLS handshake to <b>{host}</b> failed.\n"
+                "If this is a private-CA PVWA, the server certificate chain may be incomplete, "
+                "or the P12 client certificate may not be trusted by IIS. "
+                "Retry with the same host used by <i>import --format=cyberark</i>."
+            )
+        if "timed out" in err or "timeout" in err:
+            return (
+                f"Connection to <b>{host}</b> timed out.\n"
+                "Ensure VPN is connected, the PVWA is running, and the port is reachable. "
+                "If PVWA uses a non-standard port, specify it as <b>hostname:port</b>."
+            )
+        if "connection refused" in err:
+            return (
+                f"Connection to <b>{host}</b> was refused.\n"
+                "Verify the PVWA service is running and the port is correct."
+            )
+        return (
+            f"Could not connect to <b>{host}</b>.\n"
+            "Verify the PVWA hostname is correct and reachable from this machine."
+        )
+
+    def _load_p12_client_cert(self, p12_path: str, p12_password: Optional[str]) -> Optional[Tuple[str, str]]:
+        """Convert a PKCS#12 bundle to temporary PEM cert+key files for requests."""
+        try:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.serialization import pkcs12
+        except ImportError as e:
+            print_formatted_text(
+                HTML(
+                    "<ansired>cryptography package is required for P12 client certificates</ansired>: "
+                    f"{_esc(e)}"
+                )
+            )
+            return None
+
+        try:
+            with open(p12_path, "rb") as fh:
+                p12_bytes = fh.read()
+        except OSError as e:
+            print_formatted_text(
+                HTML(
+                    f"<ansired>Could not read P12 file</ansired> <b>{_esc(p12_path)}</b>: {_esc(e)}"
+                )
+            )
+            return None
+
+        password_bytes = p12_password.encode("utf-8") if p12_password else None
+        try:
+            private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
+                p12_bytes, password_bytes
+            )
+        except ValueError as e:
+            print_formatted_text(
+                HTML(
+                    "<ansired>Failed to decode P12 bundle</ansired> — check the file and passphrase: "
+                    f"{_esc(e)}"
+                )
+            )
+            return None
+
+        if private_key is None or cert is None:
+            print_formatted_text(
+                HTML(
+                    "<ansired>P12 bundle is missing a private key or certificate</ansired>; "
+                    "client-certificate authentication requires both."
+                )
+            )
+            return None
+
+        cert_fd, cert_path = tempfile.mkstemp(prefix="ca_pvwa_", suffix=".pem")
+        key_fd, key_path = tempfile.mkstemp(prefix="ca_pvwa_", suffix=".key.pem")
+        try:
+            with os.fdopen(cert_fd, "wb") as cert_file:
+                cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
+                for extra in additional_certs or []:
+                    cert_file.write(extra.public_bytes(serialization.Encoding.PEM))
+            with os.fdopen(key_fd, "wb") as key_file:
+                key_file.write(
+                    private_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
+            try:
+                os.chmod(cert_path, stat.S_IRUSR | stat.S_IWUSR)
+                os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+        except OSError as e:
+            print_formatted_text(
+                HTML(f"<ansired>Failed to materialize P12 to PEM</ansired>: {_esc(e)}")
+            )
+            for p in (cert_path, key_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return None
+
+        self._tmp_cert_files.extend([cert_path, key_path])
+        return cert_path, key_path
+
+    def _cleanup_tmp_cert_files(self):
+        """Delete temporary PEM files materialized from a P12 bundle."""
+        for p in self._tmp_cert_files:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        self._tmp_cert_files = []
+        self.client_cert = None
+
+    def _maybe_configure_client_cert(self) -> bool:
+        """Load a self-hosted PVWA client cert from P12 when configured."""
+        if self.pvwa_host.endswith(".cyberark.cloud"):
+            return True
+        if self.client_cert:
+            return True
+
+        p12_path = (
+            environ.get("KEEPER_CYBERARK_CLIENT_CERT_P12")
+            or environ.get("_CYBERARK_CLIENT_CERT_P12")
+        )
+        if p12_path is None:
+            try:
+                entered = prompt(
+                    "CyberArk PVWA client certificate P12 path (leave empty if none): "
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                return False
+            p12_path = entered or None
+
+        if not p12_path:
+            return True
+        if not path.isfile(p12_path):
+            print_formatted_text(
+                HTML(f"<ansired>P12 file not found</ansired>: <b>{_esc(p12_path)}</b>")
+            )
+            return False
+
+        p12_password = (
+            environ.get("KEEPER_CYBERARK_CLIENT_CERT_PASSWORD")
+            or environ.get("_CYBERARK_CLIENT_CERT_PASSWORD")
+        )
+        if p12_password is None:
+            p12_password = prompt("P12 passphrase: ", is_password=True)
+        cert_tuple = self._load_p12_client_cert(p12_path, p12_password)
+        if cert_tuple is None:
+            return False
+        self.client_cert = cert_tuple
+        print_formatted_text(
+            HTML("Loaded PVWA client certificate from <b>P12</b> — using mutual TLS.")
+        )
+        return True
 
     @staticmethod
     def _normalize_host(filename):
@@ -166,30 +375,29 @@ class CyberArkPVWAClient:
     def logoff(self):
         """Log off from CyberArk PVWA. Best-effort — failures are silently ignored."""
         if not self.auth_token:
+            self._cleanup_tmp_cert_files()
             return
         try:
             base = self._get_url("safes").rsplit("/Safes", 1)[0]
-            requests.post(
+            self._pvwa_request(
+                "POST",
                 f"{base}/Auth/Logoff",
                 headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
-                timeout=self.TIMEOUT,
-                verify=self.verify_ssl,
-                allow_redirects=False,
             )
         except Exception:
             pass  # Best-effort logoff
         self.auth_token = None
+        self._cleanup_tmp_cert_files()
 
     def _get(self, url, params=None):
         """GET with automatic retry on HTTP 429 (rate limit). Redirects disabled."""
         response = None
         for attempt in range(self.MAX_RETRIES):
-            response = requests.get(
+            response = self._pvwa_request(
+                "GET",
                 url,
                 headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
                 params=params,
-                timeout=self.TIMEOUT,
-                verify=self.verify_ssl,
                 allow_redirects=False,
             )
             if response.status_code != 429:
@@ -781,8 +989,14 @@ class CyberArkPVWAClient:
         return result
 
     def _auth_self_hosted(self) -> bool:
-        login_type = environ.get("KEEPER_CYBERARK_LOGON_TYPE") or prompt(
+        if not self._maybe_configure_client_cert():
+            return False
+        login_type = (
+            environ.get("KEEPER_CYBERARK_LOGON_TYPE")
+            or environ.get("_CYBERARK_LOGON_TYPE")
+            or prompt(
             "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
+            )
         )
         # Validate login_type to prevent URL path injection (case-insensitive)
         if login_type.lower() not in VALID_LOGON_TYPES:
@@ -790,31 +1004,71 @@ class CyberArkPVWAClient:
                 f"<ansired>Invalid logon type</ansired>: must be one of Cyberark, LDAP, RADIUS, Windows"
             ))
             return False
-        username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk username: ")
-        password = environ.get("KEEPER_CYBERARK_PASSWORD") or prompt("CyberArk password: ", is_password=True)
+        username = (
+            environ.get("KEEPER_CYBERARK_USERNAME")
+            or environ.get("_CYBERARK_USERNAME")
+            or prompt("CyberArk username: ")
+        )
+        password = (
+            environ.get("KEEPER_CYBERARK_PASSWORD")
+            or environ.get("_CYBERARK_PASSWORD")
+            or prompt("CyberArk password: ", is_password=True)
+        )
         try:
-            response = requests.post(
+            response = self._pvwa_request(
+                "POST",
                 self._get_url("logon").format(type=login_type),
                 json={"username": username, "password": password},
-                timeout=self.TIMEOUT,
-                verify=self.verify_ssl,
             )
+        except _requests_module.ConnectionError as e:
+            print_formatted_text(
+                HTML(
+                    f"CyberArk Log on <ansired>failed</ansired>: "
+                    f"{self._connection_error_hint(self.pvwa_host, e)}"
+                )
+            )
+            print_formatted_text(HTML(f"<ansired>Details:</ansired> {_esc(e)}"))
+            logging.warning("Logon connection error: %s", e)
+            return False
         except _requests_module.RequestException as e:
-            print_formatted_text(HTML(f"CyberArk Log on <ansired>failed</ansired>: connection error"))
-            logging.debug(f"Logon connection error: {type(e).__name__}")
+            print_formatted_text(
+                HTML(f"CyberArk Log on <ansired>failed</ansired>: {_esc(e)}")
+            )
+            logging.warning("Logon request error: %s", e)
             return False
         if response.status_code != 200:
             print_formatted_text(HTML(
                 f"CyberArk Log on <ansired>failed</ansired> with status code <b>{response.status_code}</b>"
             ))
+            try:
+                body = (response.text or "")[:500]
+                if body:
+                    print_formatted_text(HTML(f"<ansired>Response:</ansired> {_esc(body)}"))
+            except Exception:
+                pass
             return False
-        # CyberArk's Logon endpoint returns the token as a JSON string.
-        # Use json() for proper quote/escape handling rather than strip('"').
+        # Match ``import --format=cyberark``: Logon returns a JSON-quoted string.
         try:
-            token = response.json()
+            parsed = response.json()
         except ValueError:
-            token = response.text.strip('"')
-        self.auth_token = token if isinstance(token, str) else ""
+            parsed = None
+        if isinstance(parsed, str) and parsed.strip():
+            token = parsed.strip()
+        elif isinstance(parsed, dict):
+            token = (
+                parsed.get("CyberArkLogonResult")
+                or parsed.get("token")
+                or parsed.get("sessionToken")
+                or ""
+            )
+        else:
+            token = (response.text or "").strip().strip('"')
+        self.auth_token = str(token).strip().strip('"')
+        if not self.auth_token:
+            print_formatted_text(HTML(
+                "<ansired>CyberArk Log on succeeded but no session token was returned</ansired>"
+            ))
+            return False
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return True
 
@@ -832,8 +1086,24 @@ class CyberArkPVWAClient:
         while True:
             time.sleep(self.DELAY)
             response = self._get(next_url, params=page_params)
+            if response is None:
+                logging.warning('Paginated fetch failed: %s (no response)', next_url)
+                break
             if response.status_code != 200:
-                logging.debug('Paginated fetch failed: %s status %d', next_url, response.status_code)
+                print_formatted_text(HTML(
+                    f"Request to <b>{_esc(next_url)}</b> <ansired>failed</ansired> "
+                    f"with status <b>{response.status_code}</b>"
+                ))
+                try:
+                    body = (response.text or "")[:300]
+                    if body:
+                        print_formatted_text(HTML(f"<ansired>Response:</ansired> {_esc(body)}"))
+                except Exception:
+                    pass
+                logging.warning(
+                    'Paginated fetch failed: %s status %d',
+                    next_url, response.status_code,
+                )
                 break
             try:
                 data = response.json()
@@ -901,6 +1171,11 @@ class CyberArkPVWAClient:
             # Fetch from server — now with pagination
             print_formatted_text(HTML("Getting safes from the server..."))
             safes = self._paginate(self._get_url("safes"), limit=200)
+            if not safes:
+                safes = self._paginate(
+                    f"https://{self.pvwa_host}/PasswordVault/api/Safes",
+                    limit=200,
+                )
             if not safes:
                 print_formatted_text(HTML(f"No Safes on server <ansired>{_esc(self.pvwa_host)}</ansired>"))
             return safes
@@ -1393,67 +1668,115 @@ class CyberArkPVWAClient:
                           account_id, type(e).__name__)
         return None
 
+    @staticmethod
+    def _safe_account_id(account_id) -> Optional[str]:
+        """Return a path-safe CyberArk account id, or None if it looks malicious."""
+        s = str(account_id or "").strip()
+        if not s or len(s) > 128:
+            return None
+        if any(ch in s for ch in ("/", "\\", "?", "#", "\x00")) or ".." in s:
+            return None
+        return s
+
     def retrieve_password(self, account_id: str, account_name: str = "",
                           safe_name: str = "", skip_all: Optional[dict] = None) -> Optional[str]:
         """Retrieve password for an account. Returns password string or None."""
         if skip_all is None:
             skip_all = {}
-        # Validate account_id format before URL interpolation
-        if not re.match(r'^[a-zA-Z0-9_]+$', str(account_id)):
+        account_id_raw = account_id
+        account_id = self._safe_account_id(account_id)
+        if not account_id:
             logging.warning('Invalid account ID for password retrieval: %s',
-                            re.sub(r'[^a-zA-Z0-9_]', '?', str(account_id)))
+                            re.sub(r'[^a-zA-Z0-9_.\-]', '?', str(account_id_raw)))
             return None
+        payload = {"reason": "Keeper Commander Ismport"}
+        if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ:
+            payload["TicketingSystemName"] = environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]
+        if "KEEPER_CYBERARK_TICKET_ID" in environ:
+            payload["TicketId"] = environ["KEEPER_CYBERARK_TICKET_ID"]
+        retrieve_urls = [
+            self._get_url("account_password").format(account_id=account_id),
+            f"https://{self.pvwa_host}/PasswordVault/api/Accounts/{account_id}/Password/Retrieve",
+        ]
         retry = True
+        url_index = 0
         while retry is True:
+            url = retrieve_urls[url_index]
             try:
-                response = requests.post(
-                    self._get_url("account_password").format(account_id=account_id),
-                    headers={"Authorization": self.auth_token, "Content-Type": "application/json"},
-                    json={
-                        "reason": "test",
-                        **({"TicketingSystemName": environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]}
-                           if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ else {}),
-                        **({"TicketId": environ["KEEPER_CYBERARK_TICKET_ID"]}
-                           if "KEEPER_CYBERARK_TICKET_ID" in environ else {}),
+                response = self._pvwa_request(
+                    "POST",
+                    url,
+                    headers={
+                        "Authorization": self.auth_token,
+                        "Content-Type": "application/json",
                     },
-                    timeout=self.TIMEOUT,
-                    verify=self.verify_ssl,
+                    json=payload,
+                    allow_redirects=False,
                 )
             except _requests_module.RequestException as e:
-                logging.debug('Password retrieval network error for %s: %s',
-                              account_id, type(e).__name__)
+                print_formatted_text(HTML(
+                    f"Password retrieval <ansired>failed</ansired> for "
+                    f"<i>{_esc(account_name)}</i>: {_esc(e)}"
+                ))
+                logging.warning('Password retrieval network error for %s: %s',
+                                account_id, e)
                 return None
             if response.status_code == 200:
-                # Password endpoint returns a JSON string; parse properly
-                # to avoid edge cases in embedded quotes or escapes.
                 try:
                     pw = response.json()
                 except ValueError:
                     pw = response.text.strip('"')
                 return pw if isinstance(pw, str) else None
-            elif 400 <= response.status_code < 500:
+            if response.status_code in (401, 404, 405) and url_index < len(retrieve_urls) - 1:
+                url_index += 1
+                logging.debug(
+                    'Password retrieve %s at %s — trying fallback URL',
+                    response.status_code, url,
+                )
+                continue
+            if 400 <= response.status_code < 500:
                 try:
                     error = response.json()
+                    if not isinstance(error, dict):
+                        error = {"ErrorCode": "UNKNOWN", "ErrorMessage": str(error)}
                 except ValueError:
-                    error = {"ErrorCode": "UNKNOWN", "ErrorMessage": "Non-JSON error response"}
+                    error = {
+                        "ErrorCode": "UNKNOWN",
+                        "ErrorMessage": (response.text or "Non-JSON error response")[:300],
+                    }
                 error_code = error.get("ErrorCode")
+                error_message = error.get("ErrorMessage") or ""
+                print_formatted_text(HTML(
+                    f"Password retrieval <ansired>failed</ansired> "
+                    f"(HTTP {response.status_code}) for <i>{_esc(account_name)}</i> "
+                    f"in safe <i>{_esc(safe_name)}</i>: "
+                    f"{_esc(error_code)} {_esc(error_message)}"
+                ))
                 if error_code in skip_all:
                     return None
-                retry = button_dialog(
-                    title=f"{response.status_code}",
-                    text=HTML(
-                        f"Error {_esc(error_code)}: <ansired>{_esc(error.get('ErrorMessage', ''))}</ansired>\n"
-                        f"Account <i>{_esc(account_name)}</i> with ID <i>{_esc(account_id)}</i> in Safe <i>{_esc(safe_name)}</i>"
-                    ),
-                    buttons=[("Retry", True), ("Skip", False), ("Skip All", None)],
-                    style=Style.from_dict({"dialog": "bg:ansiblack"}),
-                ).run()
+                try:
+                    retry = button_dialog(
+                        title=f"{response.status_code}",
+                        text=HTML(
+                            f"Error {_esc(error_code)}: <ansired>{_esc(error_message)}</ansired>\n"
+                            f"Account <i>{_esc(account_name)}</i> with ID "
+                            f"<i>{_esc(account_id)}</i> in Safe <i>{_esc(safe_name)}</i>"
+                        ),
+                        buttons=[("Retry", True), ("Skip", False), ("Skip All", None)],
+                        style=Style.from_dict({"dialog": "bg:ansiblack"}),
+                    ).run()
+                except Exception:
+                    return None
                 if retry is None:
                     skip_all[error_code] = True
                     return None
                 if retry is False:
                     return None
+                url_index = 0
             else:
-                print_formatted_text(HTML(f"Password retrieval <ansired>aborted</ansired> (status {response.status_code})"))
+                print_formatted_text(HTML(
+                    f"Password retrieval <ansired>aborted</ansired> "
+                    f"(status {response.status_code})"
+                ))
                 return None
         return None
