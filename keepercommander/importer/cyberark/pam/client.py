@@ -1689,7 +1689,7 @@ class CyberArkPVWAClient:
             logging.warning('Invalid account ID for password retrieval: %s',
                             re.sub(r'[^a-zA-Z0-9_.\-]', '?', str(account_id_raw)))
             return None
-        payload = {"reason": "Keeper Commander Ismport"}
+        payload = {"reason": "Keeper Commander Import"}
         if "KEEPER_CYBERARK_TICKETING_SYSTEM" in environ:
             payload["TicketingSystemName"] = environ["KEEPER_CYBERARK_TICKETING_SYSTEM"]
         if "KEEPER_CYBERARK_TICKET_ID" in environ:
