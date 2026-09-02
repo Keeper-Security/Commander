@@ -145,6 +145,8 @@ def suppress_exit(self, status=0, message=None):
 
 def normalize_parent_uid(uid):
     """Normalize root folder UIDs to a consistent ``'root'`` or empty string."""
+    if not isinstance(uid, str):
+        uid = str(uid) if uid else ''
     if uid == ROOT_FOLDER_UID or uid == 'root':
         return 'root'
     return uid or ''
@@ -192,7 +194,12 @@ def is_nested_share_folder_owner_email(params, folder_uid, email):
         return False
     fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid) or {}
     owner_username = fobj.get('owner_username') or ''
-    return bool(owner_username) and owner_username.casefold() == email.casefold()
+    if not owner_username:
+        logger.debug('Folder owner_username not found for folder_uid=%s', folder_uid)
+        return False
+    if not isinstance(email, str):
+        email = str(email)
+    return owner_username.casefold() == email.casefold()
 
 
 def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *,
@@ -368,6 +375,15 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 
     visited = set()
 
+    # Build parent→children index for efficient tree traversal
+    children_index = {}
+    if recursive:
+        for child_uid, child_obj in nsf_folders.items():
+            parent = child_obj.get('parent_uid') or ROOT_FOLDER_UID
+            if parent not in children_index:
+                children_index[parent] = []
+            children_index[parent].append(child_uid)
+
     def walk(fuid):
         if fuid in visited:
             return
@@ -375,8 +391,8 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
         add_records(fuid)
         if not recursive:
             return
-        for child_uid, child_obj in nsf_folders.items():
-            if child_obj.get('parent_uid') == fuid and child_uid not in visited:
+        for child_uid in children_index.get(fuid, []):
+            if child_uid not in visited:
                 walk(child_uid)
 
     walk(folder_uid)
@@ -691,6 +707,8 @@ def format_role_display(role):
         from ...proto import folder_pb2
         try:
             role = folder_pb2.AccessRoleType.Name(role)
+        except ValueError:
+            return f'UNKNOWN({role})'
         except Exception:
             return str(role)
     if isinstance(role, str):
@@ -718,9 +736,9 @@ def get_access_role_label(access):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def format_timestamp(ms):
-    """Format a millisecond epoch timestamp as ``'YYYY-MM-DD HH:MM:SS'``."""
+    """Format a millisecond epoch timestamp as ``'YYYY-MM-DD HH:MM:SS'`` (UTC)."""
     if ms:
-        return datetime.datetime.fromtimestamp(ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     return ''
 
 
@@ -820,6 +838,7 @@ def _check_folder_permission(params, folder_uid, permission_key, error_message, 
     from ...proto import folder_pb2
     accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid, [])
     if not accesses:
+        logger.debug('No accesses found for folder_uid=%s; skipping permission check', folder_uid)
         return
 
     current_account_uid = _current_user_account_uid(params)
