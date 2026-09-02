@@ -266,6 +266,7 @@ class CyberArkImporter(BaseImporter):
 
     # Delay between requests to avoid hitting the API rate limits
     DELAY = 0.025
+    _PLATFORM_NAME_KEYS = ("platformName", "platformId")
     # CyberArk REST API endpoints (relative to the base URL)
     ENDPOINTS = {
         "accounts": "Accounts",
@@ -324,7 +325,7 @@ class CyberArkImporter(BaseImporter):
 
         platform_properties = cls._platform_properties(account)
         properties = dict(platform_properties) if isinstance(platform_properties, dict) else {}
-        for key in ("platformName", "platformId"):
+        for key in cls._PLATFORM_NAME_KEYS:
             value = account.get(key)
             if value not in (None, ""):
                 properties.setdefault("Platform Name", value)
