@@ -505,7 +505,7 @@ class PasswordComplexityEnforcer:
         return failures
 
     @classmethod
-    def validate_password(cls, password, policy):   # type: (str, Dict[str, Any]) -> List[str]
+    def validate_password(cls, password, policy, allow_passphrase_fallback=True):   # type: (str, Dict[str, Any], bool) -> List[str]
         failures = []   # type: List[str]
         if not policy or not isinstance(password, str) or not password:
             return failures
@@ -540,7 +540,7 @@ class PasswordComplexityEnforcer:
             return []
 
         # Vault re-validates as a passphrase when random password rules fail.
-        if policy.get('passphrase-allow') is False:
+        if not allow_passphrase_fallback or policy.get('passphrase-allow') is False:
             return failures
 
         passphrase_failures = cls.validate_passphrase(password, policy)
@@ -550,7 +550,7 @@ class PasswordComplexityEnforcer:
         return passphrase_failures
 
     @classmethod
-    def validate_record(cls, params, source):   # type: (KeeperParams, Any) -> List[str]
+    def validate_record(cls, params, source, allow_passphrase_fallback=True):   # type: (KeeperParams, Any, bool) -> List[str]
         """Return policy violations across all password fields in `source`.
 
         `source` may be a vault.TypedRecord, a v3 record-data dict, or a JSON
@@ -562,7 +562,7 @@ class PasswordComplexityEnforcer:
             return []
         failures = []   # type: List[str]
         for pw in cls._extract_passwords(source):
-            failures.extend(cls.validate_password(pw, policy))
+            failures.extend(cls.validate_password(pw, policy, allow_passphrase_fallback))
         return failures
 
     @staticmethod

@@ -266,6 +266,16 @@ class RecordEditMixin:
     def on_info(self, message):
         logging.info(message)
 
+    def validate_generated_password(self, password, algorithm):
+        """Validate a generated password with the correct algorithm flag."""
+        if not password or not self._password_policy:
+            return
+        allow_passphrase = algorithm == 'passphrase'
+        failures = PasswordComplexityEnforcer.validate_password(
+            password, self._password_policy, allow_passphrase_fallback=allow_passphrase)
+        for failure in failures:
+            self.on_warning(failure)
+
     def warn_wrong_password_gen_field(self, parsed_field):
         # type: (ParsedFieldValue) -> bool
         """Warn when $GEN is used with a label like Password= instead of password=."""
@@ -328,10 +338,12 @@ class RecordEditMixin:
             elif parsed_field.type == 'password':
                 action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
+                    algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
                     password, gen_error = self.generate_password(action_params, policy=self._password_policy)
                     if gen_error:
                         self.on_error(gen_error)
                     elif password is not None:
+                        self.validate_generated_password(password, algorithm)
                         record.password = password
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
@@ -669,10 +681,13 @@ class RecordEditMixin:
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
+                        algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
                         value, gen_error = self.generate_password(action_params, policy=self._password_policy)
                         if gen_error:
                             self.on_error(gen_error)
                             continue
+                        if value is not None:
+                            self.validate_generated_password(value, algorithm)
                     elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
                     elif record_field.type in ('keyPair', 'privateKey'):
@@ -683,6 +698,8 @@ class RecordEditMixin:
                             if gen_error:
                                 self.on_error(gen_error)
                                 continue
+                            if passphrase:
+                                self.validate_generated_password(passphrase, 'password')
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')
                         value = self.generate_key_pair(key_type, passphrase)
                         if passphrase:
@@ -980,12 +997,6 @@ class RecordAddCommand(Command, RecordEditMixin):
             record.record_uid = record_uid
         record.title = title
         record.notes = self.validate_notes(kwargs.get('notes') or '')
-
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
-        for f in pw_failures:
-            self.on_warning(f)
-        if pw_failures and not kwargs.get('force'):
-            self.on_warning('Use --force to bypass password policy warnings.')
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:
@@ -1369,13 +1380,6 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         if self.abort_if_errors():
             return
-
-        if isinstance(record, vault.TypedRecord):
-            pw_failures = PasswordComplexityEnforcer.validate_record(params, record)
-            for f in pw_failures:
-                self.on_warning(f)
-            if pw_failures and not kwargs.get('force'):
-                self.on_warning('Use --force to bypass password policy warnings.')
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:
