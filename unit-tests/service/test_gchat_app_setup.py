@@ -191,6 +191,31 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(fields[GChatConstants.FIELD_PEDM_POLLING_INTERVAL], '60')
         self.assertEqual(fields[GChatConstants.FIELD_DEVICE_APPROVAL_ENABLED], 'false')
 
+    def test_get_approvals_profile(self):
+        profile = self.cmd.get_approvals_profile()
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile.channel_header, 'APPROVALS_SPACE_ID')
+        self.assertEqual(profile.channel_prompt, 'Space ID (starts with spaces/):')
+        self.assertTrue(profile.validate_channel('spaces/AAAA'))
+        self.assertFalse(profile.validate_channel('invalid'))
+
+    def test_build_record_custom_fields_includes_approvals_fields(self):
+        config = GChatConfig(
+            google_service_account_json='{"type":"service_account"}',
+            google_project_id='my-gcp-project',
+            google_subscription_id='keeper-chat-events',
+            google_topic_id='keeper-chat-topic',
+            chat_approvals_space_id='spaces/AAAA',
+        )
+        fields = {
+            field.label: field.get_default_value()
+            for field in self.cmd.build_record_custom_fields(config)
+        }
+        self.assertIn(GChatConstants.FIELD_MULTI_CHANNEL_ENABLED, fields)
+        self.assertIn(GChatConstants.FIELD_APPROVALS_TEAMS, fields)
+        self.assertEqual(fields[GChatConstants.FIELD_MULTI_CHANNEL_ENABLED], 'false')
+        self.assertEqual(fields[GChatConstants.FIELD_APPROVALS_TEAMS], '')
+
 
 if __name__ == '__main__':
     unittest.main()

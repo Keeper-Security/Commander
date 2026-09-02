@@ -20,6 +20,11 @@ import re
 from .... import vault
 from ....display import bcolors
 from ...docker import GChatConfig, GChatConstants
+from .approvals_setup import (
+    ApprovalsChannelProfile,
+    approvals_config_to_record_fields,
+    print_approvals_config,
+)
 from .integration_setup_base import IntegrationSetupCommand
 
 # Short Pub/Sub IDs, or full resource names:
@@ -31,6 +36,19 @@ _SUBSCRIPTION_RESOURCE_PATTERN = re.compile(
 )
 _TOPIC_RESOURCE_PATTERN = re.compile(
     r'^projects/([^/]+)/topics/([A-Za-z][\w.-]{2,})$'
+)
+
+GCHAT_APPROVALS_PROFILE = ApprovalsChannelProfile(
+    channel_header='APPROVALS_SPACE_ID',
+    single_channel_description='Google Chat space ID for approval notifications',
+    channel_description='Google Chat space where approval requests for this approver team are sent',
+    default_channel_description=(
+        'Default space for EPM privilege requests, SSO Cloud device approvals, '
+        'and approval requests from users not assigned to an approver team'
+    ),
+    channel_prompt='Space ID (starts with spaces/):',
+    validate_channel=lambda c: bool(c and c.startswith('spaces/')),
+    channel_error="Invalid Approvals Space ID (must start with 'spaces/')",
 )
 
 
@@ -51,6 +69,9 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
 
     def get_integration_config_marker_field(self) -> str:
         return GChatConstants.FIELD_SERVICE_ACCOUNT_JSON
+
+    def get_approvals_profile(self):
+        return GCHAT_APPROVALS_PROFILE
 
     # ── Google Chat-specific configuration ────────────────────────
 
@@ -109,6 +130,10 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             GChatConstants.DEFAULT_COMMAND_CREATE_SECRET_ID,
         )
 
+        profile = self.get_approvals_profile()
+        assert profile is not None
+        approvals = self._collect_approvals_config(params, profile)
+
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
 
@@ -124,6 +149,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             chat_command_request_folder_id=chat_command_request_folder_id,
             chat_command_external_share_id=chat_command_external_share_id,
             chat_command_create_secret_id=chat_command_create_secret_id,
+            approvals=approvals,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -171,6 +197,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
                 config.chat_command_create_secret_id,
                 GChatConstants.FIELD_COMMAND_CREATE_SECRET_ID,
             ),
+            *approvals_config_to_record_fields(config.approvals),
             vault.TypedField.new_field(
                 'text',
                 'true' if config.pedm_enabled else 'false',
@@ -203,10 +230,6 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             f"{bcolors.OKBLUE}{config.google_subscription_id}{bcolors.ENDC}"
         )
         print(
-            f"    • Approvals Space: "
-            f"{bcolors.OKBLUE}{config.chat_approvals_space_id}{bcolors.ENDC}"
-        )
-        print(
             f"    • /keeper-request-record ID: "
             f"{bcolors.OKBLUE}{config.chat_command_request_record_id}{bcolors.ENDC}"
         )
@@ -222,6 +245,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             f"    • /keeper-create-secret ID: "
             f"{bcolors.OKBLUE}{config.chat_command_create_secret_id}{bcolors.ENDC}"
         )
+        print_approvals_config(config.approvals)
 
     def print_integration_commands(self):
         print(f"\n{bcolors.BOLD}Google Chat Commands Available:{bcolors.ENDC}")
