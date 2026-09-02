@@ -44,6 +44,24 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
+def _cyberark_skip_arg(value):
+    skip_targets = []
+    valid_targets = {"team", "role", "user"}
+    aliases = {"teams": "team", "roles": "role", "users": "user"}
+    for target in str(value or "").split(","):
+        target = target.strip().lower()
+        if not target:
+            continue
+        target = aliases.get(target, target)
+        if target not in valid_targets:
+            raise argparse.ArgumentTypeError(
+                f"unsupported CyberArk skip target '{target}'. Use team, role, user"
+            )
+        if target not in skip_targets:
+            skip_targets.append(target)
+    return ",".join(skip_targets)
+
+
 import_parser = argparse.ArgumentParser(prog='import', description='Import vault data from a local file into Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',
                            help='display Keeper CSV import instructions')
@@ -88,6 +106,8 @@ import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
 import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
+import_parser.add_argument('--skip', dest='skip', action='store', type=_cyberark_skip_arg,
+                           help='CyberArk only: comma-separated targets to skip: team, role, user')
 import_parser.add_argument(
     'name', type=str,
     help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
@@ -298,6 +318,10 @@ class RecordImportCommand(ImporterCommand):
         if kwargs.get('target_node') and import_format != 'cyberark':
             logging.warning('--target-node/--node is only used with --format=cyberark; ignoring')
             kwargs['target_node'] = None
+
+        if kwargs.get('skip') and import_format != 'cyberark':
+            logging.warning('--skip is only used with --format=cyberark; ignoring')
+            kwargs['skip'] = ''
 
         logging.info('Processing... please wait.')
         imp_exp._import(params, import_format, import_name, manage_users=manage_users, manage_records=manage_records,

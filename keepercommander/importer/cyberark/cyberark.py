@@ -266,6 +266,7 @@ class CyberArkImporter(BaseImporter):
 
     # Delay between requests to avoid hitting the API rate limits
     DELAY = 0.025
+    _PLATFORM_NAME_KEYS = ("platformName", "platformId")
     # CyberArk REST API endpoints (relative to the base URL)
     ENDPOINTS = {
         "accounts": "Accounts",
@@ -287,6 +288,155 @@ class CyberArkImporter(BaseImporter):
         self._tmp_cert_files = []
         # ``verify`` value used for every PVWA request. Defaults to False (self-hosted PVWAs typically use a private CA), but can be overridden by the ``_CYBERARK_CA_BUNDLE`` env var to point at a CA file/dir.
         self._verify_tls = False
+        timeout_env = environ.get("_CYBERARK_TIMEOUT")
+        if timeout_env:
+            try:
+                self.TIMEOUT = int(timeout_env)
+            except ValueError:
+                pass
+
+    @classmethod
+    def _normalize_property_key(cls, key):
+        return re.sub(r"[^a-z0-9]", "", str(key).casefold())
+
+    @classmethod
+    def _platform_properties(cls, account):
+        if not isinstance(account, dict):
+            return {}
+        properties = account.get("platformAccountProperties")
+        return properties if isinstance(properties, dict) else {}
+
+    @classmethod
+    def _get_platform_property(cls, account, *names):
+        properties = cls._platform_properties(account)
+        if not properties:
+            return None
+        normalized_names = {cls._normalize_property_key(name) for name in names}
+        for key, value in properties.items():
+            if cls._normalize_property_key(key) in normalized_names:
+                return value
+        return None
+
+    @classmethod
+    def _add_account_metadata(cls, record, account):
+        """Add CyberArk platform account properties as Keeper custom fields."""
+        if not isinstance(account, dict):
+            return
+
+        platform_properties = cls._platform_properties(account)
+        properties = dict(platform_properties) if isinstance(platform_properties, dict) else {}
+        for key in cls._PLATFORM_NAME_KEYS:
+            value = account.get(key)
+            if value not in (None, ""):
+                properties.setdefault("Platform Name", value)
+                break
+        for key in ("deviceType", "device type"):
+            value = account.get(key)
+            if value not in (None, ""):
+                properties.setdefault("Device Type", value)
+                break
+        if not properties:
+            return
+
+        existing_labels = {
+            str(field.label).casefold()
+            for field in getattr(record, "fields", [])
+            if getattr(field, "label", None)
+        }
+        host_values = set()
+        port_values = set()
+        for field in getattr(record, "fields", []):
+            if getattr(field, "type", None) != "host":
+                continue
+            host_value = getattr(field, "value", None)
+            if isinstance(host_value, dict):
+                for host_key in ("hostName", "host"):
+                    if host_value.get(host_key):
+                        host_values.add(str(host_value[host_key]))
+                if host_value.get("port"):
+                    port_values.add(str(host_value["port"]))
+            elif host_value:
+                host_values.add(str(host_value))
+
+        def field_value_to_text(value):
+            if isinstance(value, str):
+                return value
+            return json.dumps(
+                value, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            )
+
+        def is_standard_mapped_value(label, field_value):
+            label_key = label.casefold()
+            normalized_label_key = cls._normalize_property_key(label)
+            if normalized_label_key in {"name", "itemname"}:
+                return bool(record.title) and field_value == record.title
+            if normalized_label_key == "url":
+                return bool(record.login_url) and field_value == record.login_url
+            if normalized_label_key == "logondomain":
+                return bool(record.login) and record.login.casefold().startswith(
+                    f"{field_value}\\".casefold()
+                )
+            if normalized_label_key in {"address", "host", "hostname"}:
+                return field_value in host_values
+            if normalized_label_key in {"port", "portnumber"}:
+                return field_value in port_values or any(
+                    getattr(field, "type", None) == "port" and str(getattr(field, "value", "")) == field_value
+                    for field in getattr(record, "fields", [])
+                )
+            if normalized_label_key in {"username", "accountname"}:
+                return bool(record.login) and (
+                    field_value == record.login or record.login.endswith(f"\\{field_value}")
+                )
+            return False
+
+        def field_label_to_text(label):
+            parts = []
+            for part in str(label).replace("_", " ").split("."):
+                part = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", part)
+                part = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", part)
+                parts.append(" ".join(part.split()))
+            return ".".join(parts)
+
+        def add_value(label, value):
+            raw_label = str(label)
+            label = field_label_to_text(raw_label)
+            label_key = label.casefold()
+            if not label or label_key in existing_labels:
+                return
+            field_value = field_value_to_text(value)
+            if (is_standard_mapped_value(raw_label, field_value)
+                    or is_standard_mapped_value(label, field_value)):
+                return
+            record.fields.append(RecordField(
+                "text", label=label, value=field_value,
+            ))
+            existing_labels.add(label_key)
+
+        def flatten(value, label):
+            if isinstance(value, dict) and value:
+                for child_key, child_value in value.items():
+                    child_label = f"{label}.{child_key}" if label else str(child_key)
+                    flatten(child_value, child_label)
+            else:
+                add_value(label, value)
+
+        for property_key, property_value in properties.items():
+            property_label = str(property_key)
+            flatten(property_value, property_label)
+
+    @classmethod
+    def _account_title(cls, account):
+        """Return the Keeper title for a CyberArk account."""
+        if not isinstance(account, dict):
+            return "CyberArk Account"
+        properties = account.get("platformAccountProperties")
+        if not isinstance(properties, dict):
+            properties = {}
+        for value in (account.get("name"), properties.get("ItemName"), account.get("id")):
+            if value:
+                return str(value)
+        return "CyberArk Account"
 
     @classmethod
     def get_url(cls, pvwa_host, endpoint):
@@ -301,6 +451,33 @@ class CyberArkImporter(BaseImporter):
                 warnings.simplefilter("ignore", InsecureRequestWarning)
                 return requests.request(method, url, **kwargs)
         return requests.request(method, url, **kwargs)
+
+    @staticmethod
+    def _connection_error_hint(pvwa_host, error):
+        """Return user-facing guidance for a PVWA connection failure."""
+        err = str(error).lower()
+        host = _esc(pvwa_host)
+        if "getaddrinfo failed" in err or "failed to resolve" in err or "name resolution" in err:
+            return (
+                f"Could not resolve hostname <b>{host}</b>.\n"
+                "For self-hosted PVWA, use the exact hostname or IP from your CyberArk admin, "
+                "connect to VPN, or add an entry to your hosts file."
+            )
+        if "timed out" in err or "timeout" in err:
+            return (
+                f"Connection to <b>{host}</b> timed out.\n"
+                "Ensure VPN is connected, the PVWA is running, and the port is reachable. "
+                "If PVWA uses a non-standard port, specify it as <b>hostname:port</b>."
+            )
+        if "connection refused" in err:
+            return (
+                f"Connection to <b>{host}</b> was refused.\n"
+                "Verify the PVWA service is running and the port is correct."
+            )
+        return (
+            f"Could not connect to <b>{host}</b>.\n"
+            "Verify the PVWA hostname is correct and reachable from this machine."
+        )
 
     def _load_p12_client_cert(self, p12_path, p12_password):
         """Convert a PKCS#12 bundle to a temporary PEM cert+key pair for ``requests``.
@@ -471,7 +648,7 @@ class CyberArkImporter(BaseImporter):
             )
         except requests.exceptions.RequestException as e:
             print_formatted_text(
-                HTML(f"Request to <b>{url}</b> <ansired>failed</ansired>: {e}")
+                HTML(f"Request to <b>{_esc(url)}</b> <ansired>failed</ansired>: {_esc(e)}")
             )
             return None
 
@@ -771,14 +948,16 @@ class CyberArkImporter(BaseImporter):
             except requests.exceptions.ConnectionError as e:
                 print_formatted_text(
                     HTML(
-                        f"CyberArk Log on <ansired>failed</ansired>: could not connect to <b>{pvwa_host}</b>.\n"
-                        "Verify the PVWA hostname is correct and reachable from this machine."
+                        f"CyberArk Log on <ansired>failed</ansired>: "
+                        f"{self._connection_error_hint(pvwa_host, e)}"
                     )
                 )
-                print_formatted_text(HTML(f"<ansired>Details:</ansired> {e}"))
+                print_formatted_text(HTML(f"<ansired>Details:</ansired> {_esc(e)}"))
                 return None
             except requests.exceptions.RequestException as e:
-                print_formatted_text(HTML(f"CyberArk Log on <ansired>failed</ansired>: {e}"))
+                print_formatted_text(
+                    HTML(f"CyberArk Log on <ansired>failed</ansired>: {_esc(e)}")
+                )
                 return None
             if response.status_code != 200:
                 print_formatted_text(
@@ -943,13 +1122,22 @@ class CyberArkImporter(BaseImporter):
         use_nsf = bool(kwargs.get("use_nsf"))
 
         params = kwargs.get("params")
-        will_teams = environ.get("_CYBERARK_SKIP_TEAMS", "").lower() not in ("1", "true", "yes")
-        will_create_users = environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes")
-        will_print_users = environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes")
+        skip_teams = (bool(kwargs.get("skip_team"))
+                      or environ.get("_CYBERARK_SKIP_TEAMS", "").lower() in ("1", "true", "yes"))
+        skip_roles = (bool(kwargs.get("skip_role"))
+                      or environ.get("_CYBERARK_SKIP_ROLES", "").lower() in ("1", "true", "yes"))
+        skip_users = (bool(kwargs.get("skip_user"))
+                      or environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() in ("1", "true", "yes"))
+        will_teams = not skip_teams
+        will_roles = not skip_roles
+        will_create_users = not skip_users
+        will_provision = will_teams or will_roles or will_create_users
+        will_print_users = (will_create_users
+                            and environ.get("_CYBERARK_SKIP_USERS_LIST", "").lower() not in ("1", "true", "yes"))
         target_node = kwargs.get("target_node")
 
         provision_node_id = None
-        if will_teams:
+        if will_provision:
             provision_node_id = self._resolve_provisioning_node_id(params, target_node)
 
         safes = self._resolve_safes(pvwa_host, authorization_token)
@@ -997,10 +1185,11 @@ class CyberArkImporter(BaseImporter):
         # Gather the CyberArk identities (groups + users) that will become Keeper
         # teams, roles and users so they can be previewed before the import. The
         # fetched users are reused after the import (no second fetch).
-        group_names = self._preview_user_group_names(pvwa_host, authorization_token) if will_teams else []
+        group_names = self._preview_user_group_names(pvwa_host, authorization_token) if will_provision else []
         cyberark_users = []
-        if will_print_users or will_create_users:
-            print_formatted_text(HTML("\nFetching CyberArk Users..."))
+        if will_create_users:
+            if will_print_users:
+                print_formatted_text(HTML("\nFetching CyberArk Users..."))
             cyberark_users = self.fetch_cyberark_users(
                 pvwa_host, authorization_token,
                 fetch_groups_membership=will_create_users,
@@ -1024,7 +1213,7 @@ class CyberArkImporter(BaseImporter):
                 tabulate(account_rows, headers="keys"),
                 end="\n\n",
             )
-        if group_names:
+        if group_names and will_teams:
             team_rows = [
                 {"Team": g, "Status": "exists" if g.lower() in existing_teams else "new"}
                 for g in group_names
@@ -1034,6 +1223,7 @@ class CyberArkImporter(BaseImporter):
                 tabulate(team_rows, headers="keys"),
                 end="\n\n",
             )
+        if group_names and will_roles:
             role_rows = [
                 {"Role": g, "Status": "exists" if g.lower() in existing_roles else "new"}
                 for g in group_names
@@ -1066,24 +1256,33 @@ class CyberArkImporter(BaseImporter):
             summary_lines.append(
                 "  - Safes as Nested Share Folders (--nsf); records created with the NSF API"
             )
-        if group_names:
-            summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams and roles")
+        if group_names and will_teams:
+            summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper teams")
+        if group_names and will_roles:
+            summary_lines.append(f"  - <b>{len(group_names)}</b> user group(s) as Keeper roles")
         if eligible_users:
             summary_lines.append(f"  - <b>{len(eligible_users)}</b> user(s) provisioned as Keeper users")
-        if will_teams and provision_node_id is not None:
+        provision_labels = [
+            label for enabled, label in (
+                (will_teams, "teams"), (will_roles, "roles"),
+                (will_create_users, "users"),
+            ) if enabled
+        ]
+        provision_description = ", ".join(provision_labels)
+        if will_provision and provision_node_id is not None:
             if target_node:
                 summary_lines.append(
-                    f'  - provision teams, roles, and users into node <b>{_esc(target_node)}</b> '
+                    f'  - provision {provision_description} into node <b>{_esc(target_node)}</b> '
                     f'(id <b>{provision_node_id}</b>)'
                 )
             else:
                 summary_lines.append(
-                    f'  - provision teams, roles, and users into the default root node '
+                    f'  - provision {provision_description} into the default root node '
                     f'(id <b>{provision_node_id}</b>)'
                 )
-        elif will_teams:
+        elif will_provision:
             summary_lines.append(
-                '  - <ansired>teams/roles/users will be skipped</ansired> (no provisioning node)'
+                f'  - <ansired>{provision_description} will be skipped</ansired> (no provisioning node)'
             )
         if not self._confirm_import(pvwa_host, summary="\n".join(summary_lines)):
             print_formatted_text(HTML("\nImport <ansiyellow>cancelled</ansiyellow> by user"))
@@ -1092,9 +1291,7 @@ class CyberArkImporter(BaseImporter):
         # Import the accounts we already gathered above.
         for safe, accounts in safe_accounts.items():
             print_formatted_text(
-                HTML(f"Importing <b>{len(accounts)}</b> accounts from safe {safe}:\n"),
-                tabulate([{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts], headers="keys"),
-                end="\n\n",
+                HTML(f"\nImporting <b>{len(accounts)}</b> accounts from safe <b>{_esc(safe)}</b>...\n")
             )
             if use_nsf:
                 # Explicit NSF folder so prepare_nsf_folders has a SharedFolder target;
@@ -1115,20 +1312,26 @@ class CyberArkImporter(BaseImporter):
                         folder.domain = r["safeName"].replace(PathDelimiter, 2 * PathDelimiter)
                     record = Record()
                     record.folders = [folder]
-                    record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])
+                    record.title = self._account_title(r)
                     record.type = "Password"
                     if "userName" in r:
                         record.type = "login"
                         record.login = r["userName"]
                         if "address" in r:
                             record.type = "serverCredentials"
-                            if r["platformAccountProperties"].get("LogonDomain"):
-                                record.login = r["platformAccountProperties"]["LogonDomain"] + "\\" + r["userName"]
+                            logon_domain = self._get_platform_property(r, "LogonDomain", "Logon Domain")
+                            if logon_domain:
+                                record.login = str(logon_domain) + "\\" + r["userName"]
                     if "address" in r:
-                        record.fields.append(RecordField("host", value={"hostName": r["address"]}))
-                    if r["platformAccountProperties"].get("URL"):
-                        record.title = r["platformAccountProperties"]["ItemName"]
-                        record.login_url = r["platformAccountProperties"]["URL"]
+                        host_value = {"hostName": r["address"]}
+                        port = self._get_platform_property(r, "Port", "PortNumber", "Port Number")
+                        if port not in (None, ""):
+                            host_value["port"] = str(port)
+                        record.fields.append(RecordField("host", value=host_value))
+                    url = self._get_platform_property(r, "URL")
+                    if url:
+                        record.login_url = str(url)
+                    self._add_account_metadata(record, r)
                     retry = True
                     while retry is True:
                         try:
@@ -1139,7 +1342,7 @@ class CyberArkImporter(BaseImporter):
                                     "Authorization": authorization_token,
                                     "Content-Type": "application/json",
                                 },
-                                json={"reason": "test"},
+                                json={"reason": "Keeper Commander Import"},
                                 timeout=self.TIMEOUT,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
@@ -1216,12 +1419,15 @@ class CyberArkImporter(BaseImporter):
         # Import CyberArk User Groups as Keeper Enterprise Teams + Roles, then optionally
         # create Keeper users (using their real CyberArk business emails) and
         # assign them to the matching Keeper Roles.
-        if will_teams and provision_node_id is not None:
+        if will_provision and provision_node_id is not None:
             self.import_user_groups(
                 pvwa_host, authorization_token, params,
                 cyberark_users=cyberark_users,
                 target_node=target_node,
                 node_id=provision_node_id,
+                skip_teams=skip_teams,
+                skip_roles=skip_roles,
+                skip_users=skip_users,
             )
 
         print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
@@ -1301,7 +1507,8 @@ class CyberArkImporter(BaseImporter):
         return None
 
     def import_user_groups(self, pvwa_host, authorization_token, params, cyberark_users=None,
-                           target_node=None, node_id=None):
+                           target_node=None, node_id=None, skip_teams=False,
+                           skip_roles=False, skip_users=False):
         """Fetch CyberArk User Groups and create them as Keeper Enterprise Teams.
 
         This mirrors the ``enterprise-team --add`` command flow: for each
@@ -1393,28 +1600,35 @@ class CyberArkImporter(BaseImporter):
         if node_id is None:
             return
         if target_node:
+            selected_objects = ", ".join(
+                label for skipped, label in (
+                    (skip_teams, "teams"), (skip_roles, "roles"),
+                    (skip_users, "users"),
+                ) if not skipped
+            )
             print_formatted_text(
                 HTML(
-                    f"Provisioning teams, roles, and users into node "
+                    f"Provisioning {selected_objects} into node "
                     f"<b>{_esc(target_node)}</b> (id <b>{node_id}</b>)"
                 )
             )
 
-        print_formatted_text(
-            HTML(f"Importing <b>{len(groups)}</b> user groups as Keeper Teams (members not provisioned):\n"),
-            tabulate(
-                [
-                    {
-                        "ID": g.get("id"),
-                        "Name": g.get("groupName") or g.get("name"),
-                        "CyberArk Members": len(g.get("members") or []),
-                    }
-                    for g in groups
-                ],
-                headers="keys",
-            ),
-            end="\n\n",
-        )
+        if not skip_teams:
+            print_formatted_text(
+                HTML(f"Importing <b>{len(groups)}</b> user groups as Keeper Teams (members not provisioned):\n"),
+                tabulate(
+                    [
+                        {
+                            "ID": g.get("id"),
+                            "Name": g.get("groupName") or g.get("name"),
+                            "CyberArk Members": len(g.get("members") or []),
+                        }
+                        for g in groups
+                    ],
+                    headers="keys",
+                ),
+                end="\n\n",
+            )
 
         request_batch = []
         request_team_names = []  # parallel list for reporting per-batch results
@@ -1455,6 +1669,9 @@ class CyberArkImporter(BaseImporter):
                 (": " + ", ".join(member_names)) if member_names else "",
             )
 
+            if skip_teams:
+                continue
+
             if group_name.lower() in existing_team_names:
                 skipped_existing.append(group_name)
                 continue
@@ -1494,7 +1711,9 @@ class CyberArkImporter(BaseImporter):
             # Track locally so duplicates within the same run are also skipped
             existing_team_names.add(group_name.lower())
 
-        if skipped_existing:
+        if skip_teams:
+            print_formatted_text(HTML("\nSkipping Keeper Team creation (--skip=team)."))
+        elif skipped_existing:
             print_formatted_text(
                 HTML(
                     f"\n<ansiyellow>Skipped {len(skipped_existing)} group(s) that already exist as "
@@ -1502,7 +1721,9 @@ class CyberArkImporter(BaseImporter):
                 )
             )
 
-        if not request_batch:
+        if skip_teams:
+            pass
+        elif not request_batch:
             print_formatted_text(HTML("\nNo new Keeper Teams to create."))
         else:
             try:
@@ -1537,18 +1758,22 @@ class CyberArkImporter(BaseImporter):
                 )
 
         # Also create a Keeper Enterprise Role for each user group (mirrors enterprise-role --add)
-        if environ.get("_CYBERARK_SKIP_ROLES", "").lower() not in ("1", "true", "yes"):
+        if not skip_roles:
             self._create_keeper_roles(groups, params, node_id)
+        else:
+            print_formatted_text(HTML("\nSkipping Keeper Role creation (--skip=role)."))
 
         # Provision Keeper users (using their real CyberArk business emails)
         # and assign them to matching Roles.
-        if environ.get("_CYBERARK_SKIP_CREATE_USERS", "").lower() not in ("1", "true", "yes"):
+        if not skip_users:
             if cyberark_users is None:
                 print_formatted_text(HTML("\nFetching CyberArk Users for provisioning..."))
                 cyberark_users = self.fetch_cyberark_users(
                     pvwa_host, authorization_token, fetch_groups_membership=True,
                 )
             self._create_keeper_users_and_assign_roles(groups, cyberark_users, params, node_id)
+        else:
+            print_formatted_text(HTML("\nSkipping Keeper User provisioning (--skip=user)."))
 
     def _create_keeper_roles(self, groups, params, node_id):
         """Create one Keeper Enterprise Role per CyberArk user group.
