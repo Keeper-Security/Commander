@@ -562,6 +562,7 @@ class CyberArkImportOrchestrator:
         # Clear it immediately after map_account copies it into the record.
         token = None
         record = None
+        password_failed = False
         try:
             if not opts.dry_run or opts.include_creds:
                 token = self.client.retrieve_password(
@@ -571,12 +572,15 @@ class CyberArkImportOrchestrator:
                     skip_all=skip_all_passwords,
                 )
                 if token is None:
+                    password_failed = True
                     skipped.append({
                         "account": account.get("name", ""),
                         "safe": safe_name,
                         "reason": "password retrieval failed",
                     })
-                    return
+                    # Still map host/username so the account is not dropped from
+                    # the PAM project (legacy import also keeps going after Skip).
+                    token = ""
             try:
                 record = mapper.map_account(account, token, safe_name)
             except StrictPolicyError as e:
@@ -611,8 +615,13 @@ class CyberArkImportOrchestrator:
                 # can update the pamUser independently from its parent.
                 annotate_record_with_marker(nested, account_id, safe_name)
         self._apply_folder_paths(record, safe_name, folder_mapper)
+        if password_failed:
+            reason = "password retrieval failed"
+            is_incomplete = True
         if is_incomplete:
-            record["notes"] = f"INCOMPLETE: {reason}"
+            note = f"INCOMPLETE: {reason}"
+            existing = (record.get("notes") or "").strip()
+            record["notes"] = f"{existing}\n{note}".strip() if existing else note
             incomplete.append(record)
         dual_fields = detect_dual_account(account)
         if dual_fields:
@@ -1910,6 +1919,9 @@ Examples:
 
   # Self-hosted with SSL verification disabled
   pam project cyberark-import pvwa.internal.com --no-verify-ssl --name "Internal"
+
+  # Self-hosted with mutual TLS client cert (P12)
+  pam project cyberark-import pvwa.internal.com --client-cert-p12 ./client.p12 --name "Internal"
         ''')
     parser.add_argument("server", action="store", help="CyberArk PVWA host (e.g. mycompany.cyberark.cloud or pvwa.example.com)")
     parser.add_argument("--name", "-n", required=False, dest="project_name", action="store",
@@ -1956,6 +1968,10 @@ Examples:
                         default="", help="Comma-separated CPM states to include (default: all)")
     parser.add_argument("--no-verify-ssl", required=False, dest="no_verify_ssl", action="store_true",
                         default=False, help="Disable SSL certificate verification for self-hosted PVWA (insecure)")
+    parser.add_argument("--client-cert-p12", required=False, dest="client_cert_p12", action="store",
+                        default="", help="Path to client certificate P12/PFX for self-hosted PVWA mutual TLS")
+    parser.add_argument("--client-cert-password", required=False, dest="client_cert_password", action="store",
+                        default="", help="Passphrase for --client-cert-p12 (prefer env var in automation)")
     parser.add_argument("--include-system-safes", required=False, dest="include_system_safes",
                         action="store_true", default=False,
                         help="Include CyberArk system safes (VaultInternal, PVWAConfig, etc.)")
@@ -2037,7 +2053,27 @@ Examples:
                                        f"Platform map entry '{key}' must be an object with a 'record_type' field")
 
         no_verify_ssl = kwargs.get("no_verify_ssl", False)
+        client_cert_p12 = kwargs.get("client_cert_p12", "")
+        client_cert_password = kwargs.get("client_cert_password", "")
         state_filter = [s.strip() for s in state_filter_str.split(",") if s.strip()] if state_filter_str else None
+
+        if client_cert_p12:
+            os.environ["KEEPER_CYBERARK_CLIENT_CERT_P12"] = client_cert_p12
+        if client_cert_password:
+            os.environ["KEEPER_CYBERARK_CLIENT_CERT_PASSWORD"] = client_cert_password
+
+        # Match legacy `import --format=cyberark` behavior for self-hosted PVWA:
+        # default to verify=False unless a CA bundle is explicitly provided.
+        verify_ssl = not no_verify_ssl
+        if not server.endswith(".cyberark.cloud"):
+            ca_bundle = (
+                os.environ.get("KEEPER_CYBERARK_CA_BUNDLE")
+                or os.environ.get("_CYBERARK_CA_BUNDLE")
+            )
+            if ca_bundle:
+                verify_ssl = ca_bundle
+            elif not no_verify_ssl:
+                verify_ssl = False
 
         # ── Resolve gateway UID → name if needed ─────────────
         if gateway_name and not config_uid:
@@ -2056,7 +2092,7 @@ Examples:
 
         # ── Phase 0: Authenticate ────────────────────────────
         try:
-            client = CyberArkPVWAClient(server, verify_ssl=not no_verify_ssl)
+            client = CyberArkPVWAClient(server, verify_ssl=verify_ssl)
         except ValueError as e:
             raise CommandError("pam project cyberark-import", str(e))
         if not client.authenticate():

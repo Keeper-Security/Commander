@@ -752,6 +752,14 @@ def _import(params, file_format, filename, **kwargs):
     show_skipped = kwargs.get('show_skipped') is True
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
+    cyberark_skip = {
+        x.strip().lower()
+        for x in str(kwargs.get('skip') or '').split(',')
+        if x.strip()
+    }
+    skip_team = kwargs.get('skip_team') is True or 'team' in cyberark_skip
+    skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
+    skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
 
     import_into_raw = kwargs.get('import_into') or ''
     import_into = import_into_raw
@@ -779,7 +787,8 @@ def _import(params, file_format, filename, **kwargs):
 
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
-                              dry_run=dry_run, target_node=target_node, use_nsf=use_nsf):
+                              dry_run=dry_run, target_node=target_node, use_nsf=use_nsf,
+                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
@@ -2083,12 +2092,14 @@ def tokenize_record_key(record, folder):   # type: (ImportRecord, str) -> Iterat
                 yield hash_value
 
 
-def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[str]
+def tokenize_full_import_record(record, folder=None):   # type: (ImportRecord, Optional[str]) -> Iterator[str]
     """
     Turn a record-to-import into an iterable of str's for hashing.
 
     Examine the entire record.
     """
+    if folder is not None:
+        yield f'$folder:{folder.casefold()}'
     yield f'$type:{record.type or ""}'
     yield f'$title:{record.title or ""}'
     yield f'$login:{record.login or ""}'
@@ -2102,6 +2113,19 @@ def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[st
         hash_key = field.hash_key()
         if hash_key:
             yield hash_key
+
+
+def get_import_record_folder_paths(params, record):   # type: (KeeperParams, ImportRecord) -> List[str]
+    folders = []
+    for folder in record.folders or []:
+        if folder.uid and folder.uid in params.folder_cache:
+            folders.append(get_folder_path(params, folder.uid))
+        else:
+            folders.append(folder.get_folder_path())
+    folders = [x for x in folders if x]
+    if not folders:
+        folders.append('')
+    return folders
 
 
 def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord, Optional[dict]) -> (dict, dict)
@@ -2327,8 +2351,13 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
     for record_uid in params.record_cache:
         import_record = convert_keeper_record(params.record_cache[record_uid])
         if import_record:
-            record_hash = build_record_hash(tokenize_full_import_record(import_record))
-            preexisting_entire_record_hash[record_hash] = record_uid
+            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+            folders = [x for x in folders if x]
+            if len(folders) == 0:
+                folders.append('')
+            for folder in folders:
+                record_hash = build_record_hash(tokenize_full_import_record(import_record, folder))
+                preexisting_entire_record_hash[record_hash] = record_uid
             if update_flag:
                 folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
                 folders = [x for x in folders if x]
@@ -2368,14 +2397,21 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
                     import_record.attachments.append(atta)
                     f.value = LARGE_FIELD_MSG.format(atta.name)
 
-        record_hash = build_record_hash(tokenize_full_import_record(import_record))
-        if no_shortcuts is False and record_hash in preexisting_entire_record_hash:
-            record_uid = preexisting_entire_record_hash[record_hash]
-            if import_record.uid:
-                external_lookup[import_record.uid] = record_uid
-            import_record.uid = record_uid
-            record_exists.append(import_record)
-            continue
+        if no_shortcuts is False:
+            record_uid = next((
+                preexisting_entire_record_hash[record_hash]
+                for record_hash in (
+                    build_record_hash(tokenize_full_import_record(import_record, folder))
+                    for folder in get_import_record_folder_paths(params, import_record)
+                )
+                if record_hash in preexisting_entire_record_hash
+            ), None)
+            if record_uid:
+                if import_record.uid:
+                    external_lookup[import_record.uid] = record_uid
+                import_record.uid = record_uid
+                record_exists.append(import_record)
+                continue
 
         if import_record.uid and import_record.uid in params.record_cache:
             record_uid_to_update.add(import_record.uid)
