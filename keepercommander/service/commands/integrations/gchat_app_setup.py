@@ -38,6 +38,11 @@ _TOPIC_RESOURCE_PATTERN = re.compile(
     r'^projects/([^/]+)/topics/([A-Za-z][\w.-]{2,})$'
 )
 
+def _validate_gchat_space_id(space_id: str) -> bool:
+    prefix = GChatConstants.SPACE_ID_PREFIX
+    return bool(space_id and space_id.startswith(prefix) and len(space_id) > len(prefix))
+
+
 GCHAT_APPROVALS_PROFILE = ApprovalsChannelProfile(
     channel_header='APPROVALS_SPACE_ID',
     single_channel_description='Google Chat space ID for approval notifications',
@@ -47,8 +52,8 @@ GCHAT_APPROVALS_PROFILE = ApprovalsChannelProfile(
         'and approval requests from users not assigned to an approver team'
     ),
     channel_prompt='Space ID (starts with spaces/):',
-    validate_channel=lambda c: bool(c and c.startswith('spaces/')),
-    channel_error="Invalid Approvals Space ID (must start with 'spaces/')",
+    validate_channel=_validate_gchat_space_id,
+    channel_error="Invalid Approvals Space ID (must start with 'spaces/' and include a space name)",
 )
 
 
@@ -103,14 +108,6 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             google_project_id,
         )
 
-        print(f"\n{bcolors.BOLD}CHAT_APPROVALS_SPACE_ID:{bcolors.ENDC}")
-        print(f"  Google Chat space where approval cards are posted")
-        chat_approvals_space_id = self._prompt_with_validation(
-            "Space ID (starts with spaces/):",
-            self._is_valid_space_id,
-            "Invalid Approvals Space ID (must start with 'spaces/' and include a space name)"
-        )
-
         print(f"\n{bcolors.BOLD}CHAT COMMAND IDs:{bcolors.ENDC}")
         print(f"  Slash command IDs configured for the Google Chat app")
         chat_command_request_record_id = self._prompt_command_id(
@@ -144,12 +141,11 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             google_project_id=google_project_id,
             google_subscription_id=google_subscription_id,
             google_topic_id=google_topic_id,
-            chat_approvals_space_id=chat_approvals_space_id,
+            approvals=approvals,
             chat_command_request_record_id=chat_command_request_record_id,
             chat_command_request_folder_id=chat_command_request_folder_id,
             chat_command_external_share_id=chat_command_external_share_id,
             chat_command_create_secret_id=chat_command_create_secret_id,
-            approvals=approvals,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -413,7 +409,3 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             google_project_id,
         )
 
-    @staticmethod
-    def _is_valid_space_id(value: str) -> bool:
-        prefix = GChatConstants.SPACE_ID_PREFIX
-        return bool(value and value.startswith(prefix) and len(value) > len(prefix))

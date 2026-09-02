@@ -4,7 +4,12 @@ import tempfile
 import unittest
 
 from keepercommander.service.commands.integrations.gchat_app_setup import GChatAppSetupCommand
-from keepercommander.service.docker import GChatConfig, GChatConstants
+from keepercommander.service.commands.integrations.approvals_setup import (
+    FIELD_MULTI_CHANNEL_ENABLED,
+    FIELD_APPROVALS_CHANNEL_ID,
+    FIELD_APPROVALS_TEAMS,
+)
+from keepercommander.service.docker import GChatConfig, GChatConstants, ApprovalsConfig
 
 
 def _valid_service_account(**overrides):
@@ -149,19 +154,26 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertIsNone(value)
         self.assertIn('required', error.lower())
 
-    def test_space_id_validation(self):
-        self.assertTrue(self.cmd._is_valid_space_id('spaces/AAAA'))
-        self.assertFalse(self.cmd._is_valid_space_id('spaces/'))
-        self.assertFalse(self.cmd._is_valid_space_id('AAAA'))
-        self.assertFalse(self.cmd._is_valid_space_id(''))
-
-    def test_build_record_custom_fields(self):
+    def test_chat_approvals_space_id_property(self):
+        from keepercommander.service.docker import ApprovalsConfig
         config = GChatConfig(
             google_service_account_json='{"type":"service_account"}',
             google_project_id='my-gcp-project',
             google_subscription_id='keeper-chat-events',
             google_topic_id='keeper-chat-topic',
-            chat_approvals_space_id='spaces/AAAA',
+            approvals=ApprovalsConfig(multi_channel_enabled=False, single_channel_id='spaces/TEST'),
+        )
+        self.assertEqual(config.chat_approvals_space_id, 'spaces/TEST')
+        self.assertEqual(config.chat_approvals_space_id, config.approvals.single_channel_id)
+
+    def test_build_record_custom_fields(self):
+        from keepercommander.service.docker import ApprovalsConfig
+        config = GChatConfig(
+            google_service_account_json='{"type":"service_account"}',
+            google_project_id='my-gcp-project',
+            google_subscription_id='keeper-chat-events',
+            google_topic_id='keeper-chat-topic',
+            approvals=ApprovalsConfig(multi_channel_enabled=False, single_channel_id='spaces/AAAA'),
             chat_command_request_record_id='1',
             chat_command_request_folder_id='2',
             chat_command_external_share_id='3',
@@ -200,21 +212,24 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertFalse(profile.validate_channel('invalid'))
 
     def test_build_record_custom_fields_includes_approvals_fields(self):
+        from keepercommander.service.docker import ApprovalsConfig
         config = GChatConfig(
             google_service_account_json='{"type":"service_account"}',
             google_project_id='my-gcp-project',
             google_subscription_id='keeper-chat-events',
             google_topic_id='keeper-chat-topic',
-            chat_approvals_space_id='spaces/AAAA',
+            approvals=ApprovalsConfig(multi_channel_enabled=False, single_channel_id='spaces/AAAA'),
         )
         fields = {
             field.label: field.get_default_value()
             for field in self.cmd.build_record_custom_fields(config)
         }
-        self.assertIn(GChatConstants.FIELD_MULTI_CHANNEL_ENABLED, fields)
-        self.assertIn(GChatConstants.FIELD_APPROVALS_TEAMS, fields)
-        self.assertEqual(fields[GChatConstants.FIELD_MULTI_CHANNEL_ENABLED], 'false')
-        self.assertEqual(fields[GChatConstants.FIELD_APPROVALS_TEAMS], '')
+        self.assertIn(FIELD_MULTI_CHANNEL_ENABLED, fields)
+        self.assertIn(FIELD_APPROVALS_CHANNEL_ID, fields)
+        self.assertIn(FIELD_APPROVALS_TEAMS, fields)
+        self.assertEqual(fields[FIELD_MULTI_CHANNEL_ENABLED], 'false')
+        self.assertEqual(fields[FIELD_APPROVALS_CHANNEL_ID], 'spaces/AAAA')
+        self.assertEqual(fields[FIELD_APPROVALS_TEAMS], '')
 
 
 if __name__ == '__main__':

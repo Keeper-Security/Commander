@@ -155,8 +155,6 @@ class GChatConstants:
     FIELD_PEDM_POLLING_INTERVAL = 'pedm_polling_interval'
     FIELD_DEVICE_APPROVAL_ENABLED = 'device_approval_enabled'
     FIELD_DEVICE_APPROVAL_POLLING_INTERVAL = 'device_approval_polling_interval'
-    FIELD_MULTI_CHANNEL_ENABLED = 'multi_channel_approvers_enabled'
-    FIELD_APPROVALS_TEAMS = 'approvals_teams'
 
     DEFAULT_COMMAND_REQUEST_RECORD_ID = '1'
     DEFAULT_COMMAND_REQUEST_FOLDER_ID = '2'
@@ -179,15 +177,16 @@ class GChatConfig:
     google_project_id: str
     google_subscription_id: str
     google_topic_id: str
-    chat_approvals_space_id: str
+    approvals: ApprovalsConfig
     chat_command_request_record_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
     chat_command_request_folder_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
     chat_command_external_share_id: str = GChatConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID
     chat_command_create_secret_id: str = GChatConstants.DEFAULT_COMMAND_CREATE_SECRET_ID
-    approvals: ApprovalsConfig = field(default_factory=lambda: ApprovalsConfig(
-        multi_channel_enabled=False, single_channel_id=''
-    ))
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+
+    @property
+    def chat_approvals_space_id(self) -> str:
+        return self.approvals.single_channel_id
