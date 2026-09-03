@@ -93,10 +93,12 @@ _UNSAFE_SHELL_ROTATION_PASSWORD_LABELS = {
     '\n': 'newline',
 }
 
-SHELL_ROTATION_PLUGINS = {'ssh', 'pspasswd'}
+SHELL_ROTATION_PLUGINS = {'ssh', 'pspasswd', 'unixpasswd'}
 
-# Shell-unsafe characters: guard against command injection in shell-interpolated commands
-UNSAFE_SHELL_CHARACTERS = '<>^&|$(){}!;"\'\\\n'
+# Shell-unsafe characters: guard against command/argument injection in shell-interpolated commands.
+# Whitespace is included because unquoted values are split into separate command arguments
+# (e.g. "net user {user} {password}" - a password containing a space injects extra flags).
+UNSAFE_SHELL_CHARACTERS = '<>^&|$(){}!;"\'\\\n \t'
 
 
 def validate_shell_command_parameter(param, param_name):
