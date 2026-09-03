@@ -304,6 +304,7 @@ class CyberArkImporter(BaseImporter):
         if not isinstance(account, dict):
             return {}
         properties = account.get("platformAccountProperties")
+        logging.debug(properties)
         return properties if isinstance(properties, dict) else {}
 
     @classmethod
@@ -1177,6 +1178,7 @@ class CyberArkImporter(BaseImporter):
                 )
                 continue
             accounts = payload.get("value", [])
+            logging.debug(accounts);
             if not accounts:
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {safe}</ansiyellow>"))
                 continue
