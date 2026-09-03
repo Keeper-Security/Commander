@@ -29,8 +29,14 @@ class Rotator:
 
     def rotate(self, record, new_password):
         """Rotate Windows account password"""
+        from ..commands import validate_shell_command_parameter
+
+        if not validate_shell_command_parameter(self.login, 'User login'):
+            return False
+        if not validate_shell_command_parameter(new_password, 'New password'):
+            return False
+
         host_arg = f'\\\\{self.host} ' if self.host else ''
-        # the characters below mess with windows command line
         escape_quote_password = new_password.replace('"', '""')
         error_code = subprocess.call(f'pspasswd {host_arg}{self.login} "{escape_quote_password}"')
 

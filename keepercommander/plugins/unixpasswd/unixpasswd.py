@@ -27,12 +27,18 @@ PasswordAgain = ['[Rr]etype']
 
 
 def rotate(record, newpassword):
+    from ..commands import validate_shell_command_parameter
+
     user = RecordMixin.get_record_field(record, 'login')
     oldpassword = RecordMixin.get_record_field(record, 'password')
 
+    if not validate_shell_command_parameter(user, 'User login'):
+        return False
+    if not validate_shell_command_parameter(newpassword, 'New password'):
+        return False
+
     logging.info('Connecting to super user %s', user)
-    user = user.replace("\\", "\\\\").replace("\"", "\\\"").replace(";", "\\;")
-    p = pexpect.spawn(f'su - "{user}"', timeout=5)
+    p = pexpect.spawn('su', ['-', user], timeout=5)
     p.expect('[Pp]assword')
     if not p.waitnoecho(1):
         raise Exception('Password prompt is expected')
