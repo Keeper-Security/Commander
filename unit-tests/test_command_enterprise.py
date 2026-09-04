@@ -293,6 +293,94 @@ class TestEnterprise(TestCase):
                    role=[ent_env.role1_name])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
+    def test_enterprise_role_cascade_privilege_grant(self):
+        """KC-1435: Privilege grant on child node respects cascade from parent (regression test)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Set up: Admin role has transfer_account on Node1 (root)
+        # Add admin role's transfer_account privilege to parent node
+        params.enterprise['role_privileges'].append({
+            'role_id': ent_env.role_admin_id,
+            'managed_node_id': ent_env.node1_id,
+            'privilege': 'transfer_account'
+        })
+        # Add User1 to admin role so they have transfer_account via cascade
+        params.enterprise['role_users'].append({
+            'role_id': ent_env.role_admin_id,
+            'enterprise_user_id': ent_env.user1_id
+        })
+        # Role2 manages Node2 (child of Node1) with cascade enabled
+        params.enterprise['managed_nodes'].append({
+            'role_id': ent_env.role2_id,
+            'managed_node_id': ent_env.node2_id,
+            'cascade_node_management': False,
+        })
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        TestEnterprise.expected_commands = ['managed_node_privilege_add']
+        # Attempt to grant transfer_account on the child node — should succeed because
+        # the user's transfer_account privilege on parent Node1 cascades down to Node2
+        cmd.execute(params, add_privilege=['transfer_account'], role=[ent_env.role2_name],
+                   node='Sub node 1')
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_mixed_case_username(self):
+        """KC-1435: Username matching is case-insensitive (regression test)"""
+        params = get_connected_params()
+        # Mock user with mixed-case username
+        params.user = 'User@TEST.COM'
+        api.query_enterprise(params)
+
+        # Update the test data user to match in lowercase
+        params.enterprise['users'][0]['username'] = 'user@test.com'
+
+        # Add admin role to User1 for transfer_account
+        params.enterprise['role_users'].append({
+            'role_id': ent_env.role_admin_id,
+            'enterprise_user_id': ent_env.user1_id
+        })
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        TestEnterprise.expected_commands = ['managed_node_privilege_add']
+        # Should succeed despite mixed-case username in params.user
+        cmd.execute(params, add_privilege=['transfer_account'], role=[ent_env.role2_name],
+                   node='Enterprise 1')
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_enforcement_removal_restricted_non_root(self):
+        """KC-1435: Delegated admin cannot remove require_account_share enforcement (CVE fix)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Set up Role1 to manage Node2 (non-root)
+        params.enterprise['managed_nodes'] = [
+            {
+                'role_id': ent_env.role1_id,
+                'managed_node_id': ent_env.node2_id,
+                'cascade_node_management': True,
+            }
+        ]
+        # Add existing enforcement on Role2
+        params.enterprise['role_enforcements'] = [
+            {
+                'role_id': ent_env.role2_id,
+                'enforcements': {
+                    'require_account_share': 'Admin Role'
+                }
+            }
+        ]
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        # Attempt to remove the enforcement — should be denied by KC-1435 fix
+        # because delegated admin managing non-root node cannot modify it
+        with self.assertLogs(level=logging.WARNING):
+            cmd.execute(params, enforcements=['require_account_share'],
+                       role=[ent_env.role2_name])
+
+        # No command should be sent (denied by KC-1435 fix)
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
     def test_enterprise_team(self):
         params = get_connected_params()
         api.query_enterprise(params)
