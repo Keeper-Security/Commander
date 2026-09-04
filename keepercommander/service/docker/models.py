@@ -177,7 +177,7 @@ class GChatConfig:
     google_project_id: str
     google_subscription_id: str
     google_topic_id: str
-    chat_approvals_space_id: str
+    approvals: ApprovalsConfig
     chat_command_request_record_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
     chat_command_request_folder_id: str = GChatConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
     chat_command_external_share_id: str = GChatConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID
@@ -186,3 +186,7 @@ class GChatConfig:
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+
+    @property
+    def chat_approvals_space_id(self) -> str:
+        return self.approvals.single_channel_id

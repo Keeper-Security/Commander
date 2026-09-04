@@ -383,7 +383,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                     self.get_command_name(),
                     f'Record {record_uid} is not a typed record and cannot store approvals config',
                 )
-            record.custom = merge_approvals_custom_fields(record.custom, approvals)
+            profile = self.get_approvals_profile()
+            record.custom = merge_approvals_custom_fields(record.custom, approvals, profile)
             record_management.update_record(params, record)
             params.sync_data = True
             api.sync_down(params)
@@ -435,6 +436,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             update_record=lambda uid, approvals: self._patch_record_approvals(params, uid, approvals),
             command_name=self.get_command_name(),
             sync_vault=sync_vault,
+            profile=self.get_approvals_profile(),
         )
 
     # -- Docker Compose update -----------------------------------------

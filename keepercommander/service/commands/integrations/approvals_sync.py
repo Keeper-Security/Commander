@@ -74,10 +74,15 @@ def custom_fields_by_label(record: vault.KeeperRecord) -> Dict[str, str]:
 def parse_approvals_from_record(
     record: vault.KeeperRecord,
     command_name: str = '',
+    profile: 'ApprovalsChannelProfile' = None,
 ) -> ApprovalsConfig:
+    from .approvals_setup import SLACK_APPROVALS_PROFILE
+    if profile is None:
+        profile = SLACK_APPROVALS_PROFILE
+
     fields = custom_fields_by_label(record)
     multi_channel = fields.get(FIELD_MULTI_CHANNEL_ENABLED, 'false').strip().lower() == 'true'
-    single_channel_id = fields.get(FIELD_APPROVALS_CHANNEL_ID, '').strip()
+    single_channel_id = fields.get(profile.channel_field_name, '').strip()
     teams_json = fields.get(FIELD_APPROVALS_TEAMS, '').strip()
 
     teams: List[ApproverTeam] = []
@@ -94,7 +99,7 @@ def parse_approvals_from_record(
             if not isinstance(item, dict):
                 continue
             team_uid = str(item.get('team_uid', '')).strip()
-            channel_id = str(item.get('channel_id', '')).strip()
+            channel_id = str(item.get(profile.team_channel_key, '')).strip()
             if not team_uid or not channel_id or team_uid in seen_team_uids:
                 continue
             seen_team_uids.add(team_uid)
@@ -117,14 +122,15 @@ def parse_approvals_from_record(
     )
 
 
-def merge_approvals_custom_fields(existing_custom: List, config: ApprovalsConfig) -> List:
-    preserved = [f for f in (existing_custom or []) if f.label not in APPROVALS_FIELD_LABELS]
-    return preserved + approvals_config_to_record_fields(config)
+def merge_approvals_custom_fields(existing_custom: List, config: ApprovalsConfig, profile: 'ApprovalsChannelProfile' = None) -> List:
+    preserved = [f for f in (existing_custom or []) if f.label not in APPROVALS_FIELD_LABELS and (profile is None or f.label != profile.channel_field_name)]
+    return preserved + approvals_config_to_record_fields(config, profile)
 
 
 def analyze_approvals_drift(
     params: 'KeeperParams',
     config: ApprovalsConfig,
+    profile: 'ApprovalsChannelProfile' = None,
 ) -> Tuple[ApprovalsConfig, ApprovalsDriftReport]:
     by_uid, _ = build_team_lookup(params)
     known_folders = build_shared_folder_uids(params)
@@ -194,6 +200,7 @@ def sync_approvals_config(
     params: 'KeeperParams',
     config: ApprovalsConfig,
     command_name: str = '',
+    profile: 'ApprovalsChannelProfile' = None,
 ) -> Tuple[ApprovalsConfig, ApprovalsDriftReport]:
     """Remove stale vault references and refresh team names. Non-interactive."""
     if not config.multi_channel_enabled:
@@ -203,7 +210,7 @@ def sync_approvals_config(
             'Re-run setup or enable multi-channel approvers first.',
         )
 
-    cleaned, report = analyze_approvals_drift(params, config)
+    cleaned, report = analyze_approvals_drift(params, config, profile)
     print_approvals_drift_report(report)
 
     if not cleaned.teams and config.teams:
@@ -222,6 +229,7 @@ def run_approvals_sync_down(
     update_record: Callable[[str, ApprovalsConfig], None],
     command_name: str = '',
     sync_vault: bool = True,
+    profile: 'ApprovalsChannelProfile' = None,
 ) -> ApprovalsConfig:
     if sync_vault:
         params.sync_data = True
@@ -239,8 +247,8 @@ def run_approvals_sync_down(
             f'(missing "{marker_field}" field)',
         )
 
-    config = parse_approvals_from_record(record, command_name=command_name)
-    updated, report = sync_approvals_config(params, config, command_name=command_name)
+    config = parse_approvals_from_record(record, command_name=command_name, profile=profile)
+    updated, report = sync_approvals_config(params, config, command_name=command_name, profile=profile)
 
     if report.has_changes:
         update_record(record_uid, updated)

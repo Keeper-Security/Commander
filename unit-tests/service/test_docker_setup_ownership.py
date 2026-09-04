@@ -312,6 +312,63 @@ class TestIntegrationLookupOwnership(unittest.TestCase):
             'OWNED_REC',
         )
 
+    def test_gchat_find_folder_uid_by_name_skips_non_owned(self):
+        from keepercommander.service.commands.integrations.gchat_app_setup import (
+            GChatAppSetupCommand,
+        )
+
+        params = _params(shared_folder_cache={
+            'ATTACKER_SF': {
+                'name': FOLDER_NAME,
+                'owner_username': 'mallory@corp.example',
+            },
+            'OWNED_SF': {
+                'name': FOLDER_NAME,
+                'owner_username': 'operator@corp.example',
+            },
+        })
+        self.assertEqual(
+            GChatAppSetupCommand()._find_folder_uid_by_name(params, FOLDER_NAME),
+            'OWNED_SF',
+        )
+
+    def test_gchat_find_folder_uid_by_name_returns_none_for_squat_only(self):
+        from keepercommander.service.commands.integrations.gchat_app_setup import (
+            GChatAppSetupCommand,
+        )
+
+        params = _params(shared_folder_cache={
+            'ATTACKER_SF': {
+                'name': FOLDER_NAME,
+                'owner_username': 'mallory@corp.example',
+            },
+        })
+        self.assertIsNone(
+            GChatAppSetupCommand()._find_folder_uid_by_name(params, FOLDER_NAME)
+        )
+
+    @patch('keepercommander.service.commands.integrations.integration_setup_base.api.get_record')
+    def test_gchat_find_record_in_folder_skips_non_owned(self, mock_get):
+        from keepercommander.service.commands.integrations.gchat_app_setup import (
+            GChatAppSetupCommand,
+        )
+
+        owned = MagicMock(title=RECORD_NAME)
+        shared = MagicMock(title=RECORD_NAME)
+        mock_get.side_effect = lambda _p, uid: shared if uid == 'SHARED_REC' else owned
+
+        params = _params(
+            subfolder_record_cache={'FOLDER': ['SHARED_REC', 'OWNED_REC']},
+            record_owner_cache={
+                'SHARED_REC': RecordOwner(False, 'attacker'),
+                'OWNED_REC': RecordOwner(True, 'operator'),
+            },
+        )
+        self.assertEqual(
+            GChatAppSetupCommand()._find_record_in_folder(params, 'FOLDER', RECORD_NAME),
+            'OWNED_REC',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
