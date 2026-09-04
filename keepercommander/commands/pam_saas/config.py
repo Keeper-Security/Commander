@@ -141,7 +141,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
 
     @staticmethod
-    def _resolve_target_folder(params: KeeperParams, gateway_context: GatewayContext,
+    def _resolve_target_folder(params: KeeperParams,
+                               gateway_context: GatewayContext,
                                shared_folder_uid: str | None) -> str | None:
         from ..pam.vault_target import resolve_pam_folder_uid, pam_folder_exists
 
@@ -177,6 +178,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
     @staticmethod
     def _create_config(params: KeeperParams,
                        plugin: SaasCatalog,
+                       gateway_context: GatewayContext,
                        shared_folder_uid: str,
                        plugin_code_bytes: bytes | None = None):
         from ..pam.vault_target import (
@@ -202,7 +204,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
             for item in plugin.fields:
                 if item.required is is_required:
                     print("")
-                    value = get_field_input(item)
+                    value = get_field_input(params=params, field=item, gateway_context=gateway_context)
                     if value is not None:
                         field_type = item.type
                         if field_type in ["int", "number", "bool", "enum"]:
@@ -271,14 +273,20 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
                 # upload_attachments updates fileRef on existing_record via facade
                 was_nsf = update_pam_record(params, existing_record, command='pam action saas config')
-                existing_record = reload_pam_record_if_nsf_updated(params, existing_record, existing_record.record_uid, was_nsf)
+                existing_record = reload_pam_record_if_nsf_updated(params,
+                                                                   existing_record,
+                                                                   existing_record.record_uid,
+                                                                   was_nsf)
 
         print("")
         print(f"{bcolors.OKGREEN}Created SaaS configuration record with UID of {record.record_uid}{bcolors.ENDC}")
         print("")
         print("Assign this configuration to a user using the following command.")
-        print(f"  {bcolors.OKGREEN}pam action saas set -c {record.record_uid} -u <PAM User Record UID>{bcolors.ENDC}")
+        print(f"  {bcolors.OKGREEN}pam action saas set -sc {record.record_uid} -u <PAM User Record UID>{bcolors.ENDC}")
         print(f"  See {bcolors.OKGREEN}pam action saas set --help{bcolors.ENDC} for more information.")
+
+        # We create a SaaS config record, need to reload in order to use `set` command.
+        params.sync_data = True
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -330,21 +338,26 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 if not shared_folder_uid:
                     return
 
-                # For catalog plugins, we need to download the python file from GitHub.
+                # For catalog plugins, we need to download the Python file from GitHub.
                 plugin_code_bytes = None
                 if plugin.type == "catalog" and plugin.file:
                     res = requests.get(plugin.file, verify=params.ssl_verify)
-                    if res.ok is False:
+                    if not res.ok:
                         print("")
                         print(f"{bcolors.FAIL}Could download the script from GitHub.{bcolors.ENDC}")
                         return
                     plugin_code_bytes = res.content
 
-                self._create_config(
-                    params=params,
-                    plugin=plugin,
-                    shared_folder_uid=shared_folder_uid,
-                    plugin_code_bytes=plugin_code_bytes)
+                try:
+                    self._create_config(
+                        params=params,
+                        plugin=plugin,
+                        gateway_context=gateway_context,
+                        shared_folder_uid=shared_folder_uid,
+                        plugin_code_bytes=plugin_code_bytes)
+                except Exception as err:
+                    print(f"{bcolors.FAIL}{err}{bcolors.ENDC}")
+
             elif do_update:
                 pass
             else:

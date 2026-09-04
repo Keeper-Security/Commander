@@ -7,10 +7,13 @@ from ...proto import pam_pb2
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.record_link import RecordLink
+from ...subfolder import find_parent_top_folder
+from ...utils import value_to_boolean
 import logging
 import hmac
 import hashlib
 import os
+import re
 import requests
 from pydantic import BaseModel
 from typing import Optional, List, Any, TYPE_CHECKING
@@ -238,7 +241,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
     # Get the latest release of the catalog.json
     api_url = f"https://api.github.com/repos/{CATALOG_REPO}/releases/latest"
     res = requests.get(api_url, verify=params.ssl_verify)
-    if res.ok is False:
+    if not res.ok:
         print("")
         print(f"{bcolors.FAIL}Could not get plugin catalog from GitHub.{bcolors.ENDC}")
         return None
@@ -252,7 +255,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
 
     # Download the latest the catalog.yml
     res = requests.get(download_url, verify=params.ssl_verify)
-    if res.ok is False:
+    if not res.ok:
         print("")
         print(f"{bcolors.FAIL}Could not download the plugin catalog from GitHub.{bcolors.ENDC}")
         return None
@@ -288,13 +291,16 @@ def make_script_signature(plugin_code_bytes: bytes) -> str:
     return hmac.new(this_is_not_a_secret, plugin_code_bytes, hashlib.sha256).hexdigest()
 
 
-def get_field_input(field, current_value: Optional[str] = None):
+def get_field_input(params: KeeperParams,
+                    gateway_context: GatewayContext,
+                    field: SaasConfigItem,
+                    current_value: Optional[str] = None):
 
     logging.debug(field.model_dump_json())
 
     print(f"{bcolors.BOLD}{field.label}{bcolors.ENDC}")
     print(f"Description: {field.desc}")
-    if field.required is True:
+    if field.required:
         print(f"{bcolors.WARNING}Field is required.{bcolors.ENDC}")
     if field.type == "multiline":
         print(f"Enter a file path to load value from file.")
@@ -324,12 +330,56 @@ def get_field_input(field, current_value: Optional[str] = None):
             with open(value, "r") as fh:
                 value = fh.read()
                 fh.close()
-        if len(valid_values) > 0 and value not in valid_values:
-            print(f"{bcolors.FAIL}{value} is not a valid value.{bcolors.ENDC}")
-            continue
+
         if value is not None:
+            if len(valid_values) > 0 and value not in valid_values:
+                print(f"{bcolors.FAIL}{value} is not a valid value.{bcolors.ENDC}")
+                continue
+            if field.type == "record":
+                if len(str(value)) != 22:
+                    print(f"{bcolors.FAIL}The record UID is not the correct length.{bcolors.ENDC}")
+                    continue
+
+                record = vault.TypedRecord.load(params, value)
+                if record is None:
+                    print(f"{bcolors.FAIL}Could not find the record UID in the Vault.{bcolors.ENDC}")
+                    continue
+
+                record_shared_folders_uids = [x.uid for x in find_parent_top_folder(params, record.record_uid)]
+                shared_folder_valid = False
+                for shared_folder in gateway_context.get_shared_folders(params):
+                    shared_folder_valid = shared_folder.get("uid", "") in record_shared_folders_uids
+                    if shared_folder_valid:
+                        break
+                if not shared_folder_valid:
+                    print(f"{bcolors.FAIL}The record is not in the shared folders "
+                          f"used by the gateway.{bcolors.ENDC}")
+                    continue
+            elif field.type == "url":
+                found = re.match(r"^http.*://", value, re.IGNORECASE)
+                if found is None:
+                    print(f"{bcolors.FAIL}The value is not a URL.{bcolors.ENDC}")
+                    continue
+            elif field.type == "int":
+                try:
+                    _ = int(value)
+                except (Exception,):
+                    print(f"{bcolors.FAIL}The value is not an integer/whole number.{bcolors.ENDC}")
+                    continue
+            elif field.type == "number":
+                try:
+                    _ = float(value)
+                except (Exception,):
+                    print(f"{bcolors.FAIL}The value is not a number.{bcolors.ENDC}")
+                    continue
+            elif field.type == "bool":
+                test_value = value_to_boolean(value)
+                if test_value is None:
+                    print(f"{bcolors.FAIL}The value is not a boolean value.{bcolors.ENDC}")
+                    continue
             break
-        if field.required is False:
+
+        if not field.required:
             break
 
         print(f"{bcolors.FAIL}This field is required.{bcolors.ENDC}")
@@ -356,7 +406,7 @@ def set_record_field_value(record: TypedRecord, label: str, value: str, field_ty
             record.custom.append(
                 vault.TypedField.new_field(
                     field_label=label,
-                    field_type=field_type,
+                    field_type=str(field_type),
                     field_value=[value]
                 )
             )
