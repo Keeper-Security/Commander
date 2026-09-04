@@ -51,6 +51,13 @@ from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2, automator_pb2, pam_pb2
 
 
+# KC-1435: Privilege escalation CVE fix — restricted privileges that require authorization checks.
+# These privileges require the current user to already hold them before granting to roles.
+# Why: These privileges control account transfer, team/company management, and financial operations.
+# Including manage_nodes/sharing_administrator would over-restrict; delegated admins need those for routine management.
+_PRIVILEGED_GRANTS = frozenset(('transfer_account', 'manage_companies', 'manage_teams'))
+
+
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
     commands['enterprise-info'] = EnterpriseInfoCommand()
@@ -2260,6 +2267,72 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         managed_nodes = params.enterprise.get('managed_nodes')
         return any(True for x in managed_nodes if x.get('managed_node_id') == node_id and x.get('role_id') == role_id)
 
+    @staticmethod
+    def get_effective_privileges_for_node(params, role_id, target_node_id):
+        # type: (KeeperParams, int, int) -> Set[str]
+        """Compute effective privileges for a role on a target node, honoring cascade.
+
+        Walks up the ancestor chain to find privileges granted on parent nodes
+        that cascade down to the target node.
+        """
+        effective_privs = set()  # type: Set[str]
+
+        # Build node lookup and parent map
+        nodes = {n['node_id']: n for n in params.enterprise.get('nodes', [])}
+        if target_node_id not in nodes:
+            return effective_privs
+
+        # Build managed_nodes by role_id with cascade info
+        role_managed = {}  # type: Dict[int, Dict[str, Any]]
+        for mn in params.enterprise.get('managed_nodes', []):
+            if mn['role_id'] == role_id:
+                role_managed[mn['managed_node_id']] = {
+                    'cascade': mn.get('cascade_node_management', False)
+                }
+
+        # Walk up from target_node_id to root, collecting managed ancestor nodes
+        current_node_id = target_node_id
+        managed_ancestors = []  # type: List[int]
+
+        while current_node_id:
+            if current_node_id in role_managed:
+                managed_ancestors.append(current_node_id)
+            node = nodes.get(current_node_id)
+            if node and node.get('parent_id'):
+                current_node_id = node['parent_id']
+            else:
+                current_node_id = None
+
+        # Collect privileges from managed ancestors that cascade or are exact matches
+        for rp in params.enterprise.get('role_privileges', []):
+            if rp['role_id'] != role_id:
+                continue
+            privilege = rp['privilege'].lower()
+            managed_node_id = rp['managed_node_id']
+
+            if managed_node_id == target_node_id:
+                # Exact match always applies
+                effective_privs.add(privilege)
+            elif managed_node_id in managed_ancestors:
+                # Ancestor privilege applies if cascade is enabled
+                if role_managed[managed_node_id]['cascade']:
+                    effective_privs.add(privilege)
+
+        return effective_privs
+
+    @staticmethod
+    def get_current_enterprise_user_id(params):
+        # type: (KeeperParams) -> Optional[int]
+        """Find the current user's enterprise_user_id by username matching."""
+        if 'users' not in params.enterprise:
+            return None
+
+        username_lower = params.user.lower() if params.user else None
+        for user in params.enterprise['users']:
+            if user.get('username', '').lower() == username_lower:
+                return user.get('enterprise_user_id')
+        return None
+
     def execute(self, params, **kwargs):
         if kwargs.get('add') and kwargs.get('remove'):
             raise CommandError('enterprise-role', "'add' and 'delete' parameters are mutually exclusive.")
@@ -2655,6 +2728,28 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     else:
                         enforcement_value = None
 
+                    # KC-1435: Restrict require_account_share enforcement to root admins only (CVE fix)
+                    if key == 'require_account_share':
+                        # Check if current user is a root admin (manages a root node with no parent_id)
+                        is_root_admin = False
+                        # Find current user's enterprise_user_id
+                        curr_user_id = self.get_current_enterprise_user_id(params)
+                        if curr_user_id and 'managed_nodes' in params.enterprise:
+                            user_roles = {x['role_id'] for x in params.enterprise.get('role_users', [])
+                                         if x.get('enterprise_user_id') == curr_user_id}
+                            for mn in params.enterprise['managed_nodes']:
+                                if mn['role_id'] in user_roles:
+                                    # Check if the managed node is a root node (no parent)
+                                    managed_node = next((n for n in params.enterprise.get('nodes', [])
+                                                       if n.get('node_id') == mn['managed_node_id']), None)
+                                    if managed_node and not managed_node.get('parent_id'):
+                                        is_root_admin = True
+                                        break
+                        if not is_root_admin:
+                            logging.warning('Failed to modify enforcement \'%s\': Only enterprise root administrators can manage account transfer policies',
+                                            key)
+                            continue
+
                     role_enforcements = params.enterprise.get('role_enforcements') or []
                     for role in matched_roles:
                         role_id = role['role_id']
@@ -2776,9 +2871,22 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 if not node:
                     logging.warning('Role "%d" does not manage node "%d"', role_id, node_id)
                     return
-                privileges = {x['privilege'] for x in params.enterprise.get('role_privileges', [])
+                privileges = {x['privilege'].lower() for x in params.enterprise.get('role_privileges', [])
                               if x['role_id'] == role_id and x['managed_node_id'] == node_id}
                 all_privileges = {x[1].lower() for x in constants.ROLE_PRIVILEGES}
+
+                # Get current user's effective privileges for authorization check (KC-1435 fix)
+                # Cascade-aware: walks ancestor chain to find privileges granted on parent nodes
+                current_user_id = self.get_current_enterprise_user_id(params)
+                current_user_effective_privileges = set()  # type: Set[str]
+                if current_user_id:
+                    current_user_roles = {x['role_id'] for x in params.enterprise.get('role_users', [])
+                                          if x.get('enterprise_user_id') == current_user_id}
+                    for user_role_id in current_user_roles:
+                        # For each role the user has, get effective privileges on this node (honoring cascade)
+                        priv_set = self.get_effective_privileges_for_node(params, user_role_id, node_id)
+                        current_user_effective_privileges.update(priv_set)
+
                 for is_add in [True, False]:
                     parameter = 'add_privilege' if is_add else 'remove_privilege'
                     privilege_list = kwargs.get(parameter)
@@ -2787,11 +2895,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             privilege = privilege.lower()
                             if privilege not in all_privileges:
                                 logging.warning('Add/Remove managed node privilege: invalid privilege: %s', privilege)
-                                return
-                            # if is_add:
-                            #     if privilege in ['transfer_account', 'manage_companies']:
-                            #         logging.warning('Add managed node privilege: Commander does not support \"%s\" privilege', privilege)
-                            #         return
+                                continue
                             if is_add and privilege in privileges:
                                 logging.info('Add privilege: Role "%d", Mode "%s" already contains privilege "%s" ',
                                              role_id, node_id, privilege)
@@ -2800,6 +2904,14 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.info('Remove privilege: Role "%d", Mode "%s" does not contains privilege "%s" ',
                                              role_id, node_id, privilege)
                                 continue
+
+                            # KC-1435: Verify caller holds the privilege before granting it (CVE fix)
+                            # Only applies to privileged grants; cascade-aware check honors role hierarchy
+                            if is_add and privilege in _PRIVILEGED_GRANTS:
+                                if privilege not in current_user_effective_privileges:
+                                    logging.warning('Failed to assign \'%s\' privilege to role: You do not have the required privilege to grant \'%s\'',
+                                                    privilege, privilege)
+                                    continue
 
                             rq = {
                                 'command': 'managed_node_privilege_add' if is_add else 'managed_node_privilege_remove',
