@@ -23,6 +23,7 @@ from ....error import CommandError
 from ...docker import GChatConfig, GChatConstants
 from .approvals_setup import (
     ApprovalsChannelProfile,
+    approvals_config_to_record_fields,
     print_approvals_config,
 )
 from .integration_setup_base import IntegrationSetupCommand
@@ -54,6 +55,8 @@ GCHAT_APPROVALS_PROFILE = ApprovalsChannelProfile(
     channel_prompt='Space ID (starts with spaces/):',
     validate_channel=_validate_gchat_space_id,
     channel_error="Invalid Approvals Space ID (must start with 'spaces/' and include a space name)",
+    channel_field_name='chat_approvals_space_id',
+    team_channel_key='space_id',
 )
 
 
@@ -192,7 +195,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
                 config.chat_command_create_secret_id,
                 GChatConstants.FIELD_COMMAND_CREATE_SECRET_ID,
             ),
-            *self._gchat_approvals_record_fields(config.approvals),
+            *approvals_config_to_record_fields(config.approvals, self.get_approvals_profile()),
             vault.TypedField.new_field(
                 'text',
                 'true' if config.pedm_enabled else 'false',
@@ -213,35 +216,6 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
                 str(config.device_approval_polling_interval),
                 GChatConstants.FIELD_DEVICE_APPROVAL_POLLING_INTERVAL,
             ),
-        ]
-
-    def _gchat_approvals_record_fields(self, approvals):
-        import json
-        teams_json = ''
-        if approvals.multi_channel_enabled:
-            teams_data = []
-            for team in approvals.teams:
-                teams_data.append({
-                    'team_uid': team.team_uid,
-                    'name': team.name,
-                    'space_id': team.channel_id,
-                    'folder_uids': team.folder_uids,
-                    'record_uids': team.record_uids,
-                })
-            teams_json = json.dumps(teams_data, indent=2)
-
-        return [
-            vault.TypedField.new_field(
-                'text',
-                'true' if approvals.multi_channel_enabled else 'false',
-                'multi_channel_approvers_enabled',
-            ),
-            vault.TypedField.new_field(
-                'text',
-                approvals.single_channel_id,
-                'chat_approvals_space_id',
-            ),
-            vault.TypedField.new_field('multiline', teams_json, 'approvals_teams'),
         ]
 
     # ── Display ───────────────────────────────────────────────────

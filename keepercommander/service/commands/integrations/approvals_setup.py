@@ -46,6 +46,8 @@ class ApprovalsChannelProfile:
     channel_prompt: str
     validate_channel: Callable[[str], bool]
     channel_error: str
+    channel_field_name: str = 'approvals_channel_id'
+    team_channel_key: str = 'channel_id'
 
 
 SLACK_APPROVALS_PROFILE = ApprovalsChannelProfile(
@@ -59,6 +61,8 @@ SLACK_APPROVALS_PROFILE = ApprovalsChannelProfile(
     channel_prompt='Channel ID (starts with C):',
     validate_channel=lambda c: bool(c and c.startswith('C')),
     channel_error="Invalid Approvals Channel ID (must start with 'C')",
+    channel_field_name='approvals_channel_id',
+    team_channel_key='channel_id',
 )
 
 
@@ -317,14 +321,17 @@ def _collect_team_boundaries(
     return updated
 
 
-def approvals_config_to_record_fields(config: ApprovalsConfig) -> List:
+def approvals_config_to_record_fields(config: ApprovalsConfig, profile: ApprovalsChannelProfile = None) -> List:
+    if profile is None:
+        profile = SLACK_APPROVALS_PROFILE
+
     teams_json = ''
     if config.multi_channel_enabled:
         teams_json = json.dumps([
             {
                 'team_uid': team.team_uid,
                 'name': team.name,
-                'channel_id': team.channel_id,
+                profile.team_channel_key: team.channel_id,
                 'folder_uids': team.folder_uids,
                 'record_uids': team.record_uids,
             }
@@ -340,7 +347,7 @@ def approvals_config_to_record_fields(config: ApprovalsConfig) -> List:
         vault.TypedField.new_field(
             'text',
             config.single_channel_id,
-            FIELD_APPROVALS_CHANNEL_ID,
+            profile.channel_field_name,
         ),
         vault.TypedField.new_field('multiline', teams_json, FIELD_APPROVALS_TEAMS),
     ]

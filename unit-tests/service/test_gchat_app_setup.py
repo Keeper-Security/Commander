@@ -163,6 +163,7 @@ class TestGChatAppSetupValidation(unittest.TestCase):
 
     def test_multi_channel_approval_config_serialization(self):
         from keepercommander.service.docker import ApprovalsConfig, ApproverTeam
+        from keepercommander.service.commands.integrations.approvals_setup import approvals_config_to_record_fields
 
         config = ApprovalsConfig(
             multi_channel_enabled=True,
@@ -175,7 +176,7 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         )
         fields = {
             field.label: field.get_default_value()
-            for field in self.cmd._gchat_approvals_record_fields(config)
+            for field in approvals_config_to_record_fields(config, self.cmd.get_approvals_profile())
         }
         self.assertEqual(fields['multi_channel_approvers_enabled'], 'true')
         self.assertEqual(fields['chat_approvals_space_id'], 'spaces/DEFAULT')
