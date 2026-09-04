@@ -64,17 +64,6 @@ class PAMRecordingRiskLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PRR_HIGH: _ClassVar[PAMRecordingRiskLevel]
     PRR_CRITICAL: _ClassVar[PAMRecordingRiskLevel]
 
-class GitHubScope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    REPOSITORY: _ClassVar[GitHubScope]
-    ORGANIZATION: _ClassVar[GitHubScope]
-
-class GitHubOrganizationVisibility(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    ALL: _ClassVar[GitHubOrganizationVisibility]
-    PRIVATE: _ClassVar[GitHubOrganizationVisibility]
-    SELECTED: _ClassVar[GitHubOrganizationVisibility]
-
 class NhiCategory(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     NHI_CATEGORY_UNKNOWN: _ClassVar[NhiCategory]
@@ -119,11 +108,6 @@ PRR_LOW: PAMRecordingRiskLevel
 PRR_MEDIUM: PAMRecordingRiskLevel
 PRR_HIGH: PAMRecordingRiskLevel
 PRR_CRITICAL: PAMRecordingRiskLevel
-REPOSITORY: GitHubScope
-ORGANIZATION: GitHubScope
-ALL: GitHubOrganizationVisibility
-PRIVATE: GitHubOrganizationVisibility
-SELECTED: GitHubOrganizationVisibility
 NHI_CATEGORY_UNKNOWN: NhiCategory
 PAM_USER: NhiCategory
 PAM_RESOURCE: NhiCategory
@@ -498,14 +482,6 @@ class UidList(_message.Message):
     uids: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, uids: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
-class PAMServiceNames(_message.Message):
-    __slots__ = ("resourceUid", "names")
-    RESOURCEUID_FIELD_NUMBER: _ClassVar[int]
-    NAMES_FIELD_NUMBER: _ClassVar[int]
-    resourceUid: bytes
-    names: bytes
-    def __init__(self, resourceUid: _Optional[bytes] = ..., names: _Optional[bytes] = ...) -> None: ...
-
 class PAMResourceConfig(_message.Message):
     __slots__ = ("recordUid", "networkUid", "adminUid", "meta", "connectionSettings", "connectUsers", "domainUid", "jitSettings", "keeperAiSettings", "updateServices")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
@@ -536,41 +512,21 @@ class PAMUniversalSyncFolder(_message.Message):
     uid: bytes
     def __init__(self, uid: _Optional[bytes] = ...) -> None: ...
 
-class GitHubRepository(_message.Message):
-    __slots__ = ("name",)
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    name: bytes
-    def __init__(self, name: _Optional[bytes] = ...) -> None: ...
-
-class GitHubConfig(_message.Message):
-    __slots__ = ("scope", "owner", "organizationVisibility", "repos")
-    SCOPE_FIELD_NUMBER: _ClassVar[int]
-    OWNER_FIELD_NUMBER: _ClassVar[int]
-    ORGANIZATIONVISIBILITY_FIELD_NUMBER: _ClassVar[int]
-    REPOS_FIELD_NUMBER: _ClassVar[int]
-    scope: GitHubScope
-    owner: bytes
-    organizationVisibility: GitHubOrganizationVisibility
-    repos: _containers.RepeatedCompositeFieldContainer[GitHubRepository]
-    def __init__(self, scope: _Optional[_Union[GitHubScope, str]] = ..., owner: _Optional[bytes] = ..., organizationVisibility: _Optional[_Union[GitHubOrganizationVisibility, str]] = ..., repos: _Optional[_Iterable[_Union[GitHubRepository, _Mapping]]] = ...) -> None: ...
-
 class PAMUniversalSyncConfig(_message.Message):
-    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "github")
+    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName")
     NETWORKUID_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     DRYRUNENABLED_FIELD_NUMBER: _ClassVar[int]
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     SYNCIDENTITY_FIELD_NUMBER: _ClassVar[int]
     VAULTNAME_FIELD_NUMBER: _ClassVar[int]
-    GITHUB_FIELD_NUMBER: _ClassVar[int]
     networkUid: bytes
     enabled: bool
     dryRunEnabled: bool
     folders: _containers.RepeatedCompositeFieldContainer[PAMUniversalSyncFolder]
     syncIdentity: bytes
     vaultName: bytes
-    github: GitHubConfig
-    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: _Optional[bool] = ..., dryRunEnabled: _Optional[bool] = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., github: _Optional[_Union[GitHubConfig, _Mapping]] = ...) -> None: ...
+    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: _Optional[bool] = ..., dryRunEnabled: _Optional[bool] = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ...) -> None: ...
 
 class NhiMetricsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")

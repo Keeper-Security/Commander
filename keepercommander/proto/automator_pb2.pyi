@@ -401,20 +401,22 @@ class AdminEditAutomatorRequest(_message.Message):
     def __init__(self, automatorId: _Optional[int] = ..., name: _Optional[str] = ..., enabled: _Optional[bool] = ..., url: _Optional[str] = ..., skillTypes: _Optional[_Iterable[_Union[SkillType, str]]] = ..., automatorSettingValues: _Optional[_Iterable[_Union[AutomatorSettingValue, _Mapping]]] = ...) -> None: ...
 
 class AdminSetupAutomatorRequest(_message.Message):
-    __slots__ = ("automatorId", "automatorState", "encryptedEccEnterprisePrivateKey", "encryptedRsaEnterprisePrivateKey", "skillTypes", "encryptedTreeKey")
+    __slots__ = ("automatorId", "automatorState", "encryptedEccEnterprisePrivateKey", "encryptedRsaEnterprisePrivateKey", "skillTypes", "encryptedTreeKey", "enrollmentSecret")
     AUTOMATORID_FIELD_NUMBER: _ClassVar[int]
     AUTOMATORSTATE_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDECCENTERPRISEPRIVATEKEY_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDRSAENTERPRISEPRIVATEKEY_FIELD_NUMBER: _ClassVar[int]
     SKILLTYPES_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDTREEKEY_FIELD_NUMBER: _ClassVar[int]
+    ENROLLMENTSECRET_FIELD_NUMBER: _ClassVar[int]
     automatorId: int
     automatorState: AutomatorState
     encryptedEccEnterprisePrivateKey: bytes
     encryptedRsaEnterprisePrivateKey: bytes
     skillTypes: _containers.RepeatedScalarFieldContainer[SkillType]
     encryptedTreeKey: bytes
-    def __init__(self, automatorId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., encryptedEccEnterprisePrivateKey: _Optional[bytes] = ..., encryptedRsaEnterprisePrivateKey: _Optional[bytes] = ..., skillTypes: _Optional[_Iterable[_Union[SkillType, str]]] = ..., encryptedTreeKey: _Optional[bytes] = ...) -> None: ...
+    enrollmentSecret: str
+    def __init__(self, automatorId: _Optional[int] = ..., automatorState: _Optional[_Union[AutomatorState, str]] = ..., encryptedEccEnterprisePrivateKey: _Optional[bytes] = ..., encryptedRsaEnterprisePrivateKey: _Optional[bytes] = ..., skillTypes: _Optional[_Iterable[_Union[SkillType, str]]] = ..., encryptedTreeKey: _Optional[bytes] = ..., enrollmentSecret: _Optional[str] = ...) -> None: ...
 
 class AdminSetupAutomatorResponse(_message.Message):
     __slots__ = ("success", "message", "automatorId", "automatorState", "automatorEccPublicKey")
