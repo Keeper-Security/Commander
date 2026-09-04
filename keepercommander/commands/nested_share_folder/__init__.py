@@ -35,6 +35,7 @@ from .folder_commands import (                           # noqa: F401
     NestedShareFolderListCommand,
     NestedShareFolderShareCommand,
     NestedShareFolderRemoveCommand,
+    NestedSharedMoveCommander,
 )
 
 # Record commands
@@ -77,6 +78,7 @@ def register_commands(commands):
     commands['nsf-rmdir']                     = NestedShareFolderRemoveCommand()
     commands['nsf-shortcut']                  = NestedShareRecordShortcutCommand()
     commands['nsf-get']                       = NestedShareGetCommand()
+    commands['nsf-move']                      = NestedSharedMoveCommander()
 
 
 def register_command_info(aliases, command_info):
@@ -96,3 +98,4 @@ def register_command_info(aliases, command_info):
     command_info['nsf-rmdir']                     = 'Remove a Nested Share Folder and its contents'
     command_info['nsf-shortcut']                  = 'Manage Nested Share Record shortcuts'
     command_info['nsf-get']                       = 'Get details of a Nested Share Record or folder'
+    command_info['nsf-move']                      = 'Move a Nested Share Record or folder to a new location'

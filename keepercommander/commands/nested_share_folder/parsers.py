@@ -371,3 +371,18 @@ nested_share_get_parser.add_argument(
 nested_share_get_parser.add_argument(
     '--include-dag', dest='include_dag', action='store_true', default=False,
     help='Include DAG/GraphSync information in json output (PAM record types only)')
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Move parser
+# ══════════════════════════════════════════════════════════════════════════
+
+nested_share_move_parser = _make_parser(
+    'nsf-move',
+    'Move a Nested Share Record or folder to a new location')
+nested_share_move_parser.add_argument(
+    'src', type=str, help='Source record or folder UID/title/path')
+nested_share_move_parser.add_argument(
+    'dst', type=str,
+    help="Destination folder UID/title/path, or 'root' for the Nested "
+         "Share Folder root")

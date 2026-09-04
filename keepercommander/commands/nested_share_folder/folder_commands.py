@@ -38,6 +38,7 @@ from .parsers import (
     nested_share_folder_list_parser,
     nested_share_folder_share_parser,
     nested_share_folder_rmdir_parser,
+    nested_share_move_parser
 )
 
 
@@ -209,7 +210,7 @@ class NestedShareFolderUpdateCommand(Command):
 
         with command_error_handler('nsf-rndir'):
             result = _nsf.update_folder_v3(
-                params=params, folder_uid=folder_arg, folder_name=new_name,
+                params=params, folder_uid=folder_uid, folder_name=new_name,
                 color=color,
             )
             check_result(result, 'nsf-rndir')
@@ -447,6 +448,7 @@ class NestedShareFolderShareCommand(Command):
         that can be removed, including inherited access.
         """
         from keepercommander.proto import folder_pb2
+        at_owner = int(folder_pb2.AT_OWNER)
         at_user = int(folder_pb2.AT_USER)
         at_team = int(folder_pb2.AT_TEAM)
 
@@ -457,13 +459,14 @@ class NestedShareFolderShareCommand(Command):
                 if not fr.get('success'):
                     continue
                 for accessor in fr.get('accessors', []):
-                    if accessor.get('access_type') == 'AT_OWNER':
+                    access_type = int(accessor.get('access_type', 0) or 0)
+                    if access_type == at_owner:
                         continue
-                    if accessor.get('access_type') == 'AT_TEAM':
+                    if access_type == at_team:
                         team_uid = accessor.get('accessor_uid')
                         if team_uid:
                             result.append(('team', team_uid))
-                    elif accessor.get('access_type') == 'AT_USER':
+                    elif access_type == at_user:
                         username = accessor.get('username')
                         if username and username != params.user:
                             if is_nested_share_folder_owner_email(params, folder_uid, username):
@@ -657,3 +660,18 @@ class NestedShareFolderRemoveCommand(Command):
             for w in impact.get('warnings', []):
                 lines.append(f"  Warning: {w}")
         return lines
+
+
+class NestedSharedMoveCommander(Command):
+    """ Move a Nested Share Folder or record. """
+
+    def get_parser(self):
+        return nested_share_move_parser
+
+    def execute(self, params, **kwargs):
+        from .helpers import move_nested_share_item
+        source = kwargs.get('src')
+        destination = kwargs.get('dst')
+        if not source or not destination:
+            raise CommandError('nsf-move', 'Both source and destination are required.')
+        move_nested_share_item(params, source, destination)

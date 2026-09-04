@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -94,3 +95,15 @@ class MCTransferState(_message.Message):
     transferDate: int
     mcTransferEnterprises: _containers.RepeatedCompositeFieldContainer[MCTransferEnterprise]
     def __init__(self, movingEnterpriseId: _Optional[int] = ..., movingEnterpriseName: _Optional[str] = ..., movingEnterpriseAdminEmail: _Optional[str] = ..., receivingEnterpriseName: _Optional[str] = ..., receivingEnterpriseAdminEmail: _Optional[str] = ..., transferStatus: _Optional[_Union[MCTransferStatus, str]] = ..., comments: _Optional[str] = ..., transferDate: _Optional[int] = ..., mcTransferEnterprises: _Optional[_Iterable[_Union[MCTransferEnterprise, _Mapping]]] = ...) -> None: ...
+
+class MCTransferListRequest(_message.Message):
+    __slots__ = ("enterpriseId", "enterpriseName", "enterpriseAdminEmail", "transferStatus")
+    ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISEADMINEMAIL_FIELD_NUMBER: _ClassVar[int]
+    TRANSFERSTATUS_FIELD_NUMBER: _ClassVar[int]
+    enterpriseId: int
+    enterpriseName: str
+    enterpriseAdminEmail: str
+    transferStatus: MCTransferStatus
+    def __init__(self, enterpriseId: _Optional[int] = ..., enterpriseName: _Optional[str] = ..., enterpriseAdminEmail: _Optional[str] = ..., transferStatus: _Optional[_Union[MCTransferStatus, str]] = ...) -> None: ...
