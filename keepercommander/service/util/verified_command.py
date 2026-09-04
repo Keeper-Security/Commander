@@ -17,6 +17,24 @@ class Verifycommand:
     # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
     _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
 
+    # Legacy Commands category — plugin-based rotation/connection commands have no safe Service Mode form
+    # and are blocked unconditionally, regardless of what an API key's command_list allows.
+    _LEGACY_COMMANDS = frozenset({
+        'rotate', 'r',
+        'connect', 'ssh', 'ssh-agent', 'rdp', 'rsync',
+        'set', 'echo',
+        'mysql', 'postgresql', 'pg',
+    })
+    _LEGACY_COMMAND_MSG = (
+        'Legacy commands are not permitted through Service Mode'
+    )
+
+    # GroupCommand.execute_args (commands/base.py) strips a leading '-- ' at each
+    # nested group boundary, desyncing position-based checks below (e.g. pam tunnel).
+    _DOUBLE_DASH_MSG = (
+        "The '--' argument separator is not permitted through Service Mode"
+    )
+
     # WARNING: everything below is a DENYLIST. Any command/flag that reads or
     # writes a host file and is NOT enumerated here is allowed by default.
     # Adding a new command with local file I/O? Add it here, or it silently
@@ -65,6 +83,8 @@ class Verifycommand:
             return None
 
         for validator in (
+            Verifycommand.validate_service_mode_double_dash,
+            Verifycommand.validate_service_mode_legacy_command,
             Verifycommand.validate_service_mode_pam_tunnel_command,
             Verifycommand.validate_service_mode_download_attachment_command,
             Verifycommand.validate_service_mode_upload_attachment_command,
@@ -77,6 +97,22 @@ class Verifycommand:
             if error:
                 return error
         return None
+
+    @staticmethod
+    def validate_service_mode_double_dash(command_tokens, request_temp_dir=None):
+        """Block bare '--' anywhere in Service Mode input; error or None."""
+        if '--' in command_tokens:
+            return Verifycommand._DOUBLE_DASH_MSG
+        return None
+
+    @staticmethod
+    def validate_service_mode_legacy_command(command_tokens, request_temp_dir=None):
+        """Block legacy commands in Service Mode; error or None."""
+        if not command_tokens:
+            return None
+        if command_tokens[0].lower() not in Verifycommand._LEGACY_COMMANDS:
+            return None
+        return Verifycommand._LEGACY_COMMAND_MSG
 
     @staticmethod
     def validate_service_mode_pam_tunnel_command(command_tokens, request_temp_dir=None):
@@ -370,8 +406,12 @@ class Verifycommand:
         if not path or not request_temp_dir:
             return False
         try:
-            resolved = os.path.realpath(os.path.expanduser(path))
-            root = os.path.realpath(request_temp_dir)
+            expanded = os.path.expanduser(path)
+            # Resolve the parent, not the nonexistent leaf -- Windows only expands
+            # 8.3 short names for path segments that already exist on disk.
+            parent = os.path.realpath(os.path.dirname(expanded) or '.')
+            resolved = os.path.normcase(os.path.join(parent, os.path.basename(expanded)))
+            root = os.path.normcase(os.path.realpath(request_temp_dir))
             return resolved == root or resolved.startswith(root + os.sep)
         except (OSError, ValueError):
             return False
