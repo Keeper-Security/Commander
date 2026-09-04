@@ -191,6 +191,108 @@ class TestEnterprise(TestCase):
             with mock.patch('builtins.print'):
                 cmd.execute(params, add_user=['invalid@keepersecurity.com'], verbose=True, role=[ent_env.role1_name])
 
+    def test_enterprise_role_add_transfer_account_privilege_denied(self):
+        """KC-1412: Delegated admin without transfer_account privilege cannot grant it (CVE fix)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        # Role1 (current user) has only manage_nodes, manage_user, manage_roles (no transfer_account)
+        # Try to grant transfer_account to Role2 - should be denied by KC-1412 fix
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, add_privilege=['transfer_account'], role=[ent_env.role2_name],
+                       node='Enterprise 1')
+            # KC-1412 fix: Check for the privilege denial message
+            self.assertTrue(any('You do not have the required privilege' in msg for msg in log.output))
+
+        # Expected: no command sent to server (returned early due to lack of authorization)
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_add_manage_teams_privilege_denied(self):
+        """KC-1412: Delegated admin without manage_teams privilege cannot grant it (CVE fix)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        # Role1 has no manage_teams privilege - try to grant it, should be denied
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, add_privilege=['manage_teams'], role=[ent_env.role2_name],
+                       node='Enterprise 1')
+            # KC-1412 fix: Check for the privilege denial message
+            self.assertTrue(any('You do not have the required privilege' in msg for msg in log.output))
+
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_add_privilege_with_authorization(self):
+        """KC-1412: Admin with transfer_account privilege CAN grant it (regression test)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Use the admin role which has transfer_account in test data
+        # Add admin role to User1 so they have the privilege
+        params.enterprise['role_users'].append({
+            'role_id': ent_env.role_admin_id,
+            'enterprise_user_id': ent_env.user1_id
+        })
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        TestEnterprise.expected_commands = ['managed_node_privilege_add']
+        # Now User1 has transfer_account via Admin role, can grant it to Role2
+        cmd.execute(params, add_privilege=['transfer_account'], role=[ent_env.role2_name],
+                   node='Enterprise 1')
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_require_account_share_enforcement_denied_delegated_admin(self):
+        """KC-1412: Delegated admin (non-root) cannot set require_account_share enforcement (CVE fix)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Node2 is a sub-node (has parent_id), so user in that node is not root admin
+        # Modify to make Role1 manage Node2 instead
+        params.enterprise['managed_nodes'] = [
+            {
+                'role_id': ent_env.role1_id,
+                'managed_node_id': ent_env.node2_id,
+                'cascade_node_management': True,
+            }
+        ]
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        # Try to set require_account_share enforcement by role name
+        # This should be denied because the user is not a root admin (managing non-root node)
+        # KC-1412 fix should reject this with a warning and return early
+        with self.assertLogs(level=logging.WARNING):
+            cmd.execute(params, enforcements=[f'require_account_share:Admin Role'],
+                       role=[ent_env.role1_name])
+
+        # No command should be sent to server (returned early due to root admin check)
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_require_account_share_enforcement_allowed_root_admin(self):
+        """KC-1412: Root admin CAN set require_account_share enforcement (regression test)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Role1 manages Node1 (root node, no parent_id) - user is root admin
+        # Set enforcement to Admin Role which has transfer_account privilege
+        cmd = enterprise.EnterpriseRoleCommand()
+        TestEnterprise.expected_commands = ['role_enforcement_add']
+        cmd.execute(params, enforcements=['require_account_share:Admin Role'],
+                   role=[ent_env.role1_name])
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_other_enforcements_work_delegated_admin(self):
+        """KC-1412: Delegated admin CAN set non-sensitive enforcements (regression test)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        # Non-sensitive enforcement should work for delegated admin
+        TestEnterprise.expected_commands = ['role_enforcement_add']
+        cmd.execute(params, enforcements=['require_two_factor:True'],
+                   role=[ent_env.role1_name])
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
     def test_enterprise_team(self):
         params = get_connected_params()
         api.query_enterprise(params)

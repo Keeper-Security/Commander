@@ -2655,6 +2655,33 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     else:
                         enforcement_value = None
 
+                    # KC-1412: Restrict require_account_share enforcement to root admins only (CVE fix)
+                    if key == 'require_account_share' and enforcement_value is not None:
+                        # Check if current user is a root admin (manages a root node with no parent_id)
+                        is_root_admin = False
+                        # Find current user's enterprise_user_id
+                        curr_user_id = None
+                        if 'users' in params.enterprise:
+                            for user in params.enterprise['users']:
+                                if user.get('username') == params.user:
+                                    curr_user_id = user.get('enterprise_user_id')
+                                    break
+                        if curr_user_id and 'managed_nodes' in params.enterprise:
+                            user_roles = {x['role_id'] for x in params.enterprise.get('role_users', [])
+                                         if x.get('enterprise_user_id') == curr_user_id}
+                            for mn in params.enterprise['managed_nodes']:
+                                if mn['role_id'] in user_roles:
+                                    # Check if the managed node is a root node (no parent)
+                                    managed_node = next((n for n in params.enterprise.get('nodes', [])
+                                                       if n.get('node_id') == mn['managed_node_id']), None)
+                                    if managed_node and not managed_node.get('parent_id'):
+                                        is_root_admin = True
+                                        break
+                        if not is_root_admin:
+                            logging.warning('Failed to set enforcement \'%s\': Only enterprise root administrators can set account transfer policies',
+                                            key)
+                            return
+
                     role_enforcements = params.enterprise.get('role_enforcements') or []
                     for role in matched_roles:
                         role_id = role['role_id']
@@ -2779,6 +2806,25 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 privileges = {x['privilege'] for x in params.enterprise.get('role_privileges', [])
                               if x['role_id'] == role_id and x['managed_node_id'] == node_id}
                 all_privileges = {x[1].lower() for x in constants.ROLE_PRIVILEGES}
+
+                # Get current user's privileges for authorization check (KC-1412 fix)
+                # Find current user's enterprise_user_id by matching username
+                current_user_id = None
+                if 'users' in params.enterprise:
+                    for user in params.enterprise['users']:
+                        if user.get('username') == params.user:
+                            current_user_id = user.get('enterprise_user_id')
+                            break
+
+                # Find current user's role IDs
+                current_user_roles = {x['role_id'] for x in params.enterprise.get('role_users', [])
+                                      if x.get('enterprise_user_id') == current_user_id} if current_user_id and 'role_users' in params.enterprise else set()
+                current_user_privileges = set()
+                if 'role_privileges' in params.enterprise and current_user_roles:
+                    for rp in params.enterprise['role_privileges']:
+                        if rp['role_id'] in current_user_roles and rp['managed_node_id'] == node_id:
+                            current_user_privileges.add(rp['privilege'].lower())
+
                 for is_add in [True, False]:
                     parameter = 'add_privilege' if is_add else 'remove_privilege'
                     privilege_list = kwargs.get(parameter)
@@ -2800,6 +2846,13 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.info('Remove privilege: Role "%d", Mode "%s" does not contains privilege "%s" ',
                                              role_id, node_id, privilege)
                                 continue
+
+                            # KC-1412: Verify caller holds the privilege before granting it (CVE fix)
+                            if is_add and privilege in ('transfer_account', 'manage_companies', 'manage_teams'):
+                                if privilege not in current_user_privileges:
+                                    logging.warning('Failed to assign \'%s\' privilege to role: You do not have the required privilege to grant \'%s\'',
+                                                    privilege, privilege)
+                                    return
 
                             rq = {
                                 'command': 'managed_node_privilege_add' if is_add else 'managed_node_privilege_remove',
