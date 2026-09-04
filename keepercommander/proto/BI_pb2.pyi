@@ -3,7 +3,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -110,7 +111,7 @@ class ValidateSessionTokenRequest(_message.Message):
     encryptedSessionToken: bytes
     returnMcEnterpiseIds: bool
     ip: str
-    def __init__(self, encryptedSessionToken: _Optional[bytes] = ..., returnMcEnterpiseIds: bool = ..., ip: _Optional[str] = ...) -> None: ...
+    def __init__(self, encryptedSessionToken: _Optional[bytes] = ..., returnMcEnterpiseIds: _Optional[bool] = ..., ip: _Optional[str] = ...) -> None: ...
 
 class ValidateSessionTokenResponse(_message.Message):
     __slots__ = ("username", "userId", "enterpriseUserId", "status", "statusMessage", "mcEnterpriseIds", "hasMSPPermission", "deletedMcEnterpriseIds")
@@ -142,14 +143,14 @@ class ValidateSessionTokenResponse(_message.Message):
     mcEnterpriseIds: _containers.RepeatedScalarFieldContainer[int]
     hasMSPPermission: bool
     deletedMcEnterpriseIds: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, username: _Optional[str] = ..., userId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[ValidateSessionTokenResponse.Status, str]] = ..., statusMessage: _Optional[str] = ..., mcEnterpriseIds: _Optional[_Iterable[int]] = ..., hasMSPPermission: bool = ..., deletedMcEnterpriseIds: _Optional[_Iterable[int]] = ...) -> None: ...
+    def __init__(self, username: _Optional[str] = ..., userId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[ValidateSessionTokenResponse.Status, str]] = ..., statusMessage: _Optional[str] = ..., mcEnterpriseIds: _Optional[_Iterable[int]] = ..., hasMSPPermission: _Optional[bool] = ..., deletedMcEnterpriseIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class SubscriptionStatusRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
 class SubscriptionStatusResponse(_message.Message):
-    __slots__ = ("autoRenewal", "currentPaymentMethod", "checkoutLink", "licenseCreateDate", "isDistributor", "isLegacyMsp", "licenseStats", "gradientStatus", "hideTrialBanner", "gradientLastSyncDate", "gradientNextSyncDate", "isGradientMappingPending", "nhi", "freeKsmApiCallsCount", "ksm")
+    __slots__ = ("autoRenewal", "currentPaymentMethod", "checkoutLink", "licenseCreateDate", "isDistributor", "isLegacyMsp", "licenseStats", "gradientStatus", "hideTrialBanner", "gradientLastSyncDate", "gradientNextSyncDate", "isGradientMappingPending", "nhi", "freeKsmApiCallsCount", "ksm", "epm")
     AUTORENEWAL_FIELD_NUMBER: _ClassVar[int]
     CURRENTPAYMENTMETHOD_FIELD_NUMBER: _ClassVar[int]
     CHECKOUTLINK_FIELD_NUMBER: _ClassVar[int]
@@ -165,6 +166,7 @@ class SubscriptionStatusResponse(_message.Message):
     NHI_FIELD_NUMBER: _ClassVar[int]
     FREEKSMAPICALLSCOUNT_FIELD_NUMBER: _ClassVar[int]
     KSM_FIELD_NUMBER: _ClassVar[int]
+    EPM_FIELD_NUMBER: _ClassVar[int]
     autoRenewal: AutoRenewal
     currentPaymentMethod: PaymentMethod
     checkoutLink: str
@@ -180,9 +182,24 @@ class SubscriptionStatusResponse(_message.Message):
     nhi: NhiBilling
     freeKsmApiCallsCount: int
     ksm: KsmBilling
-    def __init__(self, autoRenewal: _Optional[_Union[AutoRenewal, _Mapping]] = ..., currentPaymentMethod: _Optional[_Union[PaymentMethod, _Mapping]] = ..., checkoutLink: _Optional[str] = ..., licenseCreateDate: _Optional[int] = ..., isDistributor: bool = ..., isLegacyMsp: bool = ..., licenseStats: _Optional[_Iterable[_Union[LicenseStats, _Mapping]]] = ..., gradientStatus: _Optional[_Union[GradientIntegrationStatus, str]] = ..., hideTrialBanner: bool = ..., gradientLastSyncDate: _Optional[str] = ..., gradientNextSyncDate: _Optional[str] = ..., isGradientMappingPending: bool = ..., nhi: _Optional[_Union[NhiBilling, _Mapping]] = ..., freeKsmApiCallsCount: _Optional[int] = ..., ksm: _Optional[_Union[KsmBilling, _Mapping]] = ...) -> None: ...
+    epm: EpmBilling
+    def __init__(self, autoRenewal: _Optional[_Union[AutoRenewal, _Mapping]] = ..., currentPaymentMethod: _Optional[_Union[PaymentMethod, _Mapping]] = ..., checkoutLink: _Optional[str] = ..., licenseCreateDate: _Optional[int] = ..., isDistributor: _Optional[bool] = ..., isLegacyMsp: _Optional[bool] = ..., licenseStats: _Optional[_Iterable[_Union[LicenseStats, _Mapping]]] = ..., gradientStatus: _Optional[_Union[GradientIntegrationStatus, str]] = ..., hideTrialBanner: _Optional[bool] = ..., gradientLastSyncDate: _Optional[str] = ..., gradientNextSyncDate: _Optional[str] = ..., isGradientMappingPending: _Optional[bool] = ..., nhi: _Optional[_Union[NhiBilling, _Mapping]] = ..., freeKsmApiCallsCount: _Optional[int] = ..., ksm: _Optional[_Union[KsmBilling, _Mapping]] = ..., epm: _Optional[_Union[EpmBilling, _Mapping]] = ...) -> None: ...
 
 class KsmBilling(_message.Message):
+    __slots__ = ("billingStartTimestamp", "billingEndTimestamp", "currentTierId", "enterpriseBlocks", "currentTierCeiling")
+    BILLINGSTARTTIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    BILLINGENDTIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    CURRENTTIERID_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISEBLOCKS_FIELD_NUMBER: _ClassVar[int]
+    CURRENTTIERCEILING_FIELD_NUMBER: _ClassVar[int]
+    billingStartTimestamp: int
+    billingEndTimestamp: int
+    currentTierId: int
+    enterpriseBlocks: int
+    currentTierCeiling: int
+    def __init__(self, billingStartTimestamp: _Optional[int] = ..., billingEndTimestamp: _Optional[int] = ..., currentTierId: _Optional[int] = ..., enterpriseBlocks: _Optional[int] = ..., currentTierCeiling: _Optional[int] = ...) -> None: ...
+
+class EpmBilling(_message.Message):
     __slots__ = ("billingStartTimestamp", "billingEndTimestamp", "currentTierId", "enterpriseBlocks", "currentTierCeiling")
     BILLINGSTARTTIMESTAMP_FIELD_NUMBER: _ClassVar[int]
     BILLINGENDTIMESTAMP_FIELD_NUMBER: _ClassVar[int]
@@ -258,7 +275,7 @@ class AutoRenewal(_message.Message):
     nextOn: int
     daysLeft: int
     isTrial: bool
-    def __init__(self, nextOn: _Optional[int] = ..., daysLeft: _Optional[int] = ..., isTrial: bool = ...) -> None: ...
+    def __init__(self, nextOn: _Optional[int] = ..., daysLeft: _Optional[int] = ..., isTrial: _Optional[bool] = ...) -> None: ...
 
 class PaymentMethod(_message.Message):
     __slots__ = ("type", "card", "sepa", "paypal", "failedBilling", "vendor", "purchaseOrder")
@@ -317,7 +334,7 @@ class PaymentMethod(_message.Message):
     failedBilling: bool
     vendor: PaymentMethod.Vendor
     purchaseOrder: PaymentMethod.PurchaseOrder
-    def __init__(self, type: _Optional[_Union[PaymentMethod.Type, str]] = ..., card: _Optional[_Union[PaymentMethod.Card, _Mapping]] = ..., sepa: _Optional[_Union[PaymentMethod.Sepa, _Mapping]] = ..., paypal: _Optional[_Union[PaymentMethod.Paypal, _Mapping]] = ..., failedBilling: bool = ..., vendor: _Optional[_Union[PaymentMethod.Vendor, _Mapping]] = ..., purchaseOrder: _Optional[_Union[PaymentMethod.PurchaseOrder, _Mapping]] = ...) -> None: ...
+    def __init__(self, type: _Optional[_Union[PaymentMethod.Type, str]] = ..., card: _Optional[_Union[PaymentMethod.Card, _Mapping]] = ..., sepa: _Optional[_Union[PaymentMethod.Sepa, _Mapping]] = ..., paypal: _Optional[_Union[PaymentMethod.Paypal, _Mapping]] = ..., failedBilling: _Optional[bool] = ..., vendor: _Optional[_Union[PaymentMethod.Vendor, _Mapping]] = ..., purchaseOrder: _Optional[_Union[PaymentMethod.PurchaseOrder, _Mapping]] = ...) -> None: ...
 
 class SubscriptionMspPricingRequest(_message.Message):
     __slots__ = ()
@@ -401,7 +418,7 @@ class Cost(_message.Message):
     amountPer: Cost.AmountPer
     currency: Currency
     contactSales: bool
-    def __init__(self, amount: _Optional[float] = ..., amountPer: _Optional[_Union[Cost.AmountPer, str]] = ..., currency: _Optional[_Union[Currency, str]] = ..., contactSales: bool = ...) -> None: ...
+    def __init__(self, amount: _Optional[float] = ..., amountPer: _Optional[_Union[Cost.AmountPer, str]] = ..., currency: _Optional[_Union[Currency, str]] = ..., contactSales: _Optional[bool] = ...) -> None: ...
 
 class InvoiceSearchRequest(_message.Message):
     __slots__ = ("size", "startingAfterId", "allInvoicesUnfiltered")
@@ -411,7 +428,7 @@ class InvoiceSearchRequest(_message.Message):
     size: int
     startingAfterId: int
     allInvoicesUnfiltered: bool
-    def __init__(self, size: _Optional[int] = ..., startingAfterId: _Optional[int] = ..., allInvoicesUnfiltered: bool = ...) -> None: ...
+    def __init__(self, size: _Optional[int] = ..., startingAfterId: _Optional[int] = ..., allInvoicesUnfiltered: _Optional[bool] = ...) -> None: ...
 
 class InvoiceSearchResponse(_message.Message):
     __slots__ = ("invoices",)
@@ -589,7 +606,7 @@ class GradientValidateKeyResponse(_message.Message):
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     message: str
-    def __init__(self, success: bool = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ...) -> None: ...
 
 class GradientSaveRequest(_message.Message):
     __slots__ = ("gradientKey", "enterpriseUserId")
@@ -607,7 +624,7 @@ class GradientSaveResponse(_message.Message):
     success: bool
     status: GradientIntegrationStatus
     message: str
-    def __init__(self, success: bool = ..., status: _Optional[_Union[GradientIntegrationStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., status: _Optional[_Union[GradientIntegrationStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class GradientRemoveRequest(_message.Message):
     __slots__ = ("enterpriseUserId",)
@@ -621,7 +638,7 @@ class GradientRemoveResponse(_message.Message):
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     message: str
-    def __init__(self, success: bool = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ...) -> None: ...
 
 class GradientSyncRequest(_message.Message):
     __slots__ = ("enterpriseUserId",)
@@ -637,7 +654,7 @@ class GradientSyncResponse(_message.Message):
     success: bool
     status: GradientIntegrationStatus
     message: str
-    def __init__(self, success: bool = ..., status: _Optional[_Union[GradientIntegrationStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., status: _Optional[_Union[GradientIntegrationStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class NetPromoterScoreSurveySubmissionRequest(_message.Message):
     __slots__ = ("survey_score", "notes")
@@ -659,7 +676,7 @@ class NetPromoterScorePopupScheduleResponse(_message.Message):
     __slots__ = ("show_popup",)
     SHOW_POPUP_FIELD_NUMBER: _ClassVar[int]
     show_popup: bool
-    def __init__(self, show_popup: bool = ...) -> None: ...
+    def __init__(self, show_popup: _Optional[bool] = ...) -> None: ...
 
 class NetPromoterScorePopupDismissalRequest(_message.Message):
     __slots__ = ()
@@ -705,7 +722,7 @@ class EventResponse(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     index: int
     status: bool
-    def __init__(self, index: _Optional[int] = ..., status: bool = ...) -> None: ...
+    def __init__(self, index: _Optional[int] = ..., status: _Optional[bool] = ...) -> None: ...
 
 class EventsResponse(_message.Message):
     __slots__ = ("response",)
@@ -714,7 +731,7 @@ class EventsResponse(_message.Message):
     def __init__(self, response: _Optional[_Iterable[_Union[EventResponse, _Mapping]]] = ...) -> None: ...
 
 class CustomerCaptureRequest(_message.Message):
-    __slots__ = ("pageUrl", "tree", "hash", "image", "pageLoadTime", "keyId", "test", "issueType", "notes")
+    __slots__ = ("pageUrl", "tree", "hash", "image", "pageLoadTime", "keyId", "test", "issueType", "notes", "extensionVersion", "aiAutofillStatus", "mlLabels")
     PAGEURL_FIELD_NUMBER: _ClassVar[int]
     TREE_FIELD_NUMBER: _ClassVar[int]
     HASH_FIELD_NUMBER: _ClassVar[int]
@@ -724,6 +741,9 @@ class CustomerCaptureRequest(_message.Message):
     TEST_FIELD_NUMBER: _ClassVar[int]
     ISSUETYPE_FIELD_NUMBER: _ClassVar[int]
     NOTES_FIELD_NUMBER: _ClassVar[int]
+    EXTENSIONVERSION_FIELD_NUMBER: _ClassVar[int]
+    AIAUTOFILLSTATUS_FIELD_NUMBER: _ClassVar[int]
+    MLLABELS_FIELD_NUMBER: _ClassVar[int]
     pageUrl: str
     tree: str
     hash: str
@@ -733,7 +753,10 @@ class CustomerCaptureRequest(_message.Message):
     test: bool
     issueType: str
     notes: str
-    def __init__(self, pageUrl: _Optional[str] = ..., tree: _Optional[str] = ..., hash: _Optional[str] = ..., image: _Optional[str] = ..., pageLoadTime: _Optional[str] = ..., keyId: _Optional[str] = ..., test: bool = ..., issueType: _Optional[str] = ..., notes: _Optional[str] = ...) -> None: ...
+    extensionVersion: str
+    aiAutofillStatus: str
+    mlLabels: str
+    def __init__(self, pageUrl: _Optional[str] = ..., tree: _Optional[str] = ..., hash: _Optional[str] = ..., image: _Optional[str] = ..., pageLoadTime: _Optional[str] = ..., keyId: _Optional[str] = ..., test: _Optional[bool] = ..., issueType: _Optional[str] = ..., notes: _Optional[str] = ..., extensionVersion: _Optional[str] = ..., aiAutofillStatus: _Optional[str] = ..., mlLabels: _Optional[str] = ...) -> None: ...
 
 class CustomerCaptureResponse(_message.Message):
     __slots__ = ()
@@ -770,7 +793,7 @@ class QuotePurchase(_message.Message):
     taxAmount: float
     taxLabel: str
     purchaseIdentifier: str
-    def __init__(self, quoteTotal: _Optional[float] = ..., includedTax: bool = ..., includedOtherAddons: bool = ..., taxAmount: _Optional[float] = ..., taxLabel: _Optional[str] = ..., purchaseIdentifier: _Optional[str] = ...) -> None: ...
+    def __init__(self, quoteTotal: _Optional[float] = ..., includedTax: _Optional[bool] = ..., includedOtherAddons: _Optional[bool] = ..., taxAmount: _Optional[float] = ..., taxLabel: _Optional[str] = ..., purchaseIdentifier: _Optional[str] = ...) -> None: ...
 
 class PurchaseOptions(_message.Message):
     __slots__ = ("inConsole", "externalCheckout")
@@ -778,7 +801,7 @@ class PurchaseOptions(_message.Message):
     EXTERNALCHECKOUT_FIELD_NUMBER: _ClassVar[int]
     inConsole: bool
     externalCheckout: bool
-    def __init__(self, inConsole: bool = ..., externalCheckout: bool = ...) -> None: ...
+    def __init__(self, inConsole: _Optional[bool] = ..., externalCheckout: _Optional[bool] = ...) -> None: ...
 
 class AddonPurchaseOptions(_message.Message):
     __slots__ = ("storage", "audit", "breachwatch", "chat", "compliance", "professionalServicesSilver", "professionalServicesPlatinum", "pam", "epm", "secretsManager", "connectionManager", "remoteBrowserIsolation", "nhiTier")
@@ -832,7 +855,7 @@ class UpgradeLicenseStatusResponse(_message.Message):
     allowPurchaseFromConsole: bool
     purchaseOptions: AvailablePurchaseOptions
     error: Error
-    def __init__(self, allowPurchaseFromConsole: bool = ..., purchaseOptions: _Optional[_Union[AvailablePurchaseOptions, _Mapping]] = ..., error: _Optional[_Union[Error, _Mapping]] = ...) -> None: ...
+    def __init__(self, allowPurchaseFromConsole: _Optional[bool] = ..., purchaseOptions: _Optional[_Union[AvailablePurchaseOptions, _Mapping]] = ..., error: _Optional[_Union[Error, _Mapping]] = ...) -> None: ...
 
 class UpgradeLicenseQuotePurchaseRequest(_message.Message):
     __slots__ = ("productType", "quantity", "tier")
@@ -854,7 +877,7 @@ class UpgradeLicenseQuotePurchaseResponse(_message.Message):
     quotePurchase: QuotePurchase
     viewSummaryLink: str
     error: Error
-    def __init__(self, success: bool = ..., quotePurchase: _Optional[_Union[QuotePurchase, _Mapping]] = ..., viewSummaryLink: _Optional[str] = ..., error: _Optional[_Union[Error, _Mapping]] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., quotePurchase: _Optional[_Union[QuotePurchase, _Mapping]] = ..., viewSummaryLink: _Optional[str] = ..., error: _Optional[_Union[Error, _Mapping]] = ...) -> None: ...
 
 class UpgradeLicenseCompletePurchaseRequest(_message.Message):
     __slots__ = ("productType", "quantity", "quotePurchase", "tier")
@@ -878,7 +901,7 @@ class UpgradeLicenseCompletePurchaseResponse(_message.Message):
     invoiceNumber: str
     error: Error
     quotePurchase: QuotePurchase
-    def __init__(self, success: bool = ..., invoiceNumber: _Optional[str] = ..., error: _Optional[_Union[Error, _Mapping]] = ..., quotePurchase: _Optional[_Union[QuotePurchase, _Mapping]] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., invoiceNumber: _Optional[str] = ..., error: _Optional[_Union[Error, _Mapping]] = ..., quotePurchase: _Optional[_Union[QuotePurchase, _Mapping]] = ...) -> None: ...
 
 class EnterpriseBasePlan(_message.Message):
     __slots__ = ("baseplanVersion", "cost")
@@ -986,7 +1009,7 @@ class SingularSessionRequest(_message.Message):
     installRef: str
     metaRef: str
     attributionToken: str
-    def __init__(self, deviceIdentifiers: _Optional[_Iterable[_Union[SingularDeviceIdentifier, _Mapping]]] = ..., sharedData: _Optional[_Union[SingularSharedData, _Mapping]] = ..., applicationVersion: _Optional[str] = ..., install: bool = ..., installTime: _Optional[int] = ..., updateTime: _Optional[int] = ..., installSource: _Optional[str] = ..., installReceipt: _Optional[str] = ..., openuri: _Optional[str] = ..., ddlEnabled: bool = ..., singularLinkResolveRequired: bool = ..., installRef: _Optional[str] = ..., metaRef: _Optional[str] = ..., attributionToken: _Optional[str] = ...) -> None: ...
+    def __init__(self, deviceIdentifiers: _Optional[_Iterable[_Union[SingularDeviceIdentifier, _Mapping]]] = ..., sharedData: _Optional[_Union[SingularSharedData, _Mapping]] = ..., applicationVersion: _Optional[str] = ..., install: _Optional[bool] = ..., installTime: _Optional[int] = ..., updateTime: _Optional[int] = ..., installSource: _Optional[str] = ..., installReceipt: _Optional[str] = ..., openuri: _Optional[str] = ..., ddlEnabled: _Optional[bool] = ..., singularLinkResolveRequired: _Optional[bool] = ..., installRef: _Optional[str] = ..., metaRef: _Optional[str] = ..., attributionToken: _Optional[str] = ...) -> None: ...
 
 class SingularEventRequest(_message.Message):
     __slots__ = ("deviceIdentifiers", "sharedData", "eventName")

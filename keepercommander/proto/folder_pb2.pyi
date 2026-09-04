@@ -4,7 +4,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -736,7 +737,7 @@ class FolderRecordUpdateResult(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., status: _Optional[_Union[FolderModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class FolderAccessData(_message.Message):
-    __slots__ = ("folderUid", "accessTypeUid", "accessType", "accessRoleType", "folderKey", "inherited", "hidden", "permissions", "tlaProperties", "dateCreated", "lastModified", "deniedAccess")
+    __slots__ = ("folderUid", "accessTypeUid", "accessType", "accessRoleType", "folderKey", "inherited", "hidden", "permissions", "tlaProperties", "dateCreated", "lastModified", "deniedAccess", "accessorName")
     FOLDERUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -749,6 +750,7 @@ class FolderAccessData(_message.Message):
     DATECREATED_FIELD_NUMBER: _ClassVar[int]
     LASTMODIFIED_FIELD_NUMBER: _ClassVar[int]
     DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
+    ACCESSORNAME_FIELD_NUMBER: _ClassVar[int]
     folderUid: bytes
     accessTypeUid: bytes
     accessType: AccessType
@@ -761,7 +763,8 @@ class FolderAccessData(_message.Message):
     dateCreated: int
     lastModified: int
     deniedAccess: bool
-    def __init__(self, folderUid: _Optional[bytes] = ..., accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., folderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., permissions: _Optional[_Union[FolderPermissions, _Mapping]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., deniedAccess: _Optional[bool] = ...) -> None: ...
+    accessorName: str
+    def __init__(self, folderUid: _Optional[bytes] = ..., accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., folderKey: _Optional[_Union[EncryptedDataKey, _Mapping]] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., permissions: _Optional[_Union[FolderPermissions, _Mapping]] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., deniedAccess: _Optional[bool] = ..., accessorName: _Optional[str] = ...) -> None: ...
 
 class RevokedAccess(_message.Message):
     __slots__ = ("folderUid", "actorUid", "accessType")

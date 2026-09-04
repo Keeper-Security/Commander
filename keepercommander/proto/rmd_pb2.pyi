@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -68,7 +69,7 @@ class EnterpriseStatDetail(_message.Message):
     enterpriseUserId: int
     lastLoggedIn: int
     hasRecords: bool
-    def __init__(self, enterpriseUserId: _Optional[int] = ..., lastLoggedIn: _Optional[int] = ..., hasRecords: bool = ...) -> None: ...
+    def __init__(self, enterpriseUserId: _Optional[int] = ..., lastLoggedIn: _Optional[int] = ..., hasRecords: _Optional[bool] = ...) -> None: ...
 
 class EnterpriseStatContinuationToken(_message.Message):
     __slots__ = ("lastUpdated", "enterpriseUserId")
@@ -96,7 +97,7 @@ class EnterpriseStatDetailsResponse(_message.Message):
     lastUpdated: int
     continuationToken: EnterpriseStatContinuationToken
     hasMore: bool
-    def __init__(self, enterpriseStatDetails: _Optional[_Iterable[_Union[EnterpriseStatDetail, _Mapping]]] = ..., lastUpdated: _Optional[int] = ..., continuationToken: _Optional[_Union[EnterpriseStatContinuationToken, _Mapping]] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, enterpriseStatDetails: _Optional[_Iterable[_Union[EnterpriseStatDetail, _Mapping]]] = ..., lastUpdated: _Optional[int] = ..., continuationToken: _Optional[_Union[EnterpriseStatContinuationToken, _Mapping]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class SecurityAlertsSummary(_message.Message):
     __slots__ = ("auditEventTypeId", "currentCount", "currentUserCount", "previousCount", "previousUserCount")
@@ -146,7 +147,7 @@ class SecurityAlertsDetailResponse(_message.Message):
     securityAlertDetails: _containers.RepeatedCompositeFieldContainer[SecurityAlertsDetail]
     hasMore: bool
     continuationToken: int
-    def __init__(self, securityAlertDetails: _Optional[_Iterable[_Union[SecurityAlertsDetail, _Mapping]]] = ..., hasMore: bool = ..., continuationToken: _Optional[int] = ...) -> None: ...
+    def __init__(self, securityAlertDetails: _Optional[_Iterable[_Union[SecurityAlertsDetail, _Mapping]]] = ..., hasMore: _Optional[bool] = ..., continuationToken: _Optional[int] = ...) -> None: ...
 
 class EnterpriseSecurityBenchmark(_message.Message):
     __slots__ = ("securityBenchmark", "securityBenchmarkStatus", "lastUpdated", "autoResolve")
@@ -158,7 +159,7 @@ class EnterpriseSecurityBenchmark(_message.Message):
     securityBenchmarkStatus: SecurityBenchmarkStatus
     lastUpdated: int
     autoResolve: bool
-    def __init__(self, securityBenchmark: _Optional[_Union[SecurityBenchmark, str]] = ..., securityBenchmarkStatus: _Optional[_Union[SecurityBenchmarkStatus, str]] = ..., lastUpdated: _Optional[int] = ..., autoResolve: bool = ...) -> None: ...
+    def __init__(self, securityBenchmark: _Optional[_Union[SecurityBenchmark, str]] = ..., securityBenchmarkStatus: _Optional[_Union[SecurityBenchmarkStatus, str]] = ..., lastUpdated: _Optional[int] = ..., autoResolve: _Optional[bool] = ...) -> None: ...
 
 class SetSecurityBenchmarksRequest(_message.Message):
     __slots__ = ("enterpriseSecurityBenchmarks",)

@@ -28,6 +28,7 @@ from datetime import timezone, timedelta
 from typing import Optional
 
 from ...error import CommandError
+from ... import nested_share_folder as _nsf
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,8 @@ def suppress_exit(self, status=0, message=None):
 
 def normalize_parent_uid(uid):
     """Normalize root folder UIDs to a consistent ``'root'`` or empty string."""
+    if not isinstance(uid, str):
+        uid = str(uid) if uid else ''
     if uid == ROOT_FOLDER_UID or uid == 'root':
         return 'root'
     return uid or ''
@@ -191,7 +194,12 @@ def is_nested_share_folder_owner_email(params, folder_uid, email):
         return False
     fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid) or {}
     owner_username = fobj.get('owner_username') or ''
-    return bool(owner_username) and owner_username.casefold() == email.casefold()
+    if not owner_username:
+        logger.debug('Folder owner_username not found for folder_uid=%s', folder_uid)
+        return False
+    if not isinstance(email, str):
+        email = str(email)
+    return owner_username.casefold() == email.casefold()
 
 
 def raise_if_record_share_target_is_owner(params, record_uid, email, cmd_name, *,
@@ -367,6 +375,15 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 
     visited = set()
 
+    # Build parent→children index for efficient tree traversal
+    children_index = {}
+    if recursive:
+        for child_uid, child_obj in nsf_folders.items():
+            parent = child_obj.get('parent_uid') or ROOT_FOLDER_UID
+            if parent not in children_index:
+                children_index[parent] = []
+            children_index[parent].append(child_uid)
+
     def walk(fuid):
         if fuid in visited:
             return
@@ -374,12 +391,161 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
         add_records(fuid)
         if not recursive:
             return
-        for child_uid, child_obj in nsf_folders.items():
-            if child_obj.get('parent_uid') == fuid and child_uid not in visited:
+        for child_uid in children_index.get(fuid, []):
+            if child_uid not in visited:
                 walk(child_uid)
 
     walk(folder_uid)
     return record_uids
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Move
+# ═══════════════════════════════════════════════════════════════════════════
+
+MAX_NESTED_SHARE_FOLDER_DEPTH = 5
+"""Maximum number of folder levels below the Nested Share Folder root."""
+
+
+def _folder_depth(params, folder_uid):
+    """Return the nesting depth of *folder_uid* (root's direct children = 1)."""
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    depth = 0
+    cur = folder_uid
+    visited = set()
+    while cur and cur != ROOT_FOLDER_UID and cur in nsf_folders and cur not in visited:
+        visited.add(cur)
+        depth += 1
+        cur = nsf_folders[cur].get('parent_uid')
+    return depth
+
+
+def _folder_subtree_height(params, folder_uid, _visited=None):
+    """Return the number of additional folder levels below *folder_uid*
+    (0 when it has no sub-folders).
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    visited = _visited if _visited is not None else set()
+    if folder_uid in visited:
+        return 0
+    visited.add(folder_uid)
+    children = [uid for uid, obj in nsf_folders.items()
+                if obj.get('parent_uid') == folder_uid]
+    if not children:
+        return 0
+    return 1 + max(_folder_subtree_height(params, c, visited) for c in children)
+
+
+def validate_folder_move_depth(params, folder_uid, dest_folder_uid, cmd_name):
+    """Raise if moving *folder_uid* under *dest_folder_uid* would push any of
+    its descendants past ``MAX_NESTED_SHARE_FOLDER_DEPTH`` levels.
+    """
+    dest_depth = _folder_depth(params, dest_folder_uid)
+    subtree_height = _folder_subtree_height(params, folder_uid)
+    new_depth = dest_depth + 1 + subtree_height
+    if new_depth > MAX_NESTED_SHARE_FOLDER_DEPTH:
+        raise CommandError(
+            cmd_name,
+            f"Cannot move folder: resulting nesting depth ({new_depth}) would "
+            f"exceed the maximum of {MAX_NESTED_SHARE_FOLDER_DEPTH} levels.")
+
+
+def resolve_move_destination_folder(params, destination, cmd_name):
+    """Resolve *destination* to an NSF folder UID, or ``ROOT_FOLDER_UID``.
+
+    Mirrors the classic ``mv`` command's root-folder detection: an empty
+    value, the literal ``'root'``, or the NSF root sentinel UID all mean the
+    Nested Share Folder root.
+    """
+    if not destination or destination.strip().casefold() == 'root':
+        return ROOT_FOLDER_UID
+    if destination == ROOT_FOLDER_UID:
+        return ROOT_FOLDER_UID
+    resolved = resolve_folder_uid(params, destination)
+    if not resolved or not is_nested_share_folder(params, resolved):
+        raise CommandError(
+            cmd_name,
+            f"Destination '{destination}' is not a Nested Share Folder or "
+            f"the root folder.")
+    return resolved
+
+
+def _check_move_result(result, cmd_name):
+    """Raise ``CommandError`` when a folder/record move result is not a success."""
+    if result.get('success'):
+        return
+    status = result.get('move_result_status')
+    message = normalize_nsf_user_message(result.get('message'))
+    if status and status not in ('MOVE_RESULT_STATUS_UNSPECIFIED', ''):
+        detail = status.replace('_', ' ').title()
+        raise CommandError(cmd_name, f"{detail}{(': ' + message) if message else ''}")
+    raise CommandError(cmd_name, message or 'Move failed')
+
+
+def _move_nested_share_folder(params, folder_uid, dest_folder_uid, cmd_name):
+
+    if folder_uid == dest_folder_uid:
+        raise CommandError(cmd_name, 'Cannot move a folder into itself.')
+
+    folder_obj = getattr(params, 'nested_share_folders', {}).get(folder_uid) or {}
+    current_parent_uid = folder_obj.get('parent_uid') or ROOT_FOLDER_UID
+
+    check_folder_remove_permission(params, current_parent_uid, cmd_name)
+    check_folder_add_permission(params, dest_folder_uid, cmd_name)
+    validate_folder_move_depth(params, folder_uid, dest_folder_uid, cmd_name)
+
+    target = None if dest_folder_uid == ROOT_FOLDER_UID else dest_folder_uid
+    with command_error_handler(cmd_name):
+        result = _nsf.move_folder_v3(params, folder_uid, target_parent_uid=target)
+        _check_move_result(result, cmd_name)
+        params.sync_data = True
+
+
+def _move_nested_share_record(params, record_uid, dest_folder_uid, cmd_name):
+
+    location = find_folder_location(params, record_uid)
+    src_folder_uid = (location or {}).get('uid') or ROOT_FOLDER_UID
+    if src_folder_uid == dest_folder_uid:
+        raise CommandError(cmd_name, 'Record is already in the destination folder.')
+
+    check_folder_remove_permission(params, src_folder_uid, cmd_name)
+    check_folder_add_permission(params, dest_folder_uid, cmd_name)
+
+    source = None if src_folder_uid == ROOT_FOLDER_UID else src_folder_uid
+    target = None if dest_folder_uid == ROOT_FOLDER_UID else dest_folder_uid
+    with command_error_handler(cmd_name):
+        result = _nsf.move_folder_record_v3(
+            params, record_uid, source_folder_uid=source, target_folder_uid=target)
+        _check_move_result(result, cmd_name)
+        params.sync_data = True
+
+
+def move_nested_share_item(params, source, destination):
+    """Move a Nested Share Folder record or folder to a new location.
+
+    *source* must resolve to an existing Nested Share Folder record or
+    folder; legacy (non-NSF) items are rejected. *destination* must resolve
+    to a Nested Share Folder or the root. Folder moves are capped at
+    ``MAX_NESTED_SHARE_FOLDER_DEPTH`` nesting levels; records may be moved
+    into a folder at that maximum depth.
+    """
+    from ...nested_share_folder import removal_api as _removal_api
+
+    cmd_name = 'nsf-move'
+    dest_folder_uid = resolve_move_destination_folder(params, destination, cmd_name)
+
+    folder_uid = _removal_api.resolve_nested_share_folder_uid(params, source)
+    if folder_uid and is_nested_share_folder(params, folder_uid):
+        _move_nested_share_folder(params, folder_uid, dest_folder_uid, cmd_name)
+        return
+
+    record_uid = _removal_api.resolve_nested_share_record_uid(params, source)
+    if record_uid and is_nested_share_record(params, record_uid):
+        _move_nested_share_record(params, record_uid, dest_folder_uid, cmd_name)
+        return
+
+    raise CommandError(
+        cmd_name, f"'{source}' is not a Nested Share Folder record or folder.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -541,6 +707,8 @@ def format_role_display(role):
         from ...proto import folder_pb2
         try:
             role = folder_pb2.AccessRoleType.Name(role)
+        except ValueError:
+            return f'UNKNOWN({role})'
         except Exception:
             return str(role)
     if isinstance(role, str):
@@ -568,9 +736,9 @@ def get_access_role_label(access):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def format_timestamp(ms):
-    """Format a millisecond epoch timestamp as ``'YYYY-MM-DD HH:MM:SS'``."""
+    """Format a millisecond epoch timestamp as ``'YYYY-MM-DD HH:MM:SS'`` (UTC)."""
     if ms:
-        return datetime.datetime.fromtimestamp(ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     return ''
 
 
@@ -594,6 +762,18 @@ def check_folder_delete_permission(params, folder_uid, cmd_name):
     """Raise if the current user cannot delete the folder."""
     _check_folder_permission(params, folder_uid, 'can_delete',
                              'You do not have permission to delete this folder.', cmd_name)
+
+
+def check_folder_add_permission(params, folder_uid, cmd_name):
+    """Raise if the current user cannot add items into the folder."""
+    _check_folder_permission(params, folder_uid, 'can_add',
+                             'You do not have permission to add items to this folder.', cmd_name)
+
+
+def check_folder_remove_permission(params, folder_uid, cmd_name):
+    """Raise if the current user cannot remove items from the folder."""
+    _check_folder_permission(params, folder_uid, 'can_remove',
+                             'You do not have permission to remove items from this folder.', cmd_name)
 
 
 def check_record_edit_permission(params, record_uid, cmd_name):
@@ -658,6 +838,7 @@ def _check_folder_permission(params, folder_uid, permission_key, error_message, 
     from ...proto import folder_pb2
     accesses = getattr(params, 'nested_share_folder_accesses', {}).get(folder_uid, [])
     if not accesses:
+        logger.debug('No accesses found for folder_uid=%s; skipping permission check', folder_uid)
         return
 
     current_account_uid = _current_user_account_uid(params)
