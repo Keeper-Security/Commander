@@ -290,6 +290,60 @@ class TestServiceModeCommandPolicy(TestCase):
             check(_tokens('credential-provision --config-base64 dGVzdA== -c PAMUID'))
         )
 
+    def test_legacy_commands_blocked_regardless_of_command_list(self):
+        """rotate/connect/ssh/etc. must be denied unconditionally -- this is not
+        an allow-list check, so it isn't affected by what an API key's
+        command_list permits."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Legacy commands'
+        for cmd in (
+            'rotate --match ".*" --force --plugin ssh --host 1.2.3.4 --port 22',
+            'rotate RECORD_UID',
+            'connect RECORD_UID',
+            'ssh RECORD_UID',
+            'ssh-agent list',
+            'rdp RECORD_UID',
+            'rsync',
+            'set var value',
+            'echo hello',
+            'mysql RECORD_UID',
+            'postgresql RECORD_UID',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Aliases checked before cli expansion (r -> rotate, pg -> postgresql).
+        self.assertIn(ban, check(_tokens('r --match ".*" --force --host 1.2.3.4 --port 22')))
+        self.assertIn(ban, check(_tokens('pg RECORD_UID')))
+
+        # Unrelated commands remain unaffected.
+        self.assertIsNone(check(_tokens('get RECORD_UID')))
+        self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
+
+    def test_double_dash_blocked_everywhere(self):
+        """'--' used to desync position-based checks (pam tunnel verb, pam project path)."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = "'--'"
+        for cmd in (
+            'pam -- tunnel start uid --run id',
+            'pam -- tunnel stop uid',
+            'pam -- tunnel list',
+            'pam -- t s uid',
+            'pam -- project export -o /etc/passwd',
+            'pam -- project import -f -etc/passwd',
+            'get -- RECORD_UID',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Unrelated commands without a bare '--' token remain unaffected.
+        self.assertIsNone(check(_tokens('pam tunnel edit uid')))
+        self.assertIsNone(check(_tokens('get RECORD_UID')))
+
     def test_is_record_file_attachment_arg(self):
         is_file = Verifycommand._is_record_file_attachment_arg
         self.assertTrue(is_file('file=@/tmp/x'))
