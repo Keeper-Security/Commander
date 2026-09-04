@@ -345,7 +345,10 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                                         label=field.label
                                     )
                                     print("")
-                                    value = get_field_input(field, current_value=current_value)
+                                    value = get_field_input(params=params,
+                                                            gateway_context=gateway_context,
+                                                            field=field,
+                                                            current_value=current_value)
                                     if value is not None:
                                         set_record_field_value(
                                             record=config_record,
