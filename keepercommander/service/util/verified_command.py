@@ -24,6 +24,7 @@ class Verifycommand:
         'connect', 'ssh', 'ssh-agent', 'rdp', 'rsync',
         'set', 'echo',
         'mysql', 'postgresql', 'pg',
+        'run-as', 'supershell', 'ss',
     })
     _LEGACY_COMMAND_MSG = (
         'Legacy commands are not permitted through Service Mode'
@@ -407,10 +408,13 @@ class Verifycommand:
             return False
         try:
             expanded = os.path.expanduser(path)
-            # Resolve the parent, not the nonexistent leaf -- Windows only expands
-            # 8.3 short names for path segments that already exist on disk.
-            parent = os.path.realpath(os.path.dirname(expanded) or '.')
-            resolved = os.path.normcase(os.path.join(parent, os.path.basename(expanded)))
+            if os.path.exists(expanded):
+                # Resolves the leaf too, following any symlink planted at that path.
+                resolved = os.path.realpath(expanded)
+            else:
+                parent = os.path.realpath(os.path.dirname(expanded) or '.')
+                resolved = os.path.join(parent, os.path.basename(expanded))
+            resolved = os.path.normcase(resolved)
             root = os.path.normcase(os.path.realpath(request_temp_dir))
             return resolved == root or resolved.startswith(root + os.sep)
         except (OSError, ValueError):

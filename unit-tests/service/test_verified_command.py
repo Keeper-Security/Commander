@@ -308,6 +308,9 @@ class TestServiceModeCommandPolicy(TestCase):
             'echo hello',
             'mysql RECORD_UID',
             'postgresql RECORD_UID',
+            'run-as -r RECORD_UID --application cmd.exe',
+            'supershell',
+            'ss',
         ):
             with self.subTest(cmd=cmd):
                 err = check(_tokens(cmd))
@@ -343,6 +346,21 @@ class TestServiceModeCommandPolicy(TestCase):
         # Unrelated commands without a bare '--' token remain unaffected.
         self.assertIsNone(check(_tokens('pam tunnel edit uid')))
         self.assertIsNone(check(_tokens('get RECORD_UID')))
+
+    def test_temp_path_leaf_symlink_is_not_containment(self):
+        """A symlink planted at the temp-dir leaf must not escape containment."""
+        request_temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+
+        link_path = os.path.join(request_temp_dir, 'escape.json')
+        try:
+            os.symlink(outside_dir, link_path)
+        except OSError:
+            self.skipTest('symlinks not supported in this environment')
+
+        self.assertFalse(Verifycommand._is_service_temp_path(link_path, request_temp_dir))
 
     def test_is_record_file_attachment_arg(self):
         is_file = Verifycommand._is_record_file_attachment_arg
