@@ -164,7 +164,7 @@ class CommandExecutor:
             command = ensure_record_add_json_format(html.unescape(command))
 
             try:
-                command_tokens = shlex.split(command)
+                command_tokens = shlex.split(command.replace('\\', '\\\\'))
             except ValueError:
                 command_tokens = command.split()
 
