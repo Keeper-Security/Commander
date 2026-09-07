@@ -13,7 +13,7 @@ def _tokens(command: str):
     """Same normalization CommandExecutor uses before policy checks."""
     command = unescape(command)
     try:
-        return shlex.split(command)
+        return shlex.split(command.replace('\\', '\\\\'))
     except ValueError:
         return command.split()
 
@@ -289,6 +289,78 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertIsNone(
             check(_tokens('credential-provision --config-base64 dGVzdA== -c PAMUID'))
         )
+
+    def test_legacy_commands_blocked_regardless_of_command_list(self):
+        """rotate/connect/ssh/etc. must be denied unconditionally -- this is not
+        an allow-list check, so it isn't affected by what an API key's
+        command_list permits."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Legacy commands'
+        for cmd in (
+            'rotate --match ".*" --force --plugin ssh --host 1.2.3.4 --port 22',
+            'rotate RECORD_UID',
+            'connect RECORD_UID',
+            'ssh RECORD_UID',
+            'ssh-agent list',
+            'rdp RECORD_UID',
+            'rsync',
+            'set var value',
+            'echo hello',
+            'mysql RECORD_UID',
+            'postgresql RECORD_UID',
+            'run-as -r RECORD_UID --application cmd.exe',
+            'supershell',
+            'ss',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Aliases checked before cli expansion (r -> rotate, pg -> postgresql).
+        self.assertIn(ban, check(_tokens('r --match ".*" --force --host 1.2.3.4 --port 22')))
+        self.assertIn(ban, check(_tokens('pg RECORD_UID')))
+
+        # Unrelated commands remain unaffected.
+        self.assertIsNone(check(_tokens('get RECORD_UID')))
+        self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
+
+    def test_double_dash_blocked_everywhere(self):
+        """'--' used to desync position-based checks (pam tunnel verb, pam project path)."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = "'--'"
+        for cmd in (
+            'pam -- tunnel start uid --run id',
+            'pam -- tunnel stop uid',
+            'pam -- tunnel list',
+            'pam -- t s uid',
+            'pam -- project export -o /etc/passwd',
+            'pam -- project import -f -etc/passwd',
+            'get -- RECORD_UID',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Unrelated commands without a bare '--' token remain unaffected.
+        self.assertIsNone(check(_tokens('pam tunnel edit uid')))
+        self.assertIsNone(check(_tokens('get RECORD_UID')))
+
+    def test_temp_path_leaf_symlink_is_not_containment(self):
+        """A symlink planted at the temp-dir leaf must not escape containment."""
+        request_temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+
+        link_path = os.path.join(request_temp_dir, 'escape.json')
+        try:
+            os.symlink(outside_dir, link_path)
+        except OSError:
+            self.skipTest('symlinks not supported in this environment')
+
+        self.assertFalse(Verifycommand._is_service_temp_path(link_path, request_temp_dir))
 
     def test_is_record_file_attachment_arg(self):
         is_file = Verifycommand._is_record_file_attachment_arg

@@ -247,6 +247,7 @@ class TestPAMProjectExportCommand(unittest.TestCase):
             for key in ("uid", "type", "title", "login"):
                 self.assertIn(key, usr, f"user missing key: {key}")
 
+    @unittest.skipIf(os.name == 'nt', 'NTFS has no POSIX permission bits; chmod is a no-op on Windows')
     def test_output_file_mode_is_private(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
             tmp_path = tmp.name
@@ -259,6 +260,7 @@ class TestPAMProjectExportCommand(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    @unittest.skipIf(os.name == 'nt', 'NTFS has no POSIX permission bits; chmod is a no-op on Windows')
     def test_output_file_mode_overwrites_existing_world_readable(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
             tmp.write("{}")
