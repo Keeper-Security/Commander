@@ -408,14 +408,10 @@ class Verifycommand:
             return False
         try:
             expanded = os.path.expanduser(path)
-            if os.path.exists(expanded):
-                # Resolves the leaf too, following any symlink planted at that path.
-                resolved = os.path.realpath(expanded)
-            else:
-                parent = os.path.realpath(os.path.dirname(expanded) or '.')
-                resolved = os.path.join(parent, os.path.basename(expanded))
-            resolved = os.path.normcase(resolved)
-            root = os.path.normcase(os.path.realpath(request_temp_dir))
+            if os.path.islink(expanded):
+                return False
+            resolved = os.path.normcase(os.path.abspath(expanded))
+            root = os.path.normcase(os.path.abspath(request_temp_dir))
             return resolved == root or resolved.startswith(root + os.sep)
         except (OSError, ValueError):
             return False

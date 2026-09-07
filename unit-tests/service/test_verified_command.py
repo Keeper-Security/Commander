@@ -13,7 +13,7 @@ def _tokens(command: str):
     """Same normalization CommandExecutor uses before policy checks."""
     command = unescape(command)
     try:
-        return shlex.split(command)
+        return shlex.split(command.replace('\\', '\\\\'))
     except ValueError:
         return command.split()
 
