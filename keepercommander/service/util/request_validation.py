@@ -83,12 +83,17 @@ class RequestValidator:
                     
                     # Replace FILEDATA placeholder with temporary file path, but only when it's used as a file parameter
                     # Supports: PAM import (--filename), Import (positional), Enterprise-push (positional)
+                    # Callable replacement -- a plain string would let a Windows path's backslashes be parsed as regex backreferences.
                     file_param_pattern = r'(--filename[=\s]+["\']?)FILEDATA(["\']?)'
-                    processed_command = re.sub(file_param_pattern, f'\\1{temp_file_path}\\2', processed_command)
-                    
+                    processed_command = re.sub(
+                        file_param_pattern,
+                        lambda m: f'{m.group(1)}{temp_file_path}{m.group(2)}',
+                        processed_command,
+                    )
+
                     # Also handle standalone FILEDATA (not in quotes)
                     standalone_pattern = r'\bFILEDATA\b(?!["\'])'
-                    processed_command = re.sub(standalone_pattern, temp_file_path, processed_command)
+                    processed_command = re.sub(standalone_pattern, lambda _: temp_file_path, processed_command)
                     
                     logger.debug(f"Created temporary file {temp_file_path} for filedata")
                     
