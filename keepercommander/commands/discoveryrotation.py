@@ -3754,6 +3754,28 @@ def _is_rotation_allowed_by_enforcement(params):
         return True
 
 
+def ensure_gateway_management_allowed(params):
+    # type: (KeeperParams) -> bool
+    """Per-user enforcement gate on the 'allow_pam_gateway' role enforcement
+    (confirmed via live account_summary payload). Prints an error and returns
+    False when the user's enterprise enforcement disallows Gateway management.
+    Shared by both PAMCreateGatewayCommand and PAMGatewayRemoveCommand (and
+    their legacy discoveryrotation_v1 counterparts) to avoid duplicating the
+    check at every call site.
+    """
+    try:
+        from .workflow.helpers import is_pam_action_allowed_by_enforcement
+    except ImportError as _e:
+        logging.debug('workflow.helpers not available; skipping gateway enforcement check: %s', _e)
+        return True
+
+    if not is_pam_action_allowed_by_enforcement(params, 'allow_pam_gateway'):
+        print(f"{bcolors.FAIL}Gateway management is not allowed by your enterprise "
+              f"enforcement (allow_pam_gateway).{bcolors.ENDC}")
+        return False
+    return True
+
+
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store',
@@ -4393,18 +4415,8 @@ class PAMGatewayRemoveCommand(Command):
         return PAMGatewayRemoveCommand.dr_remove_controller_parser
 
     def execute(self, params, **kwargs):
-        # Per-user enforcement gate on the 'allow_pam_gateway' role enforcement
-        # (confirmed via live account_summary payload). Bail before any further
-        # work when the user's enterprise enforcement disallows Gateway management.
-        try:
-            from .workflow.helpers import is_pam_action_allowed_by_enforcement
-            if not is_pam_action_allowed_by_enforcement(
-                    params, 'allow_pam_gateway'):
-                print(f"{bcolors.FAIL}Gateway management is not allowed by your enterprise "
-                      f"enforcement (allow_pam_gateway).{bcolors.ENDC}")
-                return
-        except ImportError:
-            pass
+        if not ensure_gateway_management_allowed(params):
+            return
 
         gateway_name = kwargs.get('gateway')
         gateways = gateway_helper.get_all_gateways(params)
@@ -4474,18 +4486,8 @@ class PAMCreateGatewayCommand(Command):
         return PAMCreateGatewayCommand.dr_create_controller_parser
 
     def execute(self, params, **kwargs):
-        # Per-user enforcement gate on the 'allow_pam_gateway' role enforcement
-        # (confirmed via live account_summary payload). Bail before any further
-        # work when the user's enterprise enforcement disallows Gateway management.
-        try:
-            from .workflow.helpers import is_pam_action_allowed_by_enforcement
-            if not is_pam_action_allowed_by_enforcement(
-                    params, 'allow_pam_gateway'):
-                print(f"{bcolors.FAIL}Gateway management is not allowed by your enterprise "
-                      f"enforcement (allow_pam_gateway).{bcolors.ENDC}")
-                return
-        except ImportError:
-            pass
+        if not ensure_gateway_management_allowed(params):
+            return
 
         gateway_name = kwargs.get('gateway_name')
         ksm_app = kwargs.get('ksm_app')
