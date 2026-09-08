@@ -272,6 +272,7 @@ class CyberArkImporter(BaseImporter):
         "accounts": "Accounts",
         "account_password": "Accounts/{account_id}/Password/Retrieve",
         "logon": "Auth/{type}/Logon",
+        "platforms": "Platforms/",
         "safes": "Safes",
         "user_groups": "UserGroups",
         "user_group": "UserGroups/{group_id}",
@@ -318,13 +319,32 @@ class CyberArkImporter(BaseImporter):
         return None
 
     @classmethod
-    def _add_account_metadata(cls, record, account):
+    def _get_account_property(cls, account, name):
+        if not isinstance(account, dict):
+            return None
+        value = cls._get_platform_property(account, name)
+        if value not in (None, ""):
+            return value
+        normalized_name = cls._normalize_property_key(name)
+        for key, value in account.items():
+            if cls._normalize_property_key(key) == normalized_name:
+                return value
+        return None
+
+    @classmethod
+    def _add_account_metadata(cls, record, account, platform_property_labels=None):
         """Add CyberArk platform account properties as Keeper custom fields."""
         if not isinstance(account, dict):
             return
 
+        if not isinstance(platform_property_labels, dict):
+            platform_property_labels = {}
         platform_properties = cls._platform_properties(account)
         properties = dict(platform_properties) if isinstance(platform_properties, dict) else {}
+        for property_key in platform_property_labels:
+            value = cls._get_account_property(account, property_key)
+            if value not in (None, ""):
+                properties.setdefault(property_key, value)
         for key in cls._PLATFORM_NAME_KEYS:
             value = account.get(key)
             if value not in (None, ""):
@@ -343,20 +363,6 @@ class CyberArkImporter(BaseImporter):
             for field in getattr(record, "fields", [])
             if getattr(field, "label", None)
         }
-        host_values = set()
-        port_values = set()
-        for field in getattr(record, "fields", []):
-            if getattr(field, "type", None) != "host":
-                continue
-            host_value = getattr(field, "value", None)
-            if isinstance(host_value, dict):
-                for host_key in ("hostName", "host"):
-                    if host_value.get(host_key):
-                        host_values.add(str(host_value[host_key]))
-                if host_value.get("port"):
-                    port_values.add(str(host_value["port"]))
-            elif host_value:
-                host_values.add(str(host_value))
 
         def field_value_to_text(value):
             if isinstance(value, str):
@@ -365,30 +371,6 @@ class CyberArkImporter(BaseImporter):
                 value, ensure_ascii=False, sort_keys=True,
                 separators=(",", ":"),
             )
-
-        def is_standard_mapped_value(label, field_value):
-            label_key = label.casefold()
-            normalized_label_key = cls._normalize_property_key(label)
-            if normalized_label_key in {"name", "itemname"}:
-                return bool(record.title) and field_value == record.title
-            if normalized_label_key == "url":
-                return bool(record.login_url) and field_value == record.login_url
-            if normalized_label_key == "logondomain":
-                return bool(record.login) and record.login.casefold().startswith(
-                    f"{field_value}\\".casefold()
-                )
-            if normalized_label_key in {"address", "host", "hostname"}:
-                return field_value in host_values
-            if normalized_label_key in {"port", "portnumber"}:
-                return field_value in port_values or any(
-                    getattr(field, "type", None) == "port" and str(getattr(field, "value", "")) == field_value
-                    for field in getattr(record, "fields", [])
-                )
-            if normalized_label_key in {"username", "accountname"}:
-                return bool(record.login) and (
-                    field_value == record.login or record.login.endswith(f"\\{field_value}")
-                )
-            return False
 
         def field_label_to_text(label):
             parts = []
@@ -399,15 +381,11 @@ class CyberArkImporter(BaseImporter):
             return ".".join(parts)
 
         def add_value(label, value):
-            raw_label = str(label)
-            label = field_label_to_text(raw_label)
+            label = field_label_to_text(label)
             label_key = label.casefold()
             if not label or label_key in existing_labels:
                 return
             field_value = field_value_to_text(value)
-            if (is_standard_mapped_value(raw_label, field_value)
-                    or is_standard_mapped_value(label, field_value)):
-                return
             record.fields.append(RecordField(
                 "text", label=label, value=field_value,
             ))
@@ -422,7 +400,11 @@ class CyberArkImporter(BaseImporter):
                 add_value(label, value)
 
         for property_key, property_value in properties.items():
-            property_label = str(property_key)
+            property_label = (
+                platform_property_labels.get(property_key)
+                or platform_property_labels.get(cls._normalize_property_key(property_key))
+                or str(property_key)
+            )
             flatten(property_value, property_label)
 
     @classmethod
@@ -437,6 +419,19 @@ class CyberArkImporter(BaseImporter):
             if value:
                 return str(value)
         return "CyberArk Account"
+
+    @staticmethod
+    def _account_record_type(account, record_type=None):
+        """Return the Keeper record type for a CyberArk account import."""
+        if record_type:
+            return record_type
+        if not isinstance(account, dict):
+            return "Password"
+        if "userName" in account:
+            if "address" in account:
+                return "serverCredentials"
+            return "login"
+        return "Password"
 
     @classmethod
     def get_url(cls, pvwa_host, endpoint):
@@ -651,6 +646,52 @@ class CyberArkImporter(BaseImporter):
                 HTML(f"Request to <b>{_esc(url)}</b> <ansired>failed</ansired>: {_esc(e)}")
             )
             return None
+
+    @classmethod
+    def _platform_property_display_names(cls, platforms_payload):
+        display_names = {}
+        if not isinstance(platforms_payload, dict):
+            return display_names
+        platforms = platforms_payload.get("Platforms") or platforms_payload.get("platforms") or []
+        if not isinstance(platforms, list):
+            return display_names
+        for platform in platforms:
+            if not isinstance(platform, dict):
+                continue
+            general = platform.get("general") or {}
+            platform_id = general.get("id") or platform.get("id")
+            if not platform_id:
+                continue
+            labels = {}
+            properties = platform.get("properties") or {}
+            for group_name in ("required", "optional"):
+                for property_info in properties.get(group_name) or []:
+                    if not isinstance(property_info, dict):
+                        continue
+                    name = property_info.get("name")
+                    display_name = property_info.get("displayName")
+                    if name and display_name:
+                        labels[str(name)] = str(display_name)
+                        labels[cls._normalize_property_key(name)] = str(display_name)
+            if labels:
+                display_names[str(platform_id)] = labels
+        return display_names
+
+    def fetch_platform_property_display_names(self, pvwa_host, authorization_token):
+        """Return CyberArk platform property name -> displayName mappings by platform ID."""
+        sleep(self.DELAY)
+        response = self.get_response(self.get_url(pvwa_host, "platforms"), authorization_token, {})
+        if response is None:
+            return {}
+        if response.status_code != 200:
+            logging.debug("Getting CyberArk platforms failed with status %s", response.status_code)
+            return {}
+        try:
+            payload = response.json()
+        except ValueError:
+            logging.debug("Getting CyberArk platforms returned invalid JSON")
+            return {}
+        return self._platform_property_display_names(payload)
 
     @staticmethod
     def _extract_user_email(user):
@@ -1122,6 +1163,7 @@ class CyberArkImporter(BaseImporter):
         use_nsf = bool(kwargs.get("use_nsf"))
 
         params = kwargs.get("params")
+        target_record_type = kwargs.get("record_type")
         skip_teams = (bool(kwargs.get("skip_team"))
                       or environ.get("_CYBERARK_SKIP_TEAMS", "").lower() in ("1", "true", "yes"))
         skip_roles = (bool(kwargs.get("skip_role"))
@@ -1180,7 +1222,8 @@ class CyberArkImporter(BaseImporter):
             if not accounts:
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {safe}</ansiyellow>"))
                 continue
-            safe_accounts[safe] = accounts
+            canonical_safe = next((x.get("safeName") for x in accounts if x.get("safeName")), None) or safe
+            safe_accounts.setdefault(canonical_safe, []).extend(accounts)
 
         # Gather the CyberArk identities (groups + users) that will become Keeper
         # teams, roles and users so they can be previewed before the import. The
@@ -1201,6 +1244,11 @@ class CyberArkImporter(BaseImporter):
         if total_accounts == 0 and not group_names and not eligible_users:
             print_formatted_text(HTML("\n<ansiyellow>Nothing to migrate from CyberArk.</ansiyellow>"))
             return
+
+        platform_property_labels = (
+            self.fetch_platform_property_display_names(pvwa_host, authorization_token)
+            if safe_accounts else {}
+        )
 
         # Show exactly what will be migrated (records, teams, roles, users), then confirm.
         if safe_accounts:
@@ -1313,15 +1361,7 @@ class CyberArkImporter(BaseImporter):
                     record = Record()
                     record.folders = [folder]
                     record.title = self._account_title(r)
-                    record.type = "Password"
-                    if "userName" in r:
-                        record.type = "login"
-                        record.login = r["userName"]
-                        if "address" in r:
-                            record.type = "serverCredentials"
-                            logon_domain = self._get_platform_property(r, "LogonDomain", "Logon Domain")
-                            if logon_domain:
-                                record.login = str(logon_domain) + "\\" + r["userName"]
+                    record.type = self._account_record_type(r, target_record_type)
                     if "address" in r:
                         host_value = {"hostName": r["address"]}
                         port = self._get_platform_property(r, "Port", "PortNumber", "Port Number")
@@ -1331,7 +1371,8 @@ class CyberArkImporter(BaseImporter):
                     url = self._get_platform_property(r, "URL")
                     if url:
                         record.login_url = str(url)
-                    self._add_account_metadata(record, r)
+                    account_platform_labels = platform_property_labels.get(str(r.get("platformId") or ""), {})
+                    self._add_account_metadata(record, r, account_platform_labels)
                     retry = True
                     while retry is True:
                         try:
