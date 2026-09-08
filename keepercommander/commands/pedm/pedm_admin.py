@@ -231,7 +231,8 @@ class PedmScimCommand(base.ArgparseCommand):
         ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='DC hostname, IP or LDAP URL (<dc-ip>, ldap(s)://<dc-fqdn>)')
         ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (userPrincipalName or DOMAIN\\\\username)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password. Will be prompted if not set.')
-        ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
+        ad_parser.add_argument('--group', dest='groups', action='append',
+                               help='AD group name or DN (repeatable). Prefix with "+" to select its direct subgroups.')
         ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
                               help='Use NetBIOS domain names (e.g., TEST) or DNS names (e.g., test.local)')
 
@@ -403,6 +404,9 @@ class PedmScimCommand(base.ArgparseCommand):
         else:
             raise base.CommandError(f'Unsupported source: {source}')
 
+        if source == 'ad':
+            data_source.debug_logger = logging.debug
+
         account_type_key = account_type.lower()
         domain_name_key = domain_name.lower()
         existing_users: Dict[tuple, admin_types.PedmCollection] = {}
@@ -435,14 +439,17 @@ class PedmScimCommand(base.ArgparseCommand):
         def build_user(user: ScimUser) -> Optional[Tuple[admin_types.CollectionData, bool]]:
             user_login = user.login or user.upn
             if not user_login:
+                logging.debug('Skipping %s user id=%s: no sAMAccountName or UPN', account_type, user.id)
                 return None
             if source == 'azure':
                 user_domain = domain_name
             else:
                 user_domain = user.domain
                 if not user_domain:
+                    logging.debug('Skipping AD user id=%s, login=%s: domain could not be determined', user.id, user_login)
                     return None
                 if user_login.endswith('$'):
+                    logging.debug('Skipping AD user id=%s, login=%s: computer account', user.id, user_login)
                     return None
             key = (account_type_key, user_domain.lower(), user_login.lower())
             data = {
@@ -476,6 +483,7 @@ class PedmScimCommand(base.ArgparseCommand):
 
         def build_group(group: ScimGroup) -> Optional[Tuple[admin_types.CollectionData, bool]]:
             if not group.name:
+                logging.debug('Skipping %s group id=%s: name is missing', account_type, group.id)
                 return None
             group_domain = group.domain or domain_name
             group_id = group.sid or group.id
@@ -506,6 +514,8 @@ class PedmScimCommand(base.ArgparseCommand):
             scim_records = list(data_source.populate())
         except Exception as e:
             raise base.CommandError(f'Error connecting to {account_type}: {e}')
+        if source == 'ad' and data_source.load_errors:
+            logging.warning('AD import may be incomplete: one or more requested group selectors could not be resolved')
 
         users_loaded = 0
         group_loaded = 0
