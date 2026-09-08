@@ -319,20 +319,28 @@ class CyberArkImporter(BaseImporter):
         return None
 
     @classmethod
-    def _get_account_property(cls, account, name):
+    def _get_account_property(cls, account, name, include_logon_domain_username=False):
         if not isinstance(account, dict):
             return None
+        normalized_name = cls._normalize_property_key(name)
+        if include_logon_domain_username and normalized_name in {"username", "accountname"}:
+            username = account.get("userName")
+            if username not in (None, ""):
+                logon_domain = cls._get_platform_property(account, "LogonDomain", "Logon Domain")
+                if logon_domain not in (None, ""):
+                    return str(logon_domain) + "\\" + str(username)
+                return username
         value = cls._get_platform_property(account, name)
         if value not in (None, ""):
             return value
-        normalized_name = cls._normalize_property_key(name)
         for key, value in account.items():
             if cls._normalize_property_key(key) == normalized_name:
                 return value
         return None
 
     @classmethod
-    def _add_account_metadata(cls, record, account, platform_property_labels=None):
+    def _add_account_metadata(cls, record, account, platform_property_labels=None,
+                              include_logon_domain_username=False):
         """Add CyberArk platform account properties as Keeper custom fields."""
         if not isinstance(account, dict):
             return
@@ -342,7 +350,10 @@ class CyberArkImporter(BaseImporter):
         platform_properties = cls._platform_properties(account)
         properties = dict(platform_properties) if isinstance(platform_properties, dict) else {}
         for property_key in platform_property_labels:
-            value = cls._get_account_property(account, property_key)
+            value = cls._get_account_property(
+                account, property_key,
+                include_logon_domain_username=include_logon_domain_username,
+            )
             if value not in (None, ""):
                 properties.setdefault(property_key, value)
         for key in cls._PLATFORM_NAME_KEYS:
@@ -432,6 +443,19 @@ class CyberArkImporter(BaseImporter):
                 return "serverCredentials"
             return "login"
         return "Password"
+
+    @classmethod
+    def _apply_standard_account_fields(cls, record, account, record_type=None):
+        """Apply the standard CyberArk-to-Keeper fields used by classic imports."""
+        if record_type:
+            return
+        if not isinstance(account, dict) or "userName" not in account:
+            return
+        record.login = account["userName"]
+        if "address" in account:
+            logon_domain = cls._get_platform_property(account, "LogonDomain", "Logon Domain")
+            if logon_domain:
+                record.login = str(logon_domain) + "\\" + account["userName"]
 
     @classmethod
     def get_url(cls, pvwa_host, endpoint):
@@ -1362,6 +1386,7 @@ class CyberArkImporter(BaseImporter):
                     record.folders = [folder]
                     record.title = self._account_title(r)
                     record.type = self._account_record_type(r, target_record_type)
+                    self._apply_standard_account_fields(record, r, target_record_type)
                     if "address" in r:
                         host_value = {"hostName": r["address"]}
                         port = self._get_platform_property(r, "Port", "PortNumber", "Port Number")
@@ -1372,7 +1397,10 @@ class CyberArkImporter(BaseImporter):
                     if url:
                         record.login_url = str(url)
                     account_platform_labels = platform_property_labels.get(str(r.get("platformId") or ""), {})
-                    self._add_account_metadata(record, r, account_platform_labels)
+                    self._add_account_metadata(
+                        record, r, account_platform_labels,
+                        include_logon_domain_username=bool(target_record_type),
+                    )
                     retry = True
                     while retry is True:
                         try:

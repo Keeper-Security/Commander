@@ -1680,6 +1680,27 @@ class TestClassicCyberArkMetadataImport:
             "Platform Name": "GenericLoginPlatform",
         }
 
+    def test_custom_metadata_username_can_include_logon_domain(self):
+        from keepercommander.importer.cyberark.cyberark import CyberArkImporter
+        from keepercommander.importer.importer import Record
+
+        record = Record()
+        account = {
+            "platformId": "GenericPlatform",
+            "userName": "user",
+            "platformAccountProperties": {
+                "LogonDomain": "DOMAIN",
+            },
+        }
+
+        CyberArkImporter._add_account_metadata(
+            record, account, {"Username": "Username"},
+            include_logon_domain_username=True,
+        )
+
+        custom_fields = {field.label: field.value for field in record.fields if field.label}
+        assert custom_fields["Username"] == "DOMAIN\\user"
+
     def test_platform_property_display_names_parse_platforms_response(self):
         from keepercommander.importer.cyberark.cyberark import CyberArkImporter
 
@@ -2385,7 +2406,7 @@ class TestClassicCyberArkSkipProvisioningArgs:
         importer.fetch_cyberark_users.assert_not_called()
         assert len(records) == 1
         assert records[0].type == "serverCredentials"
-        assert not records[0].login
+        assert records[0].login == "admin"
         typed_fields = {field.type: field.value for field in records[0].fields if not field.label}
         custom_fields = {field.label: field.value for field in records[0].fields if field.label}
         assert typed_fields["host"] == {"hostName": "host.example.com", "port": "2222"}
@@ -2404,7 +2425,7 @@ class TestClassicCyberArkSkipProvisioningArgs:
     @patch("keepercommander.importer.cyberark.cyberark.sleep")
     @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
     @patch("keepercommander.importer.cyberark.cyberark.ProgressBar")
-    def test_login_record_does_not_duplicate_username_into_keeper_login(self, progress_bar, _print, _sleep):
+    def test_login_record_keeps_release_login_behavior_and_custom_metadata(self, progress_bar, _print, _sleep):
         from keepercommander.importer.cyberark.cyberark import CyberArkImporter
 
         class FakeProgressBar:
@@ -2443,6 +2464,57 @@ class TestClassicCyberArkSkipProvisioningArgs:
 
         assert len(records) == 1
         assert records[0].type == "login"
+        assert records[0].login == "sample_user"
+        custom_fields = {field.label: field.value for field in records[0].fields if field.label}
+        assert custom_fields == {
+            "Display Username": "sample_user",
+            "Display Custom ID": "custom-value",
+            "Platform Name": "GenericLoginPlatform",
+        }
+
+    @patch("keepercommander.importer.cyberark.cyberark.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark.print_formatted_text")
+    @patch("keepercommander.importer.cyberark.cyberark.ProgressBar")
+    def test_custom_record_type_keeps_username_as_custom_metadata(self, progress_bar, _print, _sleep):
+        from keepercommander.importer.cyberark.cyberark import CyberArkImporter
+
+        class FakeProgressBar:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __call__(self, iterable, total=None):
+                return iterable
+
+        progress_bar.side_effect = FakeProgressBar
+
+        importer = CyberArkImporter()
+        importer._authenticate_pvwa = MagicMock(return_value=("pvwa.example.com", "token", {}))
+        importer._resolve_safes = MagicMock(return_value=["SampleSafe"])
+        importer.get_response = MagicMock(return_value=self._login_account_response())
+        importer.fetch_platform_property_display_names = MagicMock(return_value={
+            "GenericLoginPlatform": {
+                "Username": "Display Username",
+                "CustomID": "Display Custom ID",
+            },
+        })
+        importer.fetch_cyberark_users = MagicMock(return_value=[])
+        importer._enterprise_existing = MagicMock(return_value=(set(), set(), {}))
+        importer._confirm_import = MagicMock(return_value=True)
+        password_response = MagicMock(status_code=200)
+        password_response.text = '"secret"'
+        importer._request = MagicMock(return_value=password_response)
+
+        records = list(importer._do_import_inner(
+            "https://pvwa.example.com", params=MagicMock(),
+            record_type="customCyberArkAccount",
+            skip_team=True, skip_role=True, skip_user=True,
+        ))
+
+        assert len(records) == 1
+        assert records[0].type == "customCyberArkAccount"
         assert not records[0].login
         custom_fields = {field.label: field.value for field in records[0].fields if field.label}
         assert custom_fields == {
