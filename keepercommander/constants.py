@@ -411,6 +411,17 @@ def resolve_server(server_input):
     if server_lower in KEEPER_SERVERS.values():
         return server_lower
 
+    # Explicit custom hosts are opt-in. This is used by self-hosted/KiaB
+    # deployments; normal region validation remains strict by default.
+    if os.getenv('KEEPER_ALLOW_CUSTOM_SERVER', '').lower() in ('1', 'true', 'yes'):
+        candidate = server_input.strip()
+        if candidate and ' ' not in candidate:
+            if '://' not in candidate:
+                candidate = 'https://' + candidate
+            parsed = urlparse(candidate)
+            if parsed.scheme in ('http', 'https') and parsed.hostname:
+                return parsed.geturl().rstrip('/')
+
     # Not a valid server
     return None
 

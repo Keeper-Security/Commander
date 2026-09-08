@@ -1,0 +1,5 @@
+{
+  "server": "local.keepersecurity.com",
+  "certificate_check": true,
+  "config_storage": "file"
+}
