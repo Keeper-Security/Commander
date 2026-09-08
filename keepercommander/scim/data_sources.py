@@ -65,6 +65,19 @@ class AdCrmDataSource(ICrmDataSource):
                 message += '\nOptional: pip install winkerberos'
             raise CommandError('', message)
 
+    @staticmethod
+    def _parse_group_selector(group: str) -> Tuple[str, bool]:
+        """Return the AD group name/DN and whether to select its direct subgroups.
+
+        A leading ``+`` replaces the specified group with its immediate group
+        members. It does not recursively expand the group hierarchy.
+        """
+        return (group[1:], True) if group.startswith('+') else (group, False)
+
+    @staticmethod
+    def _direct_subgroups_filter(group_dn: str) -> str:
+        return f'(&(objectClass=group)(memberOf={group_dn}))'
+
     @contextmanager
     def get_ldap_connection(self):
         ldap3 = AdCrmDataSource._get_ldap_module()
@@ -220,6 +233,7 @@ class AdCrmDataSource(ICrmDataSource):
                 default_domain = self._domain_lookup[default_domain]
 
             scim_groups = {}           # type: Dict[str, ScimGroup]
+            resolved_selectors = 0
             if len(self.scim_groups) == 0:
                 rs = connection.extend.standard.paged_search(
                     root_dn, '(objectClass=group)',
@@ -241,7 +255,8 @@ class AdCrmDataSource(ICrmDataSource):
                         g.domain = default_domain
                         scim_groups[entry['dn']] = g
             else:
-                for scim_group in self.scim_groups:
+                for scim_group_selector in self.scim_groups:
+                    scim_group, expand_subgroups = self._parse_group_selector(scim_group_selector)
                     if scim_group.lower().startswith('cn='):
                         rs = connection.extend.standard.paged_search(
                             scim_group, f'(objectClass=group)',
@@ -256,22 +271,64 @@ class AdCrmDataSource(ICrmDataSource):
                         t = group_entry.get('type')
                         if t != 'searchResEntry':
                             continue
+                        resolved_selectors += 1
                         group_dn = group_entry['dn']
                         attrs = group_entry['attributes']
-                        scim_group_obj = ScimGroup()
-                        scim_group_obj.id = attrs.get('objectGUID')
-                        scim_group_obj.sid = attrs.get('objectSid')
-                        scim_group_obj.external_id = attrs.get('objectGUID')
-                        scim_group_obj.name = attrs.get('name')
-                        scim_group_obj.domain = default_domain
-                        scim_groups[group_dn] = scim_group_obj
+                        if expand_subgroups:
+                            subgroups = connection.extend.standard.paged_search(
+                                root_dn, self._direct_subgroups_filter(escape_filter_chars(group_dn)),
+                                search_scope=ldap3.SUBTREE, paged_size=1000, generator=True,
+                                attributes=['objectGUID', 'objectSid', 'name'])
+                            subgroup_entries = 0
+                            selected_subgroups = 0
+                            for subgroup_entry in subgroups:
+                                if subgroup_entry.get('type') != 'searchResEntry':
+                                    continue
+                                subgroup_entries += 1
+                                subgroup_attrs = subgroup_entry.get('attributes') or {}
+                                subgroup_id = subgroup_attrs.get('objectGUID')
+                                subgroup_name = subgroup_attrs.get('name')
+                                if not subgroup_id or not subgroup_name:
+                                    self.debug_logger(
+                                        f'Skipping direct subgroup "{subgroup_entry.get("dn", "")}": '
+                                        f'missing objectGUID or name')
+                                    continue
+                                subgroup = ScimGroup()
+                                subgroup.id = subgroup_id
+                                subgroup.sid = subgroup_attrs.get('objectSid')
+                                subgroup.external_id = subgroup_id
+                                subgroup.name = subgroup_name
+                                subgroup.domain = default_domain
+                                scim_groups[subgroup_entry['dn']] = subgroup
+                                selected_subgroups += 1
+                            self.debug_logger(
+                                f'AD selector "{scim_group_selector}": direct subgroup entries={subgroup_entries}, '
+                                f'selected={selected_subgroups}')
+                            if selected_subgroups == 0:
+                                logging.warning(
+                                    f'AD group selector "{scim_group_selector}" resolved but has no importable '
+                                    f'direct subgroups')
+                        else:
+                            scim_group_obj = ScimGroup()
+                            scim_group_obj.id = attrs.get('objectGUID')
+                            scim_group_obj.sid = attrs.get('objectSid')
+                            scim_group_obj.external_id = attrs.get('objectGUID')
+                            scim_group_obj.name = attrs.get('name')
+                            scim_group_obj.domain = default_domain
+                            scim_groups[group_dn] = scim_group_obj
+                            self.debug_logger(
+                                f'AD selector "{scim_group_selector}" resolved to group "{scim_group_obj.name}"')
                     else:
-                        self.debug_logger(f'AD Group "{scim_group}" could not be resolved')
+                        self.debug_logger(f'AD Group "{scim_group_selector}" could not be resolved')
                         self._load_errors = True
 
             if len(scim_groups) == 0:
                 if len(self.scim_groups) == 0:
                     self.debug_logger('No AD groups found')
+                elif resolved_selectors:
+                    # Every resolved '+' selector with no importable direct subgroups has
+                    # already emitted a customer-visible warning above.
+                    pass
                 else:
                     raise Exception('No Active Directory groups could be resolved')
 
@@ -291,6 +348,8 @@ class AdCrmDataSource(ICrmDataSource):
                     attrs = u.get('attributes') or {}
                     user_id = attrs.get('objectGUID') or ''
                     if not user_id:
+                        self.debug_logger(
+                            f'Skipping LDAP user entry "{u.get("dn", "")}": missing objectGUID')
                         continue
                     su = ScimUser()
                     su.id = user_id
@@ -328,17 +387,26 @@ class AdCrmDataSource(ICrmDataSource):
                         search_scope=ldap3.SUBTREE, paged_size=1000, generator=True,
                         attributes=['objectGUID', 'mail', 'userPrincipalName', 'givenName', 'accountExpires',
                                 'sn', 'cn', 'memberOf', 'sAMAccountName'])
+                    ldap_user_entries = 0
+                    new_users = 0
+                    existing_users = 0
+                    missing_user_ids = 0
                     for u in group_users:
                         t = u.get('type')
                         if t != 'searchResEntry':
                             continue
 
+                        ldap_user_entries += 1
                         attrs = u.get('attributes') or {}
                         user_id = attrs.get('objectGUID')
                         if not user_id:
+                            missing_user_ids += 1
+                            self.debug_logger(
+                                f'Skipping LDAP user entry "{u.get("dn", "")}": missing objectGUID')
                             continue
                         su = scim_users.get(user_id)
                         if not su:
+                            new_users += 1
                             email = ''
                             login = ''
                             if 'sAMAccountName' in attrs:
@@ -374,7 +442,14 @@ class AdCrmDataSource(ICrmDataSource):
                                 if isinstance(ae, datetime.datetime):
                                     su.active = ae.timestamp() > now
                             scim_users[user_id] = su
+                        else:
+                            existing_users += 1
                         su.groups.append(group_dn)
+                    group_name = scim_groups[group_dn].name or group_dn
+                    self.debug_logger(
+                        f'AD group "{group_name}": LDAP user entries={ldap_user_entries}, '
+                        f'new users={new_users}, already selected={existing_users}, '
+                        f'skipped missing objectGUID={missing_user_ids}')
 
             yield from scim_groups.values()
             yield from scim_users.values()
