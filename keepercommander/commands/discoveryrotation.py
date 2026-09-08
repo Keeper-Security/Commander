@@ -4393,6 +4393,19 @@ class PAMGatewayRemoveCommand(Command):
         return PAMGatewayRemoveCommand.dr_remove_controller_parser
 
     def execute(self, params, **kwargs):
+        # Per-user enforcement gate on the 'allow_pam_gateway' role enforcement
+        # (confirmed via live account_summary payload). Bail before any further
+        # work when the user's enterprise enforcement disallows Gateway management.
+        try:
+            from .workflow.helpers import is_pam_action_allowed_by_enforcement
+            if not is_pam_action_allowed_by_enforcement(
+                    params, 'allow_pam_gateway'):
+                print(f"{bcolors.FAIL}Gateway management is not allowed by your enterprise "
+                      f"enforcement (allow_pam_gateway).{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
+
         gateway_name = kwargs.get('gateway')
         gateways = gateway_helper.get_all_gateways(params)
 
@@ -4461,6 +4474,18 @@ class PAMCreateGatewayCommand(Command):
         return PAMCreateGatewayCommand.dr_create_controller_parser
 
     def execute(self, params, **kwargs):
+        # Per-user enforcement gate on the 'allow_pam_gateway' role enforcement
+        # (confirmed via live account_summary payload). Bail before any further
+        # work when the user's enterprise enforcement disallows Gateway management.
+        try:
+            from .workflow.helpers import is_pam_action_allowed_by_enforcement
+            if not is_pam_action_allowed_by_enforcement(
+                    params, 'allow_pam_gateway'):
+                print(f"{bcolors.FAIL}Gateway management is not allowed by your enterprise "
+                      f"enforcement (allow_pam_gateway).{bcolors.ENDC}")
+                return
+        except ImportError:
+            pass
 
         gateway_name = kwargs.get('gateway_name')
         ksm_app = kwargs.get('ksm_app')
