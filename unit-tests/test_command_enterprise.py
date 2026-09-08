@@ -242,6 +242,63 @@ class TestEnterprise(TestCase):
                    node='Enterprise 1')
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
+    def test_enterprise_role_add_manage_companies_privilege_denied(self):
+        """Delegated admin without manage_companies privilege cannot grant it"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, add_privilege=['manage_companies'], role=[ent_env.role2_name],
+                       node='Enterprise 1')
+            self.assertTrue(any('You do not have the required privilege' in msg for msg in log.output))
+
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_remove_transfer_account_privilege_denied(self):
+        """Delegated admin without transfer_account privilege cannot strip it from another role"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Role2 already holds transfer_account; User1 (Role1) does not.
+        params.enterprise['role_privileges'].append({
+            'role_id': ent_env.role2_id,
+            'managed_node_id': ent_env.node1_id,
+            'privilege': 'transfer_account'
+        })
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, remove_privilege=['transfer_account'], role=[ent_env.role2_name],
+                       node='Enterprise 1')
+            self.assertTrue(any('You do not have the required privilege' in msg for msg in log.output))
+
+        # No removal command sent - Role2 should still hold the privilege
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+    def test_enterprise_role_remove_privilege_with_authorization(self):
+        """Admin with transfer_account privilege CAN remove it from another role (regression test)"""
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        # Role2 already holds transfer_account
+        params.enterprise['role_privileges'].append({
+            'role_id': ent_env.role2_id,
+            'managed_node_id': ent_env.node1_id,
+            'privilege': 'transfer_account'
+        })
+        # Give User1 transfer_account via Admin role
+        params.enterprise['role_users'].append({
+            'role_id': ent_env.role_admin_id,
+            'enterprise_user_id': ent_env.user1_id
+        })
+
+        cmd = enterprise.EnterpriseRoleCommand()
+        TestEnterprise.expected_commands = ['managed_node_privilege_remove']
+        cmd.execute(params, remove_privilege=['transfer_account'], role=[ent_env.role2_name],
+                   node='Enterprise 1')
+        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
     def test_enterprise_role_require_account_share_enforcement_denied_delegated_admin(self):
         """KC-1412: Delegated admin (non-root) cannot set require_account_share enforcement (CVE fix)"""
         params = get_connected_params()

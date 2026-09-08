@@ -51,10 +51,10 @@ from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2, automator_pb2, pam_pb2
 
 
-# KC-1435: Privilege escalation CVE fix — restricted privileges that require authorization checks.
-# These privileges require the current user to already hold them before granting to roles.
-# Why: These privileges control account transfer, team/company management, and financial operations.
-# Including manage_nodes/sharing_administrator would over-restrict; delegated admins need those for routine management.
+# Privileges that require the current user to already hold them before they can be granted to,
+# or removed from, another role. These control account transfer, team/company management, and
+# financial operations. manage_nodes/sharing_administrator are excluded — restricting those would
+# block delegated admins from routine management.
 _PRIVILEGED_GRANTS = frozenset(('transfer_account', 'manage_companies', 'manage_teams'))
 
 
@@ -2728,23 +2728,14 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     else:
                         enforcement_value = None
 
-                    # KC-1435: Restrict require_account_share enforcement to root admins only (CVE fix)
+                    # Restrict require_account_share enforcement to root admins only.
+                    # Reuses EnterpriseCommand.get_user_root_nodes(), which fails open (treats an
+                    # unresolvable current user as main admin) to match the rest of the class.
                     if key == 'require_account_share':
-                        # Check if current user is a root admin (manages a root node with no parent_id)
-                        is_root_admin = False
-                        # Find current user's enterprise_user_id
-                        curr_user_id = self.get_current_enterprise_user_id(params)
-                        if curr_user_id and 'managed_nodes' in params.enterprise:
-                            user_roles = {x['role_id'] for x in params.enterprise.get('role_users', [])
-                                         if x.get('enterprise_user_id') == curr_user_id}
-                            for mn in params.enterprise['managed_nodes']:
-                                if mn['role_id'] in user_roles:
-                                    # Check if the managed node is a root node (no parent)
-                                    managed_node = next((n for n in params.enterprise.get('nodes', [])
-                                                       if n.get('node_id') == mn['managed_node_id']), None)
-                                    if managed_node and not managed_node.get('parent_id'):
-                                        is_root_admin = True
-                                        break
+                        true_root_node_id = next((n['node_id'] for n in params.enterprise.get('nodes', [])
+                                                   if n['node_id'] & 0xffffffff == 2), None)
+                        is_root_admin = true_root_node_id is not None and \
+                            true_root_node_id in self.get_user_root_nodes(params)
                         if not is_root_admin:
                             logging.warning('Failed to modify enforcement \'%s\': Only enterprise root administrators can manage account transfer policies',
                                             key)
@@ -2875,8 +2866,9 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                               if x['role_id'] == role_id and x['managed_node_id'] == node_id}
                 all_privileges = {x[1].lower() for x in constants.ROLE_PRIVILEGES}
 
-                # Get current user's effective privileges for authorization check (KC-1435 fix)
-                # Cascade-aware: walks ancestor chain to find privileges granted on parent nodes
+                # Get current user's effective privileges for authorization check.
+                # Cascade-aware: walks ancestor chain to find privileges granted on parent nodes.
+                # Fails closed: an unresolvable current user yields no privileges, so the request is denied.
                 current_user_id = self.get_current_enterprise_user_id(params)
                 current_user_effective_privileges = set()  # type: Set[str]
                 if current_user_id:
@@ -2905,12 +2897,15 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                              role_id, node_id, privilege)
                                 continue
 
-                            # KC-1435: Verify caller holds the privilege before granting it (CVE fix)
-                            # Only applies to privileged grants; cascade-aware check honors role hierarchy
-                            if is_add and privilege in _PRIVILEGED_GRANTS:
+                            # Verify caller holds the privilege before granting or revoking it on another
+                            # role. Gating removal too, since a node admin without the privilege could
+                            # otherwise strip transfer_account/manage_teams/manage_companies from a role
+                            # that depends on it (e.g. an offboarding or security-owning role).
+                            if privilege in _PRIVILEGED_GRANTS:
                                 if privilege not in current_user_effective_privileges:
-                                    logging.warning('Failed to assign \'%s\' privilege to role: You do not have the required privilege to grant \'%s\'',
-                                                    privilege, privilege)
+                                    verb = 'assign' if is_add else 'remove'
+                                    logging.warning('Failed to %s \'%s\' privilege: You do not have the required privilege to modify \'%s\'',
+                                                    verb, privilege, privilege)
                                     continue
 
                             rq = {
