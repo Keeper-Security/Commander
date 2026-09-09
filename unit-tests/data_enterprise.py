@@ -26,6 +26,10 @@ _USER2_EMAIL = 'user2@keepercommander.com'
 
 _ROLE1_ID = (_ENTERPRISE_ID << 32) + 301
 _ROLE1_NAME = 'Role 1'
+_ROLE2_ID = (_ENTERPRISE_ID << 32) + 302
+_ROLE2_NAME = 'Role 2'
+_ROLE_ADMIN_ID = (_ENTERPRISE_ID << 32) + 303
+_ROLE_ADMIN_NAME = 'Admin Role'
 
 _LAST_ID = 1000
 
@@ -45,6 +49,10 @@ class EnterpriseEnvironment:
         self.user2_email = _USER2_EMAIL
         self.role1_id = _ROLE1_ID
         self.role1_name = _ROLE1_NAME
+        self.role2_id = _ROLE2_ID
+        self.role2_name = _ROLE2_NAME
+        self.role_admin_id = _ROLE_ADMIN_ID
+        self.role_admin_name = _ROLE_ADMIN_NAME
 
 
 def enterprise_allocate_ids(params, request):
@@ -122,11 +130,37 @@ def get_enterprise_data(params):
                 crypto.encrypt_aes_v1(json.dumps({'displayname': _ROLE1_NAME}).encode('utf-8'), _TREE_KEY)),
             'visible_below': True,
             'new_user_inherit': True
+        },
+        {
+            'role_id': _ROLE2_ID,
+            'node_id': _NODE1_ID,
+            'encrypted_data': utils.base64_url_encode(
+                crypto.encrypt_aes_v1(json.dumps({'displayname': _ROLE2_NAME}).encode('utf-8'), _TREE_KEY)),
+            'visible_below': False,
+            'new_user_inherit': False
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'node_id': _NODE1_ID,
+            'encrypted_data': utils.base64_url_encode(
+                crypto.encrypt_aes_v1(json.dumps({'displayname': _ROLE_ADMIN_NAME}).encode('utf-8'), _TREE_KEY)),
+            'visible_below': False,
+            'new_user_inherit': False
         }
     ]
     rs['managed_nodes'] = [
         {
             'role_id': _ROLE1_ID,
+            'managed_node_id': _NODE1_ID,
+            'cascade_node_management': True,
+        },
+        {
+            'role_id': _ROLE2_ID,
+            'managed_node_id': _NODE1_ID,
+            'cascade_node_management': False,
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
             'managed_node_id': _NODE1_ID,
             'cascade_node_management': True,
         }
@@ -135,6 +169,49 @@ def get_enterprise_data(params):
         {
             'role_id': _ROLE1_ID,
             'enterprise_user_id':  _USER1_ID
+        }
+    ]
+    # KC-1412: Add role_privileges to test authorization checks
+    rs['role_privileges'] = [
+        {
+            'role_id': _ROLE1_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_nodes'
+        },
+        {
+            'role_id': _ROLE1_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_user'
+        },
+        {
+            'role_id': _ROLE1_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_roles'
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_nodes'
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_user'
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_roles'
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'transfer_account'
+        },
+        {
+            'role_id': _ROLE_ADMIN_ID,
+            'managed_node_id': _NODE1_ID,
+            'privilege': 'manage_teams'
         }
     ]
     rs['teams'] = [
