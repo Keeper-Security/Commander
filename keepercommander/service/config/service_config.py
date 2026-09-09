@@ -93,6 +93,9 @@ class ServiceConfig:
             cloudflare_tunnel_token="",
             cloudflare_custom_domain="",
             cloudflare_public_url="",
+            tailscale="n",
+            tailscale_auth_key="",
+            tailscale_public_url="",
             tls_certificate="n",
             certfile="",
             certpassword="",
@@ -234,7 +237,20 @@ class ServiceConfig:
         if 'cloudflare_public_url' not in config:
             config['cloudflare_public_url'] = ''
             logger.debug("Added default cloudflare_public_url for backwards compatibility")
-        
+
+        # Add backwards compatibility for missing Tailscale fields
+        if 'tailscale' not in config:
+            config['tailscale'] = 'n'  # Default to disabled for existing configs
+            logger.debug("Added default tailscale=n for backwards compatibility")
+
+        if 'tailscale_auth_key' not in config:
+            config['tailscale_auth_key'] = ''
+            logger.debug("Added default tailscale_auth_key for backwards compatibility")
+
+        if 'tailscale_public_url' not in config:
+            config['tailscale_public_url'] = ''
+            logger.debug("Added default tailscale_public_url for backwards compatibility")
+
         self._validate_config_structure(config)
         return config
 
@@ -257,6 +273,10 @@ class ServiceConfig:
             logger.debug("Validating cloudflare configuration")
             self.validator.validate_cloudflare_token(config_data.cloudflare_tunnel_token)
             self.validator.validate_domain(config_data.cloudflare_custom_domain)
+
+        if config_data.tailscale == 'y':
+            logger.debug("Validating tailscale configuration")
+            self.validator.validate_tailscale_auth_key(config_data.tailscale_auth_key)
 
         if config_data.is_advanced_security_enabled == 'y':
             logger.debug("Validating advanced security settings")

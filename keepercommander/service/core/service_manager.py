@@ -76,6 +76,7 @@ class ServiceManager:
             
             from ..config.ngrok_config import NgrokConfigurator
             from ..config.cloudflare_config import CloudflareConfigurator
+            from ..config.tailscale_config import TailscaleConfigurator
             
             is_running = True
             queue_enabled = config_data.get("queue_enabled", "y")
@@ -112,6 +113,69 @@ class ServiceManager:
 
                 logger.info(f"\n{str(e)}")
                 return
+
+            tailscale_enabled = False
+            tailscale_port = None
+
+            try:
+                TailscaleConfigurator.configure_tailscale(config_data, service_config)
+                if config_data.get("tailscale") == 'y':
+                    tailscale_enabled = True
+                    tailscale_port = port
+                    # Tailscale's public URL is only known after Funnel actually starts
+                    # (unlike ngrok/cloudflare, it can't be derived from user input alone),
+                    # so persist it back to the saved config now that it's known.
+                    if config_data.get("tailscale_public_url"):
+                        try:
+                            service_config.save_config(config_data, config_data.get("fileformat"))
+                        except Exception as save_error:
+                            logger.debug(f"Could not persist tailscale_public_url: {save_error}")
+            except Exception as e:
+                if ngrok_pid and psutil:
+                    try:
+                        process = psutil.Process(ngrok_pid)
+                        process.terminate()
+                        logger.debug(f"Terminated ngrok process {ngrok_pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as ngrok_error:
+                        logger.debug(f"Error terminating ngrok process: {type(ngrok_error).__name__}")
+                elif ngrok_pid:
+                    logger.warning("Cannot terminate ngrok process: psutil not available")
+
+                if cloudflare_pid and psutil:
+                    try:
+                        process = psutil.Process(cloudflare_pid)
+                        process.terminate()
+                        logger.debug(f"Terminated cloudflare process {cloudflare_pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as cf_error:
+                        logger.debug(f"Error terminating cloudflare process: {type(cf_error).__name__}")
+                elif cloudflare_pid:
+                    logger.warning("Cannot terminate cloudflare process: psutil not available")
+
+                ProcessInfo.clear()
+
+                logger.info(f"\n{str(e)}")
+                return
+
+            # Write vault metadata (service URL + API key) now that tunnel configuration
+            # has succeeded and the real public URL (if any) is known -- this is done here
+            # rather than at service-create time because Tailscale's URL in particular is
+            # only known after Funnel actually starts, not derivable from user input alone.
+            # Consumed from a transient, same-process global (set by CreateService, if
+            # -ur/--update-vault-record was requested) rather than persisted config, since
+            # this write should only ever fire once per creation, not on later restarts.
+            from ..core.globals import pop_pending_vault_metadata
+            pending_metadata = pop_pending_vault_metadata()
+            if pending_metadata:
+                try:
+                    from ..core.globals import ensure_params_loaded
+                    from ..commands.integrations.vault_metadata import write_service_metadata, get_service_url
+                    metadata_params = ensure_params_loaded()
+                    actual_service_url = get_service_url(config_data)
+                    write_service_metadata(
+                        metadata_params, pending_metadata['record_uid'], actual_service_url, pending_metadata['api_key']
+                    )
+                except Exception as metadata_error:
+                    logger.error(f"Failed to write vault metadata: {metadata_error}")
 
             # Custom logging filter to replace SSL handshake errors with user-friendly message
             class SSLHandshakeFilter(logging.Filter):
@@ -166,7 +230,7 @@ class ServiceManager:
                     
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {cls.pid}")
-                    ProcessInfo.save(cls.pid, is_running, ngrok_pid)
+                    ProcessInfo.save(cls.pid, is_running, ngrok_pid, tailscale_enabled=tailscale_enabled, tailscale_port=tailscale_port)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -243,9 +307,23 @@ class ServiceManager:
                         print(f"Unexpected error during Cloudflare cleanup: {e}")
                         logger.error(f"Unexpected error during Cloudflare cleanup: {e}")
 
+                def cleanup_tailscale_on_foreground_exit():
+                    """Clean up Tailscale Funnel when foreground service exits."""
+                    if not tailscale_enabled:
+                        return
+                    try:
+                        from ..util.tunneling import stop_tailscale_funnel
+                        if stop_tailscale_funnel(tailscale_port):
+                            print("Tailscale Funnel stopped")
+                    except (KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception as e:
+                        logger.debug(f"Tailscale funnel cleanup failed: {e}")
+
                 def foreground_signal_handler(signum, frame):
                     """Handle interrupt signals in foreground mode."""
                     cleanup_cloudflare_on_foreground_exit()
+                    cleanup_tailscale_on_foreground_exit()
                     sys.exit(0)
 
                 # Set up signal handlers for foreground mode
@@ -257,9 +335,9 @@ class ServiceManager:
                 cls._flask_app = create_app()
                 cls._is_running = True
 
-                ProcessInfo.save(os.getpid(), is_running, ngrok_pid)
+                ProcessInfo.save(os.getpid(), is_running, ngrok_pid, tailscale_enabled=tailscale_enabled, tailscale_port=tailscale_port)
                 ssl_context = ServiceManager.get_ssl_context(config_data)
-                
+
                 try:
                     cls._flask_app.run(
                         host='0.0.0.0',
@@ -268,9 +346,10 @@ class ServiceManager:
                     )
                 finally:
                     cleanup_cloudflare_on_foreground_exit()
+                    cleanup_tailscale_on_foreground_exit()
 
             # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)
+            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid, tailscale_enabled=tailscale_enabled, tailscale_port=tailscale_port)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
@@ -388,6 +467,20 @@ class ServiceManager:
             if not cloudflare_stopped:
                 logger.debug("No Cloudflare tunnel processes found to stop")
 
+            # Stop Tailscale Funnel if it was enabled
+            if process_info.tailscale_enabled and process_info.tailscale_port:
+                try:
+                    logger.debug(f"Attempting to stop Tailscale Funnel on port {process_info.tailscale_port}")
+                    from ..util.tunneling import stop_tailscale_funnel
+                    if stop_tailscale_funnel(process_info.tailscale_port):
+                        print("Tailscale Funnel stopped")
+                    else:
+                        logger.warning(f"Failed to stop Tailscale Funnel on port {process_info.tailscale_port}")
+                except Exception as e:
+                    logger.warning(f"Error stopping Tailscale Funnel: {str(e)}")
+            else:
+                logger.debug("No Tailscale Funnel to stop")
+
             # Stop the main service process
             if ServiceManager.kill_process_by_pid(process_info.pid):
                 logger.debug(f"Commander Service stopped (PID: {process_info.pid})")
@@ -439,6 +532,23 @@ class ServiceManager:
                         status += f"\nCloudflare tunnel is Running (PID: {process_info.cloudflare_pid})"
                     except psutil.NoSuchProcess:
                         status += f"\nCloudflare tunnel is Stopped (was PID: {process_info.cloudflare_pid})"
+
+                # Check Tailscale Funnel status if enabled
+                if process_info.tailscale_enabled and process_info.tailscale_port:
+                    try:
+                        from ..util.tunneling import get_tailscale_funnel_status, get_tailscale_funnel_url
+                        funnel_on = get_tailscale_funnel_status(process_info.tailscale_port)
+                        if funnel_on:
+                            current_url = get_tailscale_funnel_url(process_info.tailscale_port, max_retries=1, retry_delay=0.5)
+                            if current_url:
+                                status += f"\nTailscale Funnel is Running (Port: {process_info.tailscale_port}, URL: {current_url})"
+                            else:
+                                status += f"\nTailscale Funnel is Running (Port: {process_info.tailscale_port})"
+                        else:
+                            status += f"\nTailscale Funnel is Stopped (was Port: {process_info.tailscale_port})"
+                    except Exception as e:
+                        logger.debug(f"Error checking Tailscale funnel status: {e}")
+                        status += f"\nTailscale Funnel status could not be determined (Port: {process_info.tailscale_port})"
 
                 logger.debug(f"Service status check: {status}")
                 return status

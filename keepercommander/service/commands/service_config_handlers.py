@@ -63,14 +63,17 @@ class ServiceConfigHandler:
         # Apply logical tunneling flow for streamlined config
         ngrok_enabled = "y" if args.ngrok else "n"
         cloudflare_enabled = "y" if args.cloudflare else "n"
-        
+        tailscale_enabled = "y" if args.tailscale else "n"
+
         # Implement the same logic as interactive mode
         ngrok_public_url = ""
         cloudflare_public_url = ""
-        
+        tailscale_auth_key = ""
+
         if ngrok_enabled == "y":
-            # ngrok enabled → disable cloudflare and TLS
+            # ngrok enabled → disable cloudflare, tailscale and TLS
             cloudflare_enabled = "n"
+            tailscale_enabled = "n"
             cloudflare_token = ""
             cloudflare_domain = ""
             tls_enabled = "n"
@@ -84,14 +87,15 @@ class ServiceConfigHandler:
                     ngrok_public_url = f"https://{ngrok_domain}.ngrok.io"
                 else:
                     ngrok_public_url = f"https://{ngrok_domain}"
-            logger.debug("Ngrok enabled - disabling cloudflare and TLS")
+            logger.debug("Ngrok enabled - disabling cloudflare, tailscale and TLS")
         elif cloudflare_enabled == "y":
-            # cloudflare enabled → disable TLS, but validate required fields
+            # cloudflare enabled → disable tailscale and TLS, but validate required fields
             if not args.cloudflare:
                 raise ValidationError("Cloudflare tunnel token is required when using Cloudflare tunnel.")
             if not args.cloudflare_custom_domain:
                 raise ValidationError("Cloudflare custom domain is required when using Cloudflare tunnel.")
-            
+
+            tailscale_enabled = "n"
             tls_enabled = "n"
             certfile = ""
             certpassword = ""
@@ -99,9 +103,24 @@ class ServiceConfigHandler:
             cloudflare_domain = self.service_config.validator.validate_domain(args.cloudflare_custom_domain)
             # Construct cloudflare public URL from custom domain
             cloudflare_public_url = f"https://{cloudflare_domain}"
-            logger.debug("Cloudflare enabled - disabling TLS")
+            logger.debug("Cloudflare enabled - disabling tailscale and TLS")
+        elif tailscale_enabled == "y":
+            # tailscale enabled → disable TLS, but validate required fields
+            if not args.tailscale_auth_key:
+                raise ValidationError("Tailscale auth key is required when using Tailscale Funnel.")
+
+            tls_enabled = "n"
+            certfile = ""
+            certpassword = ""
+            cloudflare_token = ""
+            cloudflare_domain = ""
+            tailscale_auth_key = self.service_config.validator.validate_tailscale_auth_key(args.tailscale_auth_key)
+            # tailscale_public_url is only known once `tailscale up` + funnel enable
+            # actually run at service-start time (Tailscale assigns the hostname;
+            # there is no user-supplied custom domain to derive it from here).
+            logger.debug("Tailscale enabled - disabling TLS")
         else:
-            # Both ngrok and cloudflare disabled → allow TLS
+            # ngrok, cloudflare, and tailscale all disabled → allow TLS
             tls_enabled = "y" if args.certfile and args.certpassword else "n"
             certfile = args.certfile if args.certfile else ""
             certpassword = args.certpassword if args.certpassword else ""
@@ -139,6 +158,9 @@ class ServiceConfigHandler:
             "cloudflare_tunnel_token": cloudflare_token,
             "cloudflare_custom_domain": cloudflare_domain,
             "cloudflare_public_url": cloudflare_public_url,
+            "tailscale": tailscale_enabled,
+            "tailscale_auth_key": tailscale_auth_key,
+            "tailscale_public_url": "",
             "tls_certificate": tls_enabled,
             "certfile": certfile,
             "certpassword": certpassword,
@@ -171,34 +193,50 @@ class ServiceConfigHandler:
     def _configure_tunneling_and_tls(self, config_data: Dict[str, Any]) -> None:
         """
         Configure tunneling and TLS with logical flow:
-        1. If ngrok = yes → Skip cloudflare and TLS (ngrok provides public access with SSL)
+        1. If ngrok = yes → Skip cloudflare, tailscale and TLS (ngrok provides public access with SSL)
         2. If ngrok = no → Ask for cloudflare
-        3. If ngrok = no AND cloudflare = no → Ask for TLS (local HTTPS)
+        3. If ngrok = no AND cloudflare = no → Ask for tailscale
+        4. If ngrok = no AND cloudflare = no AND tailscale = no → Ask for TLS (local HTTPS)
         """
         # First, always ask for ngrok
         self._configure_ngrok(config_data)
-        
+
         if config_data["ngrok"] == "y":
-            # ngrok provides public access with SSL, so skip cloudflare and TLS
+            # ngrok provides public access with SSL, so skip cloudflare, tailscale and TLS
             config_data["cloudflare"] = "n"
             config_data["cloudflare_tunnel_token"] = ""
             config_data["cloudflare_custom_domain"] = ""
             config_data["cloudflare_public_url"] = ""
+            config_data["tailscale"] = "n"
+            config_data["tailscale_auth_key"] = ""
+            config_data["tailscale_public_url"] = ""
             config_data["tls_certificate"] = "n"
             config_data["certfile"] = ""
             config_data["certpassword"] = ""
         else:
             # ngrok = no, so ask for cloudflare
             self._configure_cloudflare(config_data)
-            
+
             if config_data["cloudflare"] == "y":
-                # cloudflare provides public access with SSL, so skip TLS
+                # cloudflare provides public access with SSL, so skip tailscale and TLS
+                config_data["tailscale"] = "n"
+                config_data["tailscale_auth_key"] = ""
+                config_data["tailscale_public_url"] = ""
                 config_data["tls_certificate"] = "n"
                 config_data["certfile"] = ""
                 config_data["certpassword"] = ""
             else:
-                # Both ngrok and cloudflare = no, so ask for TLS for local HTTPS
-                self._configure_tls(config_data)
+                # ngrok and cloudflare = no, so ask for tailscale
+                self._configure_tailscale(config_data)
+
+                if config_data["tailscale"] == "y":
+                    # tailscale provides public access with SSL, so skip TLS
+                    config_data["tls_certificate"] = "n"
+                    config_data["certfile"] = ""
+                    config_data["certpassword"] = ""
+                else:
+                    # ngrok, cloudflare and tailscale = no, so ask for TLS for local HTTPS
+                    self._configure_tls(config_data)
 
     def _configure_ngrok(self, config_data: Dict[str, Any]) -> None:
         config_data["ngrok"] = self.service_config._get_yes_no_input(self.messages['ngrok_prompt'])
@@ -255,6 +293,26 @@ class ServiceConfigHandler:
             config_data["cloudflare_custom_domain"] = ""
             config_data["cloudflare_public_url"] = ""
         
+    def _configure_tailscale(self, config_data: Dict[str, Any]) -> None:
+        config_data["tailscale"] = self.service_config._get_yes_no_input(
+            self.messages.get('tailscale_prompt', 'Do you want to use Tailscale Funnel? (y/n): ')
+        )
+
+        if config_data["tailscale"] == "y":
+            config_data["tailscale_auth_key"] = self._get_validated_input(
+                prompt_key='tailscale_auth_key_prompt',
+                validation_func=self.service_config.validator.validate_tailscale_auth_key,
+                error_key='invalid_tailscale_auth_key',
+                required=True
+            )
+            # Public URL is only known once `tailscale up` + funnel enable actually
+            # run at service-start time; leave blank here, matching the streamlined
+            # path's same limitation.
+            config_data["tailscale_public_url"] = ""
+        else:
+            config_data["tailscale_auth_key"] = ""
+            config_data["tailscale_public_url"] = ""
+
     def _configure_tls(self, config_data: Dict[str, Any]) -> None:
         config_data["tls_certificate"] = self.service_config._get_yes_no_input(self.messages['tls_certificate'])
         
