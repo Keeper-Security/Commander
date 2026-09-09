@@ -22,6 +22,11 @@ from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
 import sys, subprocess
 
+# Windows CreateProcess flags to run service subprocesses fully detached and hidden
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 class ServiceManager:
     """Manages the lifecycle of the service including start, stop, and status operations."""
     
@@ -130,43 +135,64 @@ class ServiceManager:
             werkzeug_logger.addFilter(SSLHandshakeFilter())
 
             if config_data.get("run_mode") == "background":
-
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                service_module = "keepercommander.service.core.service_app"  # Use module path instead of file path
-                python_executable = sys.executable
-
-                # Create logs directory for subprocess output
-                log_dir = os.path.join(base_dir, "logs")
+                
+                # Detect if running as PyInstaller executable
+                is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+                
+                # Create logs directory for subprocess output in user-writable location
+                log_dir = os.path.join(utils.get_default_path(), "service_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, "service_subprocess.log")
 
                 try:
-                    if sys.platform == "win32":
-                        subprocess.DETACHED_PROCESS = 0x00000008
-                        with open(log_file, 'w') as log_f:
-                            cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
-                                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
-                            )
+                    python_executable = sys.executable
+                    
+                    # Set up environment for subprocess
+                    subprocess_env = os.environ.copy()
+                    # Redirected (non-TTY) stdout defaults to full buffering, delaying log output.
+                    subprocess_env['PYTHONUNBUFFERED'] = '1'
+
+                    if is_frozen:
+                        # Running as PyInstaller executable - set env var to trigger service mode
+                        # The executable will detect KEEPER_SERVICE_MODE and start the service directly
+                        subprocess_env['KEEPER_SERVICE_MODE'] = '1'
+                        cmd = [python_executable]
                     else:
-                        # For macOS and Linux - improved subprocess handling
-                        with open(log_file, 'w') as log_f:
-                            cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
+                        # Running as Python script - use -m flag
+                        cmd = [python_executable, '-m', 'keepercommander.service.core.service_app']
+                    
+                    # Open log file in append mode with line buffering
+                    log_f = open(log_file, 'a', buffering=1)
+                    
+                    try:
+                        if sys.platform == "win32":
+                            process = subprocess.Popen(
+                                cmd,
+                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                                 stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                preexec_fn=os.setpgrp,
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
+                                stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL,
+                                cwd=os.getcwd(),
+                                env=subprocess_env
                             )
+                        else:
+                            # For macOS and Linux
+                            process = subprocess.Popen(
+                                cmd,
+                                stdout=log_f,
+                                stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL,
+                                preexec_fn=os.setpgrp,
+                                cwd=os.getcwd(),
+                                env=subprocess_env
+                            )
+                    except Exception:
+                        log_f.close()
+                        raise
                     
                     logger.debug(f"Service subprocess logs available at: {log_file}")
-                    print(f"Commander Service started with PID: {cls.pid}")
-                    ProcessInfo.save(cls.pid, is_running, ngrok_pid)
+                    print(f"Commander Service started with PID: {process.pid}")
+                    ProcessInfo.save(process.pid, is_running, ngrok_pid)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -268,9 +294,6 @@ class ServiceManager:
                     )
                 finally:
                     cleanup_cloudflare_on_foreground_exit()
-
-            # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
@@ -459,7 +482,13 @@ class ServiceManager:
         try:
             if sys.platform.startswith("win"):  #  Windows
                 logger.debug(f"Using Windows taskkill for PID {pid}")
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=True)
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    check=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 return True
             else:  #  Linux & macOS
                 try:

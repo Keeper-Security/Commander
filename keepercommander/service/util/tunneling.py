@@ -20,12 +20,19 @@ import re
 import json
 import tempfile
 
+# Windows CreateProcess flags to run tunnel subprocesses fully detached and hidden
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 
 def start_ngrok(port, auth_token=None, subdomain=None):
     """
     Start ngrok as a fully detached subprocess and return the PID.
     """
-    ngrok_cmd = ["ngrok", "http", str(port), "--log=stdout", "--log-level=info"]
+    ngrok_config = conf.get_default()
+    ngrok.install_ngrok(ngrok_config)
+    ngrok_cmd = [ngrok_config.ngrok_path, "http", str(port), "--log=stdout", "--log-level=info"]
     
     if subdomain:
         ngrok_cmd += ["--subdomain", subdomain]
@@ -39,25 +46,26 @@ def start_ngrok(port, auth_token=None, subdomain=None):
     log_file = os.path.join(log_dir, "ngrok_subprocess.log")
 
     if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
                 ngrok_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                cwd=service_core_dir,
+                env=os.environ.copy()
             )
     else:
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
                 ngrok_cmd,
                 stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 preexec_fn=os.setpgrp,
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
+                cwd=service_core_dir,
+                env=os.environ.copy()
             )
 
     actual_ngrok_pid = process.pid
@@ -200,32 +208,40 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
         log_event_callback=None,
     )
     
-    with open(os.devnull, 'w') as devnull:
+    if run_mode == "background":
+        # Own subprocess with its own log file - skip the console-unsafe fd redirection below.
+        if ngrok_custom_domain:
+            ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
+        else:
+            ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
+        return public_url, ngrok_pid
+
+    old_stdout_fd = None
+    old_stderr_fd = None
+    try:
         old_stdout_fd = os.dup(1)
         old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
-        
-        try:
-            if run_mode == "background":
-                # Background mode: use subprocess for both custom and non-custom domains
-                if ngrok_custom_domain:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
-                else:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
-                return public_url, ngrok_pid
-            else:
-                # Foreground mode: use pyngrok library
-                if ngrok_custom_domain:
-                    tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
-                else:
-                    tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
-                return tunnel.public_url, None
-            
-        finally:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+    except OSError:
+        old_stdout_fd = None
+        old_stderr_fd = None
+
+    try:
+        if ngrok_custom_domain:
+            tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+        else:
+            tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
+        return tunnel.public_url, None
+
+    finally:
+        if old_stdout_fd is not None:
             os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
             os.close(old_stdout_fd)
+        if old_stderr_fd is not None:
+            os.dup2(old_stderr_fd, 2)
             os.close(old_stderr_fd)
 
 
@@ -238,9 +254,18 @@ def _download_cloudflared():
     """
     try:
         # First try to find existing cloudflared
-        result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ['where', 'cloudflared'],
+                capture_output=True,
+                text=True,
+                creationflags=CREATE_NO_WINDOW
+            )
+        else:
+            result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
         if result.returncode == 0:
-            return result.stdout.strip()
+            # 'where' can print multiple matches, one per line; take the first
+            return result.stdout.strip().split('\n')[0]
     except:
         pass
         
@@ -331,13 +356,13 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
     log_file = os.path.join(log_dir, "cloudflare_tunnel_subprocess.log")
     
     if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
                 cloudflared_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 cwd=service_core_dir,
                 env=os.environ.copy()
             )
@@ -347,6 +372,7 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
                 cloudflared_cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 preexec_fn=os.setpgrp,
                 cwd=service_core_dir,
                 env=os.environ.copy()
@@ -410,36 +436,22 @@ def start_cloudflare_tunnel_with_url(port, tunnel_token, custom_domain=None):
 
 def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
     """
-    Start a Cloudflare tunnel with complete log suppression.
-    Returns a tuple of (public_url, tunnel_pid) for background mode, or (public_url, None) for foreground mode.
+    Start a Cloudflare tunnel as a detached subprocess and return its public URL.
+    Returns a tuple of (public_url, tunnel_pid).
     """
     if not port:
         raise ValueError("Port must be provided for Cloudflare tunnel.")
-    
+
     if not tunnel_token or not tunnel_token.strip():
         raise ValueError(
             "Tunnel token is required for secure Cloudflare tunnel operation. "
             "Temporary tunnels are not supported for production use."
         )
-    
-    # Cloudflare tunnel configuration
-    
-    with open(os.devnull, 'w') as devnull:
-        old_stdout_fd = os.dup(1)
-        old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
-        
-        try:
-            tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
-                port=port, 
-                tunnel_token=tunnel_token, 
-                custom_domain=custom_domain
-            )
-            return public_url, tunnel_pid
-            
-        finally:
-            os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
-            os.close(old_stdout_fd)
-            os.close(old_stderr_fd)
+
+    # Always runs as a detached subprocess with its own log file - nothing to suppress here.
+    tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
+        port=port,
+        tunnel_token=tunnel_token,
+        custom_domain=custom_domain
+    )
+    return public_url, tunnel_pid

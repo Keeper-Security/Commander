@@ -201,6 +201,13 @@ def main(from_package=False):
     if from_package:
         sys.excepthook = handle_exceptions
 
+    # Internal: Background service mode for PyInstaller frozen executable
+    # This env var is set by service_manager when spawning the background subprocess
+    if os.environ.get('KEEPER_SERVICE_MODE') == '1':
+        from .service.core.service_app import run_background_service
+        run_background_service()
+        return
+
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
     
