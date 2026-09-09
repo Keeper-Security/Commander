@@ -20,10 +20,25 @@ import re
 import json
 import tempfile
 
+from ... import utils
+
 # Windows CreateProcess flags to run tunnel subprocesses fully detached and hidden
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+# Same user-writable log directory service_manager.py uses for the service subprocess log
+TUNNEL_LOG_DIR = os.path.join(utils.get_default_path(), "service_logs")
+
+
+def get_ngrok_log_file():
+    os.makedirs(TUNNEL_LOG_DIR, exist_ok=True)
+    return os.path.join(TUNNEL_LOG_DIR, "ngrok_subprocess.log")
+
+
+def get_cloudflare_log_file():
+    os.makedirs(TUNNEL_LOG_DIR, exist_ok=True)
+    return os.path.join(TUNNEL_LOG_DIR, "cloudflare_tunnel_subprocess.log")
 
 
 def start_ngrok(port, auth_token=None, subdomain=None):
@@ -41,9 +56,7 @@ def start_ngrok(port, auth_token=None, subdomain=None):
 
 
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_dir = os.path.join(service_core_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "ngrok_subprocess.log")
+    log_file = get_ngrok_log_file()
 
     if sys.platform == "win32":
         with open(log_file, 'w') as log_f:
@@ -174,9 +187,7 @@ def start_ngrok_with_url(port, auth_token=None, subdomain=None):
 
     # If API method fails, try parsing the log file
     if not public_url:
-        service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-        log_file = os.path.join(service_core_dir, "logs", "ngrok_subprocess.log")
-        public_url = get_ngrok_url_from_log(log_file)
+        public_url = get_ngrok_url_from_log(get_ngrok_log_file())
     
     # If we still don't have a URL and subdomain was provided, construct it
     if not public_url and subdomain:
@@ -351,10 +362,8 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
         )
     
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_dir = os.path.join(service_core_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "cloudflare_tunnel_subprocess.log")
-    
+    log_file = get_cloudflare_log_file()
+
     if sys.platform == "win32":
         with open(log_file, 'w') as log_f:
             process = subprocess.Popen(
