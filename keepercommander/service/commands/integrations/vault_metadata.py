@@ -9,7 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from ...decorators.logging import logger
 from ....params import KeeperParams
@@ -19,6 +19,29 @@ SERVICE_URL_FIELD = 'service_url'
 API_KEY_FIELD = 'api_key'
 VAULT_METADATA_MAX_ATTEMPTS = 3
 _STALE_REVISION_HINTS = ('out_of_sync', 'no longer exists')
+
+
+def get_service_url(config_data: Dict[str, Any]) -> str:
+    """Determine the actual service URL (ngrok, cloudflare, tailscale, or localhost) with API version path"""
+    # Determine API version based on queue_enabled
+    queue_enabled = config_data.get("queue_enabled", "y")
+    api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
+
+    # Priority: ngrok > cloudflare > tailscale > localhost
+    base_url = ""
+    if config_data.get("ngrok_public_url"):
+        base_url = config_data["ngrok_public_url"]
+    elif config_data.get("cloudflare_public_url"):
+        base_url = config_data["cloudflare_public_url"]
+    elif config_data.get("tailscale_public_url"):
+        base_url = config_data["tailscale_public_url"]
+    else:
+        # Fallback to localhost with correct protocol
+        port = config_data.get("port", 8080)
+        protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
+        base_url = f"{protocol}://localhost:{port}"
+
+    return f"{base_url}{api_path}"
 
 
 def get_existing_api_key(params: KeeperParams, record_uid: str) -> Optional[str]:

@@ -1,0 +1,21 @@
+/usr/local/bin/tailscale: line 2: /Applications/Tailscale.app/Contents/MacOS/Tailscale: No such file or directory
+failed to connect to local Tailscale service; is Tailscale running?
+failed to connect to local Tailscale service; is Tailscale running?
+failed to connect to local Tailscale service; is Tailscale running?
+failed to connect to local Tailscale service; is Tailscale running?
+Error: the CLI for serve and funnel has changed.
+Please see https://tailscale.com/kb/1242/tailscale-serve for more information.
+try `tailscale funnel --help` for usage info
+Error: the CLI for serve and funnel has changed.
+Please see https://tailscale.com/kb/1242/tailscale-serve for more information.
+try `tailscale funnel --help` for usage info
+Error: the CLI for serve and funnel has changed.
+Please see https://tailscale.com/kb/1242/tailscale-serve for more information.
+try `tailscale funnel --help` for usage info
+Error: the CLI for serve and funnel has changed.
+Please see https://tailscale.com/kb/1242/tailscale-serve for more information.
+try `tailscale funnel --help` for usage info
+failed to connect to local Tailscale service; is Tailscale running?
+backend error: invalid key: unable to validate API key
+backend error: invalid key: unable to validate API key
+backend error: invalid key: unable to validate API key
