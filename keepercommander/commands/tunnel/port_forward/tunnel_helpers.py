@@ -331,6 +331,12 @@ class TunnelSession:
         self.websocket_thread = None
         self.websocket_ready_event = None
         self.websocket_stop_event = None
+        # Late-arrival channel for Gateway error payloads (is_ok=False).
+        # The -nti HTTP offer path waits on `gateway_error_event` briefly
+        # after an RRC_TIMEOUT, so a delayed "Unable to establish connection
+        # to remote host …" message can replace the generic timeout text.
+        self.gateway_error_message = None
+        self.gateway_error_event = threading.Event()
         # Optional attributes (set dynamically)
         # Note: signal_handler is set after TunnelSignalHandler is created
         self.signal_handler = None  # type: ignore[assignment]
@@ -1542,9 +1548,22 @@ def route_message_to_rust(response_item, tube_registry):
             elif not payload_data.get('is_ok', True):
                 # Gateway returned an explicit error (is_ok=False) — log the message and move on.
                 # This includes auth failures (401 on get_leafs), overload responses, etc.
+                gateway_error_text = payload_data.get('data', 'unknown error')
                 logging.error(
-                    f"Gateway error for {conversation_id}: {payload_data.get('data', 'unknown error')}"
+                    f"Gateway error for {conversation_id}: {gateway_error_text}"
                 )
+                try:
+                    err_tube_id = tube_registry.tube_id_from_connection_id(conversation_id)
+                    if not err_tube_id:
+                        url_safe_cid = conversation_id.replace('+', '-').replace('/', '_').rstrip('=')
+                        err_tube_id = tube_registry.tube_id_from_connection_id(url_safe_cid)
+                    if err_tube_id:
+                        err_session = get_tunnel_session(err_tube_id)
+                        if err_session is not None:
+                            err_session.gateway_error_message = gateway_error_text
+                            err_session.gateway_error_event.set()
+                except Exception as stash_exc:
+                    logging.debug(f"Failed to stash gateway error on session: {stash_exc}")
             elif payload_data.get('data', '') == '':
                 logging.debug("Empty data field an acknowledgment, no action needed")
             elif payload_data.get('data') and "ice candidate added" in payload_data.get('data').lower():
@@ -2636,6 +2655,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             }
             logging.debug(f"Including user-supplied host in payload: {target_host}:{target_port}")
 
+        # KeeperRDP Proxy and KeeperDB Proxy both auto-route on the
+        # gateway side from the record's `allowKeeper{DB,RDP}Proxy`
+        # setting alone, so no client-side opt-in flag is included in
+        # the WebRTC payload here. The Commander-side `--proxy` flag is
+        # used for validators (record-type check, `allowKeeperXxxProxy`
+        # presence check, launch-credential preflight) and to print the
+        # right banner; it does not need to round-trip to the gateway.
         string_data = json.dumps(data)
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
@@ -2699,6 +2725,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             except Exception as e:
                 error_msg = str(e)
                 is_bad_state = "RRC_BAD_STATE" in error_msg
+                is_timeout = "RRC_TIMEOUT" in error_msg
                 is_last_attempt = (attempt == max_retries)
 
                 if is_bad_state and not is_last_attempt:
@@ -2712,7 +2739,21 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                         logging.error(f"RRC_BAD_STATE persists after {max_retries} retries")
                         logging.error("This may indicate network issues or backend problems")
 
-                    logging.error(f"Failed to send offer via HTTP: {error_msg}")
+                    # On RRC_TIMEOUT, give the Gateway a brief grace period to
+                    # deliver a real error payload via WebSocket (e.g. "Unable
+                    # to establish connection to remote host …"). Without this
+                    # the user only sees the generic HTTP timeout even when the
+                    # gateway already knows why upstream is unreachable.
+                    final_error = error_msg
+                    if is_timeout and not tunnel_session.gateway_error_event.is_set():
+                        logging.debug(
+                            "RRC_TIMEOUT — waiting up to 8s for delayed Gateway error payload"
+                        )
+                        tunnel_session.gateway_error_event.wait(timeout=8.0)
+                    if tunnel_session.gateway_error_message:
+                        final_error = tunnel_session.gateway_error_message
+
+                    logging.error(f"Failed to send offer via HTTP: {final_error}")
 
                     # Cleanup on final failure
                     logging.debug(f"Cleaning up failed tunnel {commander_tube_id}")
@@ -2734,7 +2775,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                         signal_handler.cleanup()
 
                     unregister_tunnel_session(commander_tube_id)
-                    return {"success": False, "error": f"Failed to send offer via HTTP: {e}"}
+                    return {"success": False, "error": f"Failed to start tunnel: {final_error}"}
 
         # Continue with the rest of the flow after successful offer send
         # Trickle ICE: Response comes via WebSocket (HTTP response is empty)
@@ -2752,6 +2793,26 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 if payload_str:
                     payload_json = json.loads(payload_str)
                     logging.debug(f"Non-trickle ICE: Parsed payload JSON, keys: {payload_json.keys()}")
+
+                    # Gateway-side error: the HTTP response carries an
+                    # is_ok=False envelope whose 'data' field is a plain-
+                    # text reason rather than an encrypted SDP answer.
+                    # Surface it with the same one-line wording the
+                    # trickle path uses (route_message_to_rust) and bail
+                    # out — otherwise the code below decrypts garbage,
+                    # raises a TypeError in json.loads(None), and the
+                    # banner prints anyway.
+                    if not payload_json.get('is_ok', True):
+                        gateway_error_text = payload_json.get('data', 'unknown error')
+                        logging.error(
+                            f"Gateway error for {conversation_id_original}: {gateway_error_text}"
+                        )
+                        if tunnel_session.websocket_stop_event and tunnel_session.websocket_thread:
+                            tunnel_session.websocket_stop_event.set()
+                            tunnel_session.websocket_thread.join(timeout=2.0)
+                        signal_handler.cleanup()
+                        unregister_tunnel_session(commander_tube_id)
+                        return {"success": False, "error": f"Failed to start tunnel: {gateway_error_text}"}
 
                     encrypted_answer = payload_json.get('data')
                     if encrypted_answer:
@@ -2773,8 +2834,6 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     logging.error(f"Non-trickle ICE: No 'payload' field in gateway response: {gateway_payload}")
             except Exception as e:
                 logging.error(f"Non-trickle ICE: Failed to process HTTP response: {e}")
-                import traceback
-                logging.error(f"Traceback: {traceback.format_exc()}")
 
         # Send any buffered ICE candidates that arrived before offer was sent (trickle ICE only)
         if trickle_ice and tunnel_session.buffered_ice_candidates:
@@ -2811,6 +2870,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             "conversation_id": conversation_id_original,  # Use original, not base64 encoded
             "tube_registry": tube_registry,
             "status": "connecting",  # Indicates async connection in progress
+            "local_host": tunnel_session.host,  # Actual bound host (usually 127.0.0.1)
             "local_port": tunnel_session.port,  # Actual bound port (may differ from requested)
         }
 
