@@ -473,6 +473,7 @@ def get_tailscale_install_guidance():
 
 
 TAILSCALE_INSTALL_SCRIPT_URL = "https://tailscale.com/install.sh"
+TAILSCALE_MSI_INSTALLER_URL = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
 TAILSCALE_INSTALL_TIMEOUT = 180
 
 
@@ -546,18 +547,32 @@ def _install_tailscale_linux():
 
 def _install_tailscale_windows():
     """
-    Attempt to install Tailscale via winget on Windows.
+    Attempt to install Tailscale on Windows via the official MSI installer,
+    run silently with msiexec.
+
+    There is no verified/documented winget package for Tailscale (the
+    plausible-looking ID "tailscale.tailscale" does not resolve to a real
+    package), so this downloads the official MSI directly -- mirroring the
+    urllib-based download approach already used for the Linux install
+    script -- rather than depending on an unconfirmed package manager.
+    TS_NOLAUNCH=1 prevents the GUI app from auto-launching after install.
+    msiexec may require an elevated/admin shell; if not elevated, Windows
+    may prompt via UAC or the command may fail, analogous to sudo on
+    macOS/Linux.
     Returns True on apparent success, False otherwise.
     """
-    import shutil
-    if not shutil.which('winget'):
-        logging.info("winget not available for automatic Tailscale install on Windows")
-        return False
+    import urllib.request
+    import tempfile
 
-    cmd = ['winget', 'install', 'tailscale.tailscale', '-e', '--accept-package-agreements', '--accept-source-agreements']
-    print(f"Running: {' '.join(cmd)}")
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.msi') as tmp_file:
+            tmp_path = tmp_file.name
+        urllib.request.urlretrieve(TAILSCALE_MSI_INSTALLER_URL, tmp_path)
+
+        cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
+        print(f"Running: {' '.join(cmd)} (downloaded from {TAILSCALE_MSI_INSTALLER_URL})")
+
         result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
         if result.returncode != 0:
             logging.error(f"Tailscale installation command failed with exit code {result.returncode}")
@@ -567,8 +582,14 @@ def _install_tailscale_windows():
         logging.error(f"Tailscale installation timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
         return False
     except Exception as e:
-        logging.error(f"Error installing Tailscale via winget: {type(e).__name__}")
+        logging.error(f"Error installing Tailscale via MSI: {type(e).__name__}")
         return False
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def install_tailscale():
