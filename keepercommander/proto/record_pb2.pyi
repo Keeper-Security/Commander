@@ -834,7 +834,7 @@ class GetShareObjectsResponse(_message.Message):
     def __init__(self, shareRelationships: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareFamilyUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareEnterpriseUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareTeams: _Optional[_Iterable[_Union[ShareTeam, _Mapping]]] = ..., shareMCTeams: _Optional[_Iterable[_Union[ShareTeam, _Mapping]]] = ..., shareMCEnterpriseUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareEnterpriseNames: _Optional[_Iterable[_Union[ShareEnterprise, _Mapping]]] = ...) -> None: ...
 
 class ShareUser(_message.Message):
-    __slots__ = ("username", "fullname", "enterpriseId", "status", "isShareAdmin", "isAdminOfSharedFolderOwner", "userAccountUid")
+    __slots__ = ("username", "fullname", "enterpriseId", "status", "isShareAdmin", "isAdminOfSharedFolderOwner", "userAccountUid", "userId")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     FULLNAME_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
@@ -842,6 +842,7 @@ class ShareUser(_message.Message):
     ISSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     ISADMINOFSHAREDFOLDEROWNER_FIELD_NUMBER: _ClassVar[int]
     USERACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
+    USERID_FIELD_NUMBER: _ClassVar[int]
     username: str
     fullname: str
     enterpriseId: int
@@ -849,7 +850,8 @@ class ShareUser(_message.Message):
     isShareAdmin: bool
     isAdminOfSharedFolderOwner: bool
     userAccountUid: bytes
-    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: _Optional[bool] = ..., isAdminOfSharedFolderOwner: _Optional[bool] = ..., userAccountUid: _Optional[bytes] = ...) -> None: ...
+    userId: int
+    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: _Optional[bool] = ..., isAdminOfSharedFolderOwner: _Optional[bool] = ..., userAccountUid: _Optional[bytes] = ..., userId: _Optional[int] = ...) -> None: ...
 
 class ShareTeam(_message.Message):
     __slots__ = ("teamname", "enterpriseId", "teamUid")

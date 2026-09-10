@@ -171,6 +171,141 @@ class TestKSMAppRecordResolution(unittest.TestCase):
         self.assertIn('NSF App', info)
 
 
+class TestKSMUserResolution(unittest.TestCase):
+    """Email <-> user_id for app-user commands; non-admins have no enterprise directory."""
+
+    EMAIL = 'member@example.com'
+
+    def _make_params(self, directory=None):
+        params = MagicMock()
+        params.enterprise = {'users': directory} if directory is not None else None
+        return params
+
+    def _share_users(self, **users):
+        return {'users': users}
+
+    def _visible(self, user_id=7, category='enterprise'):
+        return {self.EMAIL: dict(name='Member', category=category, user_id=user_id)}
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_user_id_prefers_admin_directory(self, mock_share):
+        params = self._make_params([{'username': 'Member@Example.com', 'user_id': 42}])
+        self.assertEqual(KSMCommand.resolve_enterprise_user_id(params, self.EMAIL), 42)
+        mock_share.assert_not_called()
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_user_id_non_admin_uses_share_objects(self, mock_share):
+        mock_share.return_value = {'users': self._visible(user_id=7)}
+        params = self._make_params()
+        self.assertEqual(
+            KSMCommand.resolve_enterprise_user_id(params, 'MEMBER@example.com'), 7,
+            'non-admin should resolve through get_share_objects, case-insensitively')
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_user_id_ignores_non_enterprise_users(self, mock_share):
+        mock_share.return_value = {'users': self._visible(user_id=7, category='relationship')}
+        self.assertIsNone(KSMCommand.resolve_enterprise_user_id(self._make_params(), self.EMAIL))
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_user_id_ignores_unpopulated_user_id(self, mock_share):
+        # an older server leaves userId at 0
+        mock_share.return_value = {'users': self._visible(user_id=0)}
+        self.assertIsNone(KSMCommand.resolve_enterprise_user_id(self._make_params(), self.EMAIL))
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_user_id_unknown_email(self, mock_share):
+        mock_share.return_value = {'users': self._visible(user_id=7)}
+        self.assertIsNone(KSMCommand.resolve_enterprise_user_id(self._make_params(), 'other@example.com'))
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects', side_effect=Exception('boom'))
+    def test_resolve_user_id_share_objects_failure(self, _mock_share):
+        self.assertIsNone(KSMCommand.resolve_enterprise_user_id(self._make_params(), self.EMAIL))
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_username_prefers_admin_directory(self, mock_share):
+        params = self._make_params([{'username': self.EMAIL, 'user_id': 42}])
+        self.assertEqual(KSMCommand.resolve_username_by_user_id(params, 42), self.EMAIL)
+        mock_share.assert_not_called()
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_username_non_admin_uses_share_objects(self, mock_share):
+        mock_share.return_value = {'users': self._visible(user_id=7)}
+        self.assertEqual(KSMCommand.resolve_username_by_user_id(self._make_params(), 7), self.EMAIL)
+
+    @patch('keepercommander.commands.ksm.api.get_share_objects')
+    def test_resolve_username_unknown_id_falls_back_to_number(self, mock_share):
+        mock_share.return_value = {'users': self._visible(user_id=7)}
+        self.assertEqual(KSMCommand.resolve_username_by_user_id(self._make_params(), 99), '99')
+
+
+class TestKSMAutoShareFailure(unittest.TestCase):
+    """The member is already added when auto-share runs, so a failure must only warn."""
+
+    def _folder_app_info(self):
+        from keepercommander.proto import APIRequest_pb2
+        share = MagicMock()
+        share.secretUid = bytes(range(16))
+        share.shareType = APIRequest_pb2.SHARE_TYPE_FOLDER
+        app_info = MagicMock()
+        app_info.shares = [share]
+        return [app_info]
+
+    def _params_with_folder(self):
+        from keepercommander import utils
+        params = MagicMock()
+        params.shared_folder_cache = {utils.base64_url_encode(bytes(range(16))): {}}
+        return params
+
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_info', side_effect=Exception('boom'))
+    def test_app_info_failure_only_warns(self, _mock_info):
+        with self.assertLogs(level='WARNING') as logs:
+            KSMCommand._auto_share_app_folders(MagicMock(), 'appUid', users=['member@example.com'])
+        self.assertIn('could not share its folders', logs.output[0])
+
+    @patch('keepercommander.commands.register.ShareFolderCommand.send_requests',
+           side_effect=Exception('internal error'))
+    @patch('keepercommander.commands.register.ShareFolderCommand.prepare_request')
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_info')
+    def test_share_request_failure_only_warns(self, mock_info, _mock_prepare, _mock_send):
+        mock_info.return_value = self._folder_app_info()
+        with self.assertLogs(level='WARNING') as logs:
+            KSMCommand._auto_share_app_folders(
+                self._params_with_folder(), 'appUid', users=['member@example.com'])
+        self.assertIn('internal error', logs.output[0])
+
+    @patch('keepercommander.commands.register.ShareFolderCommand.send_requests')
+    @patch('keepercommander.commands.register.ShareFolderCommand.prepare_request')
+    @patch('keepercommander.commands.ksm.KSMCommand.get_app_info')
+    def test_success_sends_without_warning(self, mock_info, _mock_prepare, mock_send):
+        mock_info.return_value = self._folder_app_info()
+        KSMCommand._auto_share_app_folders(
+            self._params_with_folder(), 'appUid', users=['member@example.com'])
+        mock_send.assert_called_once()
+
+
+class TestGetShareObjectsUserId(unittest.TestCase):
+    """api.get_share_objects keeps ShareUser.userId for enterprise users."""
+
+    @patch('keepercommander.api.communicate_rest')
+    def test_user_id_is_cached(self, mock_rest):
+        from keepercommander import api
+        from keepercommander.proto import record_pb2
+
+        rs = record_pb2.GetShareObjectsResponse()
+        member = rs.shareEnterpriseUsers.add()
+        member.username = 'member@example.com'
+        member.enterpriseId = 8049
+        member.userId = 7
+        mock_rest.return_value = rs
+        params = MagicMock()
+        params.share_object_cache = None
+
+        users = api.get_share_objects(params)['users']
+
+        self.assertEqual(users['member@example.com']['user_id'], 7)
+        self.assertEqual(users['member@example.com']['category'], 'enterprise')
+
+
 class TestKSMTokenAdd(unittest.TestCase):
     """secrets-manager token add <app-uid> → calls add_client."""
 
