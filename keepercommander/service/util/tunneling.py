@@ -545,6 +545,47 @@ def _install_tailscale_linux():
                 pass
 
 
+def _is_windows_process_elevated():
+    """Check whether the current process is running with Administrator privileges."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception as e:
+        logging.debug(f"Could not determine Windows elevation state: {type(e).__name__}")
+        return False
+
+
+def _run_msiexec_elevated_windows(msi_path, timeout):
+    """
+    Run msiexec elevated via PowerShell's `Start-Process -Verb RunAs`, which
+    triggers the standard Windows UAC consent prompt -- matching how other
+    Windows installers request elevation -- rather than requiring the user
+    to manually open an Administrator shell.
+    Returns the msiexec exit code as an int, or None if elevation itself
+    failed or was declined by the user.
+    """
+    msi_args = f'/i "{msi_path}" /quiet TS_NOLAUNCH=1'
+    ps_command = (
+        "try { "
+        f"$p = Start-Process -FilePath msiexec.exe -ArgumentList '{msi_args}' -Verb RunAs -Wait -PassThru; "
+        "Write-Output $p.ExitCode "
+        "} catch { Write-Output 'ELEVATION_FAILED' }"
+    )
+    cmd = ["powershell", "-NoProfile", "-Command", ps_command]
+    print(f"Requesting Administrator approval (UAC prompt) to run: msiexec {msi_args}")
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    output = (result.stdout or '').strip()
+    if 'ELEVATION_FAILED' in output:
+        logging.error("Tailscale installation elevation request failed or was declined")
+        return None
+    try:
+        return int(output.splitlines()[-1].strip())
+    except (ValueError, IndexError):
+        logging.error(f"Could not parse msiexec exit code from elevated install output: {output!r}")
+        return None
+
+
 def _install_tailscale_windows():
     """
     Attempt to install Tailscale on Windows via the official MSI installer,
@@ -556,9 +597,13 @@ def _install_tailscale_windows():
     urllib-based download approach already used for the Linux install
     script -- rather than depending on an unconfirmed package manager.
     TS_NOLAUNCH=1 prevents the GUI app from auto-launching after install.
-    msiexec may require an elevated/admin shell; if not elevated, Windows
-    may prompt via UAC or the command may fail, analogous to sudo on
-    macOS/Linux.
+
+    msiexec requires Administrator privileges. If this process isn't
+    already elevated (e.g. a normal PowerShell/VS Code terminal), running
+    msiexec directly fails outright (exit code 1603) rather than prompting
+    -- so in that case, elevation is requested explicitly via a UAC prompt
+    (see _run_msiexec_elevated_windows), matching how other Windows
+    installers behave.
     Returns True on apparent success, False otherwise.
     """
     import urllib.request
@@ -570,12 +615,17 @@ def _install_tailscale_windows():
             tmp_path = tmp_file.name
         urllib.request.urlretrieve(TAILSCALE_MSI_INSTALLER_URL, tmp_path)
 
-        cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
-        print(f"Running: {' '.join(cmd)} (downloaded from {TAILSCALE_MSI_INSTALLER_URL})")
+        if _is_windows_process_elevated():
+            cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
+            print(f"Running: {' '.join(cmd)} (downloaded from {TAILSCALE_MSI_INSTALLER_URL})")
+            result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
+            returncode = result.returncode
+        else:
+            print(f"Downloaded installer from {TAILSCALE_MSI_INSTALLER_URL}; not running elevated.")
+            returncode = _run_msiexec_elevated_windows(tmp_path, TAILSCALE_INSTALL_TIMEOUT)
 
-        result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
-        if result.returncode != 0:
-            logging.error(f"Tailscale installation command failed with exit code {result.returncode}")
+        if returncode is None or returncode != 0:
+            logging.error(f"Tailscale installation command failed with exit code {returncode}")
             return False
 
         _add_windows_tailscale_to_process_path()
