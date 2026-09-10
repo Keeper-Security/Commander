@@ -155,6 +155,7 @@ download_membership_parser.exit = suppress_exit
 
 apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file')
 apply_membership_parser.add_argument('--full-sync', dest='full_sync', action='store_true', help='Update and remove membership also.')
+apply_membership_parser.add_argument('--unsafe', dest='unsafe', action='store_true', help='Combined with --full-sync. Will remove yourself from folders where you have no permission.')
 apply_membership_parser.add_argument('name', type=str, nargs='?', help='Input file name. "shared_folder_membership.json" if omitted.')
 apply_membership_parser.error = raise_parse_exception
 apply_membership_parser.exit = suppress_exit
@@ -547,8 +548,9 @@ class ApplyMembershipCommand(Command):
                 teams.append(obj)
 
         full_sync = kwargs.get('full_sync') is True
+        unsafe = kwargs.get('unsafe') is True
         if len(shared_folders) > 0:
-            imp_exp.import_user_permissions(params, shared_folders, full_sync)
+            imp_exp.import_user_permissions(params, shared_folders, full_sync, unsafe)
 
         if len(teams) > 0:
             imp_exp.import_teams(params, teams, full_sync)
