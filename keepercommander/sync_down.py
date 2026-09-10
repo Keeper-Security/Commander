@@ -113,6 +113,8 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
             params.subfolder_record_cache.clear()
             params.record_history.clear()
             params.record_owner_cache.clear()
+            params.ksm_app_users.clear()
+            params.ksm_app_teams.clear()
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
             params.security_score_data.clear()
@@ -136,6 +138,9 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                     del params.meta_data_cache[record_uid]
                 # delete record key
                 delete_record_key(record_uid)
+                # remove KSM app membership caches, if this record was an app
+                params.ksm_app_users.pop(record_uid, None)
+                params.ksm_app_teams.pop(record_uid, None)
                 # remove record from user folders
                 for folder_uid in params.subfolder_record_cache:
                     if record_uid in params.subfolder_record_cache[folder_uid]:
@@ -156,6 +161,9 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     if 'teams' in shared_folder:
                         shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] != team_uid]
+                # remove team from KSM app membership caches
+                for app_teams in params.ksm_app_teams.values():
+                    app_teams.pop(team_uid, None)
                 if team_uid in params.team_cache:
                     del params.team_cache[team_uid]
 
@@ -622,6 +630,43 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
             for rr in response.recordRotations:
                 vault_extensions.cache_record_rotation(params, rr)
             record_rotation_items.extend(response.recordRotations)
+
+        if len(response.ksmAppUsers) > 0:
+            for au in response.ksmAppUsers:
+                app_record_uid = utils.base64_url_encode(au.appRecordUid)
+                app_users = params.ksm_app_users.get(app_record_uid)
+                if app_users is None:
+                    app_users = {}
+                    params.ksm_app_users[app_record_uid] = app_users
+                if au.removed:
+                    app_users.pop(au.username, None)
+                else:
+                    app_users[au.username] = {
+                        'app_record_uid': app_record_uid,
+                        'username': au.username,
+                        'can_manage_users': au.canManageUsers,
+                        'can_manage_shares': au.canManageShares,
+                        'can_manage_devices': au.canManageDevices,
+                    }
+
+        if len(response.ksmAppTeams) > 0:
+            for at in response.ksmAppTeams:
+                app_record_uid = utils.base64_url_encode(at.appRecordUid)
+                app_teams = params.ksm_app_teams.get(app_record_uid)
+                if app_teams is None:
+                    app_teams = {}
+                    params.ksm_app_teams[app_record_uid] = app_teams
+                team_uid = utils.base64_url_encode(at.teamUid)
+                if at.removed:
+                    app_teams.pop(team_uid, None)
+                else:
+                    app_teams[team_uid] = {
+                        'app_record_uid': app_record_uid,
+                        'team_uid': team_uid,
+                        'can_manage_users': at.canManageUsers,
+                        'can_manage_shares': at.canManageShares,
+                        'can_manage_devices': at.canManageDevices,
+                    }
 
         params.sync_down_token = response.continuationToken
 
