@@ -577,6 +577,8 @@ def _install_tailscale_windows():
         if result.returncode != 0:
             logging.error(f"Tailscale installation command failed with exit code {result.returncode}")
             return False
+
+        _add_windows_tailscale_to_process_path()
         return True
     except subprocess.TimeoutExpired:
         logging.error(f"Tailscale installation timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
@@ -590,6 +592,24 @@ def _install_tailscale_windows():
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+def _add_windows_tailscale_to_process_path():
+    """
+    The MSI installer updates the system PATH via the registry, but an
+    already-running process (this one) never sees that update until it
+    restarts -- so a `shutil.which('tailscale')` check performed later in
+    this same process would falsely report "not installed" immediately
+    after a genuinely successful install. Extend this process's in-memory
+    PATH with Tailscale's default install directory so the very next
+    is_tailscale_installed() check succeeds without requiring a shell
+    restart.
+    """
+    default_install_dir = r"C:\Program Files\Tailscale"
+    current_path = os.environ.get("PATH", "")
+    if default_install_dir not in current_path.split(os.pathsep):
+        os.environ["PATH"] = current_path + os.pathsep + default_install_dir
+        logging.debug(f"Added {default_install_dir} to process PATH after Tailscale install")
 
 
 def install_tailscale():
