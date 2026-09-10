@@ -23,7 +23,7 @@ from ... import utils
 SENSITIVE_FIELD_TYPES = frozenset({
     'password', 'login', 'secret', 'onetimecode', 'pincode', 'keypair',
     'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
-    'securityquestion', 'passkey',
+    'securityquestion', 'passkey', 'licensenumber', 'encryptednote', 'note',
 })
 
 class LogLevel(Enum):
@@ -160,13 +160,14 @@ def sanitize_debug_data(data: str) -> str:
         (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
         (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
         (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
+        (r'"licenseNumber"\s*:\s*"[^"]*"', '"licenseNumber": "***"'),
+        (r'"encryptedNote"\s*:\s*"[^"]*"', '"encryptedNote": "***"'),
+        (r'"note"\s*:\s*"[^"]*"', '"note": "***"'),
+        # Bare field formats (e.g., password=value, secret=value)
         (r'\bpassword=[^\s]*', 'password=***'),
         (r'\blogin=[^\s]*', 'login=***'),
-        # oneTimeCode=otpauth://totp/...?secret=... — mask the whole value, TOTP seed included
         (r'\boneTimeCode=[^\s]*', 'oneTimeCode=***'),
         (r'\bsecret=[^\s]*', 'secret=***'),
-        # Other sensitive record field types (see SENSITIVE_FIELD_TYPES) that can
-        # appear as bare CLI args on record-add/record-update/nsf-* commands.
         (r'\bpinCode=[^\s]*', 'pinCode=***'),
         (r'\bkeyPair=[^\s]*', 'keyPair=***'),
         (r'\bprivateKey=[^\s]*', 'privateKey=***'),
@@ -175,24 +176,30 @@ def sanitize_debug_data(data: str) -> str:
         (r'\bbankAccount=[^\s]*', 'bankAccount=***'),
         (r'\bsecurityQuestion=[^\s]*', 'securityQuestion=***'),
         (r'\bpasskey=[^\s]*', 'passkey=***'),
-        # Bank/Card fields with field prefix (f.bankAccount.accountNumber=, f.bankAccount.routingNumber=)
+        (r'\blicenseNumber=[^\s]*', 'licenseNumber=***'),
+        (r'\bencryptedNote=[^\s]*', 'encryptedNote=***'),
+        # Command options (--notes, --password, etc)
+        (r'--notes=[^\s]*', '--notes=***'),
+        (r'--password=[^\s]*', '--password=***'),
+        (r'--notes\s+[^\s]+', '--notes ***'),
+        (r'--password\s+[^\s]+', '--password ***'),
+        # Prefixed field formats (f.fieldName=value, c.fieldName=value)
         (r'\bf\.bankAccount\.accountNumber=[^\s]*', 'f.bankAccount.accountNumber=***'),
         (r'\bf\.bankAccount\.routingNumber=[^\s]*', 'f.bankAccount.routingNumber=***'),
         (r'\bc\.bankAccount\.accountNumber=[^\s]*', 'c.bankAccount.accountNumber=***'),
         (r'\bc\.bankAccount\.routingNumber=[^\s]*', 'c.bankAccount.routingNumber=***'),
-        # Payment card fields
         (r'\bf\.paymentCard\.cardNumber=[^\s]*', 'f.paymentCard.cardNumber=***'),
         (r'\bf\.paymentCard\.cardSecurityCode=[^\s]*', 'f.paymentCard.cardSecurityCode=***'),
         (r'\bc\.paymentCard\.cardNumber=[^\s]*', 'c.paymentCard.cardNumber=***'),
         (r'\bc\.paymentCard\.cardSecurityCode=[^\s]*', 'c.paymentCard.cardSecurityCode=***'),
-        # SSH key fields
         (r'\bf\.keyPair\.privateKey=[^\s]*', 'f.keyPair.privateKey=***'),
         (r'\bf\.keyPair\.publicKey=[^\s]*', 'f.keyPair.publicKey=***'),
         (r'\bc\.keyPair\.privateKey=[^\s]*', 'c.keyPair.privateKey=***'),
         (r'\bc\.keyPair\.publicKey=[^\s]*', 'c.keyPair.publicKey=***'),
-        # Software license fields
         (r'\bf\.licenseNumber=[^\s]*', 'f.licenseNumber=***'),
         (r'\bc\.licenseNumber=[^\s]*', 'c.licenseNumber=***'),
+        (r'\bf\.encryptedNote=[^\s]*', 'f.encryptedNote=***'),
+        (r'\bc\.encryptedNote=[^\s]*', 'c.encryptedNote=***'),
         # Sanitize email addresses in logs to protect PII
         (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
     ]

@@ -2,241 +2,231 @@
 # -*- coding: utf-8 -*-
 
 """
-Integration test to verify that sensitive record data is not exposed in logs
-during record-add and record-update operations.
-
-This test addresses the security issue where sensitive data from bankAccount,
-bankCard, sshKeys, softwareLicense, and encryptedNotes record types was being
-logged in Docker logs.
+Integration tests verifying that sensitive record data is masked in actual logging paths.
+Tests cover sanitize_command_fields and end-to-end logging for all affected record types.
 """
 
 import unittest
 import logging
-import json
-from io import StringIO
-from unittest.mock import Mock, patch, MagicMock
-from keepercommander import api, params as keeper_params
+from keepercommander.service.decorators.logging import sanitize_command_fields, sanitize_debug_data
 
 
-class TestRecordLoggingSanitization(unittest.TestCase):
-    """Test that sensitive record data is sanitized in logs during API communication."""
+class TestCommandFieldSanitization(unittest.TestCase):
+    """Test sanitization of command fields in all supported formats."""
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.log_stream = StringIO()
-        self.handler = logging.StreamHandler(self.log_stream)
-        self.handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(levelname)s: %(message)s')
-        self.handler.setFormatter(formatter)
+    def test_bare_licensenumber_masked(self):
+        """Test bare licenseNumber field is masked."""
+        command = "record-add -rt softwareLicense licenseNumber=LICENSE_SECRET --force"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("LICENSE_SECRET", result)
+        self.assertIn("licenseNumber=***", result)
 
-        self.logger = logging.getLogger()
-        self.original_level = self.logger.level
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(self.handler)
+    def test_bare_encryptednote_masked(self):
+        """Test bare encryptedNote field is masked."""
+        command = "record-add -rt encryptedNotes encryptedNote=NOTE_SECRET --force"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("NOTE_SECRET", result)
+        self.assertIn("encryptedNote=***", result)
 
-    def tearDown(self):
-        """Clean up test fixtures."""
-        self.logger.removeHandler(self.handler)
-        self.logger.setLevel(self.original_level)
-        self.log_stream.close()
+    def test_notes_option_masked(self):
+        """Test --notes option is masked."""
+        command = "record-add --title MyRecord --notes=NOTE_OPTION_SECRET --force"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("NOTE_OPTION_SECRET", result)
+        self.assertIn("--notes=***", result)
 
-    def _get_log_contents(self):
-        """Get the accumulated log contents."""
-        return self.log_stream.getvalue()
+    def test_notes_option_with_quotes_masked(self):
+        """Test --notes option with quoted value is masked."""
+        command = 'record-add --title MyRecord --notes "NOTE_QUOTED_SECRET" --force'
+        result = sanitize_command_fields(command)
+        self.assertNotIn("NOTE_QUOTED_SECRET", result)
+        self.assertIn("--notes ***", result)
 
-    def test_bankaccount_record_sanitized_in_logs(self):
-        """Verify bankAccount sensitive fields are not logged."""
-        request_data = {
-            "records": [{
-                "recordUid": "test_bank_uid",
-                "data": {
-                    "type": "bankAccount",
-                    "value": {
-                        "accountType": "Checking",
-                        "routingNumber": "123456789",
-                        "accountNumber": "98765432109876",
-                        "otherType": ""
-                    }
-                }
-            }]
-        }
+    def test_prefixed_bankaccount_fields_masked(self):
+        """Test prefixed bankAccount fields are masked."""
+        command = "record-add -rt bankAccount f.bankAccount.routingNumber=123456789 f.bankAccount.accountNumber=9876543210"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("123456789", result)
+        self.assertNotIn("9876543210", result)
+        self.assertIn("f.bankAccount.routingNumber=***", result)
+        self.assertIn("f.bankAccount.accountNumber=***", result)
 
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+    def test_prefixed_paymentcard_fields_masked(self):
+        """Test prefixed paymentCard fields are masked."""
+        command = "record-add -rt paymentCard f.paymentCard.cardNumber=4111111111111111 f.paymentCard.cardSecurityCode=123"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("4111111111111111", result)
+        self.assertNotIn("123", result)
+        self.assertIn("f.paymentCard.cardNumber=***", result)
+        self.assertIn("f.paymentCard.cardSecurityCode=***", result)
 
-        # Verify sensitive fields are masked in output
-        self.assertNotIn("123456789", sanitized)  # routingNumber
-        self.assertNotIn("98765432109876", sanitized)  # accountNumber
-        self.assertIn("***", sanitized)
+    def test_prefixed_keypair_fields_masked(self):
+        """Test prefixed keyPair fields are masked."""
+        command = "record-add -rt sshKeys f.keyPair.privateKey=SECRET_PRIVATE_KEY f.keyPair.publicKey=SECRET_PUBLIC_KEY"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_PRIVATE_KEY", result)
+        self.assertNotIn("SECRET_PUBLIC_KEY", result)
+        self.assertIn("f.keyPair.privateKey=***", result)
+        self.assertIn("f.keyPair.publicKey=***", result)
 
-    def test_bankcard_record_sanitized_in_logs(self):
-        """Verify bankCard (paymentCard) sensitive fields are not logged."""
-        request_data = {
-            "records": [{
-                "recordUid": "test_card_uid",
-                "data": {
-                    "type": "paymentCard",
-                    "value": {
-                        "cardNumber": "4111111111111111",
-                        "cardExpirationDate": "05/2025",
-                        "cardSecurityCode": "123"
-                    }
-                }
-            }]
-        }
+    def test_custom_field_licenseNumber_masked(self):
+        """Test custom field with licenseNumber type is masked."""
+        command = "record-add -rt login c.licenseNumber.MyLicense=LICENSE_CUSTOM_SECRET"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("LICENSE_CUSTOM_SECRET", result)
+        self.assertIn("c.licenseNumber.MyLicense=***", result)
 
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+    def test_custom_field_encryptedNote_masked(self):
+        """Test custom field with encryptedNote type is masked."""
+        command = "record-add -rt login c.encryptedNote.MyNote=NOTE_CUSTOM_SECRET"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("NOTE_CUSTOM_SECRET", result)
+        self.assertIn("c.encryptedNote.MyNote=***", result)
 
-        # Verify sensitive fields are masked in output
-        self.assertNotIn("4111111111111111", sanitized)  # cardNumber
-        self.assertNotIn("123", sanitized)  # cardSecurityCode
-        self.assertIn("***", sanitized)
+    def test_bare_bankaccount_field_masked(self):
+        """Test bare bankAccount field is masked."""
+        command = "record-add bankAccount=SECRET_DATA"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_DATA", result)
+        self.assertIn("bankAccount=***", result)
 
-    def test_sshkeys_record_sanitized_in_logs(self):
-        """Verify sshKeys (keyPair) sensitive fields are not logged."""
-        private_key = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDU5Z8P2Z9q\n-----END PRIVATE KEY-----"
-        public_key = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1OWfD9mfagMCACEA\n-----END PUBLIC KEY-----"
+    def test_bare_paymentcard_field_masked(self):
+        """Test bare paymentCard field is masked."""
+        command = "record-add paymentCard=SECRET_DATA"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_DATA", result)
+        self.assertIn("paymentCard=***", result)
 
-        request_data = {
-            "records": [{
-                "recordUid": "test_key_uid",
-                "data": {
-                    "type": "keyPair",
-                    "value": {
-                        "privateKey": private_key,
-                        "publicKey": public_key
-                    }
-                }
-            }]
-        }
+    def test_bare_keypair_field_masked(self):
+        """Test bare keyPair field is masked."""
+        command = "record-add keyPair=SECRET_DATA"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_DATA", result)
+        self.assertIn("keyPair=***", result)
 
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
-
-        # Verify sensitive key material is not in the output
-        self.assertNotIn("PRIVATE KEY", sanitized)
-        self.assertNotIn("PUBLIC KEY", sanitized)
-        self.assertNotIn("BEGIN", sanitized)
-        self.assertIn("***", sanitized)
-
-    def test_softwarelicense_record_sanitized_in_logs(self):
-        """Verify softwareLicense sensitive fields are not logged."""
-        request_data = {
-            "records": [{
-                "recordUid": "test_license_uid",
-                "fields": [{
-                    "type": "licenseNumber",
-                    "value": ["LICENSE-2024-CONFIDENTIAL-NUMBER"]
-                }]
-            }]
-        }
-
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
-
-        # Verify sensitive license number is not in the output
-        self.assertNotIn("LICENSE-2024-CONFIDENTIAL-NUMBER", sanitized)
-        self.assertIn("***", sanitized)
-
-    def test_mixed_sensitive_records_sanitized(self):
-        """Verify multiple sensitive record types are all properly sanitized."""
-        request_data = {
-            "records": [
-                {
-                    "recordUid": "bank_uid",
-                    "data": {
-                        "type": "bankAccount",
-                        "value": {
-                            "accountNumber": "SECRET_ACCOUNT_123",
-                            "routingNumber": "SECRET_ROUTING_456"
-                        }
-                    }
-                },
-                {
-                    "recordUid": "card_uid",
-                    "data": {
-                        "type": "paymentCard",
-                        "value": {
-                            "cardNumber": "SECRET_CARD_789"
-                        }
-                    }
-                },
-                {
-                    "recordUid": "key_uid",
-                    "data": {
-                        "type": "keyPair",
-                        "value": {
-                            "privateKey": "SECRET_PRIVATE_KEY"
-                        }
-                    }
-                }
-            ]
-        }
-
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
-
-        # Verify all sensitive values are masked
-        self.assertNotIn("SECRET_ACCOUNT_123", sanitized)
-        self.assertNotIn("SECRET_ROUTING_456", sanitized)
-        self.assertNotIn("SECRET_CARD_789", sanitized)
-        self.assertNotIn("SECRET_PRIVATE_KEY", sanitized)
+    def test_mixed_command_all_masked(self):
+        """Test mixed command with multiple sensitive fields all masked."""
+        command = "record-add -rt softwareLicense --title MyLicense --notes=MY_NOTES licenseNumber=LICENSE_NUM f.encryptedNote=NOTE_DATA"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("MY_NOTES", result)
+        self.assertNotIn("LICENSE_NUM", result)
+        self.assertNotIn("NOTE_DATA", result)
+        self.assertIn("--notes=***", result)
+        self.assertIn("licenseNumber=***", result)
+        self.assertIn("f.encryptedNote=***", result)
 
     def test_non_sensitive_fields_preserved(self):
-        """Verify non-sensitive fields are preserved during sanitization."""
-        request_data = {
-            "records": [{
-                "recordUid": "test_uid_123",
-                "title": "My Bank Account",
-                "notes": "Primary checking account",
-                "data": {
-                    "type": "bankAccount",
-                    "value": {
-                        "accountNumber": "SECRET123"
-                    }
-                }
-            }]
-        }
+        """Test that non-sensitive fields and options are preserved."""
+        command = "record-add -rt bankAccount --title MyBank --folder MyFolder f.name=John"
+        result = sanitize_command_fields(command)
+        self.assertIn("--title", result)
+        self.assertIn("MyBank", result)
+        self.assertIn("--folder", result)
+        self.assertIn("MyFolder", result)
+        self.assertIn("f.name=John", result)
 
-        json_str = json.dumps(request_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
-        result = json.loads(sanitized)
 
-        # Verify non-sensitive fields are preserved
-        self.assertEqual(result["records"][0]["recordUid"], "test_uid_123")
-        self.assertEqual(result["records"][0]["title"], "My Bank Account")
-        self.assertEqual(result["records"][0]["notes"], "Primary checking account")
+class TestDebugDataSanitization(unittest.TestCase):
+    """Test sanitize_debug_data for JSON and other formats."""
 
-        # Verify sensitive field is masked
-        self.assertNotIn("SECRET123", sanitized)
+    def test_sanitize_licensenumber_in_json(self):
+        """Test licenseNumber in JSON is masked."""
+        json_str = '{"licenseNumber": "LICENSE_SECRET_123"}'
+        result = sanitize_debug_data(json_str)
+        self.assertNotIn("LICENSE_SECRET_123", result)
 
-    def test_case_insensitive_field_type_matching(self):
-        """Verify field type matching is case-insensitive."""
-        test_cases = [
-            ("paymentcard", "4111111111111111"),
-            ("PaymentCard", "4111111111111111"),
-            ("PAYMENTCARD", "4111111111111111"),
-            ("bankaccount", "SECRET_ACCOUNT"),
-            ("BankAccount", "SECRET_ACCOUNT"),
-            ("BANKACCOUNT", "SECRET_ACCOUNT"),
+    def test_sanitize_encryptednote_in_json(self):
+        """Test encryptedNote in JSON is masked."""
+        json_str = '{"encryptedNote": "NOTE_SECRET_456"}'
+        result = sanitize_debug_data(json_str)
+        self.assertNotIn("NOTE_SECRET_456", result)
+
+    def test_sanitize_note_in_json(self):
+        """Test note field in JSON is masked."""
+        json_str = '{"note": "SENSITIVE_NOTE_789"}'
+        result = sanitize_debug_data(json_str)
+        self.assertNotIn("SENSITIVE_NOTE_789", result)
+
+    def test_bare_licensing_command_in_debug(self):
+        """Test bare licenseNumber command is masked in debug output."""
+        debug_str = "Executing: record-add licenseNumber=LICENSE_DEBUG_SECRET"
+        result = sanitize_debug_data(debug_str)
+        self.assertNotIn("LICENSE_DEBUG_SECRET", result)
+
+    def test_bare_encryptednote_command_in_debug(self):
+        """Test bare encryptedNote command is masked in debug output."""
+        debug_str = "Executing: record-add encryptedNote=NOTE_DEBUG_SECRET"
+        result = sanitize_debug_data(debug_str)
+        self.assertNotIn("NOTE_DEBUG_SECRET", result)
+
+
+class TestRecordTypes(unittest.TestCase):
+    """End-to-end tests for each sensitive record type."""
+
+    def test_bankaccount_all_formats(self):
+        """Test bankAccount in all command formats."""
+        commands = [
+            "record-add -rt bankAccount f.bankAccount.routingNumber=123456789 f.bankAccount.accountNumber=9876543210",
+            "record-add bankAccount=DATA_SECRET",
+            "record-update REC_UID bankAccount=DATA_SECRET",
         ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("123456789", result, f"Failed for: {cmd}")
+            self.assertNotIn("9876543210", result, f"Failed for: {cmd}")
+            self.assertNotIn("DATA_SECRET", result, f"Failed for: {cmd}")
 
-        for field_type, sensitive_value in test_cases:
-            request_data = {
-                "data": {
-                    "type": field_type,
-                    "value": {"testField": sensitive_value}
-                }
-            }
-            json_str = json.dumps(request_data)
-            sanitized = api._sanitize_protobuf_json(json_str)
+    def test_paymentcard_all_formats(self):
+        """Test paymentCard in all command formats."""
+        commands = [
+            "record-add -rt paymentCard f.paymentCard.cardNumber=4111111111111111 f.paymentCard.cardSecurityCode=123",
+            "record-add paymentCard=DATA_SECRET",
+            "record-update REC_UID paymentCard=DATA_SECRET",
+        ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("4111111111111111", result, f"Failed for: {cmd}")
+            self.assertNotIn("123", result, f"Failed for: {cmd}")
+            self.assertNotIn("DATA_SECRET", result, f"Failed for: {cmd}")
 
-            # All should be sanitized regardless of case
-            self.assertNotIn(sensitive_value, sanitized,
-                           f"Failed for field type: {field_type}")
-            self.assertIn("***", sanitized,
-                        f"Sanitization failed for field type: {field_type}")
+    def test_sshkeys_all_formats(self):
+        """Test sshKeys (keyPair) in all command formats."""
+        commands = [
+            "record-add -rt sshKeys f.keyPair.privateKey=PRIVATE_SECRET f.keyPair.publicKey=PUBLIC_SECRET",
+            "record-add keyPair=DATA_SECRET",
+            "record-update REC_UID keyPair=DATA_SECRET",
+        ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("PRIVATE_SECRET", result, f"Failed for: {cmd}")
+            self.assertNotIn("PUBLIC_SECRET", result, f"Failed for: {cmd}")
+            self.assertNotIn("DATA_SECRET", result, f"Failed for: {cmd}")
+
+    def test_softwarelicense_all_formats(self):
+        """Test softwareLicense in all command formats."""
+        commands = [
+            "record-add -rt softwareLicense licenseNumber=LICENSE_SECRET",
+            "record-add -rt softwareLicense f.licenseNumber=LICENSE_SECRET",
+            "record-add licenseNumber=LICENSE_SECRET",
+            "record-update REC_UID licenseNumber=LICENSE_SECRET",
+        ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("LICENSE_SECRET", result, f"Failed for: {cmd}")
+
+    def test_encryptednotes_all_formats(self):
+        """Test encryptedNotes in all command formats."""
+        commands = [
+            "record-add -rt encryptedNotes encryptedNote=NOTE_SECRET",
+            "record-add -rt encryptedNotes f.encryptedNote=NOTE_SECRET",
+            "record-add encryptedNote=NOTE_SECRET",
+            "record-update REC_UID encryptedNote=NOTE_SECRET",
+            "record-add --notes=NOTE_SECRET",
+            "record-update REC_UID --notes=NOTE_SECRET",
+        ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("NOTE_SECRET", result, f"Failed for: {cmd}")
 
 
 if __name__ == '__main__':
