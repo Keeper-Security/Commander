@@ -68,7 +68,7 @@ class GlobalLogger:
         return default_config["logging"]
     
     def _load_config(self):
-        config_path = utils.get_default_path() / "logging_config.yaml";
+        config_path = utils.get_default_path() / "logging_config.yaml"
         
         # config_path = os.getenv("LOGGING_CONFIG_PATH", "logging_config.yaml")
         if os.path.exists(config_path):
@@ -150,9 +150,9 @@ def sanitize_debug_data(data: str) -> str:
     """Sanitize sensitive data from debug output."""
     if not data:
         return data
-    
+
     sanitized = data
-    
+
     # Sanitize common password patterns
     patterns = [
         (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
@@ -200,12 +200,24 @@ def sanitize_debug_data(data: str) -> str:
         (r'\bc\.licenseNumber=[^\s]*', 'c.licenseNumber=***'),
         (r'\bf\.encryptedNote=[^\s]*', 'f.encryptedNote=***'),
         (r'\bc\.encryptedNote=[^\s]*', 'c.encryptedNote=***'),
+        # Custom field labels with sensitive types (f.password.Label=, c.secret.Label=, etc.)
+        (r'\b[fc]\.password\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.secret\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.keypair\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.privatekey\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.bankaccount\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.paymentcard\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.licensenumber\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.encryptednote\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
         # Sanitize email addresses in logs to protect PII
         (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
     ]
-    
+
     for pattern, replacement in patterns:
-        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+        if callable(replacement):
+            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+        else:
+            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
 
     return sanitized
 

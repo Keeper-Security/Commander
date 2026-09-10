@@ -7,7 +7,6 @@ Tests cover sanitize_command_fields and end-to-end logging for all affected reco
 """
 
 import unittest
-import logging
 from keepercommander.service.decorators.logging import sanitize_command_fields, sanitize_debug_data
 
 
@@ -83,6 +82,20 @@ class TestCommandFieldSanitization(unittest.TestCase):
         self.assertNotIn("NOTE_CUSTOM_SECRET", result)
         self.assertIn("c.encryptedNote.MyNote=***", result)
 
+    def test_custom_field_password_label_masked(self):
+        """Test custom field password with label is masked."""
+        command = "record-add f.password.DBPassword=SECRET_DB_PASS"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_DB_PASS", result)
+        self.assertIn("f.password.DBPassword=***", result)
+
+    def test_custom_field_secret_label_masked(self):
+        """Test custom field secret with label is masked."""
+        command = "record-add c.secret.APIKey=SECRET_API_KEY_VALUE"
+        result = sanitize_command_fields(command)
+        self.assertNotIn("SECRET_API_KEY_VALUE", result)
+        self.assertIn("c.secret.APIKey=***", result)
+
     def test_bare_bankaccount_field_masked(self):
         """Test bare bankAccount field is masked."""
         command = "record-add bankAccount=SECRET_DATA"
@@ -114,6 +127,20 @@ class TestCommandFieldSanitization(unittest.TestCase):
         self.assertIn("--notes=***", result)
         self.assertIn("licenseNumber=***", result)
         self.assertIn("f.encryptedNote=***", result)
+
+    def test_mixed_case_field_names(self):
+        """Test that mixed-case field names are handled correctly."""
+        commands = [
+            "record-add EncryptedNote=CASE_SECRET",
+            "record-add LicenseNumber=CASE_SECRET",
+            "record-add BankAccount=CASE_SECRET",
+            "record-add f.Password.Label=CASE_SECRET",
+            "record-add c.Secret.Label=CASE_SECRET",
+        ]
+        for cmd in commands:
+            result = sanitize_command_fields(cmd)
+            self.assertNotIn("CASE_SECRET", result, f"Failed for: {cmd}")
+            self.assertIn("***", result, f"Not sanitized for: {cmd}")
 
     def test_non_sensitive_fields_preserved(self):
         """Test that non-sensitive fields and options are preserved."""

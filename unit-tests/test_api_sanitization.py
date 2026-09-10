@@ -3,8 +3,10 @@
 
 import unittest
 import json
-import logging
-from keepercommander import api
+from keepercommander.sanitization import (
+    mask_field_value,
+    sanitize_protobuf_json
+)
 
 class TestAPISanitization(unittest.TestCase):
     """Test cases for sensitive data sanitization in API logging."""
@@ -25,7 +27,7 @@ class TestAPISanitization(unittest.TestCase):
             }]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify sensitive fields are masked
@@ -50,7 +52,7 @@ class TestAPISanitization(unittest.TestCase):
             }]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify sensitive fields are masked
@@ -75,7 +77,7 @@ class TestAPISanitization(unittest.TestCase):
             }]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify sensitive fields are masked
@@ -94,7 +96,7 @@ class TestAPISanitization(unittest.TestCase):
             }]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify sensitive field is masked
@@ -110,7 +112,7 @@ class TestAPISanitization(unittest.TestCase):
             }]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify non-sensitive data is preserved
@@ -121,25 +123,25 @@ class TestAPISanitization(unittest.TestCase):
     def test_mask_field_value_with_dict(self):
         """Test masking of dict values."""
         value = {"key1": "value1", "key2": "value2"}
-        masked = api._mask_field_value(value)
+        masked = mask_field_value(value)
         self.assertEqual(masked, {"key1": "***", "key2": "***"})
 
     def test_mask_field_value_with_list(self):
         """Test masking of list values."""
         value = ["value1", "value2", "value3"]
-        masked = api._mask_field_value(value)
+        masked = mask_field_value(value)
         self.assertEqual(masked, ["***", "***", "***"])
 
     def test_mask_field_value_with_string(self):
         """Test masking of string values."""
         value = "sensitive_data"
-        masked = api._mask_field_value(value)
+        masked = mask_field_value(value)
         self.assertEqual(masked, "***")
 
     def test_sanitize_invalid_json(self):
         """Test sanitization with invalid JSON returns the original string."""
         invalid_json = "not valid json"
-        result = api._sanitize_protobuf_json(invalid_json)
+        result = sanitize_protobuf_json(invalid_json)
         self.assertEqual(result, invalid_json)
 
     def test_sanitize_nested_list_of_records(self):
@@ -168,7 +170,7 @@ class TestAPISanitization(unittest.TestCase):
             ]
         }
         json_str = json.dumps(json_data)
-        sanitized = api._sanitize_protobuf_json(json_str)
+        sanitized = sanitize_protobuf_json(json_str)
         result = json.loads(sanitized)
 
         # Verify all sensitive data in list is masked
