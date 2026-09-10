@@ -169,7 +169,7 @@ class ServiceManager:
 
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {process.pid}")
-                    ProcessInfo.save(process.pid, is_running, ngrok_pid)
+                    ProcessInfo.save(process.pid, is_running, ngrok_pid, cloudflare_pid)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")

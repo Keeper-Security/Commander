@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -7,18 +8,31 @@ from keepercommander.service.core.service_manager import ServiceManager
 from keepercommander.service.core.process_info import ProcessInfo
 from keepercommander.service.commands.handle_service import StartService, StopService, ServiceStatus
 
+# ProcessInfo.load() only clears os.environ keys present in the *current* .env file,
+# so a PID set by one test can leak into a later test's load() via os.environ if that
+# test's own save() call doesn't pass the same key. Clear these explicitly per test.
+_PROCESS_INFO_ENV_KEYS = (
+    'KEEPER_SERVICE_PID', 'KEEPER_SERVICE_TERMINAL', 'KEEPER_SERVICE_IS_RUNNING',
+    'KEEPER_SERVICE_NGROK_PID', 'KEEPER_SERVICE_CLOUDFLARE_PID',
+)
+
+
 class TestServiceManagement(unittest.TestCase):
     def setUp(self):
         self.params = mock.Mock(spec=KeeperParams)
         ProcessInfo._env_file = Path(__file__).parent / ".test_service.env"
-            
+
         if ProcessInfo._env_file.exists():
             ProcessInfo._env_file.unlink()
+        for key in _PROCESS_INFO_ENV_KEYS:
+            os.environ.pop(key, None)
 
     def tearDown(self):
         if ProcessInfo._env_file.exists():
             ProcessInfo._env_file.unlink()
-                
+        for key in _PROCESS_INFO_ENV_KEYS:
+            os.environ.pop(key, None)
+
     def test_start_service_when_not_running(self):
         """Test starting service when no existing service is running"""
         with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
@@ -231,6 +245,30 @@ class TestServiceManagement(unittest.TestCase):
         _, kwargs = mock_spawn.call_args
         self.assertEqual(kwargs['env']['PYTHONUNBUFFERED'], '1')
         self.assertTrue(kwargs['append'])
+
+    def test_start_service_background_saves_ngrok_and_cloudflare_pids(self):
+        """service-stop can only learn tunnel PIDs for a background-mode service via the
+        saved .env file (a later CLI invocation has no shared in-memory state), so both
+        ngrok_pid and cloudflare_pid must be persisted, not just the service's own pid."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.ngrok_config.NgrokConfigurator.configure_ngrok',
+                       return_value=5555), \
+            mock.patch('keepercommander.service.config.cloudflare_config.CloudflareConfigurator.configure_cloudflare',
+                       return_value=6666), \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process',
+                       return_value=mock.Mock(pid=99999)), \
+            mock.patch('sys.executable', '/usr/bin/python3'):
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "ngrok": "y", "cloudflare": "y"
+            }
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)
+
+            process_info = ProcessInfo.load()
+            self.assertEqual(process_info.pid, 99999)
+            self.assertEqual(process_info.ngrok_pid, 5555)
+            self.assertEqual(process_info.cloudflare_pid, 6666)
 
     def test_start_service_ngrok_configure_failure_is_handled_gracefully(self):
         """An ngrok setup failure (e.g. the binary being deleted by AV, or a failed
