@@ -17,15 +17,11 @@ import psutil
 from ... import utils
 from ...service.config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
+from ..util.process_util import spawn_detached_process, CREATE_NO_WINDOW
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
 import sys, subprocess
-
-# Windows CreateProcess flags to run service subprocesses fully detached and hidden
-CREATE_NO_WINDOW = 0x08000000
-DETACHED_PROCESS = 0x00000008
-CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 class ServiceManager:
     """Manages the lifecycle of the service including start, stop, and status operations."""
@@ -97,7 +93,12 @@ class ServiceManager:
             else:
                 print(f"Commander Service starting on \033[1m{protocol}://localhost:{port}/api/v1/executecommand\033[0m")
             
-            ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
+            try:
+                ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
+            except Exception as e:
+                ProcessInfo.clear()
+                logger.info(f"\n{str(e)}")
+                return
             cloudflare_pid = None
 
             try:
@@ -146,7 +147,7 @@ class ServiceManager:
 
                 try:
                     python_executable = sys.executable
-                    
+
                     # Set up environment for subprocess
                     subprocess_env = os.environ.copy()
                     # Redirected (non-TTY) stdout defaults to full buffering, delaying log output.
@@ -155,41 +156,17 @@ class ServiceManager:
                     if is_frozen:
                         # Running as PyInstaller executable - set env var to trigger service mode
                         # The executable will detect KEEPER_SERVICE_MODE and start the service directly
-                        subprocess_env['KEEPER_SERVICE_MODE'] = '1'
+                        from .service_app import KEEPER_SERVICE_MODE_ENV
+                        subprocess_env[KEEPER_SERVICE_MODE_ENV] = '1'
                         cmd = [python_executable]
                     else:
                         # Running as Python script - use -m flag
                         cmd = [python_executable, '-m', 'keepercommander.service.core.service_app']
-                    
-                    # Open log file in append mode with line buffering
-                    log_f = open(log_file, 'a', buffering=1)
-                    
-                    try:
-                        if sys.platform == "win32":
-                            process = subprocess.Popen(
-                                cmd,
-                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL,
-                                cwd=os.getcwd(),
-                                env=subprocess_env
-                            )
-                        else:
-                            # For macOS and Linux
-                            process = subprocess.Popen(
-                                cmd,
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL,
-                                preexec_fn=os.setpgrp,
-                                cwd=os.getcwd(),
-                                env=subprocess_env
-                            )
-                    except Exception:
-                        log_f.close()
-                        raise
-                    
+
+                    process = spawn_detached_process(
+                        cmd, log_file, cwd=os.getcwd(), env=subprocess_env, append=True
+                    )
+
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {process.pid}")
                     ProcessInfo.save(process.pid, is_running, ngrok_pid)

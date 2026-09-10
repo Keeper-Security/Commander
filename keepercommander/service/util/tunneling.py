@@ -21,24 +21,15 @@ import json
 import tempfile
 
 from ... import utils
-
-# Windows CreateProcess flags to run tunnel subprocesses fully detached and hidden
-CREATE_NO_WINDOW = 0x08000000
-DETACHED_PROCESS = 0x00000008
-CREATE_NEW_PROCESS_GROUP = 0x00000200
+from .process_util import spawn_detached_process, CREATE_NO_WINDOW
 
 # Same user-writable log directory service_manager.py uses for the service subprocess log
 TUNNEL_LOG_DIR = os.path.join(utils.get_default_path(), "service_logs")
 
 
-def get_ngrok_log_file():
+def get_tunnel_log_file(name):
     os.makedirs(TUNNEL_LOG_DIR, exist_ok=True)
-    return os.path.join(TUNNEL_LOG_DIR, "ngrok_subprocess.log")
-
-
-def get_cloudflare_log_file():
-    os.makedirs(TUNNEL_LOG_DIR, exist_ok=True)
-    return os.path.join(TUNNEL_LOG_DIR, "cloudflare_tunnel_subprocess.log")
+    return os.path.join(TUNNEL_LOG_DIR, name)
 
 
 def start_ngrok(port, auth_token=None, subdomain=None):
@@ -56,30 +47,8 @@ def start_ngrok(port, auth_token=None, subdomain=None):
 
 
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_file = get_ngrok_log_file()
-
-    if sys.platform == "win32":
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                ngrok_cmd,
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
-    else:
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                ngrok_cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                preexec_fn=os.setpgrp,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
+    log_file = get_tunnel_log_file("ngrok_subprocess.log")
+    process = spawn_detached_process(ngrok_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
 
     actual_ngrok_pid = process.pid
     try:
@@ -187,7 +156,7 @@ def start_ngrok_with_url(port, auth_token=None, subdomain=None):
 
     # If API method fails, try parsing the log file
     if not public_url:
-        public_url = get_ngrok_url_from_log(get_ngrok_log_file())
+        public_url = get_ngrok_url_from_log(get_tunnel_log_file("ngrok_subprocess.log"))
     
     # If we still don't have a URL and subdomain was provided, construct it
     if not public_url and subdomain:
@@ -362,31 +331,9 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
         )
     
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_file = get_cloudflare_log_file()
+    log_file = get_tunnel_log_file("cloudflare_tunnel_subprocess.log")
+    process = spawn_detached_process(cloudflared_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
 
-    if sys.platform == "win32":
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                cloudflared_cmd,
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
-    else:
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                cloudflared_cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                preexec_fn=os.setpgrp,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
-    
     tunnel_url = get_cloudflare_url_from_log(log_file, custom_domain)
     
     return process.pid, tunnel_url

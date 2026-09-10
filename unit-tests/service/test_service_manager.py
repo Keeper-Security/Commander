@@ -183,5 +183,69 @@ class TestServiceManagement(unittest.TestCase):
             mock_print.assert_called_with(
                 "Error: Service configuration is incomplete. Please configure the service port in service_config"
             )
-                
+
             mock_app.run.assert_not_called()
+
+    def _start_background_service(self, config_overrides=None):
+        """Drive StartService with run_mode=background and no tunnels enabled, capturing
+        the spawn_detached_process call so tests can assert on cmd/env without spawning anything."""
+        config_data = {"port": 8000, "run_mode": "background"}
+        config_data.update(config_overrides or {})
+
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process') as mock_spawn, \
+            mock.patch('sys.executable', '/usr/bin/python3'):
+            mock_config.return_value.load_config.return_value = config_data
+            mock_spawn.return_value = mock.Mock(pid=99999)
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)
+
+            return mock_spawn
+
+    def test_start_service_background_frozen_sets_service_mode_env_var(self):
+        """A frozen exe can't be invoked with -m, so background mode must signal it via env var."""
+        with mock.patch('sys.frozen', True, create=True), \
+            mock.patch('sys._MEIPASS', '/frozen/path', create=True):
+            mock_spawn = self._start_background_service()
+
+            mock_spawn.assert_called_once()
+            args, kwargs = mock_spawn.call_args
+            cmd = args[0]
+            self.assertEqual(cmd, ['/usr/bin/python3'])
+            self.assertEqual(kwargs['env']['KEEPER_SERVICE_MODE'], '1')
+
+    def test_start_service_background_not_frozen_uses_module_flag(self):
+        """Running from source (not frozen) must use -m, and must not set the frozen-only env var."""
+        mock_spawn = self._start_background_service()
+
+        mock_spawn.assert_called_once()
+        args, kwargs = mock_spawn.call_args
+        cmd = args[0]
+        self.assertEqual(cmd, ['/usr/bin/python3', '-m', 'keepercommander.service.core.service_app'])
+        self.assertNotIn('KEEPER_SERVICE_MODE', kwargs['env'])
+
+    def test_start_service_background_forces_unbuffered_child_output(self):
+        mock_spawn = self._start_background_service()
+
+        _, kwargs = mock_spawn.call_args
+        self.assertEqual(kwargs['env']['PYTHONUNBUFFERED'], '1')
+        self.assertTrue(kwargs['append'])
+
+    def test_start_service_ngrok_configure_failure_is_handled_gracefully(self):
+        """An ngrok setup failure (e.g. the binary being deleted by AV, or a failed
+        download) must not crash the whole service start or skip cleanup."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.ngrok_config.NgrokConfigurator.configure_ngrok',
+                       side_effect=RuntimeError("ngrok binary not found")) as mock_configure_ngrok, \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process') as mock_spawn:
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "ngrok": "y"
+            }
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)  # must not raise
+
+            mock_configure_ngrok.assert_called_once()
+            mock_spawn.assert_not_called()
+            self.assertFalse(ProcessInfo._env_file.exists())

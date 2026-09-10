@@ -11,6 +11,9 @@
 
 import sys
 
+# Env var service_manager sets so __main__.py can detect a frozen background-service subprocess.
+KEEPER_SERVICE_MODE_ENV = 'KEEPER_SERVICE_MODE'
+
 
 def run_background_service():
     """
