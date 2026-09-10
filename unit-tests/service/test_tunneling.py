@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -160,6 +161,44 @@ class TestGenerateNgrokUrl(unittest.TestCase):
             self.assertIn((10, 1), dup2_calls)
             mock_close.assert_any_call(10)
             mock_close.assert_any_call(11)
+
+
+class TestGetCloudflareUrlFromLog(unittest.TestCase):
+    """The localhost/127.0.0.1 exclusion must gate every OR-branch (trycloudflare.com,
+    cfargotunnel.com, custom_domain) - a prior operator-precedence bug let the
+    cfargotunnel.com/custom_domain branches bypass that exclusion entirely."""
+
+    def setUp(self):
+        fd, self.log_path = tempfile.mkstemp()
+        os.close(fd)
+
+    def tearDown(self):
+        os.unlink(self.log_path)
+
+    def _write_log(self, content):
+        with open(self.log_path, 'w') as f:
+            f.write(content)
+
+    def test_rejects_a_match_that_contains_localhost_even_if_it_also_contains_the_custom_domain(self):
+        # The regex excludes '/', so this is a single continuous match containing both
+        # 'localhost' and the custom domain - exactly what let the old buggy precedence
+        # accept it via the unguarded custom_domain OR-branch. No match should pass the
+        # filter, so this falls through to the constructed https://{custom_domain} URL,
+        # not the bad captured match.
+        self._write_log("https://localhost.acme.example.com\n")
+        url = tunneling.get_cloudflare_url_from_log(self.log_path, custom_domain='acme.example.com', max_retries=1)
+        self.assertEqual(url, 'https://acme.example.com')
+
+    def test_accepts_cfargotunnel_url(self):
+        self._write_log("connected to https://mytunnel.cfargotunnel.com\n")
+        url = tunneling.get_cloudflare_url_from_log(self.log_path, custom_domain=None, max_retries=1)
+        self.assertEqual(url, 'https://mytunnel.cfargotunnel.com')
+
+    def test_no_custom_domain_still_rejects_localhost(self):
+        """Previously, a falsy custom_domain made the whole filter degrade to accept-anything."""
+        self._write_log("https://localhost\n")
+        url = tunneling.get_cloudflare_url_from_log(self.log_path, custom_domain=None, max_retries=1)
+        self.assertIsNone(url)
 
 
 class TestGenerateCloudflareUrl(unittest.TestCase):

@@ -381,9 +381,9 @@ def get_cloudflare_url_from_log(log_file, custom_domain=None, max_retries=10, re
                     matches = re.findall(pattern, content)
                     for match in matches:
                         # Filter out localhost and other non-public URLs
-                        if ('localhost' not in match and 
-                            '127.0.0.1' not in match and
-                            'trycloudflare.com' in match or 'cfargotunnel.com' in match or custom_domain in match if custom_domain else True):
+                        if ('localhost' not in match and '127.0.0.1' not in match and
+                                ('trycloudflare.com' in match or 'cfargotunnel.com' in match
+                                 or (custom_domain and custom_domain in match))):
                             return match
                             
         except Exception as e:
