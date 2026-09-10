@@ -205,6 +205,8 @@ class KeeperParams:
         self.team_cache = {}
         self.share_object_cache = {}
         self.record_link_cache = {}
+        self.ksm_app_users = {}         # type: Dict[str, Dict[str, dict]]  # app_record_uid -> username -> membership
+        self.ksm_app_teams = {}         # type: Dict[str, Dict[str, dict]]  # app_record_uid -> team_uid -> membership
         self.record_rotation_cache = {}
         self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
         self.key_cache = {}            # type: Dict[str, PublicKeys]
@@ -301,6 +303,8 @@ class KeeperParams:
         self.team_cache.clear()
         self.share_object_cache.clear()
         self.record_link_cache.clear()
+        self.ksm_app_users.clear()
+        self.ksm_app_teams.clear()
         self.record_rotation_cache.clear()
         self.record_owner_cache.clear()
         self.available_team_cache = None
