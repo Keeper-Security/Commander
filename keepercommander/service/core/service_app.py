@@ -11,15 +11,15 @@
 
 import sys
 
-# Env var service_manager sets so __main__.py can detect a frozen background-service subprocess.
-KEEPER_SERVICE_MODE_ENV = 'KEEPER_SERVICE_MODE'
+# Argv flag (not an env var, which could leak into subprocesses) signaling a frozen background service.
+SERVICE_MODE_FLAG = '--internal-run-service'
 
 
 def run_background_service():
     """
     Run the Flask service in background mode.
     This function is called both when running as a module (-m) and
-    when the frozen executable detects the KEEPER_SERVICE_MODE env var.
+    when the frozen executable is invoked with SERVICE_MODE_FLAG.
     """
     # PyInstaller's bootloader doesn't reliably honor PYTHONUNBUFFERED, so force it here too.
     for stream in (sys.stdout, sys.stderr):

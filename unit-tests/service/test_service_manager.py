@@ -217,8 +217,10 @@ class TestServiceManagement(unittest.TestCase):
 
             return mock_spawn
 
-    def test_start_service_background_frozen_sets_service_mode_env_var(self):
-        """A frozen exe can't be invoked with -m, so background mode must signal it via env var."""
+    def test_start_service_background_frozen_uses_internal_flag(self):
+        """A frozen exe can't be invoked with -m, so background mode must signal it via an
+        explicit argv flag - not an env var, which would leak into subprocesses the service
+        itself spawns and could be tripped by a stale value left in the environment."""
         with mock.patch('sys.frozen', True, create=True), \
             mock.patch('sys._MEIPASS', '/frozen/path', create=True):
             mock_spawn = self._start_background_service()
@@ -226,18 +228,18 @@ class TestServiceManagement(unittest.TestCase):
             mock_spawn.assert_called_once()
             args, kwargs = mock_spawn.call_args
             cmd = args[0]
-            self.assertEqual(cmd, ['/usr/bin/python3'])
-            self.assertEqual(kwargs['env']['KEEPER_SERVICE_MODE'], '1')
+            self.assertEqual(cmd, ['/usr/bin/python3', '--internal-run-service'])
+            self.assertNotIn('KEEPER_SERVICE_MODE', kwargs['env'])
 
     def test_start_service_background_not_frozen_uses_module_flag(self):
-        """Running from source (not frozen) must use -m, and must not set the frozen-only env var."""
+        """Running from source (not frozen) must use -m, and must not pass the frozen-only flag."""
         mock_spawn = self._start_background_service()
 
         mock_spawn.assert_called_once()
         args, kwargs = mock_spawn.call_args
         cmd = args[0]
         self.assertEqual(cmd, ['/usr/bin/python3', '-m', 'keepercommander.service.core.service_app'])
-        self.assertNotIn('KEEPER_SERVICE_MODE', kwargs['env'])
+        self.assertNotIn('--internal-run-service', cmd)
 
     def test_start_service_background_forces_unbuffered_child_output(self):
         mock_spawn = self._start_background_service()
@@ -269,6 +271,43 @@ class TestServiceManagement(unittest.TestCase):
             self.assertEqual(process_info.pid, 99999)
             self.assertEqual(process_info.ngrok_pid, 5555)
             self.assertEqual(process_info.cloudflare_pid, 6666)
+
+    def test_start_service_foreground_saves_ngrok_and_cloudflare_pids(self):
+        """service-stop from a second terminal can only learn tunnel PIDs for a foreground
+        service via the saved .env file too - the in-process cleanup closure isn't reachable
+        from a separate CLI invocation, so both PIDs must be persisted here as well."""
+        # flask_app.run() is mocked as a no-op, so it "returns" immediately and the
+        # foreground branch's cleanup-on-exit runs right after (as it would on a real
+        # Ctrl+C) - capture ProcessInfo state during the run() call, before that cleanup
+        # clears it.
+        captured = {}
+
+        def capture_process_info(**kwargs):
+            info = ProcessInfo.load()
+            captured['pid'] = info.pid
+            captured['ngrok_pid'] = info.ngrok_pid
+            captured['cloudflare_pid'] = info.cloudflare_pid
+
+        mock_flask_app = mock.Mock()
+        mock_flask_app.run.side_effect = capture_process_info
+
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.ngrok_config.NgrokConfigurator.configure_ngrok',
+                       return_value=5555), \
+            mock.patch('keepercommander.service.config.cloudflare_config.CloudflareConfigurator.configure_cloudflare',
+                       return_value=6666), \
+            mock.patch('keepercommander.service.app.create_app', return_value=mock_flask_app), \
+            mock.patch('os.getpid', return_value=88888):
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "foreground", "ngrok": "y", "cloudflare": "y"
+            }
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)
+
+            self.assertEqual(captured['pid'], 88888)
+            self.assertEqual(captured['ngrok_pid'], 5555)
+            self.assertEqual(captured['cloudflare_pid'], 6666)
 
     def test_start_service_ngrok_configure_failure_is_handled_gracefully(self):
         """An ngrok setup failure (e.g. the binary being deleted by AV, or a failed

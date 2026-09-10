@@ -204,8 +204,8 @@ def main(from_package=False):
     # Internal: background service mode for a frozen (PyInstaller) executable - see service_app.py.
     is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
     if is_frozen:
-        from .service.core.service_app import KEEPER_SERVICE_MODE_ENV, run_background_service
-        if os.environ.get(KEEPER_SERVICE_MODE_ENV) == '1':
+        from .service.core.service_app import SERVICE_MODE_FLAG, run_background_service
+        if len(sys.argv) > 1 and sys.argv[1] == SERVICE_MODE_FLAG:
             run_background_service()
             return
 

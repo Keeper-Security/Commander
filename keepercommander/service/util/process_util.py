@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import os
 import subprocess
 import sys
 
@@ -41,7 +40,7 @@ def spawn_detached_process(cmd, log_file, cwd=None, env=None, append=False):
             stdout=log_f,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            preexec_fn=os.setpgrp,
+            start_new_session=True,  # os.setsid() in the child - not thread-unsafe like preexec_fn
             cwd=cwd,
             env=env,
         )

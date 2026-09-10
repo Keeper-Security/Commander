@@ -21,15 +21,17 @@ import json
 import tempfile
 
 from ... import utils
-from .process_util import spawn_detached_process, CREATE_NO_WINDOW
-
-# Same user-writable log directory service_manager.py uses for the service subprocess log
-TUNNEL_LOG_DIR = os.path.join(utils.get_default_path(), "service_logs")
-
+from .process_util import spawn_detached_process
 
 def get_tunnel_log_file(name):
-    os.makedirs(TUNNEL_LOG_DIR, exist_ok=True)
-    return os.path.join(TUNNEL_LOG_DIR, name)
+    # Resolved per call, not cached at import time, so a later --data-dir override is respected.
+    log_dir = os.path.join(utils.get_default_path(), "service_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, name)
+
+
+# DOA check only catches immediate crashes; a slower failure (bad auth) is caught later below.
+NGROK_STARTUP_CHECK_DELAY_SECONDS = 0.5
 
 
 def start_ngrok(port, auth_token=None, subdomain=None):
@@ -39,7 +41,7 @@ def start_ngrok(port, auth_token=None, subdomain=None):
     ngrok_config = conf.get_default()
     ngrok.install_ngrok(ngrok_config)
     ngrok_cmd = [ngrok_config.ngrok_path, "http", str(port), "--log=stdout", "--log-level=info"]
-    
+
     if subdomain:
         ngrok_cmd += ["--subdomain", subdomain]
     if auth_token:
@@ -49,8 +51,9 @@ def start_ngrok(port, auth_token=None, subdomain=None):
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
     log_file = get_tunnel_log_file("ngrok_subprocess.log")
     process = spawn_detached_process(ngrok_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
+    utils.set_file_permissions(log_file)
 
-    time.sleep(0.5)  # Give ngrok a moment to start
+    time.sleep(NGROK_STARTUP_CHECK_DELAY_SECONDS)
     if process.poll() is not None:
         raise RuntimeError(
             f"ngrok exited immediately (exit code {process.returncode}); see {log_file} for details"
@@ -167,7 +170,16 @@ def start_ngrok_with_url(port, auth_token=None, subdomain=None):
     if not public_url and subdomain:
         public_url = f"https://{subdomain}.ngrok.io"
         logging.warning("Could not retrieve dynamic ngrok URL, using constructed URL")
-    
+
+    # No URL and the process is gone (e.g. bad auth token) is a real failure, not just slow.
+    if not public_url:
+        try:
+            import psutil
+            if not psutil.pid_exists(pid):
+                raise RuntimeError(f"ngrok process {pid} is no longer running; see logs for details")
+        except ImportError:
+            pass
+
     return pid, public_url
 
 def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
@@ -213,11 +225,13 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
         finally:
             os.close(devnull_fd)
     except OSError:
-        # Redirection didn't fully succeed - close whatever we already opened and
-        # continue without suppressing ngrok's console output.
-        for fd in (old_stdout_fd, old_stderr_fd):
+        # Restore anything already redirected (else fd 1 could stay pointed at devnull forever).
+        for fd, target in ((old_stdout_fd, 1), (old_stderr_fd, 2)):
             if fd is not None:
-                os.close(fd)
+                try:
+                    os.dup2(fd, target)
+                finally:
+                    os.close(fd)
         old_stdout_fd = None
         old_stderr_fd = None
 
@@ -244,22 +258,14 @@ def _download_cloudflared():
     Download cloudflared binary if not available.
     Returns path to cloudflared binary.
     """
-    try:
-        # First try to find existing cloudflared
-        if sys.platform == "win32":
-            result = subprocess.run(
-                ['where', 'cloudflared'],
-                capture_output=True,
-                text=True,
-                creationflags=CREATE_NO_WINDOW
-            )
-        else:
+    # Windows `where`/shutil.which both search cwd before PATH (planted-binary risk) - only search on POSIX.
+    if sys.platform != "win32":
+        try:
             result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
-        if result.returncode == 0:
-            # 'where' can print multiple matches, one per line; take the first
-            return result.stdout.strip().split('\n')[0]
-    except Exception as e:
-        logging.debug(f"Could not find existing cloudflared on PATH: {e}")
+            if result.returncode == 0:
+                return result.stdout.strip().splitlines()[0]
+        except Exception as e:
+            logging.debug(f"Could not find existing cloudflared on PATH: {e}")
 
     # Download cloudflared binary
     import platform
@@ -345,6 +351,7 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
     log_file = get_tunnel_log_file("cloudflare_tunnel_subprocess.log")
     process = spawn_detached_process(cloudflared_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
+    utils.set_file_permissions(log_file)
 
     tunnel_url = get_cloudflare_url_from_log(log_file, custom_domain)
     

@@ -11,6 +11,7 @@
 
 from typing import Optional, Tuple, Dict, Any
 from flask import request, jsonify
+from werkzeug.exceptions import BadRequest
 from html import escape
 import tempfile
 import os
@@ -148,11 +149,12 @@ class RequestValidator:
         
         try:
             json_data = request.get_json(force=True, silent=False)
-            if json_data is None:
+            if not json_data:
                 logger.info("Request validation failed: Invalid or empty JSON")
                 return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
-        except Exception as e:
+        except (BadRequest, ValueError) as e:
+            # The parser's message can include a payload excerpt - log it, don't echo it back.
             logger.warning(f"Request validation failed: JSON parsing error - {e}")
-            return jsonify({"status": "error", "error": f"Invalid JSON format: {str(e)}"}), 400
-        
+            return jsonify({"status": "error", "error": "Invalid JSON format"}), 400
+
         return None

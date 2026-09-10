@@ -7,14 +7,9 @@ from keepercommander.service.util.process_util import (
 
 
 class TestSpawnDetachedProcess(unittest.TestCase):
-    """These force sys.platform to 'darwin' to exercise the POSIX branch regardless of
-    the machine actually running the tests. os.setpgrp doesn't exist on a real Windows
-    os module, so it needs create=True wherever that branch is forced on Windows CI."""
-
     def test_default_mode_truncates_log_file(self):
         with mock.patch('builtins.open', mock.mock_open()) as mock_open, \
              mock.patch('keepercommander.service.util.process_util.subprocess.Popen'), \
-             mock.patch('keepercommander.service.util.process_util.os.setpgrp', create=True), \
              mock.patch('keepercommander.service.util.process_util.sys.platform', 'darwin'):
             spawn_detached_process(['cmd'], '/tmp/test.log')
             mock_open.assert_called_once_with('/tmp/test.log', 'w')
@@ -22,7 +17,6 @@ class TestSpawnDetachedProcess(unittest.TestCase):
     def test_append_mode_preserves_log_history(self):
         with mock.patch('builtins.open', mock.mock_open()) as mock_open, \
              mock.patch('keepercommander.service.util.process_util.subprocess.Popen'), \
-             mock.patch('keepercommander.service.util.process_util.os.setpgrp', create=True), \
              mock.patch('keepercommander.service.util.process_util.sys.platform', 'darwin'):
             spawn_detached_process(['cmd'], '/tmp/test.log', append=True)
             mock_open.assert_called_once_with('/tmp/test.log', 'a')
@@ -40,23 +34,24 @@ class TestSpawnDetachedProcess(unittest.TestCase):
             )
             self.assertEqual(kwargs['cwd'], '/work')
             self.assertEqual(kwargs['env'], {'A': '1'})
-            self.assertNotIn('preexec_fn', kwargs)
+            self.assertNotIn('start_new_session', kwargs)
 
-    def test_posix_uses_new_process_group_via_preexec(self):
+    def test_posix_uses_new_session_not_preexec_fn(self):
+        """start_new_session=True (os.setsid in the child) is the thread-safe replacement
+        for preexec_fn=os.setpgrp - same effect, without the multi-threading hazard."""
         with mock.patch('builtins.open', mock.mock_open()), \
              mock.patch('keepercommander.service.util.process_util.subprocess.Popen') as mock_popen, \
-             mock.patch('keepercommander.service.util.process_util.sys.platform', 'darwin'), \
-             mock.patch('keepercommander.service.util.process_util.os.setpgrp', create=True):
+             mock.patch('keepercommander.service.util.process_util.sys.platform', 'darwin'):
             spawn_detached_process(['cmd'], '/tmp/test.log')
 
             _, kwargs = mock_popen.call_args
             self.assertNotIn('creationflags', kwargs)
-            self.assertIn('preexec_fn', kwargs)
+            self.assertNotIn('preexec_fn', kwargs)
+            self.assertTrue(kwargs['start_new_session'])
 
     def test_returns_the_popen_object(self):
         with mock.patch('builtins.open', mock.mock_open()), \
              mock.patch('keepercommander.service.util.process_util.subprocess.Popen') as mock_popen, \
-             mock.patch('keepercommander.service.util.process_util.os.setpgrp', create=True), \
              mock.patch('keepercommander.service.util.process_util.sys.platform', 'darwin'):
             mock_process = mock.Mock()
             mock_popen.return_value = mock_process

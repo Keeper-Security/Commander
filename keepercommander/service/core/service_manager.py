@@ -97,7 +97,7 @@ class ServiceManager:
                 ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
             except Exception as e:
                 ProcessInfo.clear()
-                logger.info(f"\n{str(e)}")
+                logger.error(f"\n{str(e)}")
                 return
             cloudflare_pid = None
 
@@ -116,7 +116,7 @@ class ServiceManager:
 
                 ProcessInfo.clear()
 
-                logger.info(f"\n{str(e)}")
+                logger.error(f"\n{str(e)}")
                 return
 
             # Custom logging filter to replace SSL handshake errors with user-friendly message
@@ -154,18 +154,19 @@ class ServiceManager:
                     subprocess_env['PYTHONUNBUFFERED'] = '1'
 
                     if is_frozen:
-                        # Running as PyInstaller executable - set env var to trigger service mode
-                        # The executable will detect KEEPER_SERVICE_MODE and start the service directly
-                        from .service_app import KEEPER_SERVICE_MODE_ENV
-                        subprocess_env[KEEPER_SERVICE_MODE_ENV] = '1'
-                        cmd = [python_executable]
+                        # -m doesn't work for a frozen exe, so pass an explicit internal flag instead.
+                        from .service_app import SERVICE_MODE_FLAG
+                        cmd = [python_executable, SERVICE_MODE_FLAG]
                     else:
                         # Running as Python script - use -m flag
                         cmd = [python_executable, '-m', 'keepercommander.service.core.service_app']
 
+                    # append=True to preserve history across restarts (tunnel logs truncate instead).
                     process = spawn_detached_process(
                         cmd, log_file, cwd=os.getcwd(), env=subprocess_env, append=True
                     )
+                    # Command output can include vault data - don't leave it world-readable.
+                    utils.set_file_permissions(log_file)
 
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {process.pid}")
@@ -260,7 +261,7 @@ class ServiceManager:
                 cls._flask_app = create_app()
                 cls._is_running = True
 
-                ProcessInfo.save(os.getpid(), is_running, ngrok_pid)
+                ProcessInfo.save(os.getpid(), is_running, ngrok_pid, cloudflare_pid)
                 ssl_context = ServiceManager.get_ssl_context(config_data)
                 
                 try:
