@@ -50,11 +50,16 @@ def start_ngrok(port, auth_token=None, subdomain=None):
     log_file = get_tunnel_log_file("ngrok_subprocess.log")
     process = spawn_detached_process(ngrok_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
 
+    time.sleep(0.5)  # Give ngrok a moment to start
+    if process.poll() is not None:
+        raise RuntimeError(
+            f"ngrok exited immediately (exit code {process.returncode}); see {log_file} for details"
+        )
+
     actual_ngrok_pid = process.pid
     try:
         import psutil
-        time.sleep(0.5)  # Give ngrok a moment to start
-        
+
         # Look for the actual ngrok binary process
         for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
             try:
@@ -202,10 +207,17 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
         old_stdout_fd = os.dup(1)
         old_stderr_fd = os.dup(2)
         devnull_fd = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull_fd, 1)
-        os.dup2(devnull_fd, 2)
-        os.close(devnull_fd)
+        try:
+            os.dup2(devnull_fd, 1)
+            os.dup2(devnull_fd, 2)
+        finally:
+            os.close(devnull_fd)
     except OSError:
+        # Redirection didn't fully succeed - close whatever we already opened and
+        # continue without suppressing ngrok's console output.
+        for fd in (old_stdout_fd, old_stderr_fd):
+            if fd is not None:
+                os.close(fd)
         old_stdout_fd = None
         old_stderr_fd = None
 
@@ -246,9 +258,9 @@ def _download_cloudflared():
         if result.returncode == 0:
             # 'where' can print multiple matches, one per line; take the first
             return result.stdout.strip().split('\n')[0]
-    except:
-        pass
-        
+    except Exception as e:
+        logging.debug(f"Could not find existing cloudflared on PATH: {e}")
+
     # Download cloudflared binary
     import platform
     import urllib.request
