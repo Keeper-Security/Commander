@@ -1889,32 +1889,46 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
                     is_last = True
 
                 if digest not in folder_hash:
-                    folder_uid = api.generate_record_uid()
-                    folder_type = 'shared_folder' if is_last else 'user_folder'
+                    existing_by_uid = None
+                    if is_last:
+                        sf_uid = getattr(fol, 'uid', None)
+                        if sf_uid and sf_uid in params.shared_folder_cache and sf_uid in params.folder_cache:
+                            # The import file names an existing shared folder by uid.
+                            # Reuse it in place (no new folder, no move) so any
+                            # records that reference this path resolve to it.
+                            shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
+                            existing_by_uid = sf_uid, 'shared_folder', shared_folder_key
 
-                    fol_req = folder_pb2.FolderRequest()
-                    fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
-                    fol_req.folderType = 2 if folder_type == 'shared_folder' else 1
+                    if existing_by_uid is not None:
+                        folder_uid, folder_type, folder_key = existing_by_uid
+                        folder_hash[digest] = existing_by_uid
+                    else:
+                        folder_uid = api.generate_record_uid()
+                        folder_type = 'shared_folder' if is_last else 'user_folder'
 
-                    if parent_uid:
-                        fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
+                        fol_req = folder_pb2.FolderRequest()
+                        fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
+                        fol_req.folderType = 2 if folder_type == 'shared_folder' else 1
 
-                    folder_key = utils.generate_aes_key()
-                    fol_req.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, params.data_key)
+                        if parent_uid:
+                            fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
 
-                    data = {'name': comp}
-                    fol_req.folderData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), folder_key)
+                        folder_key = utils.generate_aes_key()
+                        fol_req.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, params.data_key)
 
-                    if folder_type == 'shared_folder':
-                        fol_req.sharedFolderFields.encryptedFolderName = \
-                            crypto.encrypt_aes_v1(comp.encode('utf-8'), folder_key)
-                        fol_req.sharedFolderFields.manageUsers = fol.manage_users or manage_users
-                        fol_req.sharedFolderFields.manageRecords = fol.manage_records or manage_records
-                        fol_req.sharedFolderFields.canEdit = fol.can_edit or can_edit
-                        fol_req.sharedFolderFields.canShare = fol.can_share or can_share
+                        data = {'name': comp}
+                        fol_req.folderData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), folder_key)
 
-                    folder_add.append(fol_req)
-                    folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
+                        if folder_type == 'shared_folder':
+                            fol_req.sharedFolderFields.encryptedFolderName = \
+                                crypto.encrypt_aes_v1(comp.encode('utf-8'), folder_key)
+                            fol_req.sharedFolderFields.manageUsers = fol.manage_users or manage_users
+                            fol_req.sharedFolderFields.manageRecords = fol.manage_records or manage_records
+                            fol_req.sharedFolderFields.canEdit = fol.can_edit or can_edit
+                            fol_req.sharedFolderFields.canShare = fol.can_share or can_share
+
+                        folder_add.append(fol_req)
+                        folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
                 else:
                     folder_uid, folder_type, folder_key = folder_hash[digest]
                     if is_last:
