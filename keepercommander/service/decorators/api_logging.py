@@ -54,7 +54,7 @@ def _get_sanitized_request_data():
             sanitized_data = sanitize_password_in_command(json_data)
             # Additional sanitization for nested structures that might contain sensitive data
             if sanitized_data and isinstance(sanitized_data, dict):
-                sanitized_data = _sanitize_nested_data(sanitized_data)
+                sanitized_data = sanitize_nested_data(sanitized_data)
         except Exception:
             sanitized_data = None
     return f"data={sanitized_data}" if sanitized_data else "no-data"
