@@ -46,6 +46,19 @@ from .ttk import TTK
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
+# Sensitive field types that should be masked in logs
+SENSITIVE_FIELD_TYPES = frozenset({
+    'password', 'login', 'secret', 'onetimecode', 'pincode', 'keypair',
+    'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
+    'securityquestion', 'passkey', 'accountnumber', 'routingnumber',
+    'cardnumber', 'cardsecuritycode', 'privatekey', 'publickey', 'licensenumber'
+})
+
+SENSITIVE_DICT_KEYS = frozenset({'password', 'login', 'secret', 'token', 'key',
+                                  'accountnumber', 'routingnumber', 'cardnumber', 
+                                  'cardsecuritycode', 'privatekey', 'publickey',
+                                  'licensenumber', 'keypair', 'encryptednote'}) | SENSITIVE_FIELD_TYPES
+
 
 # PKCS7 padding helpers
 BS = 16
@@ -56,6 +69,50 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 decode_uid_to_str = lambda uid: base64.urlsafe_b64encode(uid).decode().rstrip('=')
 
 LOCALE = 'en_US'
+
+
+def _mask_field_value(value):
+    """Mask a Keeper record field's `value`, preserving its container shape."""
+    if isinstance(value, list):
+        return ['***' for _ in value]
+    if isinstance(value, dict):
+        return {k: '***' for k in value}
+    return '***'
+
+
+def _sanitize_nested_data(data):
+    """Recursively sanitize nested data structures for logging."""
+    if isinstance(data, dict):
+        field_type = data.get('type')
+        if isinstance(field_type, str) and field_type.lower() in SENSITIVE_FIELD_TYPES and 'value' in data:
+            sanitized = dict(data)
+            sanitized['value'] = _mask_field_value(data['value'])
+            return sanitized
+
+        sanitized = {}
+        for key, value in data.items():
+            if key.lower() in SENSITIVE_DICT_KEYS:
+                if isinstance(value, str) and len(value) > 0:
+                    sanitized[key] = '*' * min(len(value), 15)
+                else:
+                    sanitized[key] = '***'
+            else:
+                sanitized[key] = _sanitize_nested_data(value)
+        return sanitized
+    elif isinstance(data, list):
+        return [_sanitize_nested_data(item) for item in data]
+    else:
+        return data
+
+
+def _sanitize_protobuf_json(json_str):
+    """Sanitize sensitive data from protobuf JSON before logging."""
+    try:
+        data = json.loads(json_str)
+        sanitized = _sanitize_nested_data(data)
+        return json.dumps(sanitized)
+    except (json.JSONDecodeError, TypeError):
+        return json_str
 
 
 def run_command(params, request):
@@ -881,7 +938,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     if request:
         if logging.getLogger().level <= logging.DEBUG:
             js = google.protobuf.json_format.MessageToJson(request)
-            logging.debug('>>> [RQ] %s: %s', endpoint, js)
+            sanitized_js = _sanitize_protobuf_json(js)
+            logging.debug('>>> [RQ] %s: %s', endpoint, sanitized_js)
         api_request_payload.payload = request.SerializeToString()
     if isinstance(payload_version, int):
         api_request_payload.apiVersion = payload_version
@@ -894,7 +952,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
             proto_rs.ParseFromString(rs)
             if logging.getLogger().level <= logging.DEBUG:
                 js = google.protobuf.json_format.MessageToJson(proto_rs)
-                logging.debug('>>> [RS] %s: %s', endpoint, js)
+                sanitized_js = _sanitize_protobuf_json(js)
+                logging.debug('>>> [RS] %s: %s', endpoint, sanitized_js)
             return proto_rs
         else:
             return rs

@@ -156,7 +156,7 @@ def sanitize_debug_data(data: str) -> str:
     # Sanitize common password patterns
     patterns = [
         (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
-        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),  
+        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),
         (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
         (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
         (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
@@ -175,6 +175,24 @@ def sanitize_debug_data(data: str) -> str:
         (r'\bbankAccount=[^\s]*', 'bankAccount=***'),
         (r'\bsecurityQuestion=[^\s]*', 'securityQuestion=***'),
         (r'\bpasskey=[^\s]*', 'passkey=***'),
+        # Bank/Card fields with field prefix (f.bankAccount.accountNumber=, f.bankAccount.routingNumber=)
+        (r'\bf\.bankAccount\.accountNumber=[^\s]*', 'f.bankAccount.accountNumber=***'),
+        (r'\bf\.bankAccount\.routingNumber=[^\s]*', 'f.bankAccount.routingNumber=***'),
+        (r'\bc\.bankAccount\.accountNumber=[^\s]*', 'c.bankAccount.accountNumber=***'),
+        (r'\bc\.bankAccount\.routingNumber=[^\s]*', 'c.bankAccount.routingNumber=***'),
+        # Payment card fields
+        (r'\bf\.paymentCard\.cardNumber=[^\s]*', 'f.paymentCard.cardNumber=***'),
+        (r'\bf\.paymentCard\.cardSecurityCode=[^\s]*', 'f.paymentCard.cardSecurityCode=***'),
+        (r'\bc\.paymentCard\.cardNumber=[^\s]*', 'c.paymentCard.cardNumber=***'),
+        (r'\bc\.paymentCard\.cardSecurityCode=[^\s]*', 'c.paymentCard.cardSecurityCode=***'),
+        # SSH key fields
+        (r'\bf\.keyPair\.privateKey=[^\s]*', 'f.keyPair.privateKey=***'),
+        (r'\bf\.keyPair\.publicKey=[^\s]*', 'f.keyPair.publicKey=***'),
+        (r'\bc\.keyPair\.privateKey=[^\s]*', 'c.keyPair.privateKey=***'),
+        (r'\bc\.keyPair\.publicKey=[^\s]*', 'c.keyPair.publicKey=***'),
+        # Software license fields
+        (r'\bf\.licenseNumber=[^\s]*', 'f.licenseNumber=***'),
+        (r'\bc\.licenseNumber=[^\s]*', 'c.licenseNumber=***'),
         # Sanitize email addresses in logs to protect PII
         (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
     ]
