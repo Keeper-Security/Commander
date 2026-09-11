@@ -14,11 +14,8 @@ from functools import wraps
 from typing import Callable, Any
 from flask import request
 import time
-from .logging import logger, sanitize_command_fields, SENSITIVE_FIELD_TYPES
-
-# Legacy generic keys (kept for JSON payloads that aren't shaped like Keeper
-# record fields, e.g. arbitrary nested config blobs).
-_SENSITIVE_DICT_KEYS = frozenset({'password', 'login', 'secret', 'token', 'key'}) | SENSITIVE_FIELD_TYPES
+from .logging import logger, sanitize_command_fields
+from ...sanitization import sanitize_nested_data
 
 
 class SSLHandshakeFilter(logging.Filter):
@@ -44,48 +41,9 @@ def sanitize_password_in_command(data):
 
     # Sanitize filedata if present
     if 'filedata' in sanitized:
-        sanitized['filedata'] = _sanitize_nested_data(sanitized['filedata'])
-    
+        sanitized['filedata'] = sanitize_nested_data(sanitized['filedata'])
+
     return sanitized
-
-def _mask_field_value(value):
-    """Mask a Keeper record field's `value`, preserving its container shape."""
-    if isinstance(value, list):
-        return ['***' for _ in value]
-    if isinstance(value, dict):
-        return {k: '***' for k in value}
-    return '***'
-
-
-def _sanitize_nested_data(data):
-    """Recursively sanitize nested data structures"""
-    if isinstance(data, dict):
-        field_type = data.get('type')
-        if isinstance(field_type, str) and field_type.lower() in SENSITIVE_FIELD_TYPES and 'value' in data:
-            sanitized = dict(data)
-            sanitized['value'] = _mask_field_value(data['value'])
-            return sanitized
-
-        sanitized = {}
-        for key, value in data.items():
-            # Sanitize sensitive field names
-            if key.lower() in _SENSITIVE_DICT_KEYS:
-                if isinstance(value, str) and len(value) > 0:
-                    sanitized[key] = '*' * min(len(value), 15)
-                else:
-                    sanitized[key] = '***'
-            else:
-                sanitized[key] = _sanitize_nested_data(value)
-        return sanitized
-    elif isinstance(data, list):
-        return [_sanitize_nested_data(item) for item in data]
-    elif isinstance(data, str):
-        # Sanitize email addresses in string values to protect PII
-        import re
-        sanitized_str = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***', data)
-        return sanitized_str
-    else:
-        return data
 
 def _get_sanitized_request_data():
     """Extract and sanitize request data for logging (only for JSON POST requests)"""
@@ -94,6 +52,9 @@ def _get_sanitized_request_data():
         try:
             json_data = request.get_json(silent=True)
             sanitized_data = sanitize_password_in_command(json_data)
+            # Additional sanitization for nested structures that might contain sensitive data
+            if sanitized_data and isinstance(sanitized_data, dict):
+                sanitized_data = sanitize_nested_data(sanitized_data)
         except Exception:
             sanitized_data = None
     return f"data={sanitized_data}" if sanitized_data else "no-data"

@@ -17,14 +17,7 @@ import re
 import shlex
 from enum import Enum
 from ... import utils
-
-# Values that must never reach the logs when set via record-add/record-update/
-# nsf-record-* CLI args.
-SENSITIVE_FIELD_TYPES = frozenset({
-    'password', 'login', 'secret', 'onetimecode', 'pincode', 'keypair',
-    'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
-    'securityquestion', 'passkey',
-})
+from ...sanitization import SENSITIVE_FIELD_TYPES
 
 class LogLevel(Enum):
     ERROR = logging.ERROR
@@ -68,7 +61,7 @@ class GlobalLogger:
         return default_config["logging"]
     
     def _load_config(self):
-        config_path = utils.get_default_path() / "logging_config.yaml";
+        config_path = utils.get_default_path() / "logging_config.yaml"
         
         # config_path = os.getenv("LOGGING_CONFIG_PATH", "logging_config.yaml")
         if os.path.exists(config_path):
@@ -150,23 +143,24 @@ def sanitize_debug_data(data: str) -> str:
     """Sanitize sensitive data from debug output."""
     if not data:
         return data
-    
+
     sanitized = data
-    
+
     # Sanitize common password patterns
     patterns = [
         (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
-        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),  
+        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),
         (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
         (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
         (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
+        (r'"licenseNumber"\s*:\s*"[^"]*"', '"licenseNumber": "***"'),
+        (r'"encryptedNote"\s*:\s*"[^"]*"', '"encryptedNote": "***"'),
+        (r'"note"\s*:\s*"[^"]*"', '"note": "***"'),
+        # Bare field formats (e.g., password=value, secret=value)
         (r'\bpassword=[^\s]*', 'password=***'),
         (r'\blogin=[^\s]*', 'login=***'),
-        # oneTimeCode=otpauth://totp/...?secret=... — mask the whole value, TOTP seed included
         (r'\boneTimeCode=[^\s]*', 'oneTimeCode=***'),
         (r'\bsecret=[^\s]*', 'secret=***'),
-        # Other sensitive record field types (see SENSITIVE_FIELD_TYPES) that can
-        # appear as bare CLI args on record-add/record-update/nsf-* commands.
         (r'\bpinCode=[^\s]*', 'pinCode=***'),
         (r'\bkeyPair=[^\s]*', 'keyPair=***'),
         (r'\bprivateKey=[^\s]*', 'privateKey=***'),
@@ -175,10 +169,43 @@ def sanitize_debug_data(data: str) -> str:
         (r'\bbankAccount=[^\s]*', 'bankAccount=***'),
         (r'\bsecurityQuestion=[^\s]*', 'securityQuestion=***'),
         (r'\bpasskey=[^\s]*', 'passkey=***'),
+        (r'\blicenseNumber=[^\s]*', 'licenseNumber=***'),
+        (r'\bencryptedNote=[^\s]*', 'encryptedNote=***'),
+        # Command options (--notes, --password, etc)
+        (r'--notes=[^\s]*', '--notes=***'),
+        (r'--password=[^\s]*', '--password=***'),
+        (r'--notes\s+[^\s]+', '--notes ***'),
+        (r'--password\s+[^\s]+', '--password ***'),
+        # Prefixed field formats (f.fieldName=value, c.fieldName=value)
+        (r'\bf\.bankAccount\.accountNumber=[^\s]*', 'f.bankAccount.accountNumber=***'),
+        (r'\bf\.bankAccount\.routingNumber=[^\s]*', 'f.bankAccount.routingNumber=***'),
+        (r'\bc\.bankAccount\.accountNumber=[^\s]*', 'c.bankAccount.accountNumber=***'),
+        (r'\bc\.bankAccount\.routingNumber=[^\s]*', 'c.bankAccount.routingNumber=***'),
+        (r'\bf\.paymentCard\.cardNumber=[^\s]*', 'f.paymentCard.cardNumber=***'),
+        (r'\bf\.paymentCard\.cardSecurityCode=[^\s]*', 'f.paymentCard.cardSecurityCode=***'),
+        (r'\bc\.paymentCard\.cardNumber=[^\s]*', 'c.paymentCard.cardNumber=***'),
+        (r'\bc\.paymentCard\.cardSecurityCode=[^\s]*', 'c.paymentCard.cardSecurityCode=***'),
+        (r'\bf\.keyPair\.privateKey=[^\s]*', 'f.keyPair.privateKey=***'),
+        (r'\bf\.keyPair\.publicKey=[^\s]*', 'f.keyPair.publicKey=***'),
+        (r'\bc\.keyPair\.privateKey=[^\s]*', 'c.keyPair.privateKey=***'),
+        (r'\bc\.keyPair\.publicKey=[^\s]*', 'c.keyPair.publicKey=***'),
+        (r'\bf\.licenseNumber=[^\s]*', 'f.licenseNumber=***'),
+        (r'\bc\.licenseNumber=[^\s]*', 'c.licenseNumber=***'),
+        (r'\bf\.encryptedNote=[^\s]*', 'f.encryptedNote=***'),
+        (r'\bc\.encryptedNote=[^\s]*', 'c.encryptedNote=***'),
+        # Custom field labels with sensitive types (f.password.Label=, c.secret.Label=, etc.)
+        (r'\b[fc]\.password\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.secret\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.keypair\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.privatekey\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.bankaccount\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.paymentcard\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.licensenumber\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
+        (r'\b[fc]\.encryptednote\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
         # Sanitize email addresses in logs to protect PII
         (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
     ]
-    
+
     for pattern, replacement in patterns:
         sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
 
