@@ -16,7 +16,7 @@ import psutil
     
 from ..decorators.logging import logger, debug_decorator
 from .service_config import ServiceConfig
-from ..util.tunneling import generate_cloudflare_url
+from ..util.tunneling import generate_cloudflare_url, get_tunnel_log_file
 from ..util.exceptions import ValidationError
 
 class CloudflareConfigurator:
@@ -86,8 +86,7 @@ class CloudflareConfigurator:
     @staticmethod
     def _get_cloudflare_log_path() -> str:
         """Get the path to the Cloudflare tunnel log file."""
-        service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-        return os.path.join(service_core_dir, "logs", "cloudflare_tunnel_subprocess.log")
+        return get_tunnel_log_file("cloudflare_tunnel_subprocess.log")
 
     @staticmethod
     def _analyze_tunnel_log(log_file: str) -> Tuple[Optional[bool], str]:
