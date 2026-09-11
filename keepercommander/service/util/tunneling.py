@@ -20,13 +20,28 @@ import re
 import json
 import tempfile
 
+from ... import utils
+from .process_util import spawn_detached_process
+
+def get_tunnel_log_file(name):
+    # Resolved per call, not cached at import time, so a later --data-dir override is respected.
+    log_dir = os.path.join(utils.get_default_path(), "service_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, name)
+
+
+# DOA check only catches immediate crashes; a slower failure (bad auth) is caught later below.
+NGROK_STARTUP_CHECK_DELAY_SECONDS = 0.5
+
 
 def start_ngrok(port, auth_token=None, subdomain=None):
     """
     Start ngrok as a fully detached subprocess and return the PID.
     """
-    ngrok_cmd = ["ngrok", "http", str(port), "--log=stdout", "--log-level=info"]
-    
+    ngrok_config = conf.get_default()
+    ngrok.install_ngrok(ngrok_config)
+    ngrok_cmd = [ngrok_config.ngrok_path, "http", str(port), "--log=stdout", "--log-level=info"]
+
     if subdomain:
         ngrok_cmd += ["--subdomain", subdomain]
     if auth_token:
@@ -34,37 +49,20 @@ def start_ngrok(port, auth_token=None, subdomain=None):
 
 
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_dir = os.path.join(service_core_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "ngrok_subprocess.log")
+    log_file = get_tunnel_log_file("ngrok_subprocess.log")
+    process = spawn_detached_process(ngrok_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
+    utils.set_file_permissions(log_file)
 
-    if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                ngrok_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
-            )
-    else:
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                ngrok_cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                preexec_fn=os.setpgrp,
-                cwd=service_core_dir,  # Set working directory
-                env=os.environ.copy()  # Inherit environment variables
-            )
+    time.sleep(NGROK_STARTUP_CHECK_DELAY_SECONDS)
+    if process.poll() is not None:
+        raise RuntimeError(
+            f"ngrok exited immediately (exit code {process.returncode}); see {log_file} for details"
+        )
 
     actual_ngrok_pid = process.pid
     try:
         import psutil
-        time.sleep(0.5)  # Give ngrok a moment to start
-        
+
         # Look for the actual ngrok binary process
         for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
             try:
@@ -166,15 +164,22 @@ def start_ngrok_with_url(port, auth_token=None, subdomain=None):
 
     # If API method fails, try parsing the log file
     if not public_url:
-        service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-        log_file = os.path.join(service_core_dir, "logs", "ngrok_subprocess.log")
-        public_url = get_ngrok_url_from_log(log_file)
+        public_url = get_ngrok_url_from_log(get_tunnel_log_file("ngrok_subprocess.log"))
     
     # If we still don't have a URL and subdomain was provided, construct it
     if not public_url and subdomain:
         public_url = f"https://{subdomain}.ngrok.io"
         logging.warning("Could not retrieve dynamic ngrok URL, using constructed URL")
-    
+
+    # No URL and the process is gone (e.g. bad auth token) is a real failure, not just slow.
+    if not public_url:
+        try:
+            import psutil
+            if not psutil.pid_exists(pid):
+                raise RuntimeError(f"ngrok process {pid} is no longer running; see logs for details")
+        except ImportError:
+            pass
+
     return pid, public_url
 
 def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
@@ -200,32 +205,49 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
         log_event_callback=None,
     )
     
-    with open(os.devnull, 'w') as devnull:
+    if run_mode == "background":
+        # Own subprocess with its own log file - skip the console-unsafe fd redirection below.
+        if ngrok_custom_domain:
+            ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
+        else:
+            ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
+        return public_url, ngrok_pid
+
+    old_stdout_fd = None
+    old_stderr_fd = None
+    try:
         old_stdout_fd = os.dup(1)
         old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
-        
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
         try:
-            if run_mode == "background":
-                # Background mode: use subprocess for both custom and non-custom domains
-                if ngrok_custom_domain:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
-                else:
-                    ngrok_pid, public_url = start_ngrok_with_url(port=port, auth_token=auth_token)
-                return public_url, ngrok_pid
-            else:
-                # Foreground mode: use pyngrok library
-                if ngrok_custom_domain:
-                    tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
-                else:
-                    tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
-                return tunnel.public_url, None
-            
+            os.dup2(devnull_fd, 1)
+            os.dup2(devnull_fd, 2)
         finally:
+            os.close(devnull_fd)
+    except OSError:
+        # Restore anything already redirected (else fd 1 could stay pointed at devnull forever).
+        for fd, target in ((old_stdout_fd, 1), (old_stderr_fd, 2)):
+            if fd is not None:
+                try:
+                    os.dup2(fd, target)
+                finally:
+                    os.close(fd)
+        old_stdout_fd = None
+        old_stderr_fd = None
+
+    try:
+        if ngrok_custom_domain:
+            tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+        else:
+            tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
+        return tunnel.public_url, None
+
+    finally:
+        if old_stdout_fd is not None:
             os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
             os.close(old_stdout_fd)
+        if old_stderr_fd is not None:
+            os.dup2(old_stderr_fd, 2)
             os.close(old_stderr_fd)
 
 
@@ -236,14 +258,15 @@ def _download_cloudflared():
     Download cloudflared binary if not available.
     Returns path to cloudflared binary.
     """
-    try:
-        # First try to find existing cloudflared
-        result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-        
+    # Windows `where`/shutil.which both search cwd before PATH (planted-binary risk) - only search on POSIX.
+    if sys.platform != "win32":
+        try:
+            result = subprocess.run(['which', 'cloudflared'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip().splitlines()[0]
+        except Exception as e:
+            logging.debug(f"Could not find existing cloudflared on PATH: {e}")
+
     # Download cloudflared binary
     import platform
     import urllib.request
@@ -326,32 +349,10 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
         )
     
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    log_dir = os.path.join(service_core_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "cloudflare_tunnel_subprocess.log")
-    
-    if sys.platform == "win32":
-        subprocess.DETACHED_PROCESS = 0x00000008
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                cloudflared_cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
-    else:
-        with open(log_file, 'w') as log_f:
-            process = subprocess.Popen(
-                cloudflared_cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                preexec_fn=os.setpgrp,
-                cwd=service_core_dir,
-                env=os.environ.copy()
-            )
-    
+    log_file = get_tunnel_log_file("cloudflare_tunnel_subprocess.log")
+    process = spawn_detached_process(cloudflared_cmd, log_file, cwd=service_core_dir, env=os.environ.copy())
+    utils.set_file_permissions(log_file)
+
     tunnel_url = get_cloudflare_url_from_log(log_file, custom_domain)
     
     return process.pid, tunnel_url
@@ -380,9 +381,9 @@ def get_cloudflare_url_from_log(log_file, custom_domain=None, max_retries=10, re
                     matches = re.findall(pattern, content)
                     for match in matches:
                         # Filter out localhost and other non-public URLs
-                        if ('localhost' not in match and 
-                            '127.0.0.1' not in match and
-                            'trycloudflare.com' in match or 'cfargotunnel.com' in match or custom_domain in match if custom_domain else True):
+                        if ('localhost' not in match and '127.0.0.1' not in match and
+                                ('trycloudflare.com' in match or 'cfargotunnel.com' in match
+                                 or (custom_domain and custom_domain in match))):
                             return match
                             
         except Exception as e:
@@ -410,36 +411,22 @@ def start_cloudflare_tunnel_with_url(port, tunnel_token, custom_domain=None):
 
 def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
     """
-    Start a Cloudflare tunnel with complete log suppression.
-    Returns a tuple of (public_url, tunnel_pid) for background mode, or (public_url, None) for foreground mode.
+    Start a Cloudflare tunnel as a detached subprocess and return its public URL.
+    Returns a tuple of (public_url, tunnel_pid).
     """
     if not port:
         raise ValueError("Port must be provided for Cloudflare tunnel.")
-    
+
     if not tunnel_token or not tunnel_token.strip():
         raise ValueError(
             "Tunnel token is required for secure Cloudflare tunnel operation. "
             "Temporary tunnels are not supported for production use."
         )
-    
-    # Cloudflare tunnel configuration
-    
-    with open(os.devnull, 'w') as devnull:
-        old_stdout_fd = os.dup(1)
-        old_stderr_fd = os.dup(2)
-        os.dup2(devnull.fileno(), 1)
-        os.dup2(devnull.fileno(), 2)
-        
-        try:
-            tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
-                port=port, 
-                tunnel_token=tunnel_token, 
-                custom_domain=custom_domain
-            )
-            return public_url, tunnel_pid
-            
-        finally:
-            os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2) 
-            os.close(old_stdout_fd)
-            os.close(old_stderr_fd)
+
+    # Always runs as a detached subprocess with its own log file - nothing to suppress here.
+    tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
+        port=port,
+        tunnel_token=tunnel_token,
+        custom_domain=custom_domain
+    )
+    return public_url, tunnel_pid
