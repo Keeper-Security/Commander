@@ -17,6 +17,7 @@ import psutil
 from ... import utils
 from ...service.config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
+from ..util.process_util import spawn_detached_process, CREATE_NO_WINDOW
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
@@ -92,7 +93,12 @@ class ServiceManager:
             else:
                 print(f"Commander Service starting on \033[1m{protocol}://localhost:{port}/api/v1/executecommand\033[0m")
             
-            ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
+            try:
+                ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
+            except Exception as e:
+                ProcessInfo.clear()
+                logger.error(f"\n{str(e)}")
+                return
             cloudflare_pid = None
 
             try:
@@ -110,7 +116,7 @@ class ServiceManager:
 
                 ProcessInfo.clear()
 
-                logger.info(f"\n{str(e)}")
+                logger.error(f"\n{str(e)}")
                 return
 
             # Custom logging filter to replace SSL handshake errors with user-friendly message
@@ -130,43 +136,41 @@ class ServiceManager:
             werkzeug_logger.addFilter(SSLHandshakeFilter())
 
             if config_data.get("run_mode") == "background":
-
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                service_module = "keepercommander.service.core.service_app"  # Use module path instead of file path
-                python_executable = sys.executable
-
-                # Create logs directory for subprocess output
-                log_dir = os.path.join(base_dir, "logs")
+                
+                # Detect if running as PyInstaller executable
+                is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+                
+                # Create logs directory for subprocess output in user-writable location
+                log_dir = os.path.join(utils.get_default_path(), "service_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, "service_subprocess.log")
 
                 try:
-                    if sys.platform == "win32":
-                        subprocess.DETACHED_PROCESS = 0x00000008
-                        with open(log_file, 'w') as log_f:
-                            cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
-                                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
-                            )
+                    python_executable = sys.executable
+
+                    # Set up environment for subprocess
+                    subprocess_env = os.environ.copy()
+                    # Redirected (non-TTY) stdout defaults to full buffering, delaying log output.
+                    subprocess_env['PYTHONUNBUFFERED'] = '1'
+
+                    if is_frozen:
+                        # -m doesn't work for a frozen exe, so pass an explicit internal flag instead.
+                        from .service_app import SERVICE_MODE_FLAG
+                        cmd = [python_executable, SERVICE_MODE_FLAG]
                     else:
-                        # For macOS and Linux - improved subprocess handling
-                        with open(log_file, 'w') as log_f:
-                            cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
-                                preexec_fn=os.setpgrp,
-                                cwd=os.getcwd(),  # Use current working directory to access config files
-                                env=os.environ.copy()  # Inherit environment variables
-                            )
-                    
+                        # Running as Python script - use -m flag
+                        cmd = [python_executable, '-m', 'keepercommander.service.core.service_app']
+
+                    # append=True to preserve history across restarts (tunnel logs truncate instead).
+                    process = spawn_detached_process(
+                        cmd, log_file, cwd=os.getcwd(), env=subprocess_env, append=True
+                    )
+                    # Command output can include vault data - don't leave it world-readable.
+                    utils.set_file_permissions(log_file)
+
                     logger.debug(f"Service subprocess logs available at: {log_file}")
-                    print(f"Commander Service started with PID: {cls.pid}")
-                    ProcessInfo.save(cls.pid, is_running, ngrok_pid)
+                    print(f"Commander Service started with PID: {process.pid}")
+                    ProcessInfo.save(process.pid, is_running, ngrok_pid, cloudflare_pid)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -257,7 +261,7 @@ class ServiceManager:
                 cls._flask_app = create_app()
                 cls._is_running = True
 
-                ProcessInfo.save(os.getpid(), is_running, ngrok_pid)
+                ProcessInfo.save(os.getpid(), is_running, ngrok_pid, cloudflare_pid)
                 ssl_context = ServiceManager.get_ssl_context(config_data)
                 
                 try:
@@ -268,9 +272,6 @@ class ServiceManager:
                     )
                 finally:
                     cleanup_cloudflare_on_foreground_exit()
-
-            # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
@@ -459,7 +460,13 @@ class ServiceManager:
         try:
             if sys.platform.startswith("win"):  #  Windows
                 logger.debug(f"Using Windows taskkill for PID {pid}")
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=True)
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    check=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 return True
             else:  #  Linux & macOS
                 try:

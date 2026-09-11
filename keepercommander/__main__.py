@@ -201,6 +201,14 @@ def main(from_package=False):
     if from_package:
         sys.excepthook = handle_exceptions
 
+    # Internal: background service mode for a frozen (PyInstaller) executable - see service_app.py.
+    is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+    if is_frozen:
+        from .service.core.service_app import SERVICE_MODE_FLAG, run_background_service
+        if len(sys.argv) > 1 and sys.argv[1] == SERVICE_MODE_FLAG:
+            run_background_service()
+            return
+
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
     
