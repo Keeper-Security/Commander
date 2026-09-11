@@ -17,14 +17,7 @@ import re
 import shlex
 from enum import Enum
 from ... import utils
-
-# Values that must never reach the logs when set via record-add/record-update/
-# nsf-record-* CLI args.
-SENSITIVE_FIELD_TYPES = frozenset({
-    'password', 'login', 'secret', 'onetimecode', 'pincode', 'keypair',
-    'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
-    'securityquestion', 'passkey', 'licensenumber', 'encryptednote', 'note',
-})
+from ...sanitization import SENSITIVE_FIELD_TYPES
 
 class LogLevel(Enum):
     ERROR = logging.ERROR
@@ -214,10 +207,7 @@ def sanitize_debug_data(data: str) -> str:
     ]
 
     for pattern, replacement in patterns:
-        if callable(replacement):
-            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
-        else:
-            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
 
     return sanitized
 
