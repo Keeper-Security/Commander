@@ -860,6 +860,40 @@ class TestPAMRouterGetRotationInfo(unittest.TestCase):
         result = cmd.execute(mock_params, record_uid=record_uid, format='table')
         self.assertIsNone(result)
 
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.router_get_rotation_schedules')
+    @patch('keepercommander.commands.discoveryrotation.record_rotation_get')
+    def test_gateway_name_resolved_from_uid_when_empty(self, mock_rrg, mock_schedules, mock_get_gateways):
+        """When controllerName is empty, it should be resolved from gateway list using controllerUid."""
+        from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+        from keepercommander import utils
+        record_uid = 'test_record_uid_'
+        record_uid_bytes = url_safe_str_to_bytes(record_uid)
+
+        rri = self._make_rri('RRS_ONLINE')
+        rri.controllerName = ''
+
+        mock_rrg.return_value = rri
+
+        sched_mock = MagicMock()
+        sched_mock.schedules = [self._make_schedule(record_uid_bytes)]
+        mock_schedules.return_value = sched_mock
+
+        mock_gateway = MagicMock()
+        mock_gateway.controllerUid = rri.controllerUid
+        mock_gateway.controllerName = 'gw-test-resolved'
+        mock_get_gateways.return_value = [mock_gateway]
+
+        mock_params = create_mock_params()
+        mock_params.record_cache = {}
+
+        cmd = PAMRouterGetRotationInfo()
+        result = cmd.execute(mock_params, record_uid=record_uid, format='json')
+
+        self.assertIsNotNone(result, "Expected JSON string, got None")
+        data = json.loads(result)
+        self.assertEqual(data['gateway_name'], 'gw-test-resolved')
+
 
 class TestUsesDefaultRotationSchedule(unittest.TestCase):
 

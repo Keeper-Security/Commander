@@ -3265,7 +3265,14 @@ class PAMRouterGetRotationInfo(Command):
         if rri_status_name == 'RRS_ONLINE':
 
             configuration_uid = utils.base64_url_encode(rri.configurationUid)
-            gateway_name = rri.controllerName if rri.controllerName else '-'
+            gateway_name = rri.controllerName
+            if not gateway_name and rri.controllerUid:
+                all_gateways = gateway_helper.get_all_gateways(params)
+                for gateway in all_gateways:
+                    if gateway.controllerUid == rri.controllerUid:
+                        gateway_name = gateway.controllerName
+                        break
+            gateway_name = gateway_name if gateway_name else '-'
             gateway_uid = utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-'
 
             def is_resource_ok(resource_id, params, configuration_uid):
