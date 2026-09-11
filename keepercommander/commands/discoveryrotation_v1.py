@@ -22,7 +22,7 @@ import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, user_choice, dump_report_data, report_output_parser, json_output_parser, field_to_title, FolderMixin
-from .discoveryrotation import PAMLegacyCommand
+from .discoveryrotation import PAMLegacyCommand, ensure_gateway_management_allowed
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -1710,6 +1710,9 @@ class PAMGatewayRemoveCommand(Command):
         return PAMGatewayRemoveCommand.dr_remove_controller_parser
 
     def execute(self, params, **kwargs):
+        if not ensure_gateway_management_allowed(params):
+            return
+
         gateway_name = kwargs.get('gateway')
         gateways = gateway_helper.get_all_gateways(params)
 
@@ -1745,6 +1748,8 @@ class PAMCreateGatewayCommand(Command):
         return PAMCreateGatewayCommand.dr_create_controller_parser
 
     def execute(self, params, **kwargs):
+        if not ensure_gateway_management_allowed(params):
+            return
 
         gateway_name = kwargs.get('gateway_name')
         ksm_app = kwargs.get('ksm_app')
