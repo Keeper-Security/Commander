@@ -2429,7 +2429,7 @@ class PAMConfigurationListCommand(Command):
         for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
                                  'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
-                                 'pamGitHubConfiguration'):
+                                 'pamGitHubConfiguration', 'pamHashiCorpConfiguration'):
                 facade.record = c
                 folder_info = resolve_pam_config_folder_info(
                     params, facade, c.record_uid)
@@ -2489,7 +2489,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci', 'github'], help='PAM Configuration Type')
+                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci', 'github', 'hashicorp'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -2555,12 +2555,23 @@ github_group.add_argument('--personal-access-token', dest='personal_access_token
 github_group.add_argument('--github-base-url', dest='github_base_url', action='store',
                        help='GitHub Base URL')
 
+hashicorp_group = common_parser.add_argument_group('hashicorp', 'HashiCorp Vault configuration')
+hashicorp_group.add_argument('--hashicorp-id', dest='hashicorp_id', action='store', help='HashiCorp Id')
+hashicorp_group.add_argument('--vault-base-url', dest='vault_base_url', action='store',
+                            help='Vault Base URL (e.g., https://vault.company.com:8200)')
+hashicorp_group.add_argument('--vault-token', dest='vault_token', action='store',
+                            help='Vault Token (optional; syncIdentity takes precedence)')
+hashicorp_group.add_argument('--vault-namespace', dest='vault_namespace', action='store',
+                            help='Vault Namespace (optional; leave blank for Community Edition)')
+hashicorp_group.add_argument('--vault-mount-path', dest='vault_mount_path', action='store',
+                            help='Vault KV Mount Path (optional; defaults to "secret")')
+
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
     PAM_CONFIG_RECORD_TYPES = frozenset({
         'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
         'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration',
-        'pamGitHubConfiguration',
+        'pamGitHubConfiguration', 'pamHashiCorpConfiguration',
     })
     PAM_RESOURCE_RECORD_TYPES = frozenset({
         'pamDatabase', 'pamDirectory', 'pamMachine', 'pamRemoteBrowser',
@@ -2859,6 +2870,22 @@ class PamConfigurationEditMixin(RecordEditMixin):
             oci_region = kwargs.get('oci_region')
             if oci_region:
                 extra_properties.append(f'text.regionOci={oci_region}')
+        elif record.record_type == 'pamHashiCorpConfiguration':
+            hashicorp_id = kwargs.get('hashicorp_id')
+            if hashicorp_id:
+                extra_properties.append(f'text.pamHashiCorpId={hashicorp_id}')
+            vault_base_url = kwargs.get('vault_base_url')
+            if vault_base_url:
+                extra_properties.append(f'text.pamHashiCorpVaultBaseUrl={vault_base_url}')
+            vault_token = kwargs.get('vault_token')
+            if vault_token:
+                extra_properties.append(f'secret.pamHashiCorpVaultToken={vault_token}')
+            vault_namespace = kwargs.get('vault_namespace')
+            if vault_namespace:
+                extra_properties.append(f'text.pamHashiCorpVaultNamespace={vault_namespace}')
+            vault_mount_path = kwargs.get('vault_mount_path')
+            if vault_mount_path:
+                extra_properties.append(f'text.pamHashiCorpVaultMountPath={vault_mount_path}')
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
@@ -2936,9 +2963,11 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamDomainConfiguration'
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
+        elif config_type == 'hashicorp':
+            record_type = 'pamHashiCorpConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                                                 ' - supported options: local, aws, azure, gcp, domain, oci, github')
+                                                 ' - supported options: local, aws, azure, gcp, domain, oci, github, hashicorp')
 
         title = kwargs.get('title')
         if not title:
