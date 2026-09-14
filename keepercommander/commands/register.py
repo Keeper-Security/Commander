@@ -130,6 +130,11 @@ folder_access.add_argument(
 folder_access.add_argument(
     '-f', '--force', dest='force', action='store_true',
     help='skip confirmation prompts')
+folder_access.add_argument(
+    '--force-remove-share', dest='force_remove_share', action='store_true',
+    help='when removing a user/team that has a device on a KSM application linked to this '
+         'shared folder, delete that device and proceed with the removal instead of failing '
+         'with KSM_CASCADE_REQUIRED. Requires -a remove.')
 
 record_access = share_folder_parser.add_argument_group(
     'record permissions', 'Can edit and can share for records in the folder')
@@ -662,6 +667,11 @@ class ShareFolderCommand(Command):
                 'share-folder',
                 '-d and -s require a record target: -r <RECORD>, -r *, or -r @existing.')
 
+        if kwargs.get('force_remove_share') and action != 'remove':
+            raise CommandError(
+                'share-folder',
+                '--force-remove-share is only valid with -a remove.')
+
     @staticmethod
     def _validate_records_in_shared_folders(params, shared_folder_uids, record_uids):
         # type: (KeeperParams, Set[str], Set[str]) -> None
@@ -733,6 +743,8 @@ class ShareFolderCommand(Command):
         action = kwargs.get('action') or 'grant'
         mr = kwargs.get('manage_records')
         mu = kwargs.get('manage_users')
+        if action == 'remove' and kwargs.get('force_remove_share'):
+            rq.forceRemoveShare = True
 
         def apply_share_expiration(target):
             """Set expiration / timer / rotateOnExpiration on a User/Team share update proto."""
@@ -961,6 +973,12 @@ class ShareFolderCommand(Command):
                                     else:
                                         logging.warning('Record share \'%s\' failed', title)
                 except KeeperApiError as kae:
+                    if kae.result_code == 'access_denied' and kae.additional_info == 'KSM_CASCADE_REQUIRED':
+                        raise CommandError(
+                            'share-folder',
+                            'One or more removed users or teams have a device on a KSM application linked to '
+                            'this shared folder. Removing them will delete those devices. Re-run this command '
+                            'with --force-remove-share to confirm.')
                     if kae.result_code != 'bad_inputs_nothing_to_do':
                         raise kae
 
