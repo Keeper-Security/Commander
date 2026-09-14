@@ -1,4 +1,4 @@
-import enterprise_pb2 as _enterprise_pb2
+from . import enterprise_pb2 as _enterprise_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -2227,7 +2227,7 @@ class AddExternalShareRequest(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., encryptedRecordKey: _Optional[bytes] = ..., clientId: _Optional[bytes] = ..., accessExpireOn: _Optional[int] = ..., id: _Optional[str] = ..., isSelfDestruct: bool = ..., isEditable: bool = ...) -> None: ...
 
 class AppClient(_message.Message):
-    __slots__ = ("id", "clientId", "createdOn", "firstAccess", "lastAccess", "publicKey", "lockIp", "ipAddress", "firstAccessExpireOn", "accessExpireOn", "appClientType", "canEdit")
+    __slots__ = ("id", "clientId", "createdOn", "firstAccess", "lastAccess", "publicKey", "lockIp", "ipAddress", "firstAccessExpireOn", "accessExpireOn", "appClientType", "canEdit", "locked")
     ID_FIELD_NUMBER: _ClassVar[int]
     CLIENTID_FIELD_NUMBER: _ClassVar[int]
     CREATEDON_FIELD_NUMBER: _ClassVar[int]
@@ -2240,6 +2240,7 @@ class AppClient(_message.Message):
     ACCESSEXPIREON_FIELD_NUMBER: _ClassVar[int]
     APPCLIENTTYPE_FIELD_NUMBER: _ClassVar[int]
     CANEDIT_FIELD_NUMBER: _ClassVar[int]
+    LOCKED_FIELD_NUMBER: _ClassVar[int]
     id: str
     clientId: bytes
     createdOn: int
@@ -2252,7 +2253,8 @@ class AppClient(_message.Message):
     accessExpireOn: int
     appClientType: _enterprise_pb2.AppClientType
     canEdit: bool
-    def __init__(self, id: _Optional[str] = ..., clientId: _Optional[bytes] = ..., createdOn: _Optional[int] = ..., firstAccess: _Optional[int] = ..., lastAccess: _Optional[int] = ..., publicKey: _Optional[bytes] = ..., lockIp: bool = ..., ipAddress: _Optional[str] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., canEdit: bool = ...) -> None: ...
+    locked: bool
+    def __init__(self, id: _Optional[str] = ..., clientId: _Optional[bytes] = ..., createdOn: _Optional[int] = ..., firstAccess: _Optional[int] = ..., lastAccess: _Optional[int] = ..., publicKey: _Optional[bytes] = ..., lockIp: bool = ..., ipAddress: _Optional[str] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., canEdit: bool = ..., locked: bool = ...) -> None: ...
 
 class GetAppInfoRequest(_message.Message):
     __slots__ = ("appRecordUid",)

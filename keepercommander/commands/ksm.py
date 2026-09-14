@@ -30,7 +30,8 @@ from .base import (
     Command, dump_report_data, user_choice, as_boolean, report_output_parser,
     suppress_exit, raise_parse_exception, expand_cmd_args, normalize_output_param, ParseError)
 from . import record
-from ..nested_share_folder.common import get_folder_key, get_record_key
+from ..nested_share_folder.common import (
+    get_folder_key, get_record_key, get_user_public_key, get_team_keys, encrypt_for_team)
 from .nested_share_folder.helpers import (
     is_nested_share_folder, is_nested_share_record, load_record_metadata, resolve_folder_uid)
 from ..nested_share_folder.removal_api import (
@@ -38,7 +39,7 @@ from ..nested_share_folder.removal_api import (
 from .. import api, utils, crypto, vault
 from ..params import KeeperParams
 from ..display import bcolors
-from ..proto import APIRequest_pb2, record_pb2, enterprise_pb2
+from ..proto import APIRequest_pb2, record_pb2, enterprise_pb2, folder_pb2
 from ..error import KeeperApiError
 from ..constants import get_abbrev_by_host
 from ..utils import json_to_base64
@@ -74,9 +75,41 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Revoke User Access to Application (Unshare Application):{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app unshare {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.OKGREEN} --email {bcolors.OKBLUE}[USERNAME]{bcolors.ENDC}
 
+  {bcolors.BOLD}List Application Users (KSM App Sharing v2):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-user list --app {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+
+  {bcolors.BOLD}Add Application User (KSM App Sharing v2):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-user add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--email {bcolors.OKBLUE}[USERNAME]{bcolors.ENDC}
+    Options:
+      --can-manage-users [on|off] : Allow user to manage other app users/teams
+      --can-manage-shares [on|off] : Allow user to manage record/folder shares to the app
+      --can-manage-devices [on|off] : Allow user to manage client devices
+
+  {bcolors.BOLD}Update Application User:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-user update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--email {bcolors.OKBLUE}[USERNAME]{bcolors.OKGREEN} --can-manage-shares {bcolors.OKBLUE}on{bcolors.ENDC}
+
+  {bcolors.BOLD}Remove Application User:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-user remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--email {bcolors.OKBLUE}[USERNAME]{bcolors.ENDC}
+
+  {bcolors.BOLD}List Application Teams (KSM App Sharing v2):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-team list --app {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+
+  {bcolors.BOLD}Add Application Team (KSM App Sharing v2):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-team add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--team {bcolors.OKBLUE}[TEAM NAME OR UID]{bcolors.ENDC}
+    Options:
+      --can-manage-users [on|off] : Allow team members to manage other app users/teams
+      --can-manage-shares [on|off] : Allow team members to manage record/folder shares to the app
+      --can-manage-devices [on|off] : Allow team members to manage client devices
+
+  {bcolors.BOLD}Update Application Team:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-team update --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--team {bcolors.OKBLUE}[TEAM NAME OR UID]{bcolors.OKGREEN} --can-manage-devices {bcolors.OKBLUE}on{bcolors.ENDC}
+
+  {bcolors.BOLD}Remove Application Team:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app-team remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--team {bcolors.OKBLUE}[TEAM NAME OR UID]{bcolors.ENDC}
+
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
-    Options: 
+    Options:
       --name [CLIENT NAME] : Name of the client (Default: Random 10 characters string)
       --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
@@ -89,6 +122,10 @@ Commands to configure and manage the Keeper Secrets Manager platform.
     Options:
       --force : Do not prompt for confirmation
       --client : Client name or ID. Provide `*` or `all` to delete all clients at once
+
+  {bcolors.BOLD}Lock / Unlock Client Device:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client lock --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client unlock --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
 
   {bcolors.BOLD}Revoke Client Device (search all applications):{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client revoke --client {bcolors.OKBLUE}[CLIENT ID]{bcolors.ENDC}
@@ -162,7 +199,9 @@ ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper
                                      add_help=False)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*",
                     help='One of: "app list", "app get", "app create", "app update", "app remove", "app share", ' +
-                             '"app unshare", "client add", "client remove", "share add", "share update", "share remove" or "token add"')
+                             '"app unshare", "app-user list/add/update/remove", "app-team list/add/update/remove", ' +
+                             '"client add", "client remove", "client lock/unlock", "share add", "share update", ' +
+                             '"share remove" or "token add"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                         help='Record, shared folder, or Nested Share Folder (NSF) UID or path')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
@@ -197,6 +236,14 @@ ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='s
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
 # Disable sharing apps w/ admin permissions for now
 # ksm_parser.add_argument('--admin', action='store_true', help='Allow share recipient to manage application')
+# Application user/team member options (app-user / app-team)
+ksm_parser.add_argument('--team', '-t', type=str, dest='team', action='store', help='Team name or UID')
+ksm_parser.add_argument('--can-manage-users', dest='can_manage_users', action='store', choices=['on', 'off'],
+                        help='Allow this app user/team to manage other app users/teams')
+ksm_parser.add_argument('--can-manage-shares', dest='can_manage_shares', action='store', choices=['on', 'off'],
+                        help='Allow this app user/team to manage record/folder shares to the app')
+ksm_parser.add_argument('--can-manage-devices', dest='can_manage_devices', action='store', choices=['on', 'off'],
+                        help='Allow this app user/team to manage client devices')
 ksm_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
                         help='Output format (table, json)')
 
@@ -424,6 +471,102 @@ class KSMCommand(Command):
                 return
 
             KSMCommand.share_app(params, app_name_or_uid, email, is_admin=is_admin, unshare=unshare)
+            return
+
+        if ksm_obj in ['app-user', 'app-users'] and ksm_action == 'list':
+            app_name_or_uid = kwargs.get('app')
+            if not app_name_or_uid:
+                print(
+                    f'''{bcolors.WARNING}Application is required.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app-user list --app {bcolors.OKBLUE}MyApp{bcolors.ENDC}'''
+                )
+                return
+            format_type = kwargs.get('format', 'table')
+            result = KSMCommand.list_app_users(params, app_name_or_uid, format_type)
+            if format_type == 'json' and result:
+                return result
+            return
+
+        if ksm_obj in ['app-user', 'app-users'] and ksm_action in ['add', 'update', 'remove', 'rem', 'rm']:
+            app_name_or_uid = kwargs.get('app')
+            email = kwargs.get('email')
+            if not app_name_or_uid or not email:
+                print(
+                    f'''{bcolors.WARNING}Application and email are required.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app-user {ksm_action} --app {bcolors.OKBLUE}MyApp'''
+                    f'''{bcolors.OKGREEN} --email {bcolors.OKBLUE}user@company.com{bcolors.ENDC}'''
+                )
+                return
+
+            if ksm_action in ['remove', 'rem', 'rm']:
+                KSMCommand.remove_app_user(params, app_name_or_uid, email)
+                return
+
+            can_manage_users = kwargs.get('can_manage_users') == 'on'
+            can_manage_shares = kwargs.get('can_manage_shares') == 'on'
+            can_manage_devices = kwargs.get('can_manage_devices') == 'on'
+
+            if ksm_action == 'add':
+                KSMCommand.add_app_user(params, app_name_or_uid, email, can_manage_users,
+                                        can_manage_shares, can_manage_devices)
+            else:
+                KSMCommand.update_app_user(params, app_name_or_uid, email, kwargs.get('can_manage_users'),
+                                           kwargs.get('can_manage_shares'), kwargs.get('can_manage_devices'))
+            return
+
+        if ksm_obj in ['app-team', 'app-teams'] and ksm_action == 'list':
+            app_name_or_uid = kwargs.get('app')
+            if not app_name_or_uid:
+                print(
+                    f'''{bcolors.WARNING}Application is required.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app-team list --app {bcolors.OKBLUE}MyApp{bcolors.ENDC}'''
+                )
+                return
+            format_type = kwargs.get('format', 'table')
+            result = KSMCommand.list_app_teams(params, app_name_or_uid, format_type)
+            if format_type == 'json' and result:
+                return result
+            return
+
+        if ksm_obj in ['app-team', 'app-teams'] and ksm_action in ['add', 'update', 'remove', 'rem', 'rm']:
+            app_name_or_uid = kwargs.get('app')
+            team_name_or_uid = kwargs.get('team')
+            if not app_name_or_uid or not team_name_or_uid:
+                print(
+                    f'''{bcolors.WARNING}Application and team are required.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app-team {ksm_action} --app {bcolors.OKBLUE}MyApp'''
+                    f'''{bcolors.OKGREEN} --team {bcolors.OKBLUE}MyTeam{bcolors.ENDC}'''
+                )
+                return
+
+            if ksm_action in ['remove', 'rem', 'rm']:
+                KSMCommand.remove_app_team(params, app_name_or_uid, team_name_or_uid)
+                return
+
+            can_manage_users = kwargs.get('can_manage_users') == 'on'
+            can_manage_shares = kwargs.get('can_manage_shares') == 'on'
+            can_manage_devices = kwargs.get('can_manage_devices') == 'on'
+
+            if ksm_action == 'add':
+                KSMCommand.add_app_team(params, app_name_or_uid, team_name_or_uid, can_manage_users,
+                                        can_manage_shares, can_manage_devices)
+            else:
+                KSMCommand.update_app_team(params, app_name_or_uid, team_name_or_uid, kwargs.get('can_manage_users'),
+                                           kwargs.get('can_manage_shares'), kwargs.get('can_manage_devices'))
+            return
+
+        if ksm_obj in ['client', 'c'] and ksm_action in ['lock', 'unlock']:
+            app_name_or_uid = kwargs.get('app')
+            client_names_or_ids = kwargs.get('client_names_or_ids')
+            if not app_name_or_uid or not client_names_or_ids:
+                print(
+                    f'''{bcolors.WARNING}Application and client are required.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager client {ksm_action} --app {bcolors.OKBLUE}MyApp'''
+                    f'''{bcolors.OKGREEN} --client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}'''
+                )
+                return
+
+            KSMCommand.set_app_client_locked(params, app_name_or_uid, client_names_or_ids, locked=ksm_action == 'lock')
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
@@ -1169,6 +1312,300 @@ class KSMCommand(Command):
         return rs.appInfo
 
     @staticmethod
+    def resolve_enterprise_user_id(params, email):
+        for user in (params.enterprise.get('users', []) if params.enterprise else []):
+            if user.get('username', '').lower() == email.lower():
+                return user.get('enterprise_user_id')
+        return None
+
+    @staticmethod
+    def resolve_team_uid(params, team_name_or_uid):
+        for team in (params.enterprise.get('teams', []) if params.enterprise else []):
+            if team.get('team_uid') == team_name_or_uid or team.get('name', '').lower() == team_name_or_uid.lower():
+                return team.get('team_uid')
+        return None
+
+    @staticmethod
+    def resolve_team_name(params, team_uid):
+        for team in (params.enterprise.get('teams', []) if params.enterprise else []):
+            if team.get('team_uid') == team_uid:
+                return team.get('name')
+        return team_uid
+
+    @staticmethod
+    def _yes_no(value):
+        return (bcolors.OKGREEN + 'Yes' + bcolors.ENDC) if value else (bcolors.WARNING + 'No' + bcolors.ENDC)
+
+    @staticmethod
+    def list_app_users(params, app_name_or_uid, format_type='table'):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        users = params.ksm_app_users.get(app_uid, {})
+
+        if format_type == 'json':
+            rows = [{
+                'email': email,
+                'can_manage_users': m['can_manage_users'],
+                'can_manage_shares': m['can_manage_shares'],
+                'can_manage_devices': m['can_manage_devices'],
+            } for email, m in sorted(users.items())]
+            return json.dumps({"app_users": rows})
+
+        print(f'\n{bcolors.BOLD}Application Users{bcolors.ENDC}\n')
+        if not users:
+            print(f'{bcolors.WARNING}No application users found for this app. '
+                  f'Run "sync-down" if a membership was recently added.{bcolors.ENDC}\n')
+            return
+
+        fields = ['Email', 'Can Manage Users', 'Can Manage Shares', 'Can Manage Devices']
+        table = [[email, KSMCommand._yes_no(m['can_manage_users']), KSMCommand._yes_no(m['can_manage_shares']),
+                  KSMCommand._yes_no(m['can_manage_devices'])] for email, m in sorted(users.items())]
+        dump_report_data(table, fields, fmt='table')
+        print('')
+
+    @staticmethod
+    def list_app_teams(params, app_name_or_uid, format_type='table'):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        teams = params.ksm_app_teams.get(app_uid, {})
+
+        if format_type == 'json':
+            rows = [{
+                'team_uid': team_uid,
+                'team_name': KSMCommand.resolve_team_name(params, team_uid),
+                'can_manage_users': m['can_manage_users'],
+                'can_manage_shares': m['can_manage_shares'],
+                'can_manage_devices': m['can_manage_devices'],
+            } for team_uid, m in sorted(teams.items())]
+            return json.dumps({"app_teams": rows})
+
+        print(f'\n{bcolors.BOLD}Application Teams{bcolors.ENDC}\n')
+        if not teams:
+            print(f'{bcolors.WARNING}No application teams found for this app. '
+                  f'Run "sync-down" if a membership was recently added.{bcolors.ENDC}\n')
+            return
+
+        fields = ['Team Name', 'Team UID', 'Can Manage Users', 'Can Manage Shares', 'Can Manage Devices']
+        table = [[KSMCommand.resolve_team_name(params, team_uid), team_uid, KSMCommand._yes_no(m['can_manage_users']),
+                  KSMCommand._yes_no(m['can_manage_shares']), KSMCommand._yes_no(m['can_manage_devices'])]
+                 for team_uid, m in sorted(teams.items())]
+        dump_report_data(table, fields, fmt='table')
+        print('')
+
+    @staticmethod
+    def add_app_user(params, app_name_or_uid, email, can_manage_users, can_manage_shares, can_manage_devices):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        user_id = KSMCommand.resolve_enterprise_user_id(params, email)
+        if user_id is None:
+            logging.warning('Enterprise user "%s" not found.' % email)
+            return
+
+        app_uid = app.get('record_uid')
+        master_key = app.get('record_key_unencrypted')
+
+        public_key, use_ecc, _, _ = get_user_public_key(params, email)
+        if not public_key:
+            logging.warning('Could not resolve a public key for user "%s".' % email)
+            return
+
+        if use_ecc:
+            encrypted_app_key = crypto.encrypt_ec(master_key, public_key)
+            record_key_type = folder_pb2.encrypted_by_public_key_ecc
+        else:
+            encrypted_app_key = crypto.encrypt_rsa(master_key, public_key)
+            record_key_type = folder_pb2.encrypted_by_public_key
+
+        entry = APIRequest_pb2.AppUserAddEntry()
+        entry.userId = user_id
+        entry.canManageUsers = can_manage_users
+        entry.canManageShares = can_manage_shares
+        entry.canManageDevices = can_manage_devices
+        entry.encryptedAppKey = encrypted_app_key
+        entry.recordKeyType = record_key_type
+
+        rq = APIRequest_pb2.AppUserAddRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.users.append(entry)
+        api.communicate_rest(params, rq, 'vault/app_user_add')
+        print(bcolors.OKGREEN + f'\nSuccessfully added user "{email}" to app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def update_app_user(params, app_name_or_uid, email, can_manage_users, can_manage_shares, can_manage_devices):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        user_id = KSMCommand.resolve_enterprise_user_id(params, email)
+        if user_id is None:
+            logging.warning('Enterprise user "%s" not found.' % email)
+            return
+
+        app_uid = app.get('record_uid')
+        current = params.ksm_app_users.get(app_uid, {}).get(email)
+        if current is None:
+            logging.warning('User "%s" is not currently a member of this application. '
+                            'Run "sync-down" if this app membership was recently added.' % email)
+            return
+
+        entry = APIRequest_pb2.AppUserUpdateEntry()
+        entry.userId = user_id
+        entry.canManageUsers = current['can_manage_users'] if can_manage_users is None else can_manage_users == 'on'
+        entry.canManageShares = current['can_manage_shares'] if can_manage_shares is None else can_manage_shares == 'on'
+        entry.canManageDevices = current['can_manage_devices'] if can_manage_devices is None else can_manage_devices == 'on'
+
+        rq = APIRequest_pb2.AppUserUpdateRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.users.append(entry)
+        api.communicate_rest(params, rq, 'vault/app_user_update')
+        print(bcolors.OKGREEN + f'\nSuccessfully updated user "{email}" on app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def remove_app_user(params, app_name_or_uid, email):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        user_id = KSMCommand.resolve_enterprise_user_id(params, email)
+        if user_id is None:
+            logging.warning('Enterprise user "%s" not found.' % email)
+            return
+
+        app_uid = app.get('record_uid')
+        rq = APIRequest_pb2.AppUserRemoveRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.userIds.append(user_id)
+        api.communicate_rest(params, rq, 'vault/app_user_remove')
+        print(bcolors.OKGREEN + f'\nSuccessfully removed user "{email}" from app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def add_app_team(params, app_name_or_uid, team_name_or_uid, can_manage_users, can_manage_shares, can_manage_devices):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        team_uid = KSMCommand.resolve_team_uid(params, team_name_or_uid)
+        if team_uid is None:
+            logging.warning('Team "%s" not found.' % team_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        master_key = app.get('record_key_unencrypted')
+
+        team_keys = get_team_keys(params, team_uid)
+        encrypted_app_key, record_key_type = encrypt_for_team(master_key, team_keys)
+
+        entry = APIRequest_pb2.AppTeamAddEntry()
+        entry.teamUid = utils.base64_url_decode(team_uid)
+        entry.canManageUsers = can_manage_users
+        entry.canManageShares = can_manage_shares
+        entry.canManageDevices = can_manage_devices
+        entry.encryptedAppKey = encrypted_app_key
+        entry.recordKeyType = record_key_type
+
+        rq = APIRequest_pb2.AppTeamAddRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.teams.append(entry)
+        api.communicate_rest(params, rq, 'vault/app_team_add')
+        print(bcolors.OKGREEN + f'\nSuccessfully added team "{team_name_or_uid}" to app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def update_app_team(params, app_name_or_uid, team_name_or_uid, can_manage_users, can_manage_shares, can_manage_devices):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        team_uid = KSMCommand.resolve_team_uid(params, team_name_or_uid)
+        if team_uid is None:
+            logging.warning('Team "%s" not found.' % team_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        current = params.ksm_app_teams.get(app_uid, {}).get(team_uid)
+        if current is None:
+            logging.warning('Team "%s" is not currently a member of this application. '
+                            'Run "sync-down" if this app membership was recently added.' % team_name_or_uid)
+            return
+
+        entry = APIRequest_pb2.AppTeamUpdateEntry()
+        entry.teamUid = utils.base64_url_decode(team_uid)
+        entry.canManageUsers = current['can_manage_users'] if can_manage_users is None else can_manage_users == 'on'
+        entry.canManageShares = current['can_manage_shares'] if can_manage_shares is None else can_manage_shares == 'on'
+        entry.canManageDevices = current['can_manage_devices'] if can_manage_devices is None else can_manage_devices == 'on'
+
+        rq = APIRequest_pb2.AppTeamUpdateRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.teams.append(entry)
+        api.communicate_rest(params, rq, 'vault/app_team_update')
+        print(bcolors.OKGREEN + f'\nSuccessfully updated team "{team_name_or_uid}" on app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def remove_app_team(params, app_name_or_uid, team_name_or_uid):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        team_uid = KSMCommand.resolve_team_uid(params, team_name_or_uid)
+        if team_uid is None:
+            logging.warning('Team "%s" not found.' % team_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        rq = APIRequest_pb2.AppTeamRemoveRequest()
+        rq.appRecordUid = utils.base64_url_decode(app_uid)
+        rq.teamUids.append(utils.base64_url_decode(team_uid))
+        api.communicate_rest(params, rq, 'vault/app_team_remove')
+        print(bcolors.OKGREEN + f'\nSuccessfully removed team "{team_name_or_uid}" from app uid={app_uid}\n' + bcolors.ENDC)
+
+    @staticmethod
+    def set_app_client_locked(params, app_name_or_uid, client_names_or_ids, locked):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        app_uid = app.get('record_uid')
+        app_info = KSMCommand.get_app_info(params, app_uid)
+
+        client_ids = []
+        for ai in app_info:
+            for c in ai.clients:
+                client_id = utils.base64_url_encode(c.clientId)
+                for cnah in client_names_or_ids:
+                    if c.id == cnah or (len(cnah) >= KSMCommand.CLIENT_SHORT_ID_LENGTH and client_id.startswith(cnah)):
+                        client_ids.append(c.clientId)
+
+        if not client_ids:
+            print(bcolors.WARNING + "No Client Devices found with given name or ID\n" + bcolors.ENDC)
+            return
+
+        for client_id in client_ids:
+            rq = APIRequest_pb2.SetAppClientLockedRequest()
+            rq.appRecordUid = utils.base64_url_decode(app_uid)
+            rq.clientId = client_id
+            rq.locked = locked
+            api.communicate_rest(params, rq, 'vault/app_client_set_locked')
+
+        action_str = 'locked' if locked else 'unlocked'
+        print(bcolors.OKGREEN + f'\nSuccessfully {action_str} {len(client_ids)} client(s)\n' + bcolors.ENDC)
+
+    @staticmethod
     def get_sm_app_record_by_uid(params, uid):
         rec = params.record_cache.get(uid)
 
@@ -1278,7 +1715,8 @@ class KSMCommand(Command):
                             "first_access": first_access_ts,
                             "last_access": last_access_ts,
                             "ip_lock_enabled": c.lockIp,
-                            "ip_address": c.ipAddress if c.ipAddress else None
+                            "ip_address": c.ipAddress if c.ipAddress else None,
+                            "locked": c.locked
                         }
                         app_data["client_devices"].append(client_device_data)
                         
@@ -1287,7 +1725,8 @@ class KSMCommand(Command):
                             first_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.firstAccess == 0 else f'{bcolors.OKGREEN}{first_access_ts}{bcolors.ENDC}'
                             last_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.lastAccess == 0 else f'{bcolors.OKGREEN}{last_access_ts}{bcolors.ENDC}'
                             lock_ip = f'{bcolors.OKGREEN}Enabled{bcolors.ENDC}' if c.lockIp else f'{bcolors.WARNING}Disabled{bcolors.ENDC}'
-                            
+                            locked_status = f'{bcolors.FAIL}Locked{bcolors.ENDC}' if c.locked else f'{bcolors.OKGREEN}Unlocked{bcolors.ENDC}'
+
                             if expire_status == "never":
                                 expire_access = f'{bcolors.OKGREEN}Never{bcolors.ENDC}'
                             elif expire_status == "expired":
@@ -1304,7 +1743,8 @@ class KSMCommand(Command):
                                                 f'  First Access: {first_access}\n' \
                                                 f'  Last Access: {last_access}\n' \
                                                 f'  IP Lock: {lock_ip}\n' \
-                                                f'  IP Address: {client_device_data["ip_address"] or "--"}'
+                                                f'  IP Address: {client_device_data["ip_address"] or "--"}\n' \
+                                                f'  Status: {locked_status}'
 
                             print(client_devices_str)
                         client_count += 1
