@@ -22,6 +22,12 @@ _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
     ("mssql",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
     ("sqlserver",  {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
     ("mongo",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "mongodb",         "port": "27017", "database_type": "mongodb"}),
+    # Cloud consoles (RBI)
+    ("aws",        {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "aws"}),
+    ("amazon",     {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "aws"}),
+    ("azure",      {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "azure"}),
+    ("gcp",        {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"}),
+    ("googlecloud", {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"}),
     # Windows (RDP)
     ("windomain",  {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),
     ("windows",    {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),

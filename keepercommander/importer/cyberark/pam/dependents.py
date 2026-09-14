@@ -120,11 +120,28 @@ def resolve_account_dependents(client: 'CyberArkPVWAClient',
             dep,
             ("Address", "address", "Host", "host", "MachineAddress",
              "machineAddress", "TargetAddress", "targetAddress",
-             "ComputerName", "computerName"),
+             "ComputerName", "computerName", "LogonDevice", "logonDevice",
+             "Logon Device", "logon device", "Device", "device",
+             "Server", "server"),
         ) or _first_nonempty(
             props,
             ("address", "Address", "host", "Host", "machineAddress",
-             "MachineAddress"),
+             "MachineAddress", "LogonDevice", "logonDevice", "Logon Device",
+             "logon device", "Device", "device", "Server", "server"),
+        ))
+        machine_refs = _nonempty_values(
+            dep,
+            ("Address", "address", "Host", "host", "MachineAddress",
+             "machineAddress", "TargetAddress", "targetAddress",
+             "ComputerName", "computerName", "LogonDevice", "logonDevice",
+             "Logon Device", "logon device", "Device", "device",
+             "Server", "server"),
+        )
+        machine_refs.extend(_nonempty_values(
+            props,
+            ("address", "Address", "host", "Host", "machineAddress",
+             "MachineAddress", "LogonDevice", "logonDevice", "Logon Device",
+             "logon device", "Device", "device", "Server", "server"),
         ))
         # ``platformId`` (Privilege Cloud) is the most reliable type signal —
         # it returns concise category codes like ``WinService`` / ``SchedTask``
@@ -152,6 +169,7 @@ def resolve_account_dependents(client: 'CyberArkPVWAClient',
             continue
         results.append({
             "machine_address": address,
+            "machine_refs": _dedupe(machine_refs),
             "service_type": _normalize_dependent_type(raw_type),
             "raw_type": raw_type,
             "service_name": name,
@@ -198,3 +216,29 @@ def _first_nonempty(source: dict, keys: tuple) -> str:
         if text:
             return text
     return ""
+
+
+def _nonempty_values(source: dict, keys: tuple) -> List[str]:
+    values: List[str] = []
+    if not isinstance(source, dict):
+        return values
+    for key in keys:
+        val = source.get(key)
+        if val is None:
+            continue
+        text = str(val).strip()
+        if text:
+            values.append(text)
+    return values
+
+
+def _dedupe(values: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for value in values:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out

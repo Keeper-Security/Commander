@@ -982,6 +982,49 @@ class DagAiSettingsObject():
         }
 
 
+def load_custom_text_fields(data) -> list:
+    """Load import JSON custom text fields for record-add field syntax."""
+    if not isinstance(data, list):
+        return []
+    fields = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        field_type = str(item.get("type") or "text")
+        label = str(item.get("label") or "").strip()
+        raw_value = item.get("value")
+        if isinstance(raw_value, list):
+            value = raw_value[0] if raw_value else ""
+        else:
+            value = raw_value
+        if value in (None, ""):
+            continue
+        fields.append({
+            "type": field_type,
+            "label": label,
+            "value": str(value),
+        })
+    return fields
+
+
+def append_custom_text_fields(fields: list, custom_fields: list) -> None:
+    """Append loaded custom fields using record-add's labelled custom syntax."""
+    if not isinstance(custom_fields, list):
+        return
+    for field in custom_fields:
+        if not isinstance(field, dict):
+            continue
+        field_type = str(field.get("type") or "text")
+        label = str(field.get("label") or "").strip()
+        value = str(field.get("value") or "")
+        if not label or not value:
+            continue
+        safe_label = label.replace("=", "==")
+        if value.startswith("="):
+            value = f" {value}"
+        fields.append(f"c.{field_type}.{safe_label}={value}")
+
+
 class PamUserObject():
     def __init__(self):
         self.folder_path = None  # pam extend only
@@ -997,6 +1040,7 @@ class PamUserObject():
         self.connectDatabase = None
         self.managed = None
         self.oneTimeCode = None
+        self.custom = None
         self.attachments = None  # fileRef
         self.scripts = None  # script
         self.rotation_settings = None  # DAG: rotation settings
@@ -1024,6 +1068,7 @@ class PamUserObject():
         obj.connectDatabase = str(data["connect_database"]) if "connect_database" in data else None
         obj.managed = utils.value_to_boolean(data["managed"]) if "managed" in data else None
         obj.oneTimeCode = str(data["otp"]) if "otp" in data else None
+        obj.custom = load_custom_text_fields(data.get("custom"))
 
         obj.attachments = PamAttachmentsObject.load(data.get("attachments", None))
         obj.scripts = PamScriptsObject.load(data.get("scripts", None))
@@ -1062,6 +1107,7 @@ class PamUserObject():
         if managed is not None: fields.append(f"f.checkbox.managed={str(managed).lower()}")
 
         if self.oneTimeCode: fields.append(f"f.oneTimeCode={self.oneTimeCode}")
+        append_custom_text_fields(fields, self.custom)
 
         files = self.attachments.attachments if self.attachments and isinstance(self.attachments, PamAttachmentsObject) else []
         if files and isinstance(files, list):

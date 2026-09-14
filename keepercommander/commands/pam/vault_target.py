@@ -325,6 +325,14 @@ def resolve_pam_record(params, identifier, rec_type=None):
     if not identifier:
         return None
 
+    try:
+        from ..pam_import.record_loader import load_pam_record
+        rec = load_pam_record(params, identifier)
+        if rec and _record_matches_type(rec, rec_type):
+            return rec
+    except Exception:
+        pass
+
     if identifier in getattr(params, 'record_cache', {}):
         rec = vault.KeeperRecord.load(params, identifier)
         if rec and _record_matches_type(rec, rec_type):

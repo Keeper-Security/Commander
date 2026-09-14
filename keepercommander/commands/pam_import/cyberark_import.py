@@ -64,6 +64,7 @@ from ...importer.cyberark.cyberark_pam import (
     RECORD_TYPE_PAM_MACHINE,
     RECORD_TYPE_PAM_DATABASE,
     RECORD_TYPE_PAM_DIRECTORY,
+    RECORD_TYPE_PAM_REMOTE_BROWSER,
     SCHEDULE_ON_DEMAND,
     ROTATION_UNMAPPED,
 )
@@ -72,7 +73,6 @@ from ...importer.cyberark.pam.idempotency import (
     IdempotencyDecision,
     PartitionSummary,
     RecordDecision,
-    annotate_record_with_marker,
     build_existing_index,
     partition_records,
     strip_id_marker,
@@ -612,31 +612,11 @@ class CyberArkImportOrchestrator:
                 "reason": f"unmappable platformId: {platform_id}",
             })
             return
-        # Embed the CyberArk identity marker on every mapped record so
-        # future re-imports can match incoming accounts to already-created
-        # Keeper records (see importer/cyberark/pam/idempotency.py). The
-        # marker is a single line in ``notes`` — cheap to carry and
-        # survives the pam project import path unchanged (unlike ``custom``
-        # fields, which PamBaseMachineParser does not preserve).
-        account_id = str(account.get("id", "") or "").strip()
-        if account_id:
-            annotate_record_with_marker(record, account_id, safe_name)
-            for nested in record.get("users") or []:
-                if not isinstance(nested, dict):
-                    continue
-                # Nested pamUsers share the parent account's CyberArk id
-                # because CyberArk models the credential+resource as a
-                # single account.  The marker is idempotent so re-runs
-                # can update the pamUser independently from its parent.
-                annotate_record_with_marker(nested, account_id, safe_name)
         self._apply_folder_paths(record, safe_name, folder_mapper)
         if password_failed:
             reason = "password retrieval failed"
             is_incomplete = True
         if is_incomplete:
-            note = f"INCOMPLETE: {reason}"
-            existing = (record.get("notes") or "").strip()
-            record["notes"] = f"{existing}\n{note}".strip() if existing else note
             incomplete.append(record)
         dual_fields = detect_dual_account(account)
         if dual_fields:
@@ -656,6 +636,10 @@ class CyberArkImportOrchestrator:
         if record.get("type") == RECORD_TYPE_LOGIN:
             pam_users.append(record)
         else:
+            if record.get("type") == RECORD_TYPE_PAM_REMOTE_BROWSER:
+                for user in record.pop("users", []) or []:
+                    if isinstance(user, dict):
+                        pam_users.append(user)
             if opts.skip_users:
                 record.pop("users", None)
             pam_resources.append(record)
@@ -711,6 +695,9 @@ class CyberArkImportOrchestrator:
             if not isinstance(dep, dict):
                 continue
             dep["machine_title"] = machine_title
+            refs = dep.setdefault("machine_refs", [])
+            if isinstance(refs, list) and machine_title:
+                refs.append(machine_title)
             if dep.get("service_type") is None:
                 unmapped_items.append({
                     "category": "CyberArk dependent",
@@ -1110,6 +1097,8 @@ class CyberArkImportOrchestrator:
             return
         if opts.config_uid:
             return
+        if opts.use_nsf:
+            return
         if opts.dry_run or opts.output_file or opts.list_safes or opts.estimate_only:
             return
         # sync_down here so folder_cache / record_cache reflect any
@@ -1148,6 +1137,8 @@ class CyberArkImportOrchestrator:
         """
         opts = self.options
         if (opts.sync_mode or "").lower() == "create":
+            return None
+        if opts.use_nsf and not opts.config_uid:
             return None
         if opts.dry_run or opts.output_file:
             # Both paths skip the vault write; there's nothing to
@@ -1622,9 +1613,7 @@ class CyberArkImportOrchestrator:
                 })
                 continue
 
-            machine_record = self._find_machine_record(
-                dep.get("machine_address", ""), machine_index,
-            )
+            machine_record = self._find_dependent_machine_record(dep, machine_index)
             if machine_record is None:
                 summary["skipped_missing_machine"] += 1
                 summary["details"].append({
@@ -1707,6 +1696,29 @@ class CyberArkImportOrchestrator:
 
         return summary
 
+    @classmethod
+    def _find_dependent_machine_record(cls, dep: dict, machine_index: dict[str, Any]) -> Any:
+        refs = []
+        if isinstance(dep, dict):
+            raw_refs = dep.get("machine_refs")
+            if isinstance(raw_refs, list):
+                refs.extend(raw_refs)
+            refs.extend([
+                dep.get("machine_address", ""),
+                dep.get("machine_title", ""),
+            ])
+        seen = set()
+        for ref in refs:
+            ref = str(ref or "").strip()
+            key = ref.casefold()
+            if not ref or key in seen:
+                continue
+            seen.add(key)
+            machine_record = cls._find_machine_record(ref, machine_index)
+            if machine_record is not None:
+                return machine_record
+        return None
+
     def _build_record_indexes(self, mapped: MappedImportResult, vault, vault_extensions
                               ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build ``(machine, user)`` record lookups from freshly imported vault data.
@@ -1729,16 +1741,18 @@ class CyberArkImportOrchestrator:
                 t = (u.get("title") or "").casefold()
                 if t:
                     imported_user_titles.add(t)
-        for rec in vault_extensions.find_records(self.params, record_version=3):
+        from .record_loader import iter_accessible_record_uids, load_pam_record
+
+        for record_uid in iter_accessible_record_uids(self.params):
+            rec = load_pam_record(self.params, record_uid)
+            if rec is None:
+                continue
             rtype = getattr(rec, "record_type", "") or ""
             title = (getattr(rec, "title", "") or "").casefold()
             if rtype == RECORD_TYPE_PAM_MACHINE and title in imported_machine_titles:
-                loaded = vault.KeeperRecord.load(self.params, rec.record_uid)
-                if loaded is None:
-                    continue
-                machine_index[title] = loaded
+                machine_index[title] = rec
                 host_field = next(
-                    (f for f in loaded.fields
+                    (f for f in getattr(rec, "fields", []) or []
                      if (getattr(f, "type", "") or "") == "pamHostname"
                      or (getattr(f, "label", "") or "").lower() == "host"),
                     None,
@@ -1751,11 +1765,9 @@ class CyberArkImportOrchestrator:
                     elif isinstance(raw, str):
                         host_str = raw
                     if host_str:
-                        machine_index[host_str.casefold()] = loaded
+                        machine_index[host_str.casefold()] = rec
             elif rtype == "pamUser" and title in imported_user_titles:
-                loaded = vault.KeeperRecord.load(self.params, rec.record_uid)
-                if loaded is not None:
-                    user_index[title] = loaded
+                user_index[title] = rec
         return machine_index, user_index
 
     @staticmethod
@@ -2157,7 +2169,7 @@ Examples:
         if total_records <= batch_size:
             # Single batch — use import or extend directly
             return self._single_batch_import(
-                params, import_data, project_name, config_uid, use_nsf=use_nsf
+                params, import_data, project_name, config_uid, use_nsf=use_nsf,
             )
         else:
             # Multi-batch: first batch creates project, remaining extend
@@ -2182,7 +2194,7 @@ Examples:
                         "--nsf is ignored when extending an existing project "
                         "(--config); Nested Share Folders are detected automatically.")
                 PAMProjectExtendCommand().execute(
-                    params, config=config_uid, file_name=tmp_path, dry_run=False
+                    params, config=config_uid, file_name=tmp_path, dry_run=False,
                 )
             else:
                 PAMProjectImportCommand().execute(
@@ -2244,7 +2256,7 @@ Examples:
                 try:
                     if config_uid:
                         PAMProjectExtendCommand().execute(
-                            params, config=config_uid, file_name=tmp_path, dry_run=False
+                            params, config=config_uid, file_name=tmp_path, dry_run=False,
                         )
                     else:
                         logging.error("Cannot extend: PAM configuration UID not found after initial import")

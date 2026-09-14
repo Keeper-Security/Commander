@@ -77,6 +77,7 @@ RECORD_TYPE_LOGIN = "login"
 RECORD_TYPE_PAM_MACHINE = "pamMachine"
 RECORD_TYPE_PAM_DATABASE = "pamDatabase"
 RECORD_TYPE_PAM_DIRECTORY = "pamDirectory"
+RECORD_TYPE_PAM_REMOTE_BROWSER = "pamRemoteBrowser"
 
 # Rotation schedule type emitted in import JSON / PAM settings
 SCHEDULE_ON_DEMAND = "on-demand"
@@ -127,6 +128,20 @@ DEFAULT_PLATFORM_MAP = {
     "CheckPointGAIA":      {"record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh",    "port": "22"},
     # CyberArk internal — service accounts, import as pamMachine/SSH
     "CyberArk":            {"record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh",    "port": "22"},
+    # Cloud consoles: create an RBI resource plus a companion pamUser.
+    "AWS":                 {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AWSAccessKeys":       {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AWSAccessKey":        {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AmazonWebServices":   {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "Azure":               {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "AzureAccessKeys":     {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "AzureAccessKey":      {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "MicrosoftAzure":      {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "GCP":                 {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GCPAccessKeys":       {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GCPServiceAccount":   {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GoogleCloud":         {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GoogleCloudPlatform": {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
     # Web — login record, NOT pamMachine
     "BusinessWebsite": {"record_type": RECORD_TYPE_LOGIN, "rotation": None, "protocol": None, "port": None},
 }
