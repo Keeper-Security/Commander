@@ -1,4 +1,4 @@
-#  _  __
+﻿#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -7,6 +7,7 @@
 # Keeper Commander — CyberArk PAM import (split module)
 
 import copy
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,11 +16,14 @@ from .client import CyberArkPVWAClient
 from .constants import (
     DEFAULT_PLATFORM_MAP,
     FALLBACK_PLATFORM_MAP,
+    MAX_ACCOUNT_METADATA_FIELDS,
+    MAX_ACCOUNT_METADATA_VALUE_LEN,
     MAX_PLATFORM_METADATA_FIELDS,
     MAX_PLATFORM_METADATA_VALUE_LEN,
     RECORD_TYPE_LOGIN,
     RECORD_TYPE_PAM_DATABASE,
     RECORD_TYPE_PAM_MACHINE,
+    RECORD_TYPE_PAM_REMOTE_BROWSER,
     SCHEDULE_ON_DEMAND,
 )
 from .master_policy_mapper import MasterPolicyMapper
@@ -112,18 +116,18 @@ class AccountMapper:
         self._client = client
         self._details_cache: Dict[str, Optional[dict]] = {}
         # Cache of per-platform rotation policies translated to Keeper
-        # ``schedule`` dicts. Maps platformId → resolved schedule (or
+        # ``schedule`` dicts. Maps platformId -> resolved schedule (or
         # ``None`` once we've decided the platform inherits the master
         # policy default). One CyberArk API call per unique platformId.
         self._platform_schedule_cache: Dict[str, Optional[dict]] = {}
-        # Diagnostic counter — how many accounts received a platform-level
+        # Diagnostic counter - how many accounts received a platform-level
         # schedule vs. inherited the master default. Surfaced in the
         # cyberark_import.py orchestrator output so operators can verify
         # the override was applied.
         self.platform_schedule_overrides: Dict[str, int] = {}
-        # Per-platform session-recording overrides. Maps platformId →
+        # Per-platform session-recording overrides. Maps platformId ->
         # ("on"|"off"|None) for graphical session recording. ``None``
-        # means we couldn't determine the policy — caller falls back to
+        # means we couldn't determine the policy - caller falls back to
         # whatever the master policy / Keeper default dictates. Only one
         # API call per unique platformId thanks to caching.
         self._platform_session_cache: Dict[str, Optional[Tuple[str, str]]] = {}
@@ -141,7 +145,7 @@ class AccountMapper:
         # on every Keeper PAM resource record from the same platform so
         # the source-system context is preserved post-migration.
         self._platform_metadata_cache: Dict[str, List[dict]] = {}
-        # Per-platform CyberArk passwordGenRules → Keeper
+        # Per-platform CyberArk passwordGenRules -> Keeper
         # ``rotation_settings.password_complexity`` translation cache.
         # Populated lazily on first hit of each platformId.
         self._platform_complexity_cache: Dict[str, Optional[str]] = {}
@@ -160,6 +164,164 @@ class AccountMapper:
         "rotateAutomatically", "performPeriodicChange",
         "PerformPeriodicChange", "rotatePasswordsAutomatically",
     )
+
+    # These values are already represented by canonical login fields.
+    _LOGIN_METADATA_TOP_LEVEL_EXCLUSIONS = frozenset({
+        "id", "name", "platformid", "address", "username", "safename",
+        "platformaccountproperties",
+    })
+    _LOGIN_METADATA_PROPERTY_EXCLUSIONS = frozenset({
+        "url", "itemname", "logondomain",
+        "consoleurl", "portalurl", "loginurl",
+    })
+    # Retrieved credentials belong only in the Keeper password field. These
+    # exact key names guard against an API variant embedding secret material
+    # in the account payload while allowing safe metadata such as secretType
+    # and secretManagement to be retained.
+    _LOGIN_METADATA_SECRET_KEYS = frozenset({
+        "password", "secret", "content", "credential", "credentials",
+        "privatekey", "privatepemkey", "sshkey",
+    })
+    _CLOUD_RBI_DEFAULTS = {
+        "aws": {
+            "url": "https://signin.aws.amazon.com/console",
+            "page": "*.signin.aws.amazon.com",
+            "username": "#username",
+            "password": "#password",
+            "submit": "#signin_button",
+        },
+        "azure": {
+            "url": "https://portal.azure.com/",
+            "page": "*.login.microsoftonline.com",
+            "username": "input[type=email], input[name=loginfmt]",
+            "password": "input[type=password], input[name=passwd]",
+            "submit": "input[type=submit], button[type=submit]",
+        },
+        "gcp": {
+            "url": "https://console.cloud.google.com/",
+            "page": "accounts.google.com",
+            "username": "input[type=email], input[name=identifier]",
+            "password": "input[type=password], input[name=password]",
+            "submit": "button[type=submit]",
+        },
+    }
+
+    @classmethod
+    def _cloud_rbi_defaults(cls, cloud: str) -> dict:
+        return dict(cls._CLOUD_RBI_DEFAULTS.get((cloud or "").lower(), {}))
+
+    @classmethod
+    def _build_cloud_autofill_targets(cls, cloud: str, url: str) -> str:
+        defaults = cls._cloud_rbi_defaults(cloud)
+        page = defaults.get("page") or url or "*"
+        step = {"page": page}
+        if defaults.get("username"):
+            step["username-field"] = defaults["username"]
+        if defaults.get("password"):
+            step["password-field"] = defaults["password"]
+        if defaults.get("submit"):
+            step["submit"] = defaults["submit"]
+        return json.dumps([step])
+
+    @staticmethod
+    def _first_prop(props: dict, *names: str) -> str:
+        if not isinstance(props, dict):
+            return ""
+        lowered = {str(k).casefold(): k for k in props.keys()}
+        for name in names:
+            key = lowered.get(str(name).casefold())
+            if key and props.get(key) not in (None, ""):
+                return str(props[key]).strip()
+        return ""
+
+    @classmethod
+    def _metadata_label_to_text(cls, label: str) -> str:
+        parts = []
+        for part in str(label).replace("_", " ").split("."):
+            part = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", part)
+            part = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", part)
+            parts.append(" ".join(part.split()))
+        return ".".join(parts)
+
+    @staticmethod
+    def _metadata_value_to_text(value) -> str:
+        if isinstance(value, str):
+            return value
+        return json.dumps(
+            value, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def _build_account_metadata_custom_fields(cls, account: dict) -> List[dict]:
+        """Flatten CyberArk metadata in the classic importer custom-field style."""
+        out: List[dict] = []
+        if not isinstance(account, dict):
+            return out
+
+        properties = account.get("platformAccountProperties")
+        properties = dict(properties) if isinstance(properties, dict) else {}
+        for key in ("platformName", "platformId"):
+            value = account.get(key)
+            if value not in (None, ""):
+                properties.setdefault("Platform Name", value)
+                break
+        for key in ("deviceType", "device type"):
+            value = account.get(key)
+            if value not in (None, ""):
+                properties.setdefault("Device Type", value)
+                break
+
+        existing_labels = set()
+
+        def _add(path: str, value) -> None:
+            if len(out) >= MAX_ACCOUNT_METADATA_FIELDS or value in (None, "", [], {}):
+                return
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    child_name = str(child_key)
+                    if child_name.casefold() in cls._LOGIN_METADATA_SECRET_KEYS:
+                        continue
+                    _add(f"{path}.{child_name}", child_value)
+                return
+            if isinstance(value, (list, tuple)):
+                text = cls._metadata_value_to_text(list(value))
+            elif isinstance(value, bool):
+                text = "true" if value else "false"
+            else:
+                text = cls._metadata_value_to_text(value)
+            text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+            if len(text) > MAX_ACCOUNT_METADATA_VALUE_LEN:
+                text = text[:MAX_ACCOUNT_METADATA_VALUE_LEN]
+            label = cls._metadata_label_to_text(path)
+            label_key = label.casefold()
+            if not label or label_key in existing_labels:
+                return
+            out.append({
+                "type": "text",
+                "label": label[:120],
+                "value": [text],
+            })
+            existing_labels.add(label_key)
+
+        for key, value in properties.items():
+            key_name = str(key)
+            folded = key_name.casefold()
+            if (folded in cls._LOGIN_METADATA_PROPERTY_EXCLUSIONS
+                    or folded in cls._LOGIN_METADATA_SECRET_KEYS):
+                continue
+            _add(key_name, value)
+        return out
+
+    @classmethod
+    def _build_unmapped_login_custom_fields(cls, account: dict) -> List[dict]:
+        return cls._build_account_metadata_custom_fields(account)
+
+    def _add_source_metadata_to_user(self, user_record: dict, account: dict, platform_id: str) -> None:
+        """Copy CyberArk source metadata onto the generated pamUser record."""
+        account_metadata_fields = self._build_account_metadata_custom_fields(account)
+        if account_metadata_fields:
+            user_record.setdefault("custom", []).extend(account_metadata_fields)
 
     @staticmethod
     def _flatten_rotation_policy(data: dict) -> Dict[str, Any]:
@@ -212,10 +374,10 @@ class AccountMapper:
 
     @staticmethod
     def _schedule_from_change_block(change: dict) -> Optional[dict]:
-        """Translate ISPSS ``change`` group → Keeper ``schedule`` dict.
+        """Translate ISPSS ``change`` group -> Keeper ``schedule`` dict.
 
         Mirrors how the Master Policy itself is converted
-        (``MasterPolicyMapper.days_to_cron``) — the interval value alone
+        (``MasterPolicyMapper.days_to_cron``) - the interval value alone
         drives the cadence. CyberArk's ``allowedPeriodic`` /
         ``performPeriodicChange`` bookkeeping flag is informational (it
         reflects whether *CyberArk's* CPM auto-triggers the change) and is
@@ -247,29 +409,29 @@ class AccountMapper:
         Calls ``/api/platforms/{platformId}/rotation-policy/`` once per
         platform and translates the response into a Quartz CRON via
         ``MasterPolicyMapper.days_to_cron``. Returns ``None`` when the
-        platform has no custom policy — callers fall back to the master
+        platform has no custom policy - callers fall back to the master
         policy default schedule.
 
         Honors CyberArk's cascade:
 
-          1. **Per-platform with override** — a recognized exception flag
+          1. **Per-platform with override** - a recognized exception flag
              (``overridesMasterPolicy``, ``isException``, etc.) is true, OR
              no flag is present but the interval differs from the Master
-             Policy's own interval → use ``change.interval`` verbatim,
+             Policy's own interval -> use ``change.interval`` verbatim,
              converted to CRON exactly like the Master Policy default is
-             (``allowedPeriodic`` does NOT force on-demand — see
+             (``allowedPeriodic`` does NOT force on-demand - see
              ``_schedule_from_change_block``).
-          2. **Master-policy exception** — platform listed in
+          2. **Master-policy exception** - platform listed in
              ``/api/platforms/master-rotation-policy/exceptions/`` with a
              custom change interval (common for Win Local Admins and other
              platforms that inherit master but have a Master Policy
-             exception) — used when the per-platform flag says "no
+             exception) - used when the per-platform flag says "no
              override" but this separate bulk endpoint disagrees.
-          3. **Per-platform without override** —
+          3. **Per-platform without override** -
              no exception detected by (1) or (2): inherit the master
-             policy's own schedule (``None`` → caller applies
+             policy's own schedule (``None`` -> caller applies
              ``default_rotation_schedule``).
-          4. **Legacy flat shapes** — older PVWA responses with
+          4. **Legacy flat shapes** - older PVWA responses with
              ``rotateEveryXDays`` / ``passwordChangeDays`` at top level.
         """
         if not platform_id or not self._client:
@@ -280,7 +442,7 @@ class AccountMapper:
         raw = self._client.fetch_platform_rotation_policy(platform_id)
         if not raw:
             msg = (
-                f"Platform '{platform_id}' rotation-policy not accessible — "
+                f"Platform '{platform_id}' rotation-policy not accessible - "
                 "inheriting master policy default."
             )
             if self.strict_policies:
@@ -290,7 +452,7 @@ class AccountMapper:
             self._platform_schedule_cache[platform_id] = None
             return None
 
-        # ── New ISPSS shape ────────────────────────────────────
+        # -- New ISPSS shape ------------------------------------
         change = raw.get("change") if isinstance(raw.get("change"), dict) else None
         if change is not None:
             try:
@@ -302,7 +464,7 @@ class AccountMapper:
             # platform's own interval differs from the Master Policy's
             # configured interval, CyberArk is evidently applying a
             # platform-specific value regardless of what this tenant calls
-            # the flag — honor the number it actually returned.
+            # the flag - honor the number it actually returned.
             interval_mismatch = (
                 overrides is None
                 and self._master_change_days > 0
@@ -338,7 +500,7 @@ class AccountMapper:
                         platform_id, schedule,
                     )
                     return schedule
-                # No override, no separate master exception on record —
+                # No override, no separate master exception on record -
                 # this platform's cadence matches the Master Policy default.
                 # Inherit it (the caller applies ``default_rotation_schedule``,
                 # itself a CRON built from the same master interval), rather
@@ -351,7 +513,7 @@ class AccountMapper:
                 self._platform_schedule_cache[platform_id] = None
                 return None
 
-            # overrides is None — this tenant's rotation-policy response
+            # overrides is None - this tenant's rotation-policy response
             # doesn't carry any recognized exception flag at all. When we
             # know the Master Policy's own interval, use it as the source
             # of truth: a matching interval means no exception exists (the
@@ -360,13 +522,13 @@ class AccountMapper:
             if self._master_change_days > 0:
                 logging.info(
                     "Platform '%s' rotation policy: interval matches master "
-                    "(%d days) — inheriting master policy", platform_id,
+                    "(%d days) - inheriting master policy", platform_id,
                     self._master_change_days,
                 )
                 self._platform_schedule_cache[platform_id] = None
                 return None
 
-            # No flag and no master baseline to compare against — fall back
+            # No flag and no master baseline to compare against - fall back
             # to treating the platform's own ``change`` block as authoritative
             # (legacy behavior for tenants where this is the only info we get).
             schedule = self._schedule_from_change_block(change)
@@ -377,7 +539,7 @@ class AccountMapper:
                 )
             return schedule
 
-        # No ``change`` block — check master-policy exceptions before legacy.
+        # No ``change`` block - check master-policy exceptions before legacy.
         exc = self._master_exception_schedules.get(platform_id)
         if exc is not None:
             schedule = copy.deepcopy(exc)
@@ -388,7 +550,7 @@ class AccountMapper:
             )
             return schedule
 
-        # ── Legacy flat shapes (PVWA Self-Hosted, Get-Platforms) ───
+        # -- Legacy flat shapes (PVWA Self-Hosted, Get-Platforms) ---
         flat = self._flatten_rotation_policy(raw)
         days = 0
         for key in self._PLATFORM_ROTATE_DAYS_KEYS:
@@ -518,7 +680,7 @@ class AccountMapper:
             change = rotation_raw.get("change") if isinstance(rotation_raw.get("change"), dict) else {}
             verify = rotation_raw.get("verify") if isinstance(rotation_raw.get("verify"), dict) else {}
 
-            # Rotation cadence operational settings — preserved on the
+            # Rotation cadence operational settings - preserved on the
             # Keeper record so a user can reproduce them in CyberArk.
             _add("CyberArk Rotation Interval (days)", change.get("interval"))
             if change.get("allowedPeriodic") is not None:
@@ -562,12 +724,12 @@ class AccountMapper:
             self, platform_id: str) -> Optional[Tuple[str, str]]:
         """Return ``("on"|"off", "on"|"off")`` for (graphical, text) recording.
 
-        Probes the per-platform endpoints in order (secrets-policy →
-        platform details → legacy .asmx). When the platform exposes a
+        Probes the per-platform endpoints in order (secrets-policy ->
+        platform details -> legacy .asmx). When the platform exposes a
         ``recordAndSaveSessionActivity`` rule we honor it; that single
         boolean drives both Keeper recording flags because CyberArk does
         not split graphical vs. text. Returns ``None`` when no endpoint
-        answered with usable data — the resource then inherits whatever
+        answered with usable data - the resource then inherits whatever
         the master policy / Keeper default decides.
         """
         if not platform_id or not self._client:
@@ -576,10 +738,10 @@ class AccountMapper:
             return self._platform_session_cache[platform_id]
 
         # Session-recording flags can live in any of three CyberArk
-        # surfaces depending on tenant type — none of them is a single
+        # surfaces depending on tenant type - none of them is a single
         # source of truth, so we query and merge:
         #
-        #   1. ``/PasswordVault/API/Platforms/{id}`` — Get-Platform-Details.
+        #   1. ``/PasswordVault/API/Platforms/{id}`` - Get-Platform-Details.
         #      On older PVWA Self-Hosted this carries the
         #      ``sessionManagement.recordAndSaveSessionActivity`` boolean.
         #      On Privilege Cloud / ISPSS this DOES NOT include the
@@ -588,11 +750,11 @@ class AccountMapper:
         #      ``PSMServerId``/``PSMServerName`` from here as a fallback
         #      indicator (PSM-attached platforms record by default).
         #   2. ``/PasswordVault/services/PoliciesMgt.asmx/
-        #      GetPolicyRulesSessionMonitoring`` — the PVWA admin-UI grid
+        #      GetPolicyRulesSessionMonitoring`` - the PVWA admin-UI grid
         #      service. On Privilege Cloud this is the *canonical* place
         #      where ``RecordSession`` / ``MonitorSession`` rules are
         #      surfaced (the user explicitly pointed us here).
-        #   3. PSMServer presence — heuristic fallback when neither (1)
+        #   3. PSMServer presence - heuristic fallback when neither (1)
         #      nor (2) has the explicit flag: a platform that has a PSM
         #      ConnectionComponent (``PSM-RDP``, ``PSM-SSH``, ...)
         #      records sessions by default in CyberArk.
@@ -607,7 +769,7 @@ class AccountMapper:
             self._platform_session_cache[platform_id] = None
             return None
 
-        # ── Build a flat ``rules`` dict from every envelope we got ────
+        # -- Build a flat ``rules`` dict from every envelope we got ----
         rules: Dict[str, Any] = {}
         for raw in (details, asmx):
             if not isinstance(raw, dict) or not raw:
@@ -656,7 +818,7 @@ class AccountMapper:
                 if k in rules and truthy(rules[k]):
                     record_val = True
                     break
-        # 3) Heuristic: PSMServer reference present → PSM is engaged
+        # 3) Heuristic: PSMServer reference present -> PSM is engaged
         #    and CyberArk records by default. Used only when neither
         #    (1) nor (2) provided an answer.
         if record_val is None:
@@ -665,7 +827,7 @@ class AccountMapper:
                 v = rules.get(k)
                 if isinstance(v, str) and v.strip():
                     logging.debug(
-                        "Platform '%s' has PSMServer=%s — assuming "
+                        "Platform '%s' has PSMServer=%s - assuming "
                         "session recording is on (PSM default)",
                         platform_id, v,
                     )
@@ -769,9 +931,9 @@ class AccountMapper:
         """Map a custom platformId via PVWA's PlatformBaseID / SystemType.
 
         Order:
-          1. PlatformBaseID matches a built-in (e.g. WinDomain) — use that mapping.
-          2. SystemType matches our SYSTEM_TYPE_MAP (e.g. Windows → RDP).
-          3. None — caller falls through to keyword guessing.
+          1. PlatformBaseID matches a built-in (e.g. WinDomain) - use that mapping.
+          2. SystemType matches our SYSTEM_TYPE_MAP (e.g. Windows -> RDP).
+          3. None - caller falls through to keyword guessing.
         """
         meta = self._platform_index.get(platform_id)
         if not meta:
@@ -791,8 +953,8 @@ class AccountMapper:
                                 protocol: Optional[str]) -> Optional[str]:
         """Derive ``operating_system`` for a pamMachine from platformId/protocol.
 
-        Keyword scan on platformId (Win→windows, Unix/Linux→linux), then
-        protocol fallback (rdp→windows, ssh→linux). Returns ``None`` when
+        Keyword scan on platformId (Win->windows, Unix/Linux->linux), then
+        protocol fallback (rdp->windows, ssh->linux). Returns ``None`` when
         ambiguous so the field is left unset.
         """
         pid = (platform_id or "").lower()
@@ -834,9 +996,10 @@ class AccountMapper:
 
     def map_account(self, account: dict, password: Optional[str] = None,
                     safe_name: str = "") -> Optional[dict]:
-        """Convert a CyberArk account dict → pam_data record dict.
+        """Convert a CyberArk account dict -> pam_data record dict.
 
-        Returns None if the platformId is completely unknown and has no default.
+        Accounts with no resolvable platform mapping are returned as standalone
+        login records instead of speculative PAM resources.
         """
         platform_id = account.get("platformId", "")
         mapping = self.platform_map.get(platform_id) if platform_id else None
@@ -844,10 +1007,10 @@ class AccountMapper:
 
         if mapping is None:
             # Resolution order for unknown / customer-renamed platforms:
-            #   1. PVWA platform metadata — PlatformBaseID → DEFAULT_PLATFORM_MAP,
-            #      or SystemType → _SYSTEM_TYPE_MAP. Authoritative.
+            #   1. PVWA platform metadata - PlatformBaseID -> DEFAULT_PLATFORM_MAP,
+            #      or SystemType -> _SYSTEM_TYPE_MAP. Authoritative.
             #   2. Substring keyword match on platformId / name.
-            #   3. pamMachine/SSH fallback.
+            #   3. Standalone login fallback (no PAM resource or nested user).
             label = platform_id if platform_id else "(empty)"
             self.unmapped_platforms[label] = self.unmapped_platforms.get(label, 0) + 1
 
@@ -856,7 +1019,7 @@ class AccountMapper:
                 mapping = via_pvwa
                 mapping_source = "pvwa-platform"
                 logging.warning(
-                    "Unknown platformId '%s' for account '%s' — resolved via PVWA "
+                    "Unknown platformId '%s' for account '%s' - resolved via PVWA "
                     "platform metadata to %s/%s (port %s). Add it to --platform-map "
                     "to lock in.",
                     platform_id, account.get("name", ""),
@@ -870,7 +1033,7 @@ class AccountMapper:
                     mapping_source = "keyword-guess"
                     if platform_id:
                         logging.warning(
-                            "Unknown platformId '%s' for account '%s' — pattern-matched "
+                            "Unknown platformId '%s' for account '%s' - pattern-matched "
                             "to %s/%s (port %s). Add it to --platform-map to lock in.",
                             platform_id, account.get("name", ""),
                             mapping.get("record_type"), mapping.get("protocol") or "n/a",
@@ -878,26 +1041,26 @@ class AccountMapper:
                         )
                     else:
                         logging.debug(
-                            "Empty platformId for account '%s' — pattern-matched to %s/%s.",
+                            "Empty platformId for account '%s' - pattern-matched to %s/%s.",
                             account.get("name", ""),
                             mapping.get("record_type"), mapping.get("protocol") or "n/a",
                         )
                 else:
                     mapping = dict(FALLBACK_PLATFORM_MAP)
-                    mapping_source = "fallback-ssh"
+                    mapping_source = "fallback-login"
                     if platform_id:
                         logging.warning(
-                            "Unknown platformId '%s' for account '%s' — defaulting to "
-                            "pamMachine/SSH. Use --platform-map to override.",
+                            "Unknown platformId '%s' for account '%s' - importing as "
+                            "a standalone login. Use --platform-map to create a PAM resource.",
                             platform_id, account.get("name", ""))
                     else:
-                        logging.debug("Empty platformId for account '%s' — defaulting to pamMachine/SSH.",
+                        logging.debug("Empty platformId for account '%s' - importing as a standalone login.",
                                       account.get("name", ""))
 
-            # When the mapping came from a fallback path we trust PVWA's
+            # When the mapping came from an inferred resolution path we trust PVWA's
             # per-platform Details endpoint over our static defaults for the
-            # port. Cheap with caching — one call per unique custom platform.
-            if mapping_source in ("pvwa-platform", "keyword-guess", "fallback-ssh"):
+            # port. Cheap with caching - one call per unique custom platform.
+            if mapping_source in ("pvwa-platform", "keyword-guess"):
                 mapping = self._enrich_port_from_details(platform_id, mapping)
 
         record_type = mapping.get("record_type", RECORD_TYPE_PAM_MACHINE)
@@ -937,7 +1100,8 @@ class AccountMapper:
         )
 
         if record_type == RECORD_TYPE_LOGIN:
-            # BusinessWebsite → login record (not pamMachine)
+            # Explicit website mappings and unresolved platforms become
+            # standalone login records, never PAM resources with nested users.
             record = {
                 "type": RECORD_TYPE_LOGIN,
                 "title": item_name or title,
@@ -946,26 +1110,102 @@ class AccountMapper:
             }
             if url:
                 record["url"] = url
+            if mapping_source == "fallback-login":
+                custom = self._build_unmapped_login_custom_fields(account)
+                if custom:
+                    record["custom"] = custom
             return record
+
+        if record_type == RECORD_TYPE_PAM_REMOTE_BROWSER:
+            cloud = (mapping.get("cloud") or "").lower()
+            defaults = self._cloud_rbi_defaults(cloud)
+            rbi_url = (
+                self._first_prop(
+                    props, "URL", "Url", "url", "ConsoleURL", "ConsoleUrl",
+                    "PortalURL", "PortalUrl", "LoginURL", "LoginUrl",
+                )
+                or address
+                or defaults.get("url")
+                or url
+            )
+            if rbi_url and not re.match(r"^https?://", rbi_url, re.IGNORECASE):
+                rbi_url = f"https://{rbi_url}"
+
+            user_title = f"{login}@{title}" if login else f"user@{title or raw_name}"
+            user_record = {
+                "type": "pamUser",
+                "title": user_title,
+                "login": login,
+                "password": password or "",
+            }
+            secret_mgmt = account.get("secretManagement", {})
+            cpm_enabled = secret_mgmt.get("automaticManagementEnabled", True)
+            if mapping.get("rotation"):
+                if cpm_enabled:
+                    platform_sched = self._resolve_platform_schedule(platform_id)
+                    if platform_sched:
+                        schedule = copy.deepcopy(platform_sched)
+                        self.platform_schedule_overrides[platform_id] = (
+                            self.platform_schedule_overrides.get(platform_id, 0) + 1
+                        )
+                    else:
+                        schedule = copy.deepcopy(self._default_rotation_schedule)
+                else:
+                    schedule = {"type": SCHEDULE_ON_DEMAND}
+                user_record["rotation_settings"] = {
+                    "rotation": mapping["rotation"],
+                    "enabled": "on" if cpm_enabled else "off",
+                    "schedule": schedule,
+                }
+                complexity = self._resolve_platform_password_complexity(platform_id)
+                if complexity:
+                    user_record["rotation_settings"]["password_complexity"] = complexity
+                    self.platform_complexity_overrides[platform_id] = (
+                        self.platform_complexity_overrides.get(platform_id, 0) + 1
+                    )
+            if password:
+                user_record["managed"] = True
+            self._add_source_metadata_to_user(user_record, account, platform_id)
+
+            resource = {
+                "type": RECORD_TYPE_PAM_REMOTE_BROWSER,
+                "title": title or raw_name or f"{cloud.upper()} Console",
+                "url": rbi_url,
+                "users": [user_record],
+                "pam_settings": {
+                    "options": {
+                        "connections": "on",
+                        "remote_browser_isolation": "on",
+                        "graphical_session_recording": "on",
+                    },
+                    "connection": {
+                        "protocol": "http",
+                        "autofill_credentials": user_title,
+                        "autofill_targets": self._build_cloud_autofill_targets(cloud, rbi_url),
+                    },
+                },
+            }
+            metadata_fields = self._resolve_platform_metadata(platform_id)
+            if metadata_fields:
+                resource.setdefault("custom", []).extend(copy.deepcopy(metadata_fields))
+            account_metadata_fields = self._build_account_metadata_custom_fields(account)
+            if account_metadata_fields:
+                resource.setdefault("custom", []).extend(account_metadata_fields)
+            return resource
 
         if record_type in (RECORD_TYPE_PAM_MACHINE, RECORD_TYPE_PAM_DATABASE):
             secret_type_check = account.get("secretType", "password").lower()
-            # No target host and no SSH key material → route to login. A
+            # No target host and no SSH key material -> route to login. A
             # pamMachine without a host can never be reached by the gateway,
             # so the credential is more useful as a standalone login record.
             # SSH keys keep pamMachine semantics even without an address so
             # the private_pem_key field is preserved.
             if not address and secret_type_check != "key":
-                note = (f"CyberArk platform: {platform_id}\n"
-                        "No address — imported as login (not pamMachine)"
-                        if platform_id else
-                        "CyberArk account had no address — imported as login")
                 return {
                     "type": RECORD_TYPE_LOGIN,
                     "title": title or raw_name,
                     "login": login,
                     "password": password or "",
-                    "notes": note,
                 }
             # Build pamUser nested inside the resource
             user_record = {
@@ -993,7 +1233,7 @@ class AccountMapper:
             dn = props.get("DistinguishedName", "") or props.get("distinguishedName", "")
             if dn:
                 user_record["distinguished_name"] = dn
-            # Rotation settings — derive from CyberArk secretManagement state
+            # Rotation settings - derive from CyberArk secretManagement state
             secret_mgmt = account.get("secretManagement", {})
             cpm_enabled = secret_mgmt.get("automaticManagementEnabled", True)
             if mapping.get("rotation"):
@@ -1041,18 +1281,9 @@ class AccountMapper:
                         self.platform_complexity_overrides.get(
                             platform_id_for_sched, 0) + 1
                     )
-                reason = secret_mgmt.get("manualManagementReason", "")
-                if not cpm_enabled:
-                    existing = user_record.get("notes", "")
-                    line = f"CyberArk CPM disabled: {reason}"
-                    user_record["notes"] = f"{existing}\n{line}".strip()
-                cpm_status = secret_mgmt.get("status", "")
-                if cpm_status and cpm_status.lower() == "failure":
-                    existing = user_record.get("notes", "")
-                    line = f"CyberArk CPM status: FAILURE ({reason})"
-                    user_record["notes"] = f"{existing}\n{line}".strip()
             if password:
                 user_record["managed"] = True
+            self._add_source_metadata_to_user(user_record, account, platform_id)
 
             resource_title = title or address or raw_name
             resource = {
@@ -1062,13 +1293,13 @@ class AccountMapper:
                 "port": str(port) if port else "",
                 "users": [user_record],
             }
-            # Map LogonDomain → domain_name on resource (Windows AD domain)
+            # Map LogonDomain -> domain_name on resource (Windows AD domain)
             if logon_domain and record_type == RECORD_TYPE_PAM_MACHINE:
                 resource["domain_name"] = logon_domain
             # Derive operating_system on pamMachine so downstream consumers
             # (notably ``pam action service add``, which only mounts on Windows
             # hosts) can dispatch on it. Inferred from platformId keywords,
-            # fallback to protocol (rdp ⇒ windows, ssh ⇒ linux).
+            # fallback to protocol (rdp => windows, ssh => linux).
             if record_type == RECORD_TYPE_PAM_MACHINE:
                 inferred_os = self._infer_operating_system(
                     platform_id, mapping.get("protocol"),
@@ -1091,7 +1322,7 @@ class AccountMapper:
                 recording = self._resolve_platform_session_recording(
                     platform_id_for_settings)
                 # Trigger workflows resolution (records unmapped items in
-                # self.platform_workflow_unmapped — return value not used
+                # self.platform_workflow_unmapped - return value not used
                 # here because Keeper has no per-resource workflow toggles).
                 self._resolve_platform_workflows(platform_id_for_settings)
 
@@ -1135,18 +1366,30 @@ class AccountMapper:
                     copy.deepcopy(metadata_fields))
             return resource
 
-        logging.warning('Unsupported record_type "%s" for platform "%s" — account skipped',
+        logging.warning('Unsupported record_type "%s" for platform "%s" - account skipped',
                         record_type, account.get("platformId", "Unknown"))
         return None
 
     def is_incomplete(self, account: dict) -> Tuple[bool, str]:
         """Check if a CyberArk account is missing required fields for PAM import."""
+        platform_id = account.get("platformId", "")
+        mapping = self.platform_map.get(platform_id) if platform_id else None
+        if mapping is None:
+            mapping = self._resolve_from_platform_metadata(platform_id) if platform_id else None
+        if mapping is None:
+            mapping = _guess_platform_mapping(platform_id, account.get("name", ""))
+
+        is_cloud_rbi = (
+            isinstance(mapping, dict)
+            and mapping.get("record_type") == RECORD_TYPE_PAM_REMOTE_BROWSER
+        )
         reasons = []
-        if not account.get("address"):
+        if not account.get("address") and not is_cloud_rbi:
             reasons.append("missing address/host")
         if not account.get("userName"):
             reasons.append("missing userName")
         if reasons:
             return True, "; ".join(reasons)
         return False, ""
+
 

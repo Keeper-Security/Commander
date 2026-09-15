@@ -61,6 +61,11 @@ MAX_PLATFORM_METADATA_FIELDS = 50
 # Maximum character length for a single custom metadata field value.
 MAX_PLATFORM_METADATA_VALUE_LEN = 500
 
+# Equivalent limits for source-account metadata preserved on standalone login
+# records when no CyberArk platform mapping can be resolved.
+MAX_ACCOUNT_METADATA_FIELDS = 50
+MAX_ACCOUNT_METADATA_VALUE_LEN = 500
+
 # Maximum safe name length for Keeper shared folder names
 MAX_SAFE_NAME_LENGTH = 28
 
@@ -72,6 +77,7 @@ RECORD_TYPE_LOGIN = "login"
 RECORD_TYPE_PAM_MACHINE = "pamMachine"
 RECORD_TYPE_PAM_DATABASE = "pamDatabase"
 RECORD_TYPE_PAM_DIRECTORY = "pamDirectory"
+RECORD_TYPE_PAM_REMOTE_BROWSER = "pamRemoteBrowser"
 
 # Rotation schedule type emitted in import JSON / PAM settings
 SCHEDULE_ON_DEMAND = "on-demand"
@@ -122,11 +128,29 @@ DEFAULT_PLATFORM_MAP = {
     "CheckPointGAIA":      {"record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh",    "port": "22"},
     # CyberArk internal — service accounts, import as pamMachine/SSH
     "CyberArk":            {"record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh",    "port": "22"},
+    # Cloud consoles: create an RBI resource plus a companion pamUser.
+    "AWS":                 {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AWSAccessKeys":       {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AWSAccessKey":        {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "AmazonWebServices":   {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "aws"},
+    "Azure":               {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "AzureAccessKeys":     {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "AzureAccessKey":      {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "MicrosoftAzure":      {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "azure"},
+    "GCP":                 {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GCPAccessKeys":       {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GCPServiceAccount":   {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GoogleCloud":         {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
+    "GoogleCloudPlatform": {"record_type": RECORD_TYPE_PAM_REMOTE_BROWSER, "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"},
     # Web — login record, NOT pamMachine
     "BusinessWebsite": {"record_type": RECORD_TYPE_LOGIN, "rotation": None, "protocol": None, "port": None},
 }
 
-# Fallback mapping for accounts with empty or unknown platformId
+# Fallback mapping for accounts that cannot be resolved through the explicit
+# platform map, CyberArk platform metadata, or keyword matching.  Without a
+# reliable platform mapping there is not enough information to create a PAM
+# resource and its nested pamUser safely, so preserve the credential as a
+# standalone login record.
 FALLBACK_PLATFORM_MAP = {
-    "record_type": RECORD_TYPE_PAM_MACHINE, "rotation": "general", "protocol": "ssh", "port": "22",
+    "record_type": RECORD_TYPE_LOGIN, "rotation": None, "protocol": None, "port": None,
 }

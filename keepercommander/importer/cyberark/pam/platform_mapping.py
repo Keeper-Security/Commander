@@ -9,8 +9,6 @@
 import re
 from typing import Dict, Optional, Tuple
 
-from .constants import FALLBACK_PLATFORM_MAP
-
 # Keyword → mapping for custom/renamed CyberArk platforms (e.g. "Custom-WinDomain" → RDP).
 # Matched against platformId and account name; first match wins. Database patterns
 # are checked before generic Windows/Unix to avoid false positives.
@@ -24,6 +22,12 @@ _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
     ("mssql",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
     ("sqlserver",  {"record_type": "pamDatabase", "rotation": "general", "protocol": "sql-server", "port": "1433",  "database_type": "mssql"}),
     ("mongo",      {"record_type": "pamDatabase", "rotation": "general", "protocol": "mongodb",         "port": "27017", "database_type": "mongodb"}),
+    # Cloud consoles (RBI)
+    ("aws",        {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "aws"}),
+    ("amazon",     {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "aws"}),
+    ("azure",      {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "azure"}),
+    ("gcp",        {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"}),
+    ("googlecloud", {"record_type": "pamRemoteBrowser", "rotation": "general", "protocol": None, "port": None, "cloud": "gcp"}),
     # Windows (RDP)
     ("windomain",  {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),
     ("windows",    {"record_type": "pamMachine",  "rotation": "general", "protocol": "rdp",       "port": "3389"}),
@@ -47,7 +51,7 @@ _PLATFORM_KEYWORD_MAP: Tuple[Tuple[str, dict], ...] = (
 def _guess_platform_mapping(platform_id: str, raw_name: str) -> Optional[dict]:
     """Map unknown/custom platformIds to a record type via keyword scan.
 
-    Returns a mapping dict on match, or None (caller uses FALLBACK_PLATFORM_MAP).
+    Returns a mapping dict on match, or None (caller imports a standalone login).
     """
     haystack = f"{platform_id or ''}\n{raw_name or ''}".lower()
     if not haystack.strip():

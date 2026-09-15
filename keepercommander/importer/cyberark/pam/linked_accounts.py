@@ -59,23 +59,15 @@ def resolve_linked_accounts(client: 'CyberArkPVWAClient',
             "title": user_title,
             "login": link_data.get("userName", linked_name),
             "password": password or "",
-            "notes": f"CyberArk role: {role_name} account\n"
-                     f"Linked to: {account.get('name', account_id)}\n"
-                     f"Source safe: {linked_safe}",
+            "custom": [
+                {"type": "text", "label": "CyberArk Role", "value": [f"{role_name} account"]},
+                {"type": "text", "label": "CyberArk Linked To", "value": [account.get("name", account_id)]},
+                {"type": "text", "label": "CyberArk Source Safe", "value": [linked_safe]},
+            ],
             "_ca_role": role_name,  # Internal: logon, reconcile, or enable
             "_ca_id": str(linked_id),  # Internal: used by idempotency layer
             "_ca_safe": linked_safe,   # Internal: used by idempotency layer
         }
-        # Embed CyberArk identity marker so re-imports can match this
-        # linked account to the existing Keeper record.  The linked
-        # account has its own CyberArk id distinct from the master
-        # account it decorates, so we tag with ``linked_id`` (not the
-        # outer ``account_id``).
-        try:
-            from .idempotency import annotate_record_with_marker
-            annotate_record_with_marker(linked_user, str(linked_id), linked_safe)
-        except Exception:  # noqa: BLE001 — never block linked-account resolution on annotation failure
-            logging.debug("Failed to annotate linked account %s with CyberArk-ID marker", linked_id)
         result.append(linked_user)
         logging.info('Resolved linked %s account: %s', role_name, user_title)
 
