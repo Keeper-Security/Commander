@@ -45,7 +45,7 @@ from ..display import bcolors, post_login_summary
 from ..error import CommandError
 from ..generator import (
     KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator,
-    KeeperPassphraseGenerator, PASSPHRASE_SEPARATOR_HELP,
+    KeeperPassphraseGenerator, AESKeyGenerator, PASSPHRASE_SEPARATOR_HELP, _parse_passphrase_separator_token
 )
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
@@ -80,7 +80,6 @@ class DeletionStats:
         self.deleted += other.deleted
         self.failed += other.failed
         self.vault_changed = self.vault_changed or other.vault_changed
-
 
 class DeletionValidator:
     """Centralized validation for deletion operations."""
@@ -441,7 +440,10 @@ dice_group.add_argument('--word-list',  dest='word_list', action='store',
                         help='Optional. File path to word list')
 
 crypto_group = generate_parser.add_argument_group('Crypto')
-crypto_group.add_argument('--crypto', dest='crypto', action='store_true', help='Generate crypto wallet passphrase')
+crypto_group.add_argument('--crypto', dest='crypto', action='store_true', help='Generate crypto wallet private key')
+
+aes_key_group = generate_parser.add_argument_group('AES 256-bit Key')
+aes_key_group.add_argument('--aes-key', dest='aes_key', action='store_true', help='AES 256 bit encryption key. Base64 URL safe encoded')
 
 reset_password_parser = argparse.ArgumentParser(prog='reset-password', description='Reset Master Password')
 reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', action='store_true',
@@ -2239,13 +2241,15 @@ class GenerateCommand(Command):
 
         if kwargs.get('crypto') is True:
             kpg = CryptoPassphraseGenerator()
+        elif kwargs.get('aes_key') is True:
+            kpg = AESKeyGenerator()
         elif kwargs.get('passphrase') is True:
             from ..enforcement import PasswordComplexityEnforcer
             policy = PasswordComplexityEnforcer.get_policy(params)
             word_count = length if length != 20 else None
             pp_separator = kwargs.get('pp_separator')
             if isinstance(pp_separator, str) and pp_separator.strip():
-                pp_separator, pp_sep_error = generator._parse_passphrase_separator_token(
+                pp_separator, pp_sep_error = _parse_passphrase_separator_token(
                     pp_separator.strip())
                 if pp_sep_error:
                     logging.error(pp_sep_error)
