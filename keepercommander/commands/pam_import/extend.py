@@ -1426,6 +1426,9 @@ class PAMProjectExtendCommand(Command):
             for n, user in enumerate(new_users):
                 folder_uid = getattr(user, "resolved_folder_uid", None) or shfusr
                 extend_create_record(params, user, folder_uid)
+                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
+                    from .nsf_helpers import sync_down_preserving_nsf_keys
+                    sync_down_preserving_nsf_keys(params)
                 if n % pdelta == 0:
                     print(f"{n}/{len(new_users)}")
             print(f"{len(new_users)}/{len(new_users)}\n")
@@ -1441,6 +1444,11 @@ class PAMProjectExtendCommand(Command):
             folder_uid = getattr(mach, "resolved_folder_uid", None) or shfres
             admin_uid = get_admin_credential(mach, True)
             extend_create_record(params, mach, folder_uid)
+            # NSF creates with sync_after=False; pam tunnel edit resolves from
+            # record_cache / NSF caches, so sync when the new UID is not loaded yet.
+            if mach.uid and mach.uid not in (getattr(params, 'record_cache', None) or {}):
+                from .nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
             tdag.link_resource_to_config(mach.uid)
             if isinstance(mach, PamRemoteBrowserObject):
                 args = parse_command_options(mach, True)
@@ -1508,6 +1516,9 @@ class PAMProjectExtendCommand(Command):
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
                 extend_create_record(params, user, ufolder)
+                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
+                    from .nsf_helpers import sync_down_preserving_nsf_keys
+                    sync_down_preserving_nsf_keys(params)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1546,6 +1557,9 @@ class PAMProjectExtendCommand(Command):
                     rs.resourceUid = mach.uid
                 ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
                 extend_create_record(params, user, ufolder)
+                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
+                    from .nsf_helpers import sync_down_preserving_nsf_keys
+                    sync_down_preserving_nsf_keys(params)
                 if isinstance(user, PamUserObject):
                     tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
                     if rs:
@@ -1628,5 +1642,11 @@ class PAMProjectExtendCommand(Command):
             if refs:
                 api.sync_down(params)
                 add_pam_scripts(params, pam_cfg_uid, refs)
+
+        # One sync after bulk NSF record creates (create_record uses sync_after=False).
+        if is_nested_share_folder(params, shfres) or is_nested_share_folder(params, shfusr):
+            from .nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
+
         logging.debug("Done processing project data.")
         return
