@@ -14,14 +14,14 @@ from typing import Any, Union
 
 # Sensitive field types that should be masked in logs
 SENSITIVE_FIELD_TYPES = frozenset({
-    'password', 'login', 'secret', 'onetimecode', 'pincode', 'keypair',
+    'password', 'secret', 'onetimecode', 'pincode', 'keypair',
     'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
     'securityquestion', 'passkey', 'accountnumber', 'routingnumber',
-    'cardnumber', 'cardsecuritycode', 'privatekey', 'publickey', 'licensenumber',
+    'cardnumber', 'cardsecuritycode', 'publickey', 'licensenumber',
     'encryptednote'
 })
 
-SENSITIVE_DICT_KEYS = frozenset({'password', 'login', 'secret', 'token', 'key',
+SENSITIVE_DICT_KEYS = frozenset({'password', 'secret', 'token', 'key',
                                   'accountnumber', 'routingnumber', 'cardnumber',
                                   'cardsecuritycode', 'privatekey', 'publickey',
                                   'licensenumber', 'keypair', 'encryptednote'}) | SENSITIVE_FIELD_TYPES

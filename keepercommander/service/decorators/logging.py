@@ -149,7 +149,6 @@ def sanitize_debug_data(data: str) -> str:
     # Sanitize common password patterns
     patterns = [
         (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
-        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),
         (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
         (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
         (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
@@ -158,7 +157,6 @@ def sanitize_debug_data(data: str) -> str:
         (r'"note"\s*:\s*"[^"]*"', '"note": "***"'),
         # Bare field formats (e.g., password=value, secret=value)
         (r'\bpassword=[^\s]*', 'password=***'),
-        (r'\blogin=[^\s]*', 'login=***'),
         (r'\boneTimeCode=[^\s]*', 'oneTimeCode=***'),
         (r'\bsecret=[^\s]*', 'secret=***'),
         (r'\bpinCode=[^\s]*', 'pinCode=***'),
