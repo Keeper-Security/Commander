@@ -29,8 +29,8 @@ from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, 
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
-from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_config_uid_via_pam_link, \
-    get_keeper_tokens, \
+from .tunnel.port_forward.tunnel_helpers import find_open_port, is_port_open, get_config_uid, \
+    get_config_uid_via_pam_link, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
     remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
     wait_for_tunnel_connection, create_rust_webrtc_settings, \
@@ -391,6 +391,13 @@ class PAMTunnelEditCommand(Command):
     pam_cmd_parser.add_argument('--keeper-db-proxy', '-kdbp', required=False, dest='keeper_db_proxy',
                                 choices=['on', 'off', 'default'],
                                 help='Enable/disable Keeper Database Proxy for pamDatabase records (on/off/default)')
+    pam_cmd_parser.add_argument('--keeper-proxy', '-kp', required=False, dest='keeper_proxy',
+                                choices=['on', 'off', 'default'],
+                                help='Enable/disable Keeper Proxy, auto-selecting the backend from the record\'s '
+                                     'connection protocol: KeeperDB Proxy for database protocols '
+                                     '(pamDatabase, or pamMachine set to a database protocol), KeeperRDP Proxy '
+                                     'for RDP (pamMachine). SSH is not yet supported. Records/protocols that '
+                                     'don\'t map to a proxy backend are ignored with a warning (on/off/default)')
 
     def get_parser(self):
         return PAMTunnelEditCommand.pam_cmd_parser
@@ -591,6 +598,71 @@ class PAMTunnelEditCommand(Command):
                     pam_settings.value[0]["connection"].pop('allowKeeperDBProxy', None)
                     dirty = True
 
+            # Handle --keeper-proxy: generalized on/off/default that auto-selects the
+            # backend from the record's connection protocol instead of requiring the
+            # protocol-specific flag (--keeper-db-proxy today; --keeper-rdp-proxy /
+            # --keeper-ssh-proxy would be the alternative). Missing option -> no-op,
+            # no validation at all.
+            keeper_proxy = kwargs.get('keeper_proxy')
+            if keeper_proxy:
+                protocol = ''
+                if pam_settings and pam_settings.value and isinstance(pam_settings.value[0], dict):
+                    protocol = (pam_settings.value[0].get('connection') or {}).get('protocol') or ''
+                protocol = str(protocol).strip().lower()
+
+                proxy_key = None
+                proxy_bucket = None
+                if record_type == 'pamDatabase' or protocol in PAMConnectionEditCommand.db_protocols:
+                    proxy_key = 'allowKeeperDBProxy'
+                    proxy_bucket = 'connection'
+                elif protocol == 'rdp':
+                    proxy_key = 'allowKeeperRDPProxy'
+                    proxy_bucket = 'portForward'
+                elif protocol == 'ssh':
+                    # TODO(ssh-proxy): once KeeperSSH Proxy support lands on the gateway,
+                    # set pamSettings.<bucket>.allowKeeperSSHProxy here, mirroring the
+                    # KeeperDB/KeeperRDP branches above.
+                    print(f"{bcolors.WARNING}KeeperSSH Proxy is not implemented yet; "
+                          f"--keeper-proxy has no effect for record {record_uid}.{bcolors.ENDC}")
+                else:
+                    print(f"{bcolors.WARNING}--keeper-proxy has no effect for record {record_uid} "
+                          f"(type=\"{record_type}\", protocol=\"{protocol}\"). KeeperDB Proxy applies "
+                          f"only to database records/protocols, KeeperRDP Proxy only to RDP records, "
+                          f"and KeeperSSH Proxy (planned) only to SSH records.{bcolors.ENDC}")
+
+                if proxy_key:
+                    if keeper_proxy == 'default':
+                        # Pure deletion: never create pamSettings or its connection/portForward
+                        # buckets just to immediately leave them empty. No-op (no validation,
+                        # no error) if pamSettings, the bucket, or the key isn't there at all.
+                        if pam_settings and pam_settings.value and isinstance(pam_settings.value[0], dict):
+                            bucket = pam_settings.value[0].get(proxy_bucket)
+                            if isinstance(bucket, dict) and proxy_key in bucket:
+                                bucket.pop(proxy_key, None)
+                                dirty = True
+                    else:
+                        if keeper_proxy == 'on' and not tmp_dag.check_if_resource_has_launch_credential(record_uid):
+                            raise CommandError('',
+                                f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
+                                f'Please assign launch credentials to the record before enabling '
+                                f'the proxy.\n'
+                                f'Use: {bcolors.OKBLUE}pam connection edit <record> '
+                                f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                        if not pam_settings:
+                            pam_settings = vault.TypedField.new_field('pamSettings', {"connection": {}, "portForward": {}}, "")
+                            record.custom.append(pam_settings)
+                        if not pam_settings.value:
+                            pam_settings.value.append({"connection": {}, "portForward": {}})
+                        if not isinstance(pam_settings.value[0], dict):
+                            pam_settings.value[0] = {"connection": {}, "portForward": {}}
+                        if not isinstance(pam_settings.value[0].get(proxy_bucket), dict):
+                            pam_settings.value[0][proxy_bucket] = {}
+                        current_value = pam_settings.value[0][proxy_bucket].get(proxy_key)
+                        target = (keeper_proxy == 'on')
+                        if current_value is not target:
+                            pam_settings.value[0][proxy_bucket][proxy_key] = target
+                            dirty = True
+
             if dirty:
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
                 was_nsf = update_pam_record(params, record, command='pam tunnel edit')
@@ -629,10 +701,9 @@ class PAMTunnelStartCommand(Command):
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
     pam_cmd_parser.add_argument('--proxy', '-px', required=False, dest='proxy', action='store_true',
-                                help='Activate KeeperDB Proxy: the gateway substitutes credentials '
-                                     'from your Keeper vault when the local client connects to the tunnel.')
-    # TODO(rdp-proxy): once RDP Proxy support lands on pamMachine, generalize --proxy
-    # to or auto-detect from the record type). For now, --proxy is KeeperDB-only.
+                                help='Activate Keeper Proxy (KeeperDB for pamDatabase, KeeperRDP for '
+                                     'pamMachine + RDP): the gateway substitutes credentials from your '
+                                     'Keeper vault when the local client connects to the tunnel.')
     pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
                                 help='Justification text for workflow access request. Used when the record\'s '
                                      'workflow requires a reason; non-interactive equivalent of the inline prompt.')
@@ -705,6 +776,26 @@ class PAMTunnelStartCommand(Command):
         return None
 
     @staticmethod
+    def _resolve_connection_protocol(pam_settings_value):
+        # Lower-cased connection protocol from the record's pamSettings
+        # ('rdp' | 'ssh' | 'vnc' | 'telnet' | ''). pamMachine uses this to
+        # pick the right Gateway proxy backend.
+        if isinstance(pam_settings_value, dict):
+            return ((pam_settings_value.get('connection') or {}).get('protocol') or '').strip().lower()
+        return ''
+
+    @staticmethod
+    def _print_keeperrdp_proxy_banner(host, port):
+        print(f"\n{bcolors.OKGREEN}KeeperRDP Proxy ready{bcolors.ENDC}")
+        print(f"  Listening:  {host}:{port}")
+        print(f"  Connect:    mstsc /v:{host}:{port}    "
+              f"(or wfreerdp /v:{host}:{port} /sec:tls /cert:ignore)")
+        print(f"{bcolors.OKBLUE}  Note:       when your RDP client prompts for credentials supply any "
+              f"value (or the per-session NLA token if NLA is enabled). The proxy substitutes the "
+              f"credentials configured in your Keeper vault before forwarding to the target."
+              f"{bcolors.ENDC}")
+
+    @staticmethod
     def _print_keeperdb_proxy_banner(host, port, db_type):
         suffix = f' ({db_type})' if db_type else ''
         print(f"\n{bcolors.OKGREEN}KeeperDB Proxy ready{suffix}{bcolors.ENDC}")
@@ -746,6 +837,27 @@ class PAMTunnelStartCommand(Command):
         port = kwargs.get('port')
         no_trickle_ice = kwargs.get('no_trickle_ice', False)
 
+        # Port selection policy (matches the keeper-pam-webrtc-rs local
+        # listener's SO_EXCLUSIVEADDRUSE behavior on Windows):
+        #   * user passed `--port N` (any N, including 49152) → strict:
+        #     ask Rust for exactly N; if the bind fails (port already
+        #     in use, permission denied, etc.) surface the error and
+        #     don't silently pick a different port. The intent of
+        #     `--port` is "I want exactly this port; if you can't give
+        #     it to me, tell me."
+        #   * no `--port` given → prefer `LEGACY_DEFAULT_TUNNEL_PORT`
+        #     (49152) for backward-compatibility with docs / muscle
+        #     memory that hard-code the connect string. Pre-probe with
+        #     `is_port_open` (which is authoritative on Windows now
+        #     that Rust uses SO_EXCLUSIVEADDRUSE) to avoid the noisy
+        #     "address in use" error path in the common case where
+        #     49152 is already taken. If the probe says it's free we
+        #     still keep `allow_ephemeral_fallback=True` so the rare
+        #     TOCTOU race (something grabs 49152 between the probe and
+        #     the Rust bind) falls back silently to an ephemeral port
+        #     instead of failing the whole start.
+        LEGACY_DEFAULT_TUNNEL_PORT = 49152
+        allow_ephemeral_fallback = False
         if port is not None and port > 0:
             try:
                 port = find_open_port(tried_ports=[], preferred_port=port, host=host)
@@ -753,10 +865,12 @@ class PAMTunnelStartCommand(Command):
                 print(f"{bcolors.FAIL}{e}{bcolors.ENDC}")
                 return
         else:
-            port = find_open_port(tried_ports=[], host=host)
-            if port is None:
-                print(f"{bcolors.FAIL}Could not find open port to use for tunnel{bcolors.ENDC}")
-                return
+            probe_host = host or '127.0.0.1'
+            if is_port_open(probe_host, LEGACY_DEFAULT_TUNNEL_PORT):
+                port = LEGACY_DEFAULT_TUNNEL_PORT
+                allow_ephemeral_fallback = True
+            else:
+                port = 0
 
         # Sync and validate record
         api.sync_down(params)
@@ -831,48 +945,92 @@ class PAMTunnelStartCommand(Command):
         pam_settings_value = pam_settings.get_default_value() if pam_settings else {}
         allow_supply_host = pam_settings_value.get('allowSupplyHost', False) if isinstance(pam_settings_value, dict) else False
 
-        # --proxy: KeeperDB Proxy mode (gateway substitutes credentials from vault).
-        # This is a Commander-side validator/declaration; the gateway currently
-        # auto-routes pamDatabase + allowKeeperDBProxy to the proxy regardless of
-        # any client-side flag (see is_keeperdb_proxy_tunnel in dr-controller's
-        # tunnel_helpers.py and _build_protocol_settings in WebRTCSessionAction.py).
-        # Requiring no-`--proxy` to mean "raw TCP tunnel to remote host" depends on
-        # a future gateway change to honor a client-side opt-in flag; until that
-        # lands, omitting --proxy will still proxy if the record allows it.
-        is_keeperdb_proxy = bool(kwargs.get('proxy'))
+        # --proxy: Keeper Proxy mode. Backend is auto-selected from the record
+        # type (and protocol for pamMachine):
+        #   * pamDatabase                 -> KeeperDB Proxy (DB credential injection)
+        #   * pamMachine + protocol=rdp   -> KeeperRDP Proxy (RDP credential injection)
+        # Both backends require the corresponding `allowKeeper{DB,RDP}Proxy`
+        # flag on the record; the gateway auto-routes from that flag alone,
+        # so the Commander side does *not* round-trip an opt-in to the
+        # gateway. The `--proxy` flag here is purely a client-side
+        # declaration that drives our validators (record-type + flag-
+        # presence + launch-credential preflight) and the post-start
+        # banner.
+        is_keeper_proxy = bool(kwargs.get('proxy'))
+        is_keeperdb_proxy = False
+        is_keeperrdp_proxy = False
         db_type_for_banner = None
-        if is_keeperdb_proxy:
+        if is_keeper_proxy:
             record_type = record.record_type
-            # TODO(rdp-proxy): once RDP Proxy support lands, also accept
-            # 'pamMachine' here and dispatch by record type.
-            if record_type != 'pamDatabase':
-                print(f"{bcolors.FAIL}--proxy is only supported on pamDatabase records. "
-                      f"Record {record_uid} is of type \"{record_type}\".{bcolors.ENDC}")
+            protocol = self._resolve_connection_protocol(pam_settings_value)
+
+            if record_type == 'pamDatabase':
+                is_keeperdb_proxy = True
+            elif record_type == 'pamMachine' and protocol == 'rdp':
+                is_keeperrdp_proxy = True
+            else:
+                detail = f' (protocol="{protocol}")' if record_type == 'pamMachine' else ''
+                print(f"{bcolors.FAIL}--proxy is supported on pamDatabase or pamMachine+RDP records. "
+                      f"Record {record_uid} is of type \"{record_type}\"{detail}.{bcolors.ENDC}")
                 return
-            allow_kdb = isinstance(pam_settings_value, dict) and bool(
-                (pam_settings_value.get('portForward') or {}).get('allowKeeperDBProxy')
-                or (pam_settings_value.get('connection') or {}).get('allowKeeperDBProxy')
-            )
-            if not allow_kdb:
-                print(f"{bcolors.FAIL}KeeperDB Proxy is not enabled for record {record_uid}.{bcolors.ENDC}")
-                print(f"{bcolors.WARNING}Enable it with "
-                      f"{bcolors.OKBLUE}'pam tunnel edit {record_uid} --keeper-db-proxy on'"
-                      f"{bcolors.ENDC}")
-                return
-            # Mirror the launch-credential pre-flight from PAMTunnelEditCommand
-            # (--keeper-db-proxy on path) so the failure message and timing are
-            # identical between edit and start.
-            _est, _ett, _tk = get_keeper_tokens(params)
-            _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
-            _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
-            if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
-                print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
-                      f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
-                print(f"{bcolors.WARNING}Use: "
-                      f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
-                      f"{bcolors.ENDC}")
-                return
-            db_type_for_banner = self._resolve_database_type(record, pam_settings_value)
+
+            if is_keeperdb_proxy:
+                allow_kdb = isinstance(pam_settings_value, dict) and bool(
+                    (pam_settings_value.get('portForward') or {}).get('allowKeeperDBProxy')
+                    or (pam_settings_value.get('connection') or {}).get('allowKeeperDBProxy')
+                )
+                if not allow_kdb:
+                    print(f"{bcolors.FAIL}KeeperDB Proxy is not enabled for record {record_uid}.{bcolors.ENDC}")
+                    print(f"{bcolors.WARNING}Enable it with "
+                          f"{bcolors.OKBLUE}'pam tunnel edit {record_uid} --keeper-db-proxy on'"
+                          f"{bcolors.ENDC}")
+                    return
+                # Mirror the launch-credential pre-flight from PAMTunnelEditCommand
+                # (--keeper-db-proxy on path) so the failure message and timing are
+                # identical between edit and start.
+                _est, _ett, _tk = get_keeper_tokens(params)
+                _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
+                _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
+                if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
+                    print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                          f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                    print(f"{bcolors.WARNING}Use: "
+                          f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                          f"{bcolors.ENDC}")
+                    return
+                db_type_for_banner = self._resolve_database_type(record, pam_settings_value)
+            else:
+                # KeeperRDP Proxy: validate the record flag set via
+                #   record-update -r <UID> pamSettings=$JSON:{"portForward":{"allowKeeperRDPProxy":true}}
+                # Unlike KeeperDB-Proxy's writer/reader bucket mismatch,
+                # RDP only ever stores this flag in `portForward` — no
+                # `connection` fallback.
+                allow_krdp = isinstance(pam_settings_value, dict) and bool(
+                    (pam_settings_value.get('portForward') or {}).get('allowKeeperRDPProxy')
+                )
+                if not allow_krdp:
+                    print(f"{bcolors.FAIL}KeeperRDP Proxy is not enabled for record {record_uid}.{bcolors.ENDC}")
+                    print(f"{bcolors.WARNING}Enable it on the record's pamSettings.portForward bucket: "
+                          f"set {bcolors.OKBLUE}allowKeeperRDPProxy=true{bcolors.WARNING} (e.g. via "
+                          f"{bcolors.OKBLUE}record-update -r {record_uid} --force "
+                          f"pamSettings=$JSON:{{\"portForward\":{{\"allowKeeperRDPProxy\":true}}}}"
+                          f"{bcolors.ENDC})")
+                    return
+                # Launch-credential pre-flight (same gate KeeperDB uses).
+                # The gateway resolves the linked pamUser's login/password
+                # into tunnel_params via _process_user_record, so failing
+                # without one yields the cryptic
+                # `gateway_webrtcaction_missing_rdp_credentials`.
+                _est, _ett, _tk = get_keeper_tokens(params)
+                _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
+                _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
+                if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
+                    print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                          f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                    print(f"{bcolors.WARNING}Use: "
+                          f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                          f"{bcolors.ENDC}")
+                    return
 
         # Get target host and port
         if allow_supply_host:
@@ -1074,7 +1232,74 @@ class PAMTunnelStartCommand(Command):
                       f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
             return
 
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
+        # When `allow_ephemeral_fallback` is on we're about to attempt
+        # the legacy default port and the pre-probe said it was free.
+        # In the rare TOCTOU window the bind can still race and lose,
+        # in which case Rust (via pyo3-log) and Commander both emit
+        # noisy ERROR-level lines ("Failed to bind … os error 10048",
+        # the pyo3 PyBind wrapper, and Commander's "Error in
+        # start_rust_tunnel"). Suppress ERROR-level logging during
+        # this first attempt so the user only sees those if the retry
+        # also fails. Reset before the retry so any second-attempt
+        # errors surface normally.
+        if allow_ephemeral_fallback:
+            logging.disable(logging.ERROR)
+            try:
+                result = start_rust_tunnel(
+                    params, record_uid, gateway_uid, host, port, seed,
+                    target_host, target_port, socks, trickle_ice,
+                    record.title, allow_supply_host=allow_supply_host,
+                    two_factor_value=two_factor_value,
+                )
+            finally:
+                logging.disable(logging.NOTSET)
+        else:
+            result = start_rust_tunnel(
+                params, record_uid, gateway_uid, host, port, seed,
+                target_host, target_port, socks, trickle_ice,
+                record.title, allow_supply_host=allow_supply_host,
+                two_factor_value=two_factor_value,
+            )
+
+        # No-`--port` legacy default fallback. If Rust failed to bind the
+        # preferred LEGACY_DEFAULT_TUNNEL_PORT because something else
+        # already owns it (concurrent `pam tunnel start`, an unrelated
+        # service, etc.), retry with port=0 so the OS picks an
+        # ephemeral port. We let the actual bind decide instead of
+        # trusting the (now stale) pre-probe. Only triggers when the
+        # user did not pass `--port`.
+        if (
+            allow_ephemeral_fallback
+            and (not result or not result.get("success"))
+        ):
+            err_text = ((result or {}).get("error") or "").lower()
+            # Windows reports SO_EXCLUSIVEADDRUSE collisions as
+            # WSAEACCES (os error 10013, "An attempt was made to access
+            # a socket in a way forbidden by its access permissions")
+            # rather than the more familiar WSAEADDRINUSE (10048).
+            # Unix uses EADDRINUSE / "Address already in use".
+            looks_like_bind_taken = (
+                "address already in use" in err_text
+                or "wsaeaddrinuse" in err_text
+                or "wsaeaccess" in err_text
+                or "access permissions" in err_text
+                or ("bind" in err_text and "10013" in err_text)
+                or ("bind" in err_text and "10048" in err_text)
+                or ("bind" in err_text and "in use" in err_text)
+                or ("bind" in err_text and "forbidden" in err_text)
+            )
+            if looks_like_bind_taken:
+                logging.debug(
+                    f"start_rust_tunnel: legacy default port {port} unavailable "
+                    f"({err_text!r}); retrying with ephemeral (port=0)"
+                )
+                port = 0
+                result = start_rust_tunnel(
+                    params, record_uid, gateway_uid, host, port, seed,
+                    target_host, target_port, socks, trickle_ice,
+                    record.title, allow_supply_host=allow_supply_host,
+                    two_factor_value=two_factor_value,
+                )
 
         if result and result.get("success"):
             # When --proxy was used, print the KeeperDB Proxy info banner once.
@@ -1084,8 +1309,18 @@ class PAMTunnelStartCommand(Command):
             # Single call covers interactive, foreground, run, and background-
             # child modes — the background parent returns earlier and never
             # reaches this branch.
+            #
+            # Use the actually-bound `local_host`/`local_port` from Rust
+            # (may differ from the requested CLI args when the requested
+            # port was already in use and Rust fell back to ephemeral —
+            # otherwise repeat `pam tunnel start` invocations print the
+            # same `:port` even though only the first one is reachable).
+            banner_host = result.get("local_host") or host
+            banner_port = result.get("local_port") or port
             if is_keeperdb_proxy:
-                self._print_keeperdb_proxy_banner(host, port, db_type_for_banner)
+                self._print_keeperdb_proxy_banner(banner_host, banner_port, db_type_for_banner)
+            elif is_keeperrdp_proxy:
+                self._print_keeperrdp_proxy_banner(banner_host, banner_port)
             # Workflow lease expiry handling.
             #
             # At expiresOn we close the tube (stops new channels, sends
