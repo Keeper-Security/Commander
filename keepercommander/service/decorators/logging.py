@@ -200,8 +200,6 @@ def sanitize_debug_data(data: str) -> str:
         (r'\b[fc]\.paymentcard\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
         (r'\b[fc]\.licensenumber\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
         (r'\b[fc]\.encryptednote\.[^=]+=\S*', lambda m: m.group(0).split('=')[0] + '=***'),
-        # Sanitize email addresses in logs to protect PII
-        (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
     ]
 
     for pattern, replacement in patterns:
