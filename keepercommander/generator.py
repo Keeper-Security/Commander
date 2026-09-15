@@ -19,7 +19,7 @@ from secrets import choice
 from typing import Optional, List, Iterator, Sequence, Tuple
 from collections import namedtuple
 
-from . import crypto
+from . import crypto, utils
 
 from Cryptodome.Random.random import shuffle
 
@@ -476,6 +476,11 @@ class KeeperPassphraseGenerator(PasswordGenerator):
             word_count=length_override,
             separator=separator_override,
         )
+
+
+class AESKeyGenerator(PasswordGenerator):
+    def generate(self):
+        return utils.base64_url_encode(utils.generate_aes_key())
 
 
 class CryptoPassphraseGenerator(PasswordGenerator):
