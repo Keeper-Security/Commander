@@ -325,6 +325,14 @@ def resolve_pam_record(params, identifier, rec_type=None):
     if not identifier:
         return None
 
+    try:
+        from ..pam_import.record_loader import load_pam_record
+        rec = load_pam_record(params, identifier)
+        if rec and _record_matches_type(rec, rec_type):
+            return rec
+    except Exception:
+        pass
+
     if identifier in getattr(params, 'record_cache', {}):
         rec = vault.KeeperRecord.load(params, identifier)
         if rec and _record_matches_type(rec, rec_type):
@@ -619,8 +627,13 @@ def update_pam_record(params, record, command='pam', force_nsf=False) -> bool:
         return False
 
 
-def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
-    """Add a record in *folder_uid*, using NSF-native creation when needed."""
+def execute_record_add_in_folder(params, args, folder_uid, command='pam',
+                                 sync_after=True):
+    """Add a record in *folder_uid*, using NSF-native creation when needed.
+
+    When *sync_after* is False, NSF callers can defer sync_down to a batch
+    boundary (avoids one sync per record during large PAM imports).
+    """
     from ..record_edit import RecordAddCommand
     from ..nested_share_folder.record_commands import NestedShareRecordAddCommand
 
@@ -630,7 +643,7 @@ def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
         nsf_args.pop('folder', None)
         nsf_args['folder_uid'] = folder_uid
         uid = NestedShareRecordAddCommand().execute(params, **nsf_args)
-        if uid:
+        if uid and sync_after:
             from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
             sync_down_preserving_nsf_keys(params)
         return uid
@@ -639,8 +652,13 @@ def execute_record_add_in_folder(params, args, folder_uid, command='pam'):
     return RecordAddCommand().execute(params, **record_args)
 
 
-def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam'):
-    """Add a v3 typed record in *folder_uid*, using NSF-native creation when needed."""
+def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam',
+                                    sync_after=True):
+    """Add a v3 typed record in *folder_uid*, using NSF-native creation when needed.
+
+    When *sync_after* is False, NSF callers can defer sync_down to a batch
+    boundary (avoids one sync per record during large PAM imports).
+    """
     import json
 
     from ..recordv3 import RecordAddCommand
@@ -663,8 +681,9 @@ def execute_record_v3_add_in_folder(params, args, folder_uid, command='pam'):
         if not result.get('success'):
             raise CommandError(command, normalize_nsf_user_message(result.get('message')) or
                                'Failed to create record in Nested Share Folder')
-        from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
-        sync_down_preserving_nsf_keys(params)
+        if sync_after:
+            from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+            sync_down_preserving_nsf_keys(params)
         return result['record_uid']
 
     record_args['folder'] = folder_uid
