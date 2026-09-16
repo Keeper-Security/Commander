@@ -21,8 +21,7 @@ _COMMAND_LIST_RE = re.compile(r"-c '([^']*)'")
 
 
 class TestIntegrationSetupBaseCommandSanitize(unittest.TestCase):
-    """A tampered/injected commands string must be confined to the integration's
-    own get_service_commands() list when docker-compose.yml is (re)generated."""
+    """A tampered/injected commands string must be confined to the integration's own get_service_commands() list."""
 
     def _make_service_config(self, commands):
         return ServiceConfig(

@@ -9,13 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""Shared command-list sanitization for Service Mode *-app-setup commands.
-
-Each integration keeps its own allowed (and optional banned) command list;
-this module only provides the generic filter/force-include mechanism so
-every integration can restrict its docker-compose command list to what it
-already declares as allowed.
-"""
+"""Shared command-list sanitization for Service Mode *-app-setup commands."""
 
 from __future__ import annotations
 
@@ -23,13 +17,7 @@ from typing import Iterable
 
 
 def sanitize_commands(commands: str, allowed: Iterable[str], banned: Iterable[str] = ()) -> str:
-    """
-    Keep only allowed commands from ``commands``; always drop banned ones.
-
-    Also ensures every allowed, non-banned command is present in the result,
-    so required commands are not dropped when the input is a partial or
-    stale command list (e.g. a hand-edited docker-compose.yml).
-    """
+    """Keep only allowed commands from `commands`, drop banned ones, and force-include any missing allowed entries."""
     allowed = list(allowed)
     allowed_set = {c.strip().lower() for c in allowed}
     banned_set = {c.strip().lower() for c in banned}

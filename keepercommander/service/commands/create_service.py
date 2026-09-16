@@ -106,8 +106,7 @@ class CreateService(Command):
                 from .integrations.sailpoint.service import SailPointService
                 SailPointService.maybe_enable(params, args)
 
-            # Re-sanitize commands for Slack/Teams/GChat/Terraform against their own
-            # allowlist, in case docker-compose.yml was hand-edited or is stale.
+            # Re-sanitize commands against each integration's own allowlist in case docker-compose.yml is stale/hand-edited.
             from .integrations.runtime_policy import apply_runtime_command_policy
             apply_runtime_command_policy(args)
 

@@ -65,8 +65,7 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         )
 
     def test_sailpoint_record_env_confines_to_sailpoint_allowlist(self):
-        # Fallback path: applies even though SailPointService.maybe_enable() is a
-        # separate call that may have skipped sanitizing (e.g. marker check failed).
+        # Fallback path: applies even if SailPointService.maybe_enable() skipped sanitizing.
         allowed = set(SailPointAppSetupCommand().get_service_commands().split(','))
         with mock.patch.dict(os.environ, {'SAILPOINT_RECORD': 'uid-789'}, clear=True):
             args = _Args(commands='search,download-attachment,ksm')

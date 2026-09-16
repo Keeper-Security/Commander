@@ -123,9 +123,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return commands
 
     def get_banned_commands(self) -> tuple:
-        """Commands to always strip from this integration's command list, even if
-        present in get_service_commands(). Override per integration only if a specific
-        command in that integration's own list needs to be banned."""
+        """Commands to always strip from this integration's command list; override per integration if needed."""
         return ()
 
     def sanitize_service_commands(self, commands: str) -> str:

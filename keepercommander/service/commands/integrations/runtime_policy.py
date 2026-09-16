@@ -9,15 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""Container-start command-list enforcement for *-app-setup integrations.
-
-`service-create` runs every time the Commander container boots (it's the
-container's `command:` in docker-compose.yml), so a hand-edited compose file
-or a stale/rebuilt image can otherwise pass through a `commands` value that
-no longer matches what the integration was actually set up to allow. This
-re-sanitizes `args.commands` against the deploying integration's own
-declared allowlist right before it's persisted.
-"""
+"""Container-start command-list enforcement for *-app-setup integrations."""
 
 from __future__ import annotations
 
@@ -53,14 +45,7 @@ def apply_runtime_command_policy(args) -> None:
 
 
 def _integration_sanitizers():
-    """Map each integration's container-start env var to its own sanitize_service_commands()
-    (or equivalent), reusing the exact allow/ban lists each *-app-setup command declares.
-
-    SailPoint is included here too, even though SailPointService.maybe_enable() (called
-    earlier in create_service.py) already sanitizes against the same allowlist: that call
-    silently skips sanitizing if the vault marker-field check on SAILPOINT_RECORD fails or
-    throws, so this acts as a fallback that applies regardless of that record's state.
-    """
+    """Maps each integration's env var to its own sanitize_service_commands(); SailPoint is included too as a fallback in case SailPointService.maybe_enable() skipped sanitizing."""
     from ..terraform_app_setup import TerraformSetupConstants
     from .command_policy import sanitize_commands
     from .gchat_app_setup import GChatAppSetupCommand

@@ -79,9 +79,7 @@ class TestTerraformAppSetupCommand(TestCase):
         'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'
     )
     def test_commands_config_strips_commands_outside_terraform_allowlist(self, mock_runtime_config):
-        # Even if the global-membership check ever let through a command that
-        # isn't part of Terraform's own allowlist, the final result must not
-        # contain it.
+        # Final result must not contain commands outside Terraform's own allowlist.
         mock_runtime_config.return_value.validate_command_list.return_value = (
             TerraformSetupConstants.SERVICE_COMMANDS + ',clipboard-copy'
         )

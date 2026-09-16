@@ -48,7 +48,7 @@ class TerraformSetupConstants:
         'share-folder', 'rmdir', 'rndir', 'mkdir', 'epm', 'scim', 'mv', 'pam',
         'secrets-manager', 'ln', 'share-record',
         'nsf-mkdir', 'nsf-get', 'nsf-rmdir', 'nsf-record-add', 'nsf-record-update',
-        'nsf-rm', 'nsf-rndir', 'nsf-share-folder', 'nsf-share-record', 'nsf-ln',
+        'nsf-rm', 'nsf-rndir', 'nsf-share-folder', 'nsf-share-record', 'nsf-ln', 'nsf-move',
     )
     SERVICE_COMMANDS = ','.join(SERVICE_COMMANDS_LIST)
 
