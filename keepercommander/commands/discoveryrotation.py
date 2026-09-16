@@ -3277,14 +3277,17 @@ class PAMRouterGetRotationInfo(Command):
                 target_uid = _normalize_uid(rri.controllerUid)
                 try:
                     all_gateways = gateway_helper.get_all_gateways(params) or []
-                except Exception:
+                except (Exception,) as ex:
+                    logging.debug(f"Failed to retrieve gateway list for name resolution: {ex}")
                     all_gateways = []
 
-                matched = next((g for g in all_gateways
-                               if _normalize_uid(getattr(g, 'controllerUid', None)) == target_uid), None)
-                if matched:
-                    gateway_name = getattr(matched, 'controllerName', None)
-                    logging.debug(f"Resolved gateway name from controllerUid {target_uid} -> {gateway_name}")
+                if all_gateways and target_uid:
+                    matched = next((g for g in all_gateways
+                                   if _normalize_uid(getattr(g, 'controllerUid', None)) == target_uid), None)
+                    if matched:
+                        gateway_name = getattr(matched, 'controllerName', None)
+                        if gateway_name:
+                            logging.debug(f"Resolved gateway name from controllerUid {target_uid} -> {gateway_name}")
 
             gateway_name = gateway_name if gateway_name else '-'
             gateway_uid = utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-'
