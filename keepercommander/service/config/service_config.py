@@ -95,6 +95,7 @@ class ServiceConfig:
             cloudflare_public_url="",
             tailscale="n",
             tailscale_auth_key="",
+            tailscale_advertise_tags="",
             tailscale_public_url="",
             tls_certificate="n",
             certfile="",
@@ -246,6 +247,10 @@ class ServiceConfig:
         if 'tailscale_auth_key' not in config:
             config['tailscale_auth_key'] = ''
             logger.debug("Added default tailscale_auth_key for backwards compatibility")
+
+        if 'tailscale_advertise_tags' not in config:
+            config['tailscale_advertise_tags'] = ''
+            logger.debug("Added default tailscale_advertise_tags for backwards compatibility")
 
         if 'tailscale_public_url' not in config:
             config['tailscale_public_url'] = ''

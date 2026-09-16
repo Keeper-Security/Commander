@@ -124,15 +124,11 @@ class ConfigValidator:
 
     @staticmethod
     def validate_tailscale_auth_key(auth_key: str) -> str:
-        """Validate Tailscale auth key format"""
+        """Check presence only; Tailscale's servers are authoritative on key validity at `tailscale up` time."""
         logger.debug("Validating Tailscale auth key")
 
         if not auth_key or not auth_key.strip():
             msg = "Tailscale auth key cannot be empty"
-            raise ValidationError(msg)
-
-        if not re.match(r'^tskey-[0-9a-zA-Z_-]{8,}$', auth_key):
-            msg = "Invalid Tailscale auth key format. Expected a key starting with 'tskey-'."
             raise ValidationError(msg)
 
         logger.debug("Tailscale auth key validation successful")

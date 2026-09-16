@@ -40,4 +40,5 @@ class ServiceConfigData:
     cloudflare_public_url: str = ""
     tailscale: str = "n"
     tailscale_auth_key: str = ""
+    tailscale_advertise_tags: str = ""
     tailscale_public_url: str = ""

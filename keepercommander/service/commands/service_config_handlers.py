@@ -69,6 +69,7 @@ class ServiceConfigHandler:
         ngrok_public_url = ""
         cloudflare_public_url = ""
         tailscale_auth_key = ""
+        tailscale_advertise_tags = ""
 
         if ngrok_enabled == "y":
             # ngrok enabled → disable cloudflare, tailscale and TLS
@@ -115,9 +116,8 @@ class ServiceConfigHandler:
             cloudflare_token = ""
             cloudflare_domain = ""
             tailscale_auth_key = self.service_config.validator.validate_tailscale_auth_key(args.tailscale_auth_key)
-            # tailscale_public_url is only known once `tailscale up` + funnel enable
-            # actually run at service-start time (Tailscale assigns the hostname;
-            # there is no user-supplied custom domain to derive it from here).
+            tailscale_advertise_tags = args.tailscale_advertise_tags or ""
+            # URL is only known once Funnel actually starts at service-start time.
             logger.debug("Tailscale enabled - disabling TLS")
         else:
             # ngrok, cloudflare, and tailscale all disabled → allow TLS
@@ -160,6 +160,7 @@ class ServiceConfigHandler:
             "cloudflare_public_url": cloudflare_public_url,
             "tailscale": tailscale_enabled,
             "tailscale_auth_key": tailscale_auth_key,
+            "tailscale_advertise_tags": tailscale_advertise_tags,
             "tailscale_public_url": "",
             "tls_certificate": tls_enabled,
             "certfile": certfile,
@@ -209,6 +210,7 @@ class ServiceConfigHandler:
             config_data["cloudflare_public_url"] = ""
             config_data["tailscale"] = "n"
             config_data["tailscale_auth_key"] = ""
+            config_data["tailscale_advertise_tags"] = ""
             config_data["tailscale_public_url"] = ""
             config_data["tls_certificate"] = "n"
             config_data["certfile"] = ""
@@ -221,6 +223,7 @@ class ServiceConfigHandler:
                 # cloudflare provides public access with SSL, so skip tailscale and TLS
                 config_data["tailscale"] = "n"
                 config_data["tailscale_auth_key"] = ""
+                config_data["tailscale_advertise_tags"] = ""
                 config_data["tailscale_public_url"] = ""
                 config_data["tls_certificate"] = "n"
                 config_data["certfile"] = ""
@@ -305,12 +308,17 @@ class ServiceConfigHandler:
                 error_key='invalid_tailscale_auth_key',
                 required=True
             )
-            # Public URL is only known once `tailscale up` + funnel enable actually
-            # run at service-start time; leave blank here, matching the streamlined
-            # path's same limitation.
-            config_data["tailscale_public_url"] = ""
+            # Only required for OAuth-derived auth keys.
+            config_data["tailscale_advertise_tags"] = input(
+                self.messages.get(
+                    'tailscale_advertise_tags_prompt',
+                    'Enter Tailscale ACL tags to advertise, comma-separated (optional, required for OAuth-derived auth keys): '
+                )
+            ).strip()
+            config_data["tailscale_public_url"] = ""  # known only once Funnel starts
         else:
             config_data["tailscale_auth_key"] = ""
+            config_data["tailscale_advertise_tags"] = ""
             config_data["tailscale_public_url"] = ""
 
     def _configure_tls(self, config_data: Dict[str, Any]) -> None:
