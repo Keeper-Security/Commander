@@ -87,6 +87,52 @@ class TestEnterprise(TestCase):
             'role_name': ent_env.role1_name,
         }])
 
+    def test_enterprise_node_rename_root_omits_parent_id(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseNodeCommand()
+
+        with mock.patch('keepercommander.commands.enterprise.api.execute_batch',
+                        return_value=[{'result': 'success'}]) as execute_batch:
+            cmd.execute(params, node=[str(ent_env.node1_id)], displayname='Renamed Enterprise')
+
+        request = execute_batch.call_args.args[1][0]
+        self.assertNotIn('parent_id', request)
+        data = crypto.decrypt_aes_v1(
+            utils.base64_url_decode(request['encrypted_data']),
+            params.enterprise['unencrypted_tree_key'],
+        )
+        self.assertEqual(json.loads(data.decode('utf-8'))['displayname'], 'Renamed Enterprise')
+
+    def test_enterprise_node_rename_child_preserves_parent_id(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseNodeCommand()
+
+        with mock.patch('keepercommander.commands.enterprise.api.execute_batch',
+                        return_value=[{'result': 'success'}]) as execute_batch:
+            cmd.execute(params, node=[str(ent_env.node2_id)], displayname='Renamed Child')
+
+        request = execute_batch.call_args.args[1][0]
+        self.assertEqual(request['parent_id'], ent_env.node1_id)
+        data = crypto.decrypt_aes_v1(
+            utils.base64_url_decode(request['encrypted_data']),
+            params.enterprise['unencrypted_tree_key'],
+        )
+        self.assertEqual(json.loads(data.decode('utf-8'))['displayname'], 'Renamed Child')
+
+    def test_enterprise_node_move_sets_selected_parent_id(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseNodeCommand()
+
+        with mock.patch('keepercommander.commands.enterprise.api.execute_batch',
+                        return_value=[{'result': 'success'}]) as execute_batch:
+            cmd.execute(params, node=[str(ent_env.node2_id)], parent=str(ent_env.node1_id))
+
+        request = execute_batch.call_args.args[1][0]
+        self.assertEqual(request['parent_id'], ent_env.node1_id)
+
     def test_enterprise_add_user(self):
         params = get_connected_params()
         api.query_enterprise(params)

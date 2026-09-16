@@ -1561,7 +1561,9 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                             'node_id': node['node_id'],
                             'encrypted_data': encrypted_data
                         }
-                        rq['parent_id'] = parent_id if parent_id else node.get('parent_id')
+                        effective_parent_id = parent_id if parent_id else node.get('parent_id')
+                        if effective_parent_id:
+                            rq['parent_id'] = effective_parent_id
                         request_batch.append(rq)
 
         if request_batch:
