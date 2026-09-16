@@ -27,7 +27,7 @@ class EnterpriseCommand(Command):
         self.public_keys = {}
         self.team_keys = {}
         self._node_map = None
-        self._node_map_enterprise_name = None
+        self._node_map_signature = None
 
     def execute_args(self, params, args, **kwargs):
         if params.enterprise:
@@ -296,11 +296,21 @@ class EnterpriseCommand(Command):
         return enterprise_ids
 
     def get_node_path(self, params, node_id, omit_root=False):
-        current_enterprise_name = params.enterprise.get('enterprise_name')
-        if self._node_map is None or self._node_map_enterprise_name != current_enterprise_name:
-            self._node_map_enterprise_name = current_enterprise_name
+        node_map_signature = (
+            params.enterprise.get('enterprise_name'),
+            tuple(
+                (x['node_id'], x.get('parent_id', 0), x['data'].get('displayname'), x.get('name'))
+                for x in params.enterprise['nodes']
+            ),
+        )
+        if self._node_map is None or self._node_map_signature != node_map_signature:
+            self._node_map_signature = node_map_signature
             self._node_map = {
-                x['node_id']: (x['data'].get('displayname') or x.get('name') or str(x['node_id']) if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
+                x['node_id']: (
+                    x['data'].get('displayname') or x.get('name') or
+                    (params.enterprise['enterprise_name'] if not x.get('parent_id') else str(x['node_id'])),
+                    x.get('parent_id', 0),
+                )
                 for x in params.enterprise['nodes']}
         path = ''
         node = self._node_map.get(node_id)
@@ -328,11 +338,10 @@ class EnterpriseCommand(Command):
                     yield node
                     continue
             if node_name:
-                if 'parent_id' in node:
-                    display_name = node['data'].get('displayname') or ''
-                else:
-                    display_name = params.enterprise['enterprise_name'] or ''
-                if display_name and display_name.lower() == node_name:
+                display_names = [node['data'].get('displayname') or '']
+                if not node.get('parent_id'):
+                    display_names.append(params.enterprise['enterprise_name'] or '')
+                if any(x and x.lower() == node_name for x in display_names):
                     yield node
             else:
                 if 'parent_id' not in node:

@@ -397,7 +397,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             nodes[node_id] = {
                 'node_id': node_id,
                 'parent_id': node.get('parent_id') or 0,
-                'name': (node['data'].get('displayname') or '') if node.get('parent_id') else params.enterprise['enterprise_name'],
+                'name': node['data'].get('displayname') or
+                        (params.enterprise['enterprise_name'] if not node.get('parent_id') else ''),
                 'isolated': node.get('restrict_visibility') or False,
                 'users': [],
                 'teams': [],
