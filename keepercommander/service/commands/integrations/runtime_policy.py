@@ -15,27 +15,25 @@ from __future__ import annotations
 
 import os
 
+from ...util.exceptions import ValidationError
+
 
 def apply_runtime_command_policy(args) -> None:
-    if not getattr(args, 'commands', None):
+    if getattr(args, 'commands', None) is None:
         return
 
-    matched = [
-        env_key for env_key in _integration_sanitizers()
-        if (os.environ.get(env_key) or '').strip()
-    ]
+    sanitizers = _integration_sanitizers()
+    matched = [env_key for env_key in sanitizers if (os.environ.get(env_key) or '').strip()]
     if not matched:
         return
     if len(matched) > 1:
-        print(
-            f'Service Mode: multiple integration env vars are set ({", ".join(matched)}); '
-            f'applying {matched[0]} allowlist. Remove the others from the container '
-            f'environment to avoid ambiguous command policy.'
+        raise ValidationError(
+            f'Multiple integration env vars are set ({", ".join(matched)}); '
+            f'remove all but one before starting the service.'
         )
 
     env_key = matched[0]
-    sanitize = _integration_sanitizers()[env_key]
-    cleaned = sanitize(args.commands)
+    cleaned = sanitizers[env_key](args.commands)
     if cleaned != args.commands:
         print(
             f'Service Mode ({env_key}): removed commands outside the integration '

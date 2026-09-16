@@ -20,6 +20,7 @@ from keepercommander.service.commands.integrations.runtime_policy import apply_r
 from keepercommander.service.commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
 from keepercommander.service.commands.terraform_app_setup import TerraformSetupConstants
+from keepercommander.service.util.exceptions import ValidationError
 
 
 @dataclass
@@ -34,11 +35,20 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
             apply_runtime_command_policy(args)
         self.assertEqual(args.commands, 'search,malicious-command')
 
-    def test_noop_when_commands_empty(self):
+    def test_noop_when_commands_none(self):
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'uid-123'}, clear=True):
+            args = _Args(commands=None)
+            apply_runtime_command_policy(args)
+        self.assertIsNone(args.commands)
+
+    def test_empty_commands_normalizes_to_integration_default(self):
+        # Matches compose-generation behavior: empty falls back to the integration's
+        # own default allowlist rather than leaving the service with no commands.
+        allowed = set(SlackAppSetupCommand().get_service_commands().split(','))
         with mock.patch.dict(os.environ, {'SLACK_RECORD': 'uid-123'}, clear=True):
             args = _Args(commands='')
             apply_runtime_command_policy(args)
-        self.assertEqual(args.commands, '')
+        self.assertEqual(set(args.commands.split(',')), allowed)
 
     def test_slack_record_env_confines_to_slack_allowlist(self):
         allowed = set(SlackAppSetupCommand().get_service_commands().split(','))
@@ -73,19 +83,13 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         self.assertEqual(set(args.commands.split(',')), allowed)
         self.assertNotIn('download-attachment', args.commands.split(','))
 
-    def test_multiple_integration_env_vars_uses_first_and_warns(self):
+    def test_multiple_integration_env_vars_raises(self):
         with mock.patch.dict(
             os.environ, {'SLACK_RECORD': 'uid-1', 'KEEPER_TERRAFORM': '1'}, clear=True
         ):
-            with mock.patch('builtins.print') as mock_print:
-                args = _Args(commands='search,malicious-command')
+            args = _Args(commands='search,malicious-command')
+            with self.assertRaises(ValidationError):
                 apply_runtime_command_policy(args)
-        self.assertTrue(
-            any('multiple integration env vars' in call.args[0].lower()
-                for call in mock_print.call_args_list)
-        )
-        slack_allowed = set(SlackAppSetupCommand().get_service_commands().split(','))
-        self.assertEqual(set(args.commands.split(',')), slack_allowed)
 
 
 if __name__ == '__main__':

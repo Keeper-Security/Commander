@@ -17,7 +17,7 @@ from typing import Iterable
 
 
 def sanitize_commands(commands: str, allowed: Iterable[str], banned: Iterable[str] = ()) -> str:
-    """Keep only allowed commands from `commands`, drop banned ones, and force-include any missing allowed entries."""
+    """Normalizes `commands` to exactly the allowed set minus banned; cannot narrow below the allowlist, only add missing/drop extra entries."""
     allowed = [c.strip() for c in allowed if c and c.strip()]
     allowed_set = {c.lower() for c in allowed}
     banned_set = {c.strip().lower() for c in banned}
