@@ -435,20 +435,13 @@ TAILSCALE_INSTALL_URL = "https://tailscale.com/download"
 
 
 def is_tailscale_installed():
-    """
-    Check whether the Tailscale CLI is available on PATH.
-    Returns True if found, False otherwise.
-    """
+    """Check whether the Tailscale CLI is on PATH."""
     import shutil
     return shutil.which('tailscale') is not None
 
 
 def get_tailscale_install_guidance():
-    """
-    Return a user-facing guidance message when the Tailscale CLI is missing,
-    for manual installation or as a fallback when automatic installation
-    (see install_tailscale()) isn't available or doesn't succeed.
-    """
+    """Manual install guidance; used when auto-install is unavailable or fails."""
     return (
         "Tailscale CLI was not found on this system. Commander Service Mode "
         "requires Tailscale to be installed before enabling Tailscale Funnel. "
@@ -461,43 +454,37 @@ TAILSCALE_MSI_INSTALLER_URL = "https://pkgs.tailscale.com/stable/tailscale-setup
 TAILSCALE_INSTALL_TIMEOUT = 180
 
 
-def _install_tailscale_macos():
+def _run_privileged_tailscale_command(cmd, timeout, action_label):
     """
-    Attempt to install Tailscale via Homebrew on macOS.
-    Returns True on apparent success, False otherwise. Does not attempt a
-    GUI/App-Store install -- if Homebrew isn't available, returns False so
-    the caller falls back to manual guidance.
+    Run a Tailscale management command (install/daemon-start, may need sudo)
+    with standard timeout/error handling. Returns True on success, False otherwise.
     """
-    import shutil
-    if not shutil.which('brew'):
-        logging.info("Homebrew not available for automatic Tailscale install on macOS")
-        return False
-
-    cmd = ['brew', 'install', 'tailscale']
     print(f"Running: {' '.join(cmd)}")
-
     try:
-        result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
+        result = subprocess.run(cmd, timeout=timeout, env=os.environ.copy())
         if result.returncode != 0:
-            logging.error(f"Tailscale installation command failed with exit code {result.returncode}")
+            logging.error(f"{action_label} failed, exit code {result.returncode}")
             return False
         return True
     except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale installation timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
+        logging.error(f"{action_label} timed out after {timeout}s")
         return False
     except Exception as e:
-        logging.error(f"Error installing Tailscale via Homebrew: {type(e).__name__}")
+        logging.error(f"Error during {action_label.lower()}: {type(e).__name__}")
         return False
+
+
+def _install_tailscale_macos():
+    """Install via Homebrew. Returns False if Homebrew isn't available (no GUI/App Store fallback)."""
+    import shutil
+    if not shutil.which('brew'):
+        logging.info("Homebrew not available for automatic Tailscale install")
+        return False
+    return _run_privileged_tailscale_command(['brew', 'install', 'tailscale'], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
 
 
 def _install_tailscale_linux():
-    """
-    Attempt to install Tailscale via the official install script on Linux.
-    Downloads the script (no shell pipe) and runs it with `sh`. The script
-    may prompt for sudo interactively -- expected, since this always runs
-    in a real foreground terminal (see configure_tailscale's caller).
-    Returns True on apparent success, False otherwise.
-    """
+    """Download and run the official install script. May prompt for sudo interactively."""
     import urllib.request
     import tempfile
 
@@ -506,20 +493,9 @@ def _install_tailscale_linux():
         with tempfile.NamedTemporaryFile(delete=False, suffix='.sh') as tmp_file:
             tmp_path = tmp_file.name
         urllib.request.urlretrieve(TAILSCALE_INSTALL_SCRIPT_URL, tmp_path)
-
-        cmd = ['sh', tmp_path]
-        print(f"Running: sh {tmp_path} (Tailscale official install script, downloaded from {TAILSCALE_INSTALL_SCRIPT_URL})")
-
-        result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
-        if result.returncode != 0:
-            logging.error(f"Tailscale installation command failed with exit code {result.returncode}")
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale installation timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
-        return False
+        return _run_privileged_tailscale_command(['sh', tmp_path], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
     except Exception as e:
-        logging.error(f"Error installing Tailscale via install script: {type(e).__name__}")
+        logging.error(f"Error downloading Tailscale install script: {type(e).__name__}")
         return False
     finally:
         if tmp_path:
@@ -530,7 +506,7 @@ def _install_tailscale_linux():
 
 
 def _is_windows_process_elevated():
-    """Check whether the current process is running with Administrator privileges."""
+    """Check whether this process has Administrator privileges."""
     try:
         import ctypes
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -540,14 +516,7 @@ def _is_windows_process_elevated():
 
 
 def _run_msiexec_elevated_windows(msi_path, timeout):
-    """
-    Run msiexec elevated via PowerShell's `Start-Process -Verb RunAs`, which
-    triggers the standard Windows UAC consent prompt -- matching how other
-    Windows installers request elevation -- rather than requiring the user
-    to manually open an Administrator shell.
-    Returns the msiexec exit code as an int, or None if elevation itself
-    failed or was declined by the user.
-    """
+    """Run msiexec via a UAC prompt (Start-Process -Verb RunAs). Returns exit code, or None if declined/failed."""
     msi_args = f'/i "{msi_path}" /quiet TS_NOLAUNCH=1'
     ps_command = (
         "try { "
@@ -556,40 +525,22 @@ def _run_msiexec_elevated_windows(msi_path, timeout):
         "} catch { Write-Output 'ELEVATION_FAILED' }"
     )
     cmd = ["powershell", "-NoProfile", "-Command", ps_command]
-    print(f"Requesting Administrator approval (UAC prompt) to run: msiexec {msi_args}")
+    print("Requesting Administrator approval (UAC prompt) to install Tailscale...")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     output = (result.stdout or '').strip()
     if 'ELEVATION_FAILED' in output:
-        logging.error("Tailscale installation elevation request failed or was declined")
+        logging.error("Elevation request failed or was declined")
         return None
     try:
         return int(output.splitlines()[-1].strip())
     except (ValueError, IndexError):
-        logging.error(f"Could not parse msiexec exit code from elevated install output: {output!r}")
+        logging.error(f"Could not parse msiexec exit code: {output!r}")
         return None
 
 
 def _install_tailscale_windows():
-    """
-    Attempt to install Tailscale on Windows via the official MSI installer,
-    run silently with msiexec.
-
-    There is no verified/documented winget package for Tailscale (the
-    plausible-looking ID "tailscale.tailscale" does not resolve to a real
-    package), so this downloads the official MSI directly -- mirroring the
-    urllib-based download approach already used for the Linux install
-    script -- rather than depending on an unconfirmed package manager.
-    TS_NOLAUNCH=1 prevents the GUI app from auto-launching after install.
-
-    msiexec requires Administrator privileges. If this process isn't
-    already elevated (e.g. a normal PowerShell/VS Code terminal), running
-    msiexec directly fails outright (exit code 1603) rather than prompting
-    -- so in that case, elevation is requested explicitly via a UAC prompt
-    (see _run_msiexec_elevated_windows), matching how other Windows
-    installers behave.
-    Returns True on apparent success, False otherwise.
-    """
+    """Download the official MSI and install silently (no verified winget package exists). Elevates via UAC if needed."""
     import urllib.request
     import tempfile
 
@@ -601,21 +552,20 @@ def _install_tailscale_windows():
 
         if _is_windows_process_elevated():
             cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
-            print(f"Running: {' '.join(cmd)} (downloaded from {TAILSCALE_MSI_INSTALLER_URL})")
+            print(f"Running: {' '.join(cmd)}")
             result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
             returncode = result.returncode
         else:
-            print(f"Downloaded installer from {TAILSCALE_MSI_INSTALLER_URL}; not running elevated.")
             returncode = _run_msiexec_elevated_windows(tmp_path, TAILSCALE_INSTALL_TIMEOUT)
 
         if returncode is None or returncode != 0:
-            logging.error(f"Tailscale installation command failed with exit code {returncode}")
+            logging.error(f"Tailscale install failed, exit code {returncode}")
             return False
 
         _add_windows_tailscale_to_process_path()
         return True
     except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale installation timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
+        logging.error(f"Tailscale install timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
         return False
     except Exception as e:
         logging.error(f"Error installing Tailscale via MSI: {type(e).__name__}")
@@ -629,30 +579,16 @@ def _install_tailscale_windows():
 
 
 def _add_windows_tailscale_to_process_path():
-    """
-    The MSI installer updates the system PATH via the registry, but an
-    already-running process (this one) never sees that update until it
-    restarts -- so a `shutil.which('tailscale')` check performed later in
-    this same process would falsely report "not installed" immediately
-    after a genuinely successful install. Extend this process's in-memory
-    PATH with Tailscale's default install directory so the very next
-    is_tailscale_installed() check succeeds without requiring a shell
-    restart.
-    """
+    """Extend this process's PATH so is_tailscale_installed() sees a fresh install without a shell restart."""
     default_install_dir = r"C:\Program Files\Tailscale"
     current_path = os.environ.get("PATH", "")
     if default_install_dir not in current_path.split(os.pathsep):
         os.environ["PATH"] = current_path + os.pathsep + default_install_dir
-        logging.debug(f"Added {default_install_dir} to process PATH after Tailscale install")
+        logging.debug(f"Added {default_install_dir} to process PATH")
 
 
 def install_tailscale():
-    """
-    Attempt to automatically install the Tailscale CLI for the current OS.
-    Returns True if the install command completed successfully, False
-    otherwise. Callers should re-check is_tailscale_installed() afterward
-    rather than trusting this return value alone.
-    """
+    """Install Tailscale for the current OS. Caller should re-check is_tailscale_installed() after."""
     import platform
     system = platform.system()
 
@@ -663,7 +599,7 @@ def install_tailscale():
     elif system == "Windows":
         return _install_tailscale_windows()
     else:
-        logging.error(f"Automatic Tailscale installation is not supported on platform: {system}")
+        logging.error(f"Automatic Tailscale install not supported on platform: {system}")
         return False
 
 
@@ -675,18 +611,9 @@ _TAILSCALE_DAEMON_UNREACHABLE_HINT = "failed to connect to local tailscale servi
 
 def is_tailscale_daemon_running():
     """
-    Check whether the tailscaled daemon is reachable (distinct from the CLI
-    binary being present on PATH -- `tailscale up`/`funnel` require a live
-    daemon connection, not just the binary).
-
-    `tailscale status` returns a non-zero exit code both when the daemon is
-    genuinely unreachable AND when it's reachable but the node is simply
-    logged out ("Logged out.", also exit code 1) -- so exit code alone
-    can't distinguish the two. Only the specific "failed to connect to
-    local Tailscale service" message indicates the daemon itself is down;
-    any other outcome (including "Logged out.") means the daemon is up.
-
-    Returns True if the daemon is reachable, False otherwise.
+    Check whether tailscaled is reachable. `tailscale status` exits non-zero
+    both when unreachable and when merely logged out, so check for the
+    specific unreachable-connection message rather than the exit code.
     """
     try:
         result = subprocess.run(['tailscale', 'status'], capture_output=True, text=True, timeout=10)
@@ -698,10 +625,7 @@ def is_tailscale_daemon_running():
 
 
 def get_tailscale_daemon_start_guidance():
-    """
-    Return a user-facing guidance message when the Tailscale CLI is present
-    but the tailscaled daemon isn't running/reachable.
-    """
+    """Manual daemon-start guidance; used when auto-start fails."""
     return (
         "Tailscale CLI is installed, but the Tailscale daemon is not running. "
         "On macOS: run 'sudo brew services start tailscale' (or open the Tailscale app). "
@@ -712,78 +636,22 @@ def get_tailscale_daemon_start_guidance():
 
 
 def _start_tailscale_daemon_macos():
-    """
-    Attempt to start the Tailscale daemon on macOS via the Homebrew service.
-    Requires sudo (the daemon needs elevated privileges for network setup) --
-    inherits stdio so any real sudo password prompt is visible/interactive.
-    Returns True on apparent success, False otherwise.
-    """
-    cmd = ['sudo', 'brew', 'services', 'start', 'tailscale']
-    print(f"Running: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(cmd, timeout=TAILSCALE_DAEMON_START_TIMEOUT, env=os.environ.copy())
-        if result.returncode != 0:
-            logging.error(f"Tailscale daemon start command failed with exit code {result.returncode}")
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale daemon start timed out after {TAILSCALE_DAEMON_START_TIMEOUT}s")
-        return False
-    except Exception as e:
-        logging.error(f"Error starting Tailscale daemon via Homebrew services: {type(e).__name__}")
-        return False
+    """Start tailscaled via Homebrew services. Requires sudo."""
+    return _run_privileged_tailscale_command(['sudo', 'brew', 'services', 'start', 'tailscale'], TAILSCALE_DAEMON_START_TIMEOUT, "Daemon start")
 
 
 def _start_tailscale_daemon_linux():
-    """
-    Attempt to start the tailscaled daemon on Linux via systemd.
-    Requires sudo -- inherits stdio for an interactive password prompt.
-    Returns True on apparent success, False otherwise.
-    """
-    cmd = ['sudo', 'systemctl', 'start', 'tailscaled']
-    print(f"Running: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(cmd, timeout=TAILSCALE_DAEMON_START_TIMEOUT, env=os.environ.copy())
-        if result.returncode != 0:
-            logging.error(f"Tailscale daemon start command failed with exit code {result.returncode}")
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale daemon start timed out after {TAILSCALE_DAEMON_START_TIMEOUT}s")
-        return False
-    except Exception as e:
-        logging.error(f"Error starting Tailscale daemon via systemctl: {type(e).__name__}")
-        return False
+    """Start tailscaled via systemd. Requires sudo."""
+    return _run_privileged_tailscale_command(['sudo', 'systemctl', 'start', 'tailscaled'], TAILSCALE_DAEMON_START_TIMEOUT, "Daemon start")
 
 
 def _start_tailscale_daemon_windows():
-    """
-    Attempt to start the Tailscale Windows service.
-    Returns True on apparent success, False otherwise.
-    """
-    cmd = ['net', 'start', 'Tailscale']
-    print(f"Running: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(cmd, timeout=TAILSCALE_DAEMON_START_TIMEOUT, env=os.environ.copy())
-        if result.returncode != 0:
-            logging.error(f"Tailscale daemon start command failed with exit code {result.returncode}")
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        logging.error(f"Tailscale daemon start timed out after {TAILSCALE_DAEMON_START_TIMEOUT}s")
-        return False
-    except Exception as e:
-        logging.error(f"Error starting Tailscale Windows service: {type(e).__name__}")
-        return False
+    """Start the Tailscale Windows service."""
+    return _run_privileged_tailscale_command(['net', 'start', 'Tailscale'], TAILSCALE_DAEMON_START_TIMEOUT, "Daemon start")
 
 
 def start_tailscale_daemon():
-    """
-    Attempt to start the tailscaled daemon for the current OS.
-    Returns True if the start command completed successfully, False
-    otherwise. Callers should re-check is_tailscale_daemon_running()
-    afterward rather than trusting this return value alone.
-    """
+    """Start the daemon for the current OS. Caller should re-check is_tailscale_daemon_running() after."""
     import platform
     system = platform.system()
 
@@ -794,36 +662,31 @@ def start_tailscale_daemon():
     elif system == "Windows":
         return _start_tailscale_daemon_windows()
     else:
-        logging.error(f"Automatic Tailscale daemon start is not supported on platform: {system}")
+        logging.error(f"Automatic daemon start not supported on platform: {system}")
         return False
 
 
 def _get_tailscale_log_path():
-    """
-    Get the path to the Tailscale subprocess log file, creating the
-    containing directory if needed.
-    """
+    """Path to the Tailscale subprocess log file."""
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
     log_dir = os.path.join(service_core_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, "tailscale_subprocess.log")
 
 
-def tailscale_up(auth_key):
+def tailscale_up(auth_key, advertise_tags=None):
     """
-    Authenticate this node to the tailnet using the configured auth key.
-    Runs `tailscale up --authkey=<auth_key>`. The auth key is passed as a
-    single argv element (never via a shell string) and is never logged.
-
-    Note: like ngrok/cloudflare tokens passed as CLI args today, the auth
-    key is visible in this process's argv to other local users via ps/psutil
-    for the short lifetime of the subprocess -- a pre-existing OS-level
-    exposure class, not a regression introduced here.
+    Authenticate via `tailscale up --auth-key=... --advertise-tags=...`.
+    advertise_tags is required for OAuth-client-issued auth keys. --advertise-tags
+    is always passed explicitly (empty if unused) -- `tailscale up` requires every
+    non-default setting to be re-specified on each call, or it errors out; omitting
+    the flag entirely fails if a previous run (e.g. a prior OAuth key) left tags set.
+    The auth key is passed as a single argv element and never logged.
     """
     if not auth_key:
         raise ValueError("Tailscale auth key must be provided for 'tailscale up'.")
 
-    cmd = ["tailscale", "up", f"--authkey={auth_key}"]
+    cmd = ["tailscale", "up", f"--auth-key={auth_key}", f"--advertise-tags={advertise_tags or ''}"]
     log_file = _get_tailscale_log_path()
 
     try:
@@ -836,9 +699,17 @@ def tailscale_up(auth_key):
                 timeout=60,
             )
         if result.returncode != 0:
+            hint = ""
+            try:
+                with open(log_file, 'r') as f:
+                    if "requires --advertise-tags" in f.read() and not advertise_tags:
+                        hint = " This auth key requires --advertise-tags (OAuth-issued key)."
+            except OSError:
+                pass
+            logging.error(f"Tailscale authentication failed, exit code {result.returncode}")
             raise Exception(
-                "Tailscale authentication failed ('tailscale up' returned "
-                f"exit code {result.returncode}). See {log_file} for details."
+                f"Tailscale authentication failed (exit code {result.returncode}).{hint} "
+                f"See {log_file} for details."
             )
         logging.info("Tailscale authentication successful")
     except subprocess.TimeoutExpired:
@@ -855,20 +726,13 @@ TAILSCALE_FUNNEL_DEFAULT_PORT = 443
 
 def start_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT):
     """
-    Enable Tailscale Funnel, forwarding the external funnel_port (must be
-    443, 8443, or 10000) to the local Commander service on localhost:local_port.
-    Runs `tailscale funnel --bg --https=<funnel_port> localhost:<local_port>`.
-    `--bg` is required -- without it, the command runs in the foreground and
-    blocks until interrupted (per Tailscale's documented behavior), which
-    would hang here indefinitely.
+    Enable Funnel: forward funnel_port -> localhost:local_port.
+    --bg is required, otherwise the command blocks in the foreground indefinitely.
     """
     if not local_port:
         raise ValueError("Port must be provided to start Tailscale Funnel.")
 
-    cmd = [
-        "tailscale", "funnel", "--bg",
-        f"--https={funnel_port}", f"localhost:{local_port}",
-    ]
+    cmd = ["tailscale", "funnel", "--bg", f"--https={funnel_port}", f"localhost:{local_port}"]
     log_file = _get_tailscale_log_path()
 
     try:
@@ -881,12 +745,11 @@ def start_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT
                 timeout=30,
             )
         if result.returncode != 0:
+            logging.error(f"Tailscale Funnel start failed, exit code {result.returncode}")
             raise Exception(
-                f"Failed to start Tailscale Funnel (local port {local_port}, "
-                f"funnel port {funnel_port}, exit code {result.returncode}). "
-                f"See {log_file} for details. Note: the first time Funnel is "
-                "enabled on a tailnet, it may require one-time approval in the "
-                "Tailscale admin console."
+                f"Failed to start Tailscale Funnel (exit code {result.returncode}). "
+                f"See {log_file} for details. First-time Funnel use on a tailnet may "
+                "require one-time approval in the Tailscale admin console."
             )
         logging.info(f"Tailscale Funnel enabled: localhost:{local_port} -> :{funnel_port}")
     except subprocess.TimeoutExpired:
@@ -895,12 +758,7 @@ def start_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT
 
 
 def get_tailscale_funnel_url(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT, max_retries=10, retry_delay=1):
-    """
-    Retrieve the public HTTPS Funnel URL, combining this node's MagicDNS
-    hostname (from `tailscale status --json`) with funnel_port. No port
-    suffix is added for the default port 443.
-    Returns the public URL if found, None otherwise.
-    """
+    """Build the public Funnel URL from this node's MagicDNS hostname + funnel_port."""
     for attempt in range(max_retries):
         try:
             result = subprocess.run(
@@ -911,8 +769,7 @@ def get_tailscale_funnel_url(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PO
             )
             if result.returncode == 0 and result.stdout:
                 status = json.loads(result.stdout)
-                self_node = status.get("Self", {})
-                dns_name = (self_node.get("DNSName") or "").rstrip('.')
+                dns_name = (status.get("Self", {}).get("DNSName") or "").rstrip('.')
                 if dns_name:
                     if funnel_port == TAILSCALE_FUNNEL_DEFAULT_PORT:
                         return f"https://{dns_name}"
@@ -925,23 +782,16 @@ def get_tailscale_funnel_url(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PO
         if attempt < max_retries - 1:
             time.sleep(retry_delay)
 
+    logging.warning(f"Could not retrieve Tailscale Funnel URL after {max_retries} attempts")
     return None
 
 
 def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT):
     """
-    Disable Tailscale Funnel (does not tear down the tailnet connection
-    itself, only the funnel exposure).
-
-    The installed CLI's `tailscale funnel --help` shows only `status` and
-    `reset` as subcommands -- there is no documented per-target `off`
-    argument in this version. `tailscale funnel reset` clears ALL funnel
-    config on this node (not scoped to local_port), which is acceptable
-    here since Commander only ever manages its own single Funnel target,
-    consistent with how the existing ngrok/cloudflare cleanup already scans
-    and kills broadly rather than surgically. `local_port`/`funnel_port` are
-    accepted for call-site symmetry with start_tailscale_funnel but unused.
-    Returns True on success, False otherwise.
+    Disable Funnel via `tailscale funnel reset` (no per-target `off` exists
+    in this CLI version). Resets all funnel config on this node; acceptable
+    since Commander manages a single target. local_port/funnel_port kept
+    for signature symmetry with start_tailscale_funnel.
     """
     cmd = ["tailscale", "funnel", "reset"]
     log_file = _get_tailscale_log_path()
@@ -958,7 +808,7 @@ def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT)
         if result.returncode == 0:
             logging.info(f"Tailscale Funnel disabled for localhost:{local_port}")
             return True
-        logging.warning(f"Failed to stop Tailscale Funnel for localhost:{local_port} (exit code {result.returncode})")
+        logging.warning(f"Failed to stop Tailscale Funnel, exit code {result.returncode}")
         return False
     except Exception as e:
         logging.error(f"Error stopping Tailscale Funnel: {type(e).__name__}")
@@ -966,11 +816,7 @@ def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT)
 
 
 def get_tailscale_funnel_status(local_port):
-    """
-    Query live Funnel status via `tailscale funnel status --json` for the
-    given local port. Returns True if Funnel is currently on for that
-    local target, False otherwise.
-    """
+    """Check live Funnel status via `tailscale funnel status --json`."""
     try:
         result = subprocess.run(
             ["tailscale", "funnel", "status", "--json"],
