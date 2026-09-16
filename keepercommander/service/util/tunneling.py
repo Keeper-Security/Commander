@@ -506,7 +506,7 @@ def _install_tailscale_linux():
 
 
 def _is_windows_process_elevated():
-    """Check whether the current process is running with Administrator privileges."""
+    """Check whether this process has Administrator privileges."""
     try:
         import ctypes
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -516,14 +516,7 @@ def _is_windows_process_elevated():
 
 
 def _run_msiexec_elevated_windows(msi_path, timeout):
-    """
-    Run msiexec elevated via PowerShell's `Start-Process -Verb RunAs`, which
-    triggers the standard Windows UAC consent prompt -- matching how other
-    Windows installers request elevation -- rather than requiring the user
-    to manually open an Administrator shell.
-    Returns the msiexec exit code as an int, or None if elevation itself
-    failed or was declined by the user.
-    """
+    """Run msiexec via a UAC prompt (Start-Process -Verb RunAs). Returns exit code, or None if declined/failed."""
     msi_args = f'/i "{msi_path}" /quiet TS_NOLAUNCH=1'
     ps_command = (
         "try { "
@@ -532,17 +525,17 @@ def _run_msiexec_elevated_windows(msi_path, timeout):
         "} catch { Write-Output 'ELEVATION_FAILED' }"
     )
     cmd = ["powershell", "-NoProfile", "-Command", ps_command]
-    print(f"Requesting Administrator approval (UAC prompt) to run: msiexec {msi_args}")
+    print("Requesting Administrator approval (UAC prompt) to install Tailscale...")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     output = (result.stdout or '').strip()
     if 'ELEVATION_FAILED' in output:
-        logging.error("Tailscale installation elevation request failed or was declined")
+        logging.error("Elevation request failed or was declined")
         return None
     try:
         return int(output.splitlines()[-1].strip())
     except (ValueError, IndexError):
-        logging.error(f"Could not parse msiexec exit code from elevated install output: {output!r}")
+        logging.error(f"Could not parse msiexec exit code: {output!r}")
         return None
 
 
