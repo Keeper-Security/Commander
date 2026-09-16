@@ -31,6 +31,7 @@ class StreamlineArgs:
     cloudflare_custom_domain: Optional[str]
     tailscale: Optional[str]
     tailscale_auth_key: Optional[str]
+    tailscale_advertise_tags: Optional[str]
     certfile: Optional[str]
     certpassword: Optional[str]
     fileformat: Optional[str]
@@ -76,6 +77,7 @@ class CreateService(Command):
         parser.add_argument('-cfd', '--cloudflare_custom_domain', type=str, help='cloudflare custom domain name (required when using cloudflare)')
         parser.add_argument('-ts', '--tailscale', type=str, help='enable Tailscale Funnel to generate public URL (y, required when using tailscale)')
         parser.add_argument('-tsk', '--tailscale-auth-key', dest='tailscale_auth_key', type=str, help='Tailscale auth key for `tailscale up` authentication (required when using tailscale)')
+        parser.add_argument('-tst', '--tailscale-advertise-tags', dest='tailscale_advertise_tags', type=str, help='Comma-separated ACL tags to advertise (required when the auth key is OAuth-client-derived, e.g. tag:commander-service)')
         parser.add_argument('-crtf', '--certfile', type=str, help='certificate file path')
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
@@ -99,7 +101,7 @@ class CreateService(Command):
 
             filtered_kwargs = {k: v for k, v in kwargs.items() if k in [
                 'port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain',
-                'cloudflare', 'cloudflare_custom_domain', 'tailscale', 'tailscale_auth_key',
+                'cloudflare', 'cloudflare_custom_domain', 'tailscale', 'tailscale_auth_key', 'tailscale_advertise_tags',
                 'certfile', 'certpassword', 'fileformat',
                 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption',
                 'encryption_key', 'token_expiration',
@@ -121,10 +123,7 @@ class CreateService(Command):
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args, existing_api_key=existing_api_key)
 
-            # Vault metadata (service URL + API key) is written from within
-            # ServiceManager.start_service() instead of here, since the real
-            # public URL (for Tailscale in particular) is only known once the
-            # tunnel actually starts -- see service_manager.py.
+            # Vault metadata is written from start_service() instead, once the real URL is known.
             self._upload_and_start_service(params)
 
         except ValidationError as e:

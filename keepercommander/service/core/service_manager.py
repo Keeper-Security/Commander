@@ -122,12 +122,15 @@ class ServiceManager:
                 if config_data.get("tailscale") == 'y':
                     tailscale_enabled = True
                     tailscale_port = port
-                    # Tailscale's public URL is only known after Funnel actually starts
-                    # (unlike ngrok/cloudflare, it can't be derived from user input alone),
-                    # so persist it back to the saved config now that it's known.
+                    # Tailscale's URL is only known post-Funnel-start; persist it now.
                     if config_data.get("tailscale_public_url"):
                         try:
+                            # save_config() writes plaintext; must re-encrypt or later
+                            # load_config() calls (auth checks, routes) fail to decrypt.
                             service_config.save_config(config_data, config_data.get("fileformat"))
+                            service_config.format_handler.encrypt_config_file(
+                                service_config.format_handler.config_path, service_config.format_handler.config_dir
+                            )
                         except Exception as save_error:
                             logger.debug(f"Could not persist tailscale_public_url: {save_error}")
             except Exception as e:
@@ -156,13 +159,9 @@ class ServiceManager:
                 logger.info(f"\n{str(e)}")
                 return
 
-            # Write vault metadata (service URL + API key) now that tunnel configuration
-            # has succeeded and the real public URL (if any) is known -- this is done here
-            # rather than at service-create time because Tailscale's URL in particular is
-            # only known after Funnel actually starts, not derivable from user input alone.
-            # Consumed from a transient, same-process global (set by CreateService, if
-            # -ur/--update-vault-record was requested) rather than persisted config, since
-            # this write should only ever fire once per creation, not on later restarts.
+            # Write vault metadata (URL + API key) now the real URL is known. Consumed
+            # from a transient, same-process global (set by CreateService for
+            # -ur/--update-vault-record) so it fires once per creation, not on restarts.
             from ..core.globals import pop_pending_vault_metadata
             pending_metadata = pop_pending_vault_metadata()
             if pending_metadata:
@@ -238,6 +237,7 @@ class ServiceManager:
 
             else:
                 cleanup_done = False
+                tailscale_cleanup_done = False
 
                 def cleanup_cloudflare_on_foreground_exit():
                     """Clean up Cloudflare tunnel when foreground service exits."""
@@ -308,9 +308,11 @@ class ServiceManager:
                         logger.error(f"Unexpected error during Cloudflare cleanup: {e}")
 
                 def cleanup_tailscale_on_foreground_exit():
-                    """Clean up Tailscale Funnel when foreground service exits."""
-                    if not tailscale_enabled:
+                    """Stop Funnel when foreground service exits. Leaves tailnet auth/daemon untouched."""
+                    nonlocal tailscale_cleanup_done
+                    if not tailscale_enabled or tailscale_cleanup_done:
                         return
+                    tailscale_cleanup_done = True
                     try:
                         from ..util.tunneling import stop_tailscale_funnel
                         if stop_tailscale_funnel(tailscale_port):
@@ -467,7 +469,8 @@ class ServiceManager:
             if not cloudflare_stopped:
                 logger.debug("No Cloudflare tunnel processes found to stop")
 
-            # Stop Tailscale Funnel if it was enabled
+            # Stop Tailscale Funnel if it was enabled. Leaves tailnet auth/daemon untouched
+            # (tailscaled is system-wide; stopping it would affect other uses of this machine's Tailscale connection).
             if process_info.tailscale_enabled and process_info.tailscale_port:
                 try:
                     logger.debug(f"Attempting to stop Tailscale Funnel on port {process_info.tailscale_port}")
@@ -477,7 +480,7 @@ class ServiceManager:
                     else:
                         logger.warning(f"Failed to stop Tailscale Funnel on port {process_info.tailscale_port}")
                 except Exception as e:
-                    logger.warning(f"Error stopping Tailscale Funnel: {str(e)}")
+                    logger.warning(f"Error stopping Tailscale: {str(e)}")
             else:
                 logger.debug("No Tailscale Funnel to stop")
 
