@@ -87,6 +87,37 @@ class TestEnterprise(TestCase):
             'role_name': ent_env.role1_name,
         }])
 
+    def test_enterprise_info_uses_root_displayname(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        params.enterprise['nodes'][0]['data']['displayname'] = 'ECC-cmdr'
+        cmd = enterprise.EnterpriseInfoCommand()
+
+        report = json.loads(cmd.execute(params, nodes=True, format='json', quiet=True))
+        root = next(x for x in report if x['node_id'] == ent_env.node1_id)
+        self.assertEqual(root['name'], 'ECC-cmdr')
+        self.assertIn('ECC-cmdr', cmd.execute(params, quiet=True))
+        self.assertIn('ECC-cmdr', cmd.execute(params, nodes=True, format='csv', quiet=True))
+
+        self.assertEqual(
+            [x['node_id'] for x in cmd.resolve_nodes(params, 'ECC-cmdr')],
+            [ent_env.node1_id],
+        )
+        self.assertEqual(
+            [x['node_id'] for x in cmd.resolve_nodes(params, 'Enterprise 1')],
+            [ent_env.node1_id],
+        )
+        self.assertEqual(cmd.get_node_path(params, ent_env.node2_id), 'ECC-cmdr\\Sub node 1')
+
+    def test_enterprise_node_path_cache_refreshes_displayname(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseInfoCommand()
+
+        self.assertEqual(cmd.get_node_path(params, ent_env.node2_id), 'Enterprise 1\\Sub node 1')
+        params.enterprise['nodes'][0]['data']['displayname'] = 'ECC-cmdr'
+        self.assertEqual(cmd.get_node_path(params, ent_env.node2_id), 'ECC-cmdr\\Sub node 1')
+
     def test_enterprise_node_rename_root_omits_parent_id(self):
         params = get_connected_params()
         api.query_enterprise(params)
