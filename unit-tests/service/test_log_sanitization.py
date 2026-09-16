@@ -6,8 +6,10 @@ from keepercommander.service.decorators.logging import (
     sanitize_debug_data,
 )
 from keepercommander.service.decorators.api_logging import (
-    _sanitize_nested_data,
     sanitize_password_in_command,
+)
+from keepercommander.sanitization import (
+    sanitize_nested_data,
 )
 from keepercommander.service.util.command_util import CommandExecutor
 from keepercommander.service.util.exceptions import CommandExecutionError
@@ -86,7 +88,7 @@ class TestFiledataSanitization(TestCase):
                                                 "cardExpirationDate": "04/2026",
                                                 "cardSecurityCode": "123"}]},
         ]
-        sanitized = _sanitize_nested_data(filedata)
+        sanitized = sanitize_nested_data(filedata)
         dumped = str(sanitized)
         self.assertNotIn(SECRET_VALUE, dumped)
         self.assertNotIn('4111111111111111', dumped)
@@ -94,7 +96,7 @@ class TestFiledataSanitization(TestCase):
 
     def test_non_sensitive_type_value_untouched(self):
         filedata = [{"type": "text", "value": ["not a secret"]}]
-        sanitized = _sanitize_nested_data(filedata)
+        sanitized = sanitize_nested_data(filedata)
         self.assertEqual(sanitized, filedata)
 
     def test_sanitize_password_in_command_masks_command_and_filedata(self):
