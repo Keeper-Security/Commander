@@ -169,10 +169,8 @@ def sanitize_debug_data(data: str) -> str:
         (r'\bpasskey=[^\s]*', 'passkey=***'),
         (r'\blicenseNumber=[^\s]*', 'licenseNumber=***'),
         (r'\bencryptedNote=[^\s]*', 'encryptedNote=***'),
-        # Command options (--notes, --password, etc)
-        (r'--notes=[^\s]*', '--notes=***'),
+        # Command options (--password, etc)
         (r'--password=[^\s]*', '--password=***'),
-        (r'--notes\s+[^\s]+', '--notes ***'),
         (r'--password\s+[^\s]+', '--password ***'),
         # Prefixed field formats (f.fieldName=value, c.fieldName=value)
         (r'\bf\.bankAccount\.accountNumber=[^\s]*', 'f.bankAccount.accountNumber=***'),
