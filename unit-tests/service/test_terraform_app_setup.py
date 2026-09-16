@@ -78,6 +78,20 @@ class TestTerraformAppSetupCommand(TestCase):
     @mock.patch(
         'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'
     )
+    def test_commands_config_strips_commands_outside_terraform_allowlist(self, mock_runtime_config):
+        # Even if the global-membership check ever let through a command that
+        # isn't part of Terraform's own allowlist, the final result must not
+        # contain it.
+        mock_runtime_config.return_value.validate_command_list.return_value = (
+            TerraformSetupConstants.SERVICE_COMMANDS + ',clipboard-copy'
+        )
+        cmd = TerraformAppSetupCommand()
+        result = cmd._get_commands_config(mock.Mock())
+        self.assertEqual(set(result.split(',')), set(TerraformSetupConstants.SERVICE_COMMANDS_LIST))
+
+    @mock.patch(
+        'keepercommander.service.commands.terraform_app_setup.RuntimeServiceConfig'
+    )
     def test_commands_config_wraps_validation_error(self, mock_runtime_config):
         mock_runtime_config.return_value.validate_command_list.side_effect = ValidationError(
             'bad command'

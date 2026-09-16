@@ -106,6 +106,11 @@ class CreateService(Command):
                 from .integrations.sailpoint.service import SailPointService
                 SailPointService.maybe_enable(params, args)
 
+            # Re-sanitize commands for Slack/Teams/GChat/Terraform against their own
+            # allowlist, in case docker-compose.yml was hand-edited or is stale.
+            from .integrations.runtime_policy import apply_runtime_command_policy
+            apply_runtime_command_policy(args)
+
             from .integrations.vault_metadata import get_existing_api_key, write_service_metadata
             existing_api_key = (
                 get_existing_api_key(params, args.update_vault_record)

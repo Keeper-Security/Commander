@@ -17,6 +17,7 @@ import shlex
 from typing import Any, Optional, Tuple
 
 from .....utils import is_email
+from .. import command_policy as _shared_policy
 from .command_parse import SailPointCommandParser
 from .constants import SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS
 
@@ -50,25 +51,13 @@ class SailPointCommandPolicy:
         commands are not dropped when the input list is a partial or older
         compose allowlist.
         """
-        allowed = {c.strip().lower() for c in SAILPOINT_ALLOWED_COMMANDS}
-        banned = {c.lower() for c in SAILPOINT_BANNED_COMMANDS}
-        filtered = [
-            cmd for raw in (commands or '').split(',')
-            if (cmd := raw.strip())
-            and (key := cmd.lower()) not in banned
-            and key in allowed
-        ]
-        # Input order first, then any missing required allowlist entries.
-        by_key = {cmd.lower(): cmd for cmd in filtered}
-        for cmd in SAILPOINT_ALLOWED_COMMANDS:
-            key = cmd.lower()
-            if key not in banned and key not in by_key:
-                by_key[key] = cmd
-        return ','.join(by_key.values())
+        return _shared_policy.sanitize_commands(
+            commands, SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS
+        )
 
     @classmethod
     def default_allowlist(cls) -> str:
-        return cls.sanitize(','.join(SAILPOINT_ALLOWED_COMMANDS))
+        return _shared_policy.default_allowlist(SAILPOINT_ALLOWED_COMMANDS, SAILPOINT_BANNED_COMMANDS)
 
     @classmethod
     def validate_enterprise_user(cls, command: str) -> Optional[str]:

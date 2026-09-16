@@ -33,6 +33,7 @@ from .sailpoint.constants import (
     MIN_POLL_INTERVAL_SECONDS,
     PENDING_ENTITLEMENTS_FIELD,
     POLL_INTERVAL_FIELD,
+    SAILPOINT_BANNED_COMMANDS,
     SAILPOINT_MARKER_FIELD,
     SAILPOINT_RECORD_ENV,
     TRANSFER_TARGET_EMAIL_FIELD,
@@ -59,6 +60,9 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
 
     def get_service_commands(self) -> str:
         return SailPointCommandPolicy.default_allowlist()
+
+    def get_banned_commands(self) -> tuple:
+        return tuple(SAILPOINT_BANNED_COMMANDS)
 
     def collect_integration_config(self, params, transfer_target_default: str = ''):
         print(f"\n{bcolors.BOLD}SHARE ENTITLEMENTS:{bcolors.ENDC}")
@@ -186,7 +190,7 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
 
         try:
             cfg = asdict(service_config)
-            cfg['commands'] = SailPointCommandPolicy.sanitize(cfg.get('commands') or '')
+            cfg['commands'] = self.sanitize_service_commands(cfg.get('commands') or '')
             builder = DockerComposeBuilder(
                 setup_result,
                 cfg,
