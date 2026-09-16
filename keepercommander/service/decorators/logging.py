@@ -160,6 +160,7 @@ def sanitize_debug_data(data: str) -> str:
         (r'\boneTimeCode=[^\s]*', 'oneTimeCode=***'),
         (r'\bsecret=[^\s]*', 'secret=***'),
         (r'\bpinCode=[^\s]*', 'pinCode=***'),
+        (r'\bnote=[^\s]*', 'note=***'),
         (r'\bkeyPair=[^\s]*', 'keyPair=***'),
         (r'\bprivateKey=[^\s]*', 'privateKey=***'),
         (r'\bpassphrase=[^\s]*', 'passphrase=***'),

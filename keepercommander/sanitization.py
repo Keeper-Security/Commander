@@ -18,7 +18,7 @@ SENSITIVE_FIELD_TYPES = frozenset({
     'privatekey', 'passphrase', 'paymentcard', 'bankaccount',
     'securityquestion', 'passkey', 'accountnumber', 'routingnumber',
     'cardnumber', 'cardsecuritycode', 'publickey', 'licensenumber',
-    'encryptednote'
+    'note', 'encryptednote'
 })
 
 SENSITIVE_DICT_KEYS = frozenset({'password', 'secret', 'token', 'key',

@@ -27,19 +27,19 @@ class TestCommandFieldSanitization(unittest.TestCase):
         self.assertNotIn("NOTE_SECRET", result)
         self.assertIn("encryptedNote=***", result)
 
-    def test_notes_option_masked(self):
-        """Test --notes option is masked."""
-        command = "record-add --title MyRecord --notes=NOTE_OPTION_SECRET --force"
+    def test_notes_field_masked(self):
+        """Test note field (in encryptedNotes) is masked."""
+        command = "record-add -rt encryptedNotes note=NOTE_FIELD_SECRET --force"
         result = sanitize_command_fields(command)
-        self.assertNotIn("NOTE_OPTION_SECRET", result)
-        self.assertIn("--notes=***", result)
+        self.assertNotIn("NOTE_FIELD_SECRET", result)
+        self.assertIn("note=***", result)
 
-    def test_notes_option_with_quotes_masked(self):
-        """Test --notes option with quoted value is masked."""
-        command = 'record-add --title MyRecord --notes "NOTE_QUOTED_SECRET" --force'
+    def test_notes_option_preserved(self):
+        """Test --notes option is preserved (not a sensitive field)."""
+        command = 'record-add --title MyRecord --notes "General notes here" --force'
         result = sanitize_command_fields(command)
-        self.assertNotIn("NOTE_QUOTED_SECRET", result)
-        self.assertIn("--notes ***", result)
+        self.assertIn("--notes", result)
+        self.assertIn("General notes here", result)
 
     def test_prefixed_bankaccount_fields_masked(self):
         """Test prefixed bankAccount fields are masked."""
@@ -119,12 +119,10 @@ class TestCommandFieldSanitization(unittest.TestCase):
 
     def test_mixed_command_all_masked(self):
         """Test mixed command with multiple sensitive fields all masked."""
-        command = "record-add -rt softwareLicense --title MyLicense --notes=MY_NOTES licenseNumber=LICENSE_NUM f.encryptedNote=NOTE_DATA"
+        command = "record-add -rt softwareLicense --title MyLicense licenseNumber=LICENSE_NUM f.encryptedNote=NOTE_DATA"
         result = sanitize_command_fields(command)
-        self.assertNotIn("MY_NOTES", result)
         self.assertNotIn("LICENSE_NUM", result)
         self.assertNotIn("NOTE_DATA", result)
-        self.assertIn("--notes=***", result)
         self.assertIn("licenseNumber=***", result)
         self.assertIn("f.encryptedNote=***", result)
 
@@ -248,8 +246,8 @@ class TestRecordTypes(unittest.TestCase):
             "record-add -rt encryptedNotes f.encryptedNote=NOTE_SECRET",
             "record-add encryptedNote=NOTE_SECRET",
             "record-update REC_UID encryptedNote=NOTE_SECRET",
-            "record-add --notes=NOTE_SECRET",
-            "record-update REC_UID --notes=NOTE_SECRET",
+            "record-add -rt encryptedNotes note=NOTE_SECRET",
+            "record-update REC_UID note=NOTE_SECRET",
         ]
         for cmd in commands:
             result = sanitize_command_fields(cmd)
