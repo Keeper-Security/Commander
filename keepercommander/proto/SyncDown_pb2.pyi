@@ -1,11 +1,11 @@
-import record_pb2 as _record_pb2
-import breachwatch_pb2 as _breachwatch_pb2
-import APIRequest_pb2 as _APIRequest_pb2
-import enterprise_pb2 as _enterprise_pb2
-import NotificationCenter_pb2 as _NotificationCenter_pb2
-import dag_pb2 as _dag_pb2
-import folder_pb2 as _folder_pb2
-import record_sharing_pb2 as _record_sharing_pb2
+from . import record_pb2 as _record_pb2
+from . import breachwatch_pb2 as _breachwatch_pb2
+from . import APIRequest_pb2 as _APIRequest_pb2
+from . import enterprise_pb2 as _enterprise_pb2
+from . import NotificationCenter_pb2 as _NotificationCenter_pb2
+from . import dag_pb2 as _dag_pb2
+from . import folder_pb2 as _folder_pb2
+from . import record_sharing_pb2 as _record_sharing_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -597,36 +597,44 @@ class KsmChange(_message.Message):
     def __init__(self, appRecordUid: _Optional[bytes] = ..., detailId: _Optional[bytes] = ..., removed: bool = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., expiration: _Optional[int] = ..., locked: bool = ...) -> None: ...
 
 class AppUserChange(_message.Message):
-    __slots__ = ("appRecordUid", "username", "canManageUsers", "canManageShares", "removed", "canManageDevices")
+    __slots__ = ("appRecordUid", "username", "canManageUsers", "canManageShares", "removed", "canManageDevices", "recordKey", "recordKeyType")
     APPRECORDUID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     CANMANAGEUSERS_FIELD_NUMBER: _ClassVar[int]
     CANMANAGESHARES_FIELD_NUMBER: _ClassVar[int]
     REMOVED_FIELD_NUMBER: _ClassVar[int]
     CANMANAGEDEVICES_FIELD_NUMBER: _ClassVar[int]
+    RECORDKEY_FIELD_NUMBER: _ClassVar[int]
+    RECORDKEYTYPE_FIELD_NUMBER: _ClassVar[int]
     appRecordUid: bytes
     username: str
     canManageUsers: bool
     canManageShares: bool
     removed: bool
     canManageDevices: bool
-    def __init__(self, appRecordUid: _Optional[bytes] = ..., username: _Optional[str] = ..., canManageUsers: bool = ..., canManageShares: bool = ..., removed: bool = ..., canManageDevices: bool = ...) -> None: ...
+    recordKey: bytes
+    recordKeyType: _record_pb2.RecordKeyType
+    def __init__(self, appRecordUid: _Optional[bytes] = ..., username: _Optional[str] = ..., canManageUsers: bool = ..., canManageShares: bool = ..., removed: bool = ..., canManageDevices: bool = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ...) -> None: ...
 
 class AppTeamChange(_message.Message):
-    __slots__ = ("appRecordUid", "teamUid", "canManageUsers", "canManageShares", "removed", "canManageDevices")
+    __slots__ = ("appRecordUid", "teamUid", "canManageUsers", "canManageShares", "removed", "canManageDevices", "recordKey", "recordKeyType")
     APPRECORDUID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     CANMANAGEUSERS_FIELD_NUMBER: _ClassVar[int]
     CANMANAGESHARES_FIELD_NUMBER: _ClassVar[int]
     REMOVED_FIELD_NUMBER: _ClassVar[int]
     CANMANAGEDEVICES_FIELD_NUMBER: _ClassVar[int]
+    RECORDKEY_FIELD_NUMBER: _ClassVar[int]
+    RECORDKEYTYPE_FIELD_NUMBER: _ClassVar[int]
     appRecordUid: bytes
     teamUid: bytes
     canManageUsers: bool
     canManageShares: bool
     removed: bool
     canManageDevices: bool
-    def __init__(self, appRecordUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., canManageUsers: bool = ..., canManageShares: bool = ..., removed: bool = ..., canManageDevices: bool = ...) -> None: ...
+    recordKey: bytes
+    recordKeyType: _record_pb2.RecordKeyType
+    def __init__(self, appRecordUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., canManageUsers: bool = ..., canManageShares: bool = ..., removed: bool = ..., canManageDevices: bool = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ...) -> None: ...
 
 class ShareInvitation(_message.Message):
     __slots__ = ("username",)
