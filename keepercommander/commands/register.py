@@ -795,6 +795,9 @@ class ShareFolderCommand(Command):
                         rq.sharedFolderUpdateUser.append(uo)
                     elif action == 'remove':
                         rq.sharedFolderRemoveUser.append(uo.username)
+                elif action == 'remove':
+                    logging.warning('User \'%s\' is not a member of shared folder \'%s\'',
+                                     email, curr_sf.get('shared_folder_uid', ''))
                 elif action == 'grant':
                     invited = api.load_user_public_keys(params, [email], send_invites=True)
                     if invited:
