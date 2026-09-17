@@ -8,6 +8,7 @@ from ...discovery_common.record_link import RecordLink
 from ...discovery_common.types import UserAcl, DiscoveryObject, ServiceEnum
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...keeper_dag import EdgeType
+from .graph import PAMDebugGraphCommand
 import time
 import re
 import json
@@ -170,117 +171,10 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
         record_vertex = record_link.dag.get_vertex(record.record_uid)
 
         if record_vertex is not None:
-            print(self._h("Record Linking"))
-
-            print(self._b("  Record Data (meta)"))
-            print(f"  Raw JSON: {json.dumps(record_vertex.content_as_dict)}")
-            print("")
-
-            record_parent_vertices = record_vertex.belongs_to_vertices()
-            print(self._b("  Parent Records"))
-            if len(record_parent_vertices) > 0:
-                for record_parent_vertex in record_parent_vertices:
-
-                    parent_record = load_pam_record(params,
-                                                            record_parent_vertex.uid)  # type: TypedRecord | None
-                    if parent_record is None:
-                        print(f"{bcolors.FAIL}   * Parent record {record_parent_vertex.uid} "
-                              f"does not exists.{bcolors.ENDC}")
-                        continue
-
-                    acl_edge = record_vertex.get_edge(record_parent_vertex, EdgeType.ACL)
-                    if acl_edge is not None:
-                        acl_content = acl_edge.content_as_object(UserAcl)  # type: UserAcl
-                        print(f"    * ACL to {self._n(parent_record.record_type)}; {parent_record.title}; "
-                              f"{record_parent_vertex.uid}")
-                        print(f"      . Raw JSON: {json.dumps(acl_edge.content_as_dict)}")
-                        if acl_content.is_admin:
-                            print(f"      . Is {self._gr('Admin')}")
-                        if acl_content.belongs_to:
-                            print(f"      . Belongs")
-                        else:
-                            print(f"      . Is {self._bl('Remote user')}")
-
-                        if acl_content.rotation_settings is None:
-                            print(f"{bcolors.FAIL}      . There are no rotation settings!{bcolors.ENDC}")
-                        else:
-                            if (acl_content.rotation_settings.schedule is None
-                                    or acl_content.rotation_settings.schedule == ""):
-                                print(f"      . No Schedule")
-                            else:
-                                print(f"      . Schedule = {acl_content.rotation_settings.get_schedule()}")
-
-                            if (acl_content.rotation_settings.pwd_complexity is None
-                                    or acl_content.rotation_settings.pwd_complexity == ""):
-                                print(f"      . No Password Complexity")
-                            else:
-                                key_bytes = record.record_key
-                                print(f"      . Password Complexity = "
-                                      f"{acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
-                            print(f"      . Disabled = {acl_content.rotation_settings.disabled}")
-                            print(f"      . NOOP = {acl_content.rotation_settings.noop}")
-                            print(f"      . SaaS configuration record UID = "
-                                  f"{acl_content.rotation_settings.saas_record_uid_list}")
-
-                            if len(acl_content.rotation_settings.saas_record_uid_list) > 0:
-                                if acl_content.rotation_settings.noop:
-                                    saas_config_uid = acl_content.rotation_settings.saas_record_uid_list[0]
-                                    saas_config = load_pam_record(
-                                        params,
-                                        saas_config_uid)  # type: TypedRecord | None
-
-                                    print(f"      . SaaS configuration record is {saas_config.title}")
-                                else:
-                                    print(f"{bcolors.FAIL}      . Has SaaS plugin config record, "
-                                          f"however it's not NOOP{bcolors.ENDC}")
-
-                    elif record.record_type == PAM_USER:
-                        print(f"{bcolors.FAIL}    * PAM User has NO acl!!!!!!{bcolors.ENDC}")
-
-                    link_edge = record_vertex.get_edge(record_parent_vertex, EdgeType.LINK)
-                    if link_edge is not None:
-                        print(f"    * LINK to {self._n(parent_record.record_type)}; {parent_record.title}; "
-                              f"{record_parent_vertex.uid}")
-            else:
-                # This really should not happen
-                print(f"{bcolors.FAIL}   Record does not have a parent record.{bcolors.ENDC}")
-            print("")
-
-            record_child_vertices = record_vertex.has_vertices()
-            print(self._b("  Child Records"))
-            if len(record_child_vertices) > 0:
-                for record_child_vertex in record_child_vertices:
-                    child_record = load_pam_record(params,
-                                                           record_child_vertex.uid)  # type: TypedRecord | None
-
-                    if child_record is None:
-                        print(f"{bcolors.FAIL}    * Child record {record_child_vertex.uid} "
-                              f"does not exists.{bcolors.ENDC}")
-                        continue
-
-                    acl_edge = record_child_vertex.get_edge(record_vertex, EdgeType.ACL)
-                    link_edge = record_child_vertex.get_edge(record_vertex, EdgeType.LINK)
-                    if acl_edge is not None:
-                        acl_content = acl_edge.content_as_object(UserAcl)
-                        print(f"    * ACL from {self._n(child_record.record_type)}; {child_record.title}; "
-                              f"{record_child_vertex.uid}")
-                        if acl_content.is_admin:
-                            print(f"      . Is {self._gr('Admin')}")
-                        if acl_content.belongs_to:
-                            print(f"      . Belongs")
-                        else:
-                            print(f"      . Is {self._bl('Remote user')}")
-                    elif link_edge is not None:
-                        print(f"    * LINK from {self._n(child_record.record_type)}; {child_record.title}; "
-                              "{record_child_vertex.uid}")
-                    else:
-                        for edge in record_vertex.edges:  # List[DAGEdge]
-                            print(f"    * {self._f(edge.edge_type)}?")
-
-            else:
-                # This is OK
-                print(f"    Record does not have any children.")
-            print("")
+            print(self._h("Record Linking Graph"))
+            graph = PAMDebugGraphCommand()
+            graph.do_list(params=params, gateway_context=gateway_context, graph_type="rl", debug_level=0,
+                          indent=1, show_data=True, record_uids=[record.record_uid])
 
         else:
             print(f"{bcolors.FAIL}Cannot find record in record linking.{bcolors.ENDC}")

@@ -1,4 +1,7 @@
 from __future__ import annotations
+import base64
+import binascii
+import json
 from . import get_connection
 import argparse
 import logging
@@ -11,13 +14,14 @@ from ...discovery_common.jobs import Jobs
 from ...discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
                                            DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, DIS_JOBS_GRAPH_ID)
 from ...discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
-                                       DiscoveryDatabase, JobContent, ServiceAcl)
+                                       DiscoveryDatabase, JobContent, ServiceAcl, UserAcl, UserAclServiceNames)
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...keeper_dag import DAG
 from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamEndpoints
 from ...keeper_dag.vertex import DAGVertex
-from ...keeper_dag.edge import EdgeType
-from typing import TYPE_CHECKING
+from ...keeper_dag.edge import EdgeType, DAGEdge
+from ...crypto import decrypt_aes_v2
+from typing import TYPE_CHECKING, Optional, List
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -53,6 +57,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         dest='format', default="dot", action='store', help='The format of the graph.')
     parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
                         help='GraphSync debug level. Default is 0', type=int, default=0)
+    parser.add_argument('--history-level', required=False, dest='history_level', action='store',
+                        help='Levels of history to keep. Default is 0', type=int, default=0)
 
     mapping = {
         PAM_USER: {"order": 1, "sort": "_sort_name", "item": DiscoveryUser, "key": "user"},
@@ -70,8 +76,25 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def get_parser(self):
         return PAMDebugGraphCommand.parser
 
+    @staticmethod
+    def is_base64(value) -> bool:
+        # Ensure the input is treated as bytes (or an ASCII string)
+        if isinstance(value, str):
+            value_bytes = value.encode('utf-8')
+        elif isinstance(value, (bytes, bytearray)):
+            value_bytes = value
+        else:
+            return False
+
+        try:
+            # validate=True ensures characters outside the base64 alphabet throw an error
+            base64.b64decode(value_bytes, validate=True)
+            return True
+        except binascii.Error:
+            return False
+
     def _do_text_list_infra(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
-                            indent: int = 0):
+                            indent: int = 0, **kwargs):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
                                debug_level=debug_level, use_per_graph_endpoints=False)
@@ -148,8 +171,80 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         _handle(configuration, indent=indent)
         print("")
 
+    def _do_acl(self,
+                acl_edge:DAGEdge,
+                record_key: bytes,
+                params: KeeperParams,
+                pad: Optional[str] = ""):
+
+        acl = acl_edge.content_as_object(UserAcl)
+        if acl is None:
+            print(f"{pad}      {self._f('missing ACL')}")
+        else:
+            print(f"{pad}        . acl: {acl_edge.content}")
+            print(f"{pad}          . path {acl_edge.path}")
+            if acl.is_iam_user:
+                print(f"{pad}          . is IAM user")
+            if acl.is_admin:
+                print(f"{pad}          . is the {self._b('Admin')}")
+            if acl.belongs_to:
+                print(f"{pad}          . local user")
+            else:
+                print(f"{pad}          . looks like directory user")
+
+            if acl.controls_services:
+                print(f"{pad}          . controls services")
+
+                if acl.service_names:
+
+                    for service_names in acl.get_service_names(record_key):  # type: UserAclServiceNames
+                        print(f"{pad}            - {service_names.type.value}")
+                        for item in service_names.items:
+                            print(f"{pad}              > {item.name} "
+                                  f"{'... via discovery' if item.via_discovery else '... manual'}")
+                else:
+                    print(f"{pad}          . service names not set")
+            else:
+                print(f"{pad}          . does not control services")
+
+            if acl.rotation_settings is not None:
+                if acl.rotation_settings.schedule:
+                    print(f"{pad}          . schedule: {acl.rotation_settings.get_schedule()}")
+                else:
+                    print(f"{pad}          . schedule: None")
+                if acl.rotation_settings.pwd_complexity:
+                    print(f"{pad}          . password complexity: {acl.rotation_settings.get_pwd_complexity(record_key)}")
+                else:
+                    print(f"{pad}          . password complexity: None")
+                if acl.rotation_settings.noop:
+                    print(f"{pad}          . is a NOOP")
+                if acl.rotation_settings.disabled:
+                    print(f"{pad}          . rotation is disabled")
+
+                if (acl.rotation_settings.saas_record_uid_list is not None
+                        and len(acl.rotation_settings.saas_record_uid_list) > 0):
+                    print(f"{pad}          . has SaaS rotation: "
+                          f"{acl.rotation_settings.saas_record_uid_list[0]}")
+
+                if len(acl.rotation_settings.saas_record_uid_list) > 0:
+                    if acl.rotation_settings.noop:
+                        saas_config_uid = acl.rotation_settings.saas_record_uid_list[0]
+                        saas_config = load_pam_record(
+                            params,
+                            saas_config_uid)  # type: TypedRecord | None
+
+                        print(f"          . SaaS configuration record is {saas_config.title}")
+                    else:
+                        print(f"{bcolors.FAIL}          . Has SaaS plugin config record, "
+                              f"however it's not NOOP{bcolors.ENDC}")
+            else:
+                print(f"{pad}{bcolors.FAIL}          . there are no rotation settings in ACL!{bcolors.ENDC}")
+
     def _do_text_list_rl(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
-                         indent: int = 0):
+                         indent: int = 0,
+                         record_uids: Optional[List[str]] = None,
+                         show_data: bool = True,
+                         **kwargs):
 
         print("")
 
@@ -163,12 +258,12 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                  debug_level=debug_level, use_per_graph_endpoints=False)
         configuration = record_link.dag.get_root
         
-        record = load_pam_record(params, configuration.uid)  # type: TypedRecord | None
-        if record is None:
+        config_record = load_pam_record(params, configuration.uid)  # type: TypedRecord | None
+        if config_record is None:
             print(self._f("Configuration record does not exists."))
             return
         
-        print(self._h(f"{pad}{record.record_type}, {record.title}, {record.record_uid}"))
+        print(self._h(f"{pad}{config_record.record_type}, {config_record.title}, {config_record.record_uid}"))
 
         if configuration.has_data:
             try:
@@ -191,6 +286,24 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             }
 
             for vertex in configuration_vertex.has_vertices():
+
+                users_uids: Optional[List] = None
+                if record_uids is not None:
+                    found = vertex.uid in record_uids
+                    if not found:
+                        # Get the resource's users
+                        children_uids = [x.uid for x in vertex.has_vertices() if x is not None]
+                        for record_uid in record_uids:
+                            if record_uid in children_uids:
+                                found = True
+                                if users_uids is None:
+                                    users_uids = []
+                                users_uids.append(record_uid)
+                                break
+
+                    if not found:
+                        continue
+
                 record = load_pam_record(params, vertex.uid)  # type: TypedRecord | None
                 if record is None:
                     group[PAMDebugGraphCommand.NO_RECORD].append({
@@ -202,95 +315,142 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     rt = PAMDebugGraphCommand.OTHER
                 group[rt].append({
                     "v": vertex,
-                    "r": record
+                    "r": record,
+                    "u": users_uids
                 })
 
             return group
         
         group = _group(configuration)
-        
+
         for record_type in [PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE]:
             if len(group[record_type]) > 0:
                 print(f"{pad}  " + self._b(self._n(record_type)))
                 for item in group[record_type]:
                     vertex = item.get("v")  # type: DAGVertex
                     record = item.get("r")  # type: TypedRecord
+                    user_uids = item.get("u")  # type: Optional[List[str]]
                     text = self._gr(f"{record.title}; {record.record_uid} ")
                     if not vertex.active:
                         text += " " + self._f("Inactive")
                     print(f"{pad}    * {text}")
 
-                    # These are cloud users
-                    if record_type == PAM_USER:
-                        acl = record_link.get_acl(vertex.uid, configuration.uid)
-                        if acl is None:
-                            print(f"{pad}      {self._f('missing ACL')}")
+                    # Resource connection to configuration.
+
+                    for edge in vertex.edges:
+                        if not edge:
+                            continue
+
+                        print(f"{pad}      {bcolors.WARNING}{edge.edge_type.value.upper()}{bcolors.ENDC}")
+                        print(f"{pad}        . path = {edge.path}")
+                        print(f"{pad}        . active = {edge.active}")
+
+                        if edge.edge_type == EdgeType.ACL:
+                            self._do_acl(acl_edge=edge,
+                                         params=params,
+                                         pad=pad,
+                                         record_key=record.record_key)
                         else:
-                            if acl.is_iam_user:
-                                print(f"{pad}      . is IAM user")
-                            if acl.is_admin:
-                                print(f"{pad}        . is the {self._b('Admin')}")
-                            if acl.belongs_to:
-                                print(f"{pad}      . belongs to this resource")
-                            else:
-                                print(f"{pad}      . looks like directory user")
+                            if show_data and edge.content and edge.content is not None:
+                                try:
+                                    data = edge.content_as_dict
+                                    if data is not None:
+                                        print(f"{pad}        . data")
+                                        for k, v in data.items():
+                                            print(f"{pad}          + {k} = {v}")
+                                    else:
+                                        print(f"{pad}        . data is None")
+                                except Exception as err:
+                                    content = edge.content
+                                    print(f"{pad}          ! data not JSON: {err}")
+                                    print(f"{pad}            {content}")
 
-                            if acl.rotation_settings:
-                                if acl.rotation_settings.noop:
-                                    print(f"{pad}      . is a NOOP")
-                                if acl.rotation_settings.disabled:
-                                    print(f"{pad}      . rotation is disabled")
+                                    if self.is_base64(content):
+                                        print(f"{pad}          . is base64")
+                                        content = base64.b64decode(content)
 
-                                if (acl.rotation_settings.saas_record_uid_list is not None
-                                        and len(acl.rotation_settings.saas_record_uid_list) > 0):
-                                    print(f"{pad}      . has SaaS rotation: "
-                                          f"{acl.rotation_settings.saas_record_uid_list[0]}")
+                                    try:
+                                        content = json.loads(content)
+                                        print(f"{pad}          . is JSON")
+                                        for k, v in content.items():
+                                            print(f"{pad}            + {k} = {v}")
+                                    except (Exception):
 
-                        continue
+                                        try:
+                                            content = decrypt_aes_v2(content, record.record_key)
+                                            print(f"{pad}          . encrypted with resource record bytes")
+                                        except (Exception,):
+                                            try:
+                                                content = decrypt_aes_v2(content, config_record.record_key)
+                                                print(f"{pad}          . encrypted with configuration record bytes")
+                                            except (Exception,):
+                                                print(f"{pad}          !! cannot decrypt")
+                                                content = None
 
-                    if vertex.has_data:
-                        try:
-                            data = vertex.content_as_dict
-                            print(f"{pad}      . data")
-                            for k, v in data.items():
-                                print(f"{pad}        + {k} = {v}")
-                        except Exception as err:
-                            print(f"{pad}        ! data not JSON: {err}")
+                                        if content is not None:
+                                            try:
+                                                content = json.loads(content)
+                                                print(f"{pad}          . is JSON")
+                                                for k, v in content.items():
+                                                    print(f"{pad}            + {k} = {v}")
+                                            except (Exception):
+                                                print(f"{pad}          !! decrypt data is not JSON")
 
+                    # Get the resource's users
                     children = vertex.has_vertices()
                     if len(children) > 0:
+
+                        print("")
+                        print(f"{pad}      {bcolors.BOLD}Users{bcolors.ENDC}")
+                        
                         bad = []
                         for child in children:
+                            if user_uids is not None and child.uid not in user_uids:
+                                continue
+
                             child_record = load_pam_record(params, child.uid)  # type: TypedRecord | None
                             if child_record is None:
                                 if child.active:
                                     bad.append(self._f(f"- Record UID {child.uid} does not exists."))
                                 continue
                             else:
-                                print(f"{pad}      - {child_record.title}; {child_record.record_uid}")
-                                acl = record_link.get_acl(child.uid, vertex.uid)
-                                if acl is None:
-                                    print(f"{pad}        {self._f('missing ACL')}")
-                                else:
-                                    if acl.is_admin:
-                                        print(f"{pad}        . is the {self._b('Admin')}")
-                                    if acl.belongs_to:
-                                        print(f"{pad}        . belongs to this resource")
-                                    else:
-                                        print(f"{pad}        . looks like directory user")
+                                print(f"{pad}        * {bcolors.OKBLUE}{child_record.title}{bcolors.ENDC}; "
+                                      f"{child_record.record_uid}")
 
-                                if child.has_data:
-                                    try:
-                                        data = child.content_as_dict
-                                        print(f"{pad}        . data")
-                                        for k, v in data.items():
-                                            print(f"{pad}          + {k} = {v}")
-                                    except Exception as err:
-                                        print(f"{pad}          ! data not JSON: {err}")
+                                for edge in child.edges:
+                                    if edge and edge.head_uid == child.uid:
+                                        if edge.content:
+                                            try:
+                                                data = edge.content_as_dict
+                                                if data is not None:
+                                                    print(f"{pad}        . data")
+                                                    for k, v in data.items():
+                                                        print(f"{pad}          + {k} = {v}")
+                                                else:
+                                                    print(f"{pad}        . data is None")
+                                            except Exception as err:
+                                                content = edge.content
+                                                print(f"{pad}          ! data not JSON: {err}")
+                                                print(f"{pad}            {content}")
+
+                                for edge in child.edges:
+                                    if edge is None or edge.head_uid != record.record_uid:
+                                        continue
+
+                                    if edge.edge_type == EdgeType.ACL:
+                                        self._do_acl(acl_edge=edge,
+                                                     params=params,
+                                                     pad=pad,
+                                                     record_key=child_record.record_key)
+                                    else:
+                                        print(f"{pad}            {self._f('not ACL')}")
                         for i in bad:
-                            print(f"{pad}      " + i)
+                            print(f"{pad}        " + i)
+
+                    print("")
 
         if len(group[PAMDebugGraphCommand.OTHER]) > 0:
+            print("")
             print(f"{pad}  " + self._b("Other PAM Types"))
             for item in group[PAMDebugGraphCommand.OTHER]:
                 vertex = item.get("v")  # type: DAGVertex
@@ -301,15 +461,37 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{pad}    * {text}")
 
         if len(group[PAMDebugGraphCommand.NO_RECORD]) > 0:
-
-            # TODO: Check the infra graph for information
-            print(f"{pad}  " + self._b(self._n("In Graph, No Vault Record")))
+            print("")
+            print(f"{pad}  " + self._b("No Record; In Graph; Active"))
             for item in group[PAMDebugGraphCommand.NO_RECORD]:
                 vertex = item.get("v")  # type: DAGVertex
-                print(f"{pad}    * {vertex.uid}")
+                if not vertex.active:
+                    continue
+                for edge in vertex.edges:
+                    if edge is None or edge.content is None or not edge.active:
+                        continue
+                    text = vertex.uid
+                    if edge.path is not None and edge.path != "":
+                        text += f"; path: {edge.path}"
+                    if not vertex.active:
+                        text += " " + self._f("Inactive")
+                    print(f"{pad}    * {text}")
+
+                    if show_data and edge.content:
+                        try:
+                            data = edge.content_as_dict
+                            if data is not None:
+                                print(f"{pad}      . data")
+                                for k, v in data.items():
+                                    print(f"{pad}        + {k} = {v}")
+                            else:
+                                print(f"{pad}      . data is None")
+                        except Exception as err:
+                            print(f"{pad}        ! data not JSON")
+                            print(f"{pad}          {edge.content}")
 
     def _do_text_list_service(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
-                              indent: int = 0):
+                              indent: int = 0, **kwargs):
 
         pad = ""
         if indent > 0:
@@ -413,7 +595,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{pad}  * {user}")
 
     def _do_text_list_jobs(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
-                           indent: int = 0):
+                           indent: int = 0, **kwargs):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
                                debug_level=debug_level, fail_on_corrupt=False, use_per_graph_endpoints=False)
@@ -578,7 +760,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
 
     def _do_raw_text_list(self, params: KeeperParams, gateway_context: GatewayContext, graph_id: int = 0,
-                          debug_level: int = 0):
+                          debug_level: int = 0, history_level: int = 0, **kwargs):
 
         logging.debug(f"loading graph id {graph_id}, for record uid {gateway_context.configuration.record_uid}")
 
@@ -586,7 +768,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         endpoint = GRAPH_ID_TO_ENDPOINT[graph_id]
         dag = DAG(conn=conn, record=gateway_context.configuration,
                   read_endpoint=endpoint, write_endpoint=endpoint,
-                  fail_on_corrupt=False, logger=logging, debug_level=debug_level)
+                  fail_on_corrupt=False, logger=logging, debug_level=debug_level,
+                  history_level=history_level)
         dag.load(sync_point=0)
         print("")
         if dag.is_corrupt is True:
@@ -655,13 +838,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
 
     def _do_raw_render_graph(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
-                             graph_format: str, graph_id: int = 0, debug_level: int = 0):
+                             graph_format: str, graph_id: int = 0, debug_level: int = 0, history_level: int = 0):
 
         conn = get_connection(params=params)
         endpoint = GRAPH_ID_TO_ENDPOINT[graph_id]
         dag = DAG(conn=conn, record=gateway_context.configuration,
                   read_endpoint=endpoint, write_endpoint=endpoint,
-                  fail_on_corrupt=False, logger=logging, debug_level=debug_level)
+                  fail_on_corrupt=False, logger=logging, debug_level=debug_level,
+                  history_level=history_level)
         dag.load(sync_point=0)
         dot = dag.to_dot(graph_format=graph_format)
         if graph_format == "raw":
@@ -677,12 +861,13 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
 
     def do_list(self, params: KeeperParams, gateway_context: GatewayContext, graph_type: str, debug_level: int = 0,
-                indent: int = 0):
+                indent: int = 0, **kwargs):
         list_func = getattr(self, f"_do_text_list_{graph_type}")
         list_func(params=params,
                   gateway_context=gateway_context,
                   debug_level=debug_level,
-                  indent=indent)
+                  indent=indent,
+                  **kwargs)
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -692,6 +877,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         do_text_list = kwargs.get("do_text_list")
         do_render = kwargs.get("do_render")
         debug_level = int(kwargs.get("debug_level", 0))
+        history_level = int(kwargs.get("history_level", 0))
 
         configuration_uid = kwargs.get('configuration_uid')
         try:
@@ -710,7 +896,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 self._do_raw_text_list(params=params,
                                        gateway_context=gateway_context,
                                        graph_id=PAMDebugGraphCommand.graph_id_map.get(graph_type),
-                                       debug_level=debug_level)
+                                       debug_level=debug_level,
+                                       history_level=history_level)
             if do_render:
                 filepath = kwargs.get("filepath")
                 graph_format = kwargs.get("format")
@@ -719,7 +906,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                           filepath=filepath,
                                           graph_format=graph_format,
                                           graph_id=PAMDebugGraphCommand.graph_id_map.get(graph_type),
-                                          debug_level=debug_level)
+                                          debug_level=debug_level,
+                                          history_level=history_level)
         else:
             if do_text_list:
                 self.do_list(

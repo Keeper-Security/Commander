@@ -222,55 +222,107 @@ class DAGVertex:
         """
         return self._uid
 
-    def get_edge(self, vertex: DAGVertex, edge_type: EdgeType) -> DAGEdge:
+    def get_edge(self,
+                 vertex: DAGVertex,
+                 edge_type: EdgeType,
+                 path_aware: Optional[bool] = None,
+                 path: Optional[str] = None) -> Optional[DAGEdge]:
+
+        """
+        Get an edge
+        :param vertex: The vertex where the tail connects.
+        :param edge_type:  The edge type enumeration.
+        :param path_aware: If True, use the path as a filter.
+        :param path: Path to match. None will return edges without a path.
+        :return: An optional DAGEdge instance.
+        """
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         high_edge = None
         high_version = -1
         for edge in self.edges:
-            # Get all the edge point at the same vertex.
-            # Don't include DATA edges.
-            if edge.head_uid == vertex.uid and edge.edge_type == edge_type:
-                if edge.version > high_version:
-                    high_version = edge.version
-                    high_edge = edge
+            if (edge is not None
+                    and edge.head_uid == vertex.uid
+                    and edge.edge_type == edge_type
+                    and edge.version > high_version
+                    and (not path_aware
+                         or (path is None and edge.path is None)
+                         or (path is not None and path == edge.path))):
+                high_version = edge.version
+                high_edge = edge
         return high_edge
 
-    def get_highest_edge_version(self, head_uid: str) -> Tuple[int, Optional[DAGEdge]]:
+    def get_highest_edge_version(self,
+                                 head_uid: str,
+                                 path_aware: Optional[bool] = None,
+                                 path: Optional[str] = None) -> Tuple[int, Optional[DAGEdge]]:
         """
-        Find the highest DAGEdge version of all edge types.
+        Find the highest DAGEdge version of all edge types and paths.
 
-        :param head_uid:
+        :param head_uid: Where the edge is towards.
+        :param path_aware: If True, use the path as a filter.
+        :param path: Path to match. None will return edges without a path.
         :return:
         """
 
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         high_edge = None
         high_version = -1
         for edge in self.edges:
-            # Get all the edge point at the same vertex.
-            # Don't include DATA edges.
-            if edge.head_uid == head_uid:
-                if edge.version > high_version:
-                    high_edge = edge
-                    high_version = edge.version
+            if (edge is not None
+                    and edge.head_uid == head_uid
+                    and edge.version > high_version
+                    and (not path_aware or path == edge.path)):
+                high_edge = edge
+                high_version = edge.version
         return high_version, high_edge
 
-    def edge_count(self, vertex: DAGVertex, edge_type: EdgeType) -> int:
+    def edge_count(self,
+                   vertex: DAGVertex,
+                   edge_type: EdgeType,
+                   path_aware: Optional[bool] = None,
+                   path: Optional[str] = None) -> int:
         """
         Get the number of edges between two vertices.
 
         :param vertex:
         :param edge_type:
+        :param path_aware:
+        :param path:
         :return:
         """
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         count = 0
         for edge in self.edges:
-            if edge.head_uid == vertex.uid and edge.edge_type == edge_type:
+            if (edge is not None
+                    and edge.head_uid == vertex.uid
+                    and edge.edge_type == edge_type
+                    and (not path_aware or path == edge.path)):
                 count += 1
         return count
 
-    def edge_by_type(self, vertex: DAGVertex, edge_type: EdgeType) -> List[DAGEdge]:
+    def edge_by_type(self,
+                     vertex: DAGVertex,
+                     edge_type: EdgeType,
+                     path_aware: Optional[bool] = None,
+                     path: Optional[str] = None) -> List[DAGEdge]:
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         edge_list = []
         for edge in self.edges:
-            if edge.edge_type == edge_type and edge.head_uid == vertex.uid:
+            if (edge is not None
+                    and edge.edge_type == edge_type
+                    and edge.head_uid == vertex.uid
+                    and (not path_aware or path == edge.path)):
                 edge_list.append(edge)
         return edge_list
 
@@ -278,19 +330,44 @@ class DAGVertex:
     def has_data(self) -> bool:
 
         """
-        Does this vertex contain a DATA edge?
+        Does this vertex contain a DATA edge regardless of path?
+
+        **DEPRECATED** - Use `has_data_for_path`
 
         :return: True if vertex has a DATA edge.
         """
 
         for item in self.edges:
-            if item.edge_type == EdgeType.DATA:
+            if item is not None and item.edge_type == EdgeType.DATA:
                 return True
         return False
 
-    def get_data(self, index: Optional[int] = None) -> Optional[DAGEdge]:
+    def has_data_for_path(self,
+                          path: Optional[str] = None) -> bool:
+
         """
-        Get data edge
+        Does this vertex contain a DATA edge for the provided path?
+
+        With check if a DAGA edge exists for the path.
+        If the path is None, it will check if a DATA edge exists where the path is None.
+
+        :param path: Optional path.
+        :return: True if vertex has a DATA edge for the path.
+        """
+
+        for item in self.edges:
+            if (item is not None
+                    and item.edge_type == EdgeType.DATA
+                    and path == item.path):
+                return True
+        return False
+
+    def get_data(self,
+                 path_aware: Optional[bool] = None,
+                 path: Optional[str] = None,
+                 index: Optional[int] = None) -> Optional[DAGEdge]:
+        """
+        Get data edge.
 
         If the index is None or 0, the latest data edge will be returned.
         A positive and negative, non-zero, index will return the same data.
@@ -299,11 +376,19 @@ class DAGVertex:
 
         If there is no data, None is returned.
 
-        :param index:
+        :param path_aware: If True, path will be used as a filter.
+        :param index: If history allows, get prior data.
+        :param path: If path_aware is True, find data that matches the path.
         :return:
         """
 
-        data_list = self.edge_by_type(self, EdgeType.DATA)
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
+        data_list = self.edge_by_type(self,
+                                      edge_type=EdgeType.DATA,
+                                      path=path,
+                                      path_aware=path_aware)
         data_count = len(data_list)
         if data_count == 0:
             return None
@@ -331,6 +416,7 @@ class DAGVertex:
                  content: Any,
                  is_encrypted: bool = False,
                  is_serialized: bool = False,
+                 path_aware: Optional[bool] = None,
                  path: Optional[str] = None,
                  modified: bool = True,
                  from_load: bool = False,
@@ -342,6 +428,7 @@ class DAGVertex:
         :param content: The content to store in the DATA edge.
         :param is_encrypted: Is the content encrypted?
         :param is_serialized: Is the content base64 serialized?
+        :param path_aware: If True, path will be used as a filter.
         :param path: Simple string tag to identify the edge.
         :param modified: Does this modify the content?
                          By default, adding a DATA edge will flag that the edge has been modified.
@@ -353,6 +440,9 @@ class DAGVertex:
         """
 
         self.debug(f"connect {self.uid} to DATA edge", level=1)
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
 
         # Are we trying to add DATA to a deleted vertex?
 
@@ -384,7 +474,7 @@ class DAGVertex:
 
         # Get the prior data, set the version and inactive the prior data.
         version = 0
-        prior_data = self.get_data()
+        prior_data = self.get_data(path=path, path_aware=path_aware)
         if prior_data is not None:
             version = prior_data.version + 1
             prior_data.active = False
@@ -406,6 +496,7 @@ class DAGVertex:
                 head_uid=self.uid,
                 version=version,
                 content=content,
+                path_aware=path_aware,
                 path=path,
                 modified=modified,
                 is_serialized=is_serialized,
@@ -418,7 +509,7 @@ class DAGVertex:
         # The history level is per edge type.
         # It's FIFO, so we will remove the first edge type if we exceed the history level.
         if self.dag.history_level > 0:
-            data_count = self.data_count()
+            data_count = self.data_count(path=path, path_aware=path_aware)
             while data_count > self.dag.history_level:
                 for index in range(0, len(self.edges) - 1):
                     if self.edges[index].edge_type == EdgeType.DATA:
@@ -428,14 +519,29 @@ class DAGVertex:
 
         self.dag.do_auto_save()
 
-    def data_count(self):
-        return self.edge_count(self, EdgeType.DATA)
+    def data_count(self,
+                   path_aware: Optional[bool] = None,
+                   path: Optional[str] = None):
 
-    def data_delete(self):
+        return self.edge_count(self,
+                               path_aware=path_aware,
+                               path=path,
+                               edge_type=EdgeType.DATA)
+
+    def data_delete(self,
+                    path_aware: Optional[bool] = None,
+                    path: Optional[str] = None):
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
 
         # Get the DATA edge.
         # It will be a reference to itself.
-        data_edge = self.get_edge(self, EdgeType.DATA)
+        data_edge = self.get_edge(self,
+                                  edge_type=EdgeType.DATA,
+                                  path=path,
+                                  path_aware=path_aware)
+
         if data_edge is None:
             self.debug("cannot delete the data, no data edge exists.")
 
@@ -443,26 +549,61 @@ class DAGVertex:
 
         self.belongs_to(
             vertex=self,
-            edge_type=EdgeType.DELETION
+            edge_type=EdgeType.DELETION,
+            path_aware=path_aware,
+            path=path
         )
-        self.debug(f"deleted data edge for {self.uid}")
+        self.debug(f"deleted data edge for {self.uid}; path {path}")
 
     @property
-    def latest_data_version(self):
+    def latest_data_version(self,
+                            path_aware: Optional[bool] = None,
+                            path: Optional[str] = None):
+        """
+        Get the latest DATA edge version.
+
+        :param path_aware:
+        :param path:
+        :return:
+        """
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         version = -1
         for edge in self.edges:
-            if edge.edge_type == EdgeType.DATA and edge.version > version:
+            # If edge is defined; and the paths match, and the edge if a DATA type; and the edge version is >
+            if (edge is not None
+                    and (not path_aware or path == edge.path)
+                    and edge.edge_type == EdgeType.DATA and edge.version > version):
                 version = edge.version
         return version
 
     @property
     def content(self) -> Optional[Union[str, bytes]]:
         """
-        Get the content of the active DATA edge.
+        Get the content of the first found, active DATA edge for any path.
 
         If the content is a str, then the content is encrypted.
+
+        **DEPRECATED**: use `content_for_path`
         """
-        data_edge = self.get_data()
+        data_edge = self.get_data(path=None, path_aware=False)
+        if data_edge is None:
+            return None
+        return data_edge.content
+
+    def content_for_path(self,
+                         path: Optional[str] = None) -> Optional[Union[str, bytes]]:
+        """
+        Get the content of the active DATA edge for a path.
+
+        If the content is a str, then the content is encrypted.
+
+        :param path: Get content for a specific path.
+        :return: Content as a str or bytes.
+        """
+        data_edge = self.get_data(path=path, path_aware=self.dag.path_aware)
         if data_edge is None:
             return None
         return data_edge.content
@@ -470,10 +611,25 @@ class DAGVertex:
     @property
     def content_as_dict(self) -> Optional[dict]:
         """
-        Get the content from the active DATA edge as a dictionary.
+        Get the content from the first found, active DATA edge, for any path, as a dictionary.
+        :return: Content as a dictionary.
+
+        **DEPRECATED**: use `content_as_dict_for_path`
+        """
+        data_edge = self.get_data(path=None, path_aware=False)
+        if data_edge is None:
+            return None
+        return data_edge.content_as_dict
+
+    def content_as_dict_for_path(self,
+                                 path: Optional[str] = None) -> Optional[dict]:
+        """
+        Get the content from the active DATA edge, for a path, as a dictionary.
+
+        :param path: Get content for a specific path.
         :return: Content as a dictionary.
         """
-        data_edge = self.get_data()
+        data_edge = self.get_data(path=path, path_aware=self.dag.path_aware)
         if data_edge is None:
             return None
         return data_edge.content_as_dict
@@ -481,23 +637,47 @@ class DAGVertex:
     @property
     def content_as_str(self) -> Optional[str]:
         """
-        Get the content from the active DATA edge as a str.
+        Get the content from the first found, active DATA edge, for any path, as a str.
+
+         **DEPRECATED**: use `content_as_str_for_path`
+
         :return: Content as a str.
         """
 
-        data_edge = self.get_data()
+        data_edge = self.get_data(path=None, path_aware=False)
         if data_edge is None:
             return None
         return data_edge.content_as_str
 
-    def content_as_object(self, meta_class: Type[T]) -> Optional[T]:
+    def content_as_str_for_path(self,
+                                path: Optional[str] = None) -> Optional[str]:
+        """
+        Get the content from the active DATA edge, with no path, as a str.
+        :return: Content as a str.
+        """
+
+        data_edge = self.get_data(path=path, path_aware=self.dag.path_aware)
+        if data_edge is None:
+            return None
+        return data_edge.content_as_str
+
+    def content_as_object(self,
+                          meta_class: Type[T],
+                          path_aware: Optional[bool] = False,
+                          path: Optional[str] = None) -> Optional[T]:
         """
         Get the content as a pydantic based object.
 
         :param meta_class: The class to return
+        :param path_aware: If True, path will be used as a filter.
+        :param path: Find a DATA edge that matches this path. None with match None.
         :return:
         """
-        data_edge = self.get_data()
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
+        data_edge = self.get_data(path=path, path_aware=path_aware)
         if data_edge is None:
             return None
 
@@ -507,13 +687,19 @@ class DAGVertex:
     def has_key(self) -> bool:
 
         """
-        Does this vertex contain any KEY or ACL edges?
+        Does this vertex contain any KEY?
 
-        :return: True if vertex has a KEY or ACL edge.
+        If `path_aware` is enabled, the KEY must not have a path.
+        If not enabled, it will take the first path it finds regardless of path.
+        This will be the active KEY.
+
+        :return: True if vertex has a KEY edge where the path is None.
         """
 
         for item in self.edges:
-            if item.edge_type == EdgeType.KEY:
+            if (item
+                    and item.edge_type == EdgeType.KEY
+                    and (not self.dag.path_aware or item.path is None)):
                 return True
         return False
 
@@ -522,6 +708,7 @@ class DAGVertex:
                    edge_type: EdgeType,
                    content: Optional[Any] = None,
                    is_encrypted: bool = False,
+                   path_aware: Optional[bool] = None,
                    path: Optional[str] = None,
                    modified: bool = True,
                    from_load: bool = False):
@@ -539,6 +726,7 @@ class DAGVertex:
         :param edge_type: The edge type that connects the two vertices.
         :param content: Data to store as the edges content.
         :param is_encrypted: Is the content encrypted?
+        :param path_aware: If True, the path will be used as a filter.
         :param path: Text tag for the edge.
         :param modified: Does adding this edge modify the stored DAG?
         :param from_load: Is being connected from load() method?
@@ -547,8 +735,12 @@ class DAGVertex:
 
         self.debug(f"connect {self.uid} to {vertex.uid} with edge type {edge_type.value}", level=1)
 
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         if vertex is None:
             raise ValueError("Vertex is blank.")
+
         if self.uid == self.dag.uid and not (edge_type == EdgeType.DATA or edge_type == EdgeType.DELETION):
             if not from_load:
                 raise DAGIllegalEdgeException(f"Cannot create edge to self for edge type {edge_type}.")
@@ -568,13 +760,18 @@ class DAGVertex:
 
         # Figure out what version of the edge we are.
 
-        version, version_edge = self.get_highest_edge_version(head_uid=vertex.uid)
+        version, version_edge = self.get_highest_edge_version(head_uid=str(vertex.uid),
+                                                              path=path,
+                                                              path_aware=path_aware)
 
         # If the new edge is not DELETION
         if edge_type != EdgeType.DELETION:
 
             # Find the current active edge for this edge type to make it inactive.
-            current_edge_by_type = self.get_edge(vertex, edge_type)
+            current_edge_by_type = self.get_edge(vertex=vertex,
+                                                 edge_type=edge_type,
+                                                 path_aware=path_aware,
+                                                 path=path)
             if current_edge_by_type is not None:
                 current_edge_by_type.active = False
 
@@ -589,7 +786,10 @@ class DAGVertex:
                         self.dag.debug_stacktrace()
 
             # If we are adding a non-DELETION edge, it will inactivate the DELETION edge.
-            highest_deletion_edge = self.get_edge(vertex, EdgeType.DELETION)
+            highest_deletion_edge = self.get_edge(vertex=vertex,
+                                                  edge_type=EdgeType.DELETION,
+                                                  path_aware=path_aware,
+                                                  path=path)
             if highest_deletion_edge is not None:
                 highest_deletion_edge.active = False
 
@@ -604,7 +804,7 @@ class DAGVertex:
             if edge_type == EdgeType.DELETION:
                 return
 
-            if self.dag.dedup_edge and version_edge.modified:
+            if self.dag.dedup_edge and version_edge is not None and version_edge.modified:
                 version_edge.skip_on_save = True
                 if self.dag.dedup_edge_warning:
                     self.dag.debug("edge was deleted in session, will not save DELETION edge")
@@ -624,6 +824,7 @@ class DAGVertex:
             block_content_auto_save=True,
             content=content,
             is_encrypted=is_encrypted,
+            path_aware=path_aware,
             path=path,
             modified=modified
         )
@@ -637,17 +838,26 @@ class DAGVertex:
 
     def belongs_to_root(self,
                         edge_type: EdgeType,
-                        path: Optional[str] = None):
+                        path_aware: Optional[bool] = None,
+                        path: Optional[str] = None,
+                        content: Optional[Any] = None,
+                        is_encrypted: bool = False):
 
         """
         Connect the vertex to the root vertex.
 
         :param edge_type: The type of edge to use for the connection.
+        :param path_aware: If True, the path will be used as a filter.
         :param path: Short tag for this edge.
+        :param content: Data to store as the edges content.
+        :param is_encrypted: Is the content encrypted?
         :return:
         """
 
         self.debug(f"connect {self.uid} to root", level=1)
+
+        if path_aware is None:
+            path_aware = self.dag.path_aware
 
         if self.uid == self.dag.uid:
             raise DAGIllegalEdgeException("Cannot create edge to self.")
@@ -657,16 +867,29 @@ class DAGVertex:
 
         # We are adding the root, we can enable auto save now.
         # We can get the correct stream id with an edge to the root vertex.
-        self.belongs_to(self.dag.get_root, edge_type=edge_type, path=path)
+        root = self.dag.get_root
+        if root:
+            self.belongs_to(vertex=root,
+                            edge_type=edge_type,
+                            path=path,
+                            path_aware=path_aware,
+                            content=content,
+                            is_encrypted=is_encrypted)
 
-        self.dag.allow_auto_save = True
-        self.dag.do_auto_save()
+            self.dag.allow_auto_save = True
+            self.dag.do_auto_save()
 
-    def has_vertices(self, edge_type: Optional[EdgeType] = None, allow_inactive: bool = False,
+    def has_vertices(self,
+                     edge_type: Optional[EdgeType] = None,
+                     allow_inactive: bool = False,
                      allow_self_ref: bool = False) -> List[DAGVertex]:
 
         """
         Get a list of vertices that belong to this vertex.
+
+        :param edge_type: Filter for a specific edge type.
+        :param allow_inactive: If True, include vertices that are inactive.
+        :param allow_self_ref: If True, allow vertices that refer to themselves.
         :return: List of DAGVertex
         """
 
@@ -679,23 +902,26 @@ class DAGVertex:
                 continue
 
             vertex = self.dag.get_vertex(uid)
-            if edge_type is not None:
-                edge = vertex.get_edge(self, edge_type=edge_type)
-                if edge is not None:
-                    vertices.append(vertex)
+            if vertex:
+                if edge_type is not None:
+                    edge = vertex.get_edge(self, edge_type=edge_type)
+                    if edge is not None:
+                        vertices.append(vertex)
 
-            # If no edge type was specified, do not return DATA and DELETION.
-            # Also do not include vertices that are inactive by default.
-            elif edge_type != EdgeType.DATA and edge_type != EdgeType.DELETION:
-                if vertex.active is True or allow_inactive is True:
-                    vertices.append(vertex)
+                # If no edge type was specified, do not return DATA and DELETION.
+                # Also do not include vertices that are inactive by default.
+                elif edge_type != EdgeType.DATA and edge_type != EdgeType.DELETION:
+                    if vertex.active is True or allow_inactive is True:
+                        vertices.append(vertex)
 
         return vertices
 
-    def has(self, vertex: DAGVertex, edge_type: Optional[EdgeType] = None) -> bool:
+    def has(self,
+            vertex: DAGVertex,
+            edge_type: Optional[EdgeType] = None) -> bool:
 
         """
-        Does this vertex have the passed in vertex?
+        Does "self" have the vertex passed in?
 
         :return: True if request vertex belongs to this vertex.
                  False if it does not.
@@ -713,12 +939,12 @@ class DAGVertex:
         vertices = []
         for edge in self.edges:
             # If the edge is not a DATA or DELETION type, and the edge is the highest version/active
-            if edge.edge_type != EdgeType.DATA and edge.edge_type != EdgeType.DELETION and edge.active is True:
+            if edge and edge.edge_type != EdgeType.DATA and edge.edge_type != EdgeType.DELETION and edge.active is True:
 
                 # The head will point at the remote vertex.
                 # If it is active, and not already in the list, add it to the list of vertices this vertex belongs to.
                 vertex = self.dag.get_vertex(edge.head_uid)
-                if vertex.active is True and vertex not in vertices:
+                if vertex and vertex.active is True and vertex not in vertices:
                     vertices.append(vertex)
         return vertices
 
@@ -736,7 +962,10 @@ class DAGVertex:
 
         return len(self.belongs_to_vertices()) > 0
 
-    def disconnect_from(self, vertex: DAGVertex, path: Optional[str] = None):
+    def disconnect_from(self,
+                        vertex: DAGVertex,
+                        path_aware: Optional[bool] = None,
+                        path: Optional[str] = None):
 
         """
         Disconnect this vertex from another vertex.
@@ -745,6 +974,7 @@ class DAGVertex:
         If the vertex no longer belongs to another vertex, the vertex will be deleted.
 
         :param vertex: The vertex this vertex belongs to
+        :param path_aware: If True, the path will be used a specific edge.
         :param path: an Optional path for the DELETION edge.
         :return:
         """
@@ -752,15 +982,21 @@ class DAGVertex:
         if vertex is None:
             raise ValueError("Vertex is blank.")
 
+        if path_aware is None:
+            path_aware = self.dag.path_aware
+
         # Flag all the edges as inactive.
         for edge in self.edges:
-            if edge.head_uid == vertex.uid and edge.edge_type:
+            if (edge is not None
+                    and (not path_aware or edge.path == path)
+                    and edge.head_uid == vertex.uid):
                 edge.active = False
 
         # Add the DELETION edge
         self.belongs_to(
             vertex=vertex,
             edge_type=EdgeType.DELETION,
+            path_aware=path_aware,
             path=path
         )
 
@@ -768,12 +1004,17 @@ class DAGVertex:
         # There is no longer a KEY edge to decrypt the DATA.
         has_active_key_edge = False
         for edge in self.edges:
-            if edge.edge_type == EdgeType.KEY and edge.active is True:
+            if (edge is not None
+                    and (not path_aware or path == edge.path)
+                    and edge.edge_type == EdgeType.KEY
+                    and edge.active is True):
                 has_active_key_edge = True
                 break
         if not has_active_key_edge:
             for edge in self.edges:
-                if edge.edge_type == EdgeType.DATA:
+                if (edge is not None
+                        and (not path_aware or path == edge.path)
+                        and edge.edge_type == EdgeType.DATA):
                     edge.active = False
 
         if not self.belongs_to_a_vertex:
@@ -875,7 +1116,7 @@ class DAGVertex:
             self.debug(f"vertex {self.uid} has {vertex.uid}", level=2)
             for edge in vertex.edges:
                 # If the edge matches the current path, the head of the edge is this vertex, a route exists.
-                if edge.path == current_path and edge.head_uid == self.uid:
+                if edge and edge.path == current_path and edge.head_uid == self.uid:
                     # If there is no path left, this is our vertex
                     if len(path) == 0:
                         return vertex
@@ -893,7 +1134,7 @@ class DAGVertex:
         paths = []
         for vertex in self.has_vertices():
             for edge in vertex.edges:
-                if edge.path is None or edge.path == "":
+                if edge and edge.path is None or edge.path == "":
                     continue
                 paths.append(edge.path)
 

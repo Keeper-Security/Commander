@@ -10,11 +10,13 @@ import csv
 import os
 import time
 import sys
+import json
 from enum import Enum
 from pydantic import BaseModel
-from typing import Optional, Union, Any, Dict, Tuple, TYPE_CHECKING
+from typing import Optional, Union, Any, Dict, Tuple, List, TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
     Logger = Union[logging.RootLogger, logging.Logger]
+    from ..types import JitSettings, ConnectionSettingsBase, AiSettings, Meta
 
 # What is this?
 # If used with Commander, router_abbr_pb2 will interfere with router_pb2.
@@ -218,6 +220,8 @@ class ConnectionBase:
             self.logger.debug("payload is protobuf")
             headers = {'Content-Type': 'application/octet-stream'}
             payload = encrypt_aes(payload.SerializeToString(), self.transmission_key)
+        elif isinstance(payload, dict):
+            payload = json.dumps(payload)
         else:
             raise Exception("Cannot determine if the model is pydantic or protobuf.")
 
@@ -468,3 +472,18 @@ class ConnectionBase:
                 error=str(err)
             )
             raise DAGException(f"Could not get leafs: {err}")
+
+    def configure_resource(self,
+                           record: Any,
+                           configuration_record_uid: str,
+                           connection_user_uids: List[str] = [],
+                           admin_user_record_uid: Optional[str] = None,
+                           connection_settings: Optional[ConnectionSettingsBase] = None,
+                           jit_settings: Optional[JitSettings] = None,
+                           ai_settings: Optional[AiSettings] = None,
+                           domain_uid: Optional[str] = None,
+                           meta: Optional[Dict] = None,
+                           update_services: Optional[Meta] = None,
+                           agent: Optional[str] = None):
+
+        raise Exception(f"configure_resource does not exists for {self.__class__.__name__}")
