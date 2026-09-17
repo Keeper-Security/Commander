@@ -43,6 +43,7 @@ from .subfolder import BaseFolderNode
 from .sync_down import sync_down
 from .team import Team
 from .ttk import TTK
+from .sanitization import sanitize_protobuf_json
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
@@ -881,7 +882,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     if request:
         if logging.getLogger().level <= logging.DEBUG:
             js = google.protobuf.json_format.MessageToJson(request)
-            logging.debug('>>> [RQ] %s: %s', endpoint, js)
+            sanitized_js = sanitize_protobuf_json(js)
+            logging.debug('>>> [RQ] %s: %s', endpoint, sanitized_js)
         api_request_payload.payload = request.SerializeToString()
     if isinstance(payload_version, int):
         api_request_payload.apiVersion = payload_version
@@ -894,7 +896,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
             proto_rs.ParseFromString(rs)
             if logging.getLogger().level <= logging.DEBUG:
                 js = google.protobuf.json_format.MessageToJson(proto_rs)
-                logging.debug('>>> [RS] %s: %s', endpoint, js)
+                sanitized_js = sanitize_protobuf_json(js)
+                logging.debug('>>> [RS] %s: %s', endpoint, sanitized_js)
             return proto_rs
         else:
             return rs
