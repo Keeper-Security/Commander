@@ -674,22 +674,58 @@ def _get_tailscale_log_path():
     return os.path.join(log_dir, "tailscale_subprocess.log")
 
 
+def reset_tailscale_log():
+    """
+    Truncate the Tailscale subprocess log at the start of a service lifecycle,
+    matching Ngrok/Cloudflare's per-session log convention. Without this, the
+    log grows unbounded across every start/stop cycle -- unlike the other
+    tunnel providers' 'w'-mode logs, Tailscale's is always opened in append
+    mode since multiple one-shot commands (up/funnel) share it within a
+    single lifecycle.
+    """
+    try:
+        open(_get_tailscale_log_path(), 'w').close()
+    except OSError as e:
+        logging.debug(f"Could not reset Tailscale log: {type(e).__name__}")
+
+
 def tailscale_up(auth_key, advertise_tags=None):
     """
-    Authenticate via `tailscale up --auth-key=... --advertise-tags=...`.
+    Authenticate via `tailscale up --auth-key=... --advertise-tags=... --force-reauth`.
     advertise_tags is required for OAuth-client-issued auth keys. --advertise-tags
     is always passed explicitly (empty if unused) -- `tailscale up` requires every
     non-default setting to be re-specified on each call, or it errors out; omitting
     the flag entirely fails if a previous run (e.g. a prior OAuth key) left tags set.
-    The auth key is passed as a single argv element and never logged.
+
+    --force-reauth is required too: without it, `tailscale up` returns exit code 0
+    for an invalid auth key as long as the node is already authenticated under any
+    identity -- there's nothing to re-authenticate, so the key is silently ignored
+    rather than validated. --force-reauth makes Tailscale genuinely re-validate the
+    key every time, so the exit code can be trusted. Per Tailscale's own docs, this
+    may briefly disrupt an active connection if this same Tailscale link is being
+    used for something else (e.g. an SSH session) at the moment of the call.
+
+    The auth key is written to a short-lived, owner-only-readable temp file
+    and passed as `--auth-key=file:<path>` rather than a raw argv value --
+    Tailscale supports this directly, avoiding exposing the key via `ps`/
+    `/proc` to other local users for the life of the subprocess. Never logged.
     """
     if not auth_key:
         raise ValueError("Tailscale auth key must be provided for 'tailscale up'.")
 
-    cmd = ["tailscale", "up", f"--auth-key={auth_key}", f"--advertise-tags={advertise_tags or ''}"]
+    import tempfile
     log_file = _get_tailscale_log_path()
+    key_file_path = None
 
     try:
+        fd, key_file_path = tempfile.mkstemp(suffix='.tskey')
+        os.chmod(key_file_path, 0o600)
+        with os.fdopen(fd, 'w') as key_f:
+            key_f.write(auth_key)
+
+        cmd = ["tailscale", "up", f"--auth-key=file:{key_file_path}",
+               f"--advertise-tags={advertise_tags or ''}", "--force-reauth"]
+
         with open(log_file, 'a') as log_f:
             result = subprocess.run(
                 cmd,
@@ -715,6 +751,12 @@ def tailscale_up(auth_key, advertise_tags=None):
     except subprocess.TimeoutExpired:
         logging.error("Tailscale authentication timed out")
         raise Exception("Tailscale authentication timed out after 60 seconds.")
+    finally:
+        if key_file_path:
+            try:
+                os.unlink(key_file_path)
+            except OSError:
+                pass
 
 
 # Tailscale Funnel only accepts one of these as the external-facing port;
@@ -816,7 +858,11 @@ def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT)
 
 
 def get_tailscale_funnel_status(local_port):
-    """Check live Funnel status via `tailscale funnel status --json`."""
+    """
+    Check live Funnel status via `tailscale funnel status --json`. Verified
+    schema: active targets appear as data["Web"]["<host>:<port>"]["Handlers"]
+    ["<path>"]["Proxy"] == "http://localhost:<local_port>".
+    """
     try:
         result = subprocess.run(
             ["tailscale", "funnel", "status", "--json"],
@@ -826,7 +872,11 @@ def get_tailscale_funnel_status(local_port):
         )
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
-            return f"localhost:{local_port}" in json.dumps(data)
+            target = f"http://localhost:{local_port}"
+            for web_config in (data.get("Web") or {}).values():
+                for handler in (web_config.get("Handlers") or {}).values():
+                    if handler.get("Proxy") == target:
+                        return True
     except Exception as e:
         logging.debug(f"Error checking Tailscale funnel status: {type(e).__name__}")
     return False

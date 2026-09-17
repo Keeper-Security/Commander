@@ -30,7 +30,6 @@ class StreamlineArgs:
     cloudflare: Optional[str]
     cloudflare_custom_domain: Optional[str]
     tailscale: Optional[str]
-    tailscale_auth_key: Optional[str]
     tailscale_advertise_tags: Optional[str]
     certfile: Optional[str]
     certpassword: Optional[str]
@@ -75,9 +74,8 @@ class CreateService(Command):
         parser.add_argument('-cd', '--ngrok_custom_domain', type=str, help='ngrok custom domain name(optional)')
         parser.add_argument('-cf', '--cloudflare', type=str, help='cloudflare tunnel token to generate public URL (required when using cloudflare)')
         parser.add_argument('-cfd', '--cloudflare_custom_domain', type=str, help='cloudflare custom domain name (required when using cloudflare)')
-        parser.add_argument('-ts', '--tailscale', type=str, help='enable Tailscale Funnel to generate public URL (y, required when using tailscale)')
-        parser.add_argument('-tsk', '--tailscale-auth-key', dest='tailscale_auth_key', type=str, help='Tailscale auth key for `tailscale up` authentication (required when using tailscale)')
-        parser.add_argument('-tst', '--tailscale-advertise-tags', dest='tailscale_advertise_tags', type=str, help='Comma-separated ACL tags to advertise (required when the auth key is OAuth-client-derived, e.g. tag:commander-service)')
+        parser.add_argument('-ts', '--tailscale', type=str, help='Tailscale auth key to generate public URL via Funnel (required when using tailscale)')
+        parser.add_argument('-tst', '--tailscale_advertise_tags', dest='tailscale_advertise_tags', type=str, help='Comma-separated ACL tags to advertise (required when the auth key is OAuth-client-derived, e.g. tag:commander-service)')
         parser.add_argument('-crtf', '--certfile', type=str, help='certificate file path')
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
@@ -101,7 +99,7 @@ class CreateService(Command):
 
             filtered_kwargs = {k: v for k, v in kwargs.items() if k in [
                 'port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain',
-                'cloudflare', 'cloudflare_custom_domain', 'tailscale', 'tailscale_auth_key', 'tailscale_advertise_tags',
+                'cloudflare', 'cloudflare_custom_domain', 'tailscale', 'tailscale_advertise_tags',
                 'certfile', 'certpassword', 'fileformat',
                 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption',
                 'encryption_key', 'token_expiration',

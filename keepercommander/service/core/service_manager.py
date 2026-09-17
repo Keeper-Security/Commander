@@ -139,7 +139,10 @@ class ServiceManager:
                             )
                         except Exception as save_error:
                             logger.debug(f"Could not persist tailscale_public_url: {save_error}")
-            except Exception as e:
+            except (KeyboardInterrupt, Exception) as e:
+                # KeyboardInterrupt (e.g. Ctrl+C during a Tailscale install/daemon-start
+                # prompt) is not an Exception subclass -- must be caught explicitly here
+                # too, or this rollback (and the ones below) never runs on interrupt.
                 if ngrok_pid and psutil:
                     try:
                         process = psutil.Process(ngrok_pid)
@@ -162,7 +165,11 @@ class ServiceManager:
 
                 ProcessInfo.clear()
 
-                logger.error(f"\n{str(e)}")
+                if isinstance(e, KeyboardInterrupt):
+                    logger.info("Service startup interrupted by user")
+                    raise
+
+                logger.info(f"\n{str(e)}")
                 return
 
             # Write vault metadata (URL + API key) now the real URL is known. Consumed
