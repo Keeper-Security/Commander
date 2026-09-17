@@ -143,6 +143,19 @@ class PAMUniversalSyncConfigListCommand(Command):
                             logging.debug(f"Failed to decrypt vault_name for record {record.record_uid}: {e}")
                             vault_name = 'N/A'
 
+                    # Decrypt object_storage_bucket if present. The router stores it under
+                    # the 'objectStorageBucket' key as a base64-url string of the encrypted bytes.
+                    object_storage_bucket = 'N/A'
+                    object_storage_bucket_encrypted = config_data.get('objectStorageBucket')
+                    if object_storage_bucket_encrypted:
+                        try:
+                            object_storage_bucket_bytes = crypto.decrypt_aes_v2(
+                                utils.base64_url_decode(object_storage_bucket_encrypted), record.record_key)
+                            object_storage_bucket = object_storage_bucket_bytes.decode('utf-8')
+                        except Exception as e:
+                            logging.debug(f"Failed to decrypt object_storage_bucket for record {record.record_uid}: {e}")
+                            object_storage_bucket = 'N/A'
+
                     # Decrypt sync_identity if present. The router stores it under the
                     # 'syncIdentity' key as a base64-url string of the encrypted bytes; the
                     # decrypted value is the UID of the Identity record used for syncing.
@@ -216,6 +229,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                         'dry_run_enabled': config_data.get('dryRunEnabled', False),
                         'folder_count': folder_count,
                         'vault_name': vault_name,
+                        'object_storage_bucket': object_storage_bucket,
                         'sync_identity': sync_identity,
                         'scope': scope_str,
                         'owner': owner,
@@ -242,8 +256,9 @@ class PAMUniversalSyncConfigListCommand(Command):
 
         # Display as simple summary table
         table = []
-        headers = ['Network UID', 'Title', 'Type', 'Enabled', 'Dry Run', 'Folders', 'Vault Name', 'Sync Identity',
-                   'Scope', 'Owner', 'Org Visibility', 'Repos', 'Vault Base URL']
+        headers = ['Network UID', 'Title', 'Type', 'Enabled', 'Dry Run', 'Folders', 'Vault Name',
+                   'Object Storage Bucket', 'Sync Identity', 'Scope', 'Owner', 'Org Visibility', 'Repos',
+                   'Vault Base URL']
 
         for config in configs_data:
             enabled_str = f"{bcolors.OKGREEN}Yes{bcolors.ENDC}" if config['enabled'] else f"{bcolors.FAIL}No{bcolors.ENDC}"
@@ -261,6 +276,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                 dry_run_str,
                 folders_str,
                 config['vault_name'],
+                config.get('object_storage_bucket', 'N/A'),
                 config['sync_identity'],
                 config.get('scope', 'N/A'),
                 config.get('owner', 'N/A'),
@@ -354,6 +370,19 @@ class PAMUniversalSyncConfigListCommand(Command):
                 except Exception as e:
                     logging.debug(f"Failed to decrypt vault_name for network {network.record_uid}: {e}")
                     vault_name = 'N/A'
+
+            # Decrypt object_storage_bucket if present. The router stores it under
+            # the 'objectStorageBucket' key as a base64-url string of the encrypted bytes.
+            object_storage_bucket = 'N/A'
+            object_storage_bucket_encrypted = config_data.get('objectStorageBucket')
+            if object_storage_bucket_encrypted:
+                try:
+                    object_storage_bucket_bytes = crypto.decrypt_aes_v2(
+                        utils.base64_url_decode(object_storage_bucket_encrypted), network.record_key)
+                    object_storage_bucket = object_storage_bucket_bytes.decode('utf-8')
+                except Exception as e:
+                    logging.debug(f"Failed to decrypt object_storage_bucket for network {network.record_uid}: {e}")
+                    object_storage_bucket = 'N/A'
 
             # Decrypt sync_identity if present. The router stores it under the
             # 'syncIdentity' key as a base64-url string of the encrypted bytes; the
@@ -465,6 +494,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                 'enabled': config_data.get('enabled', False),
                 'dry_run_enabled': config_data.get('dryRunEnabled', False),
                 'vault_name': vault_name,
+                'object_storage_bucket': object_storage_bucket,
                 'sync_identity': sync_identity,
                 'scope': scope_str,
                 'owner': owner,
@@ -501,6 +531,7 @@ class PAMUniversalSyncConfigListCommand(Command):
             table.append(['Enabled', 'Yes' if config_data.get('enabled', False) else 'No'])
             table.append(['Dry Run', 'Yes' if config_data.get('dryRunEnabled', False) else 'No'])
             table.append(['Vault Name', vault_name])
+            table.append(['Object Storage Bucket', object_storage_bucket])
             table.append(['Sync Identity', sync_identity])
             table.append(['Scope', scope_str])
             table.append(['Owner', owner])
@@ -568,6 +599,8 @@ class PAMUniversalSyncConfigAddCommand(Command):
                         help='Identity record UID to use for syncing')
     parser.add_argument('--vault-name', '-vn', dest='vault_name', action='store',
                         help='Vault name for universal sync')
+    parser.add_argument('--object-storage-bucket', '-osb', dest='object_storage_bucket', action='store',
+                        help='Object storage bucket for storing file reference content')
     parser.add_argument('--scope', '-sc', dest='scope', action='store',
                         choices=['repository', 'organization'],
                         help='GitHub sync scope: a single repository or an entire organization')
@@ -635,6 +668,12 @@ class PAMUniversalSyncConfigAddCommand(Command):
             vault_name_bytes = string_to_bytes(vault_name)
             encrypted_vault_name = crypto.encrypt_aes_v2(vault_name_bytes, network.record_key)
             rq.vaultName = encrypted_vault_name
+
+        object_storage_bucket = kwargs.get('object_storage_bucket')
+        if object_storage_bucket:
+            object_storage_bucket_bytes = string_to_bytes(object_storage_bucket)
+            encrypted_object_storage_bucket = crypto.encrypt_aes_v2(object_storage_bucket_bytes, network.record_key)
+            rq.objectStorageBucket = encrypted_object_storage_bucket
 
         scope = kwargs.get('scope')
         if scope is not None:
@@ -708,6 +747,8 @@ class PAMUniversalSyncConfigEditCommand(Command):
                         help='Identity record UID to use for syncing')
     parser.add_argument('--vault-name', '-vn', dest='vault_name', action='store',
                         help='Vault name for universal sync')
+    parser.add_argument('--object-storage-bucket', '-osb', dest='object_storage_bucket', action='store',
+                        help='Object storage bucket for storing file reference content')
     parser.add_argument('--scope', '-sc', dest='scope', action='store',
                         choices=['repository', 'organization'],
                         help='GitHub sync scope: a single repository or an entire organization')
@@ -821,6 +862,14 @@ class PAMUniversalSyncConfigEditCommand(Command):
             rq.vaultName = encrypted_vault_name
         elif existing_config.get('vaultName'):
             rq.vaultName = utils.base64_url_decode(existing_config['vaultName'])
+
+        object_storage_bucket = kwargs.get('object_storage_bucket')
+        if object_storage_bucket:
+            object_storage_bucket_bytes = string_to_bytes(object_storage_bucket)
+            encrypted_object_storage_bucket = crypto.encrypt_aes_v2(object_storage_bucket_bytes, network.record_key)
+            rq.objectStorageBucket = encrypted_object_storage_bucket
+        elif existing_config.get('objectStorageBucket'):
+            rq.objectStorageBucket = utils.base64_url_decode(existing_config['objectStorageBucket'])
 
         # GitHub-specific fields live under the nested 'github' object, both in the
         # request message (rq.github) and in the existing DAG edge content.
