@@ -76,8 +76,7 @@ class TestGetProtectedRecordUids(TestCase):
         self.assertEqual(get_protected_record_uids(p), {})
 
     def test_docker_record_protected_by_uid_even_with_custom_title(self):
-        """--record-name can give the Docker config record any title at setup time;
-        COMMANDER_RECORD is the only reliable way to identify it in that case."""
+        """--record-name can give the Docker config record a custom title; COMMANDER_RECORD must still identify it."""
         with mock.patch.dict(os.environ, {'COMMANDER_RECORD': 'DOCKER_CUSTOM_UID'}):
             p = _params_with_records({'DOCKER_CUSTOM_UID': 'My Totally Custom Docker Title'})
             result = get_protected_record_uids(p)
@@ -105,6 +104,41 @@ class TestGetProtectedRecordUids(TestCase):
         self.assertEqual(set(result.keys()), {'UID_CONFIG'})
 
 
+class TestGetProtectedRecordUidsCaching(TestCase):
+    """The record_cache scan must not re-run for the same params/revision but must re-run when revision changes."""
+
+    def test_repeat_call_same_revision_does_not_rescan(self):
+        p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+        p.revision = 100
+        first = get_protected_record_uids(p)
+
+        # Mutate the cache without bumping revision -- the cached result should
+        # win, proving the second call didn't re-scan.
+        p.record_cache['UID_DOCKER'] = _record_cache_entry('UID_DOCKER', PROTECTED_DOCKER_TITLE)
+        second = get_protected_record_uids(p)
+        self.assertEqual(second, first)
+        self.assertNotIn('UID_DOCKER', second)
+
+    def test_revision_change_triggers_rescan(self):
+        p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+        p.revision = 100
+        get_protected_record_uids(p)
+
+        p.record_cache['UID_DOCKER'] = _record_cache_entry('UID_DOCKER', PROTECTED_DOCKER_TITLE)
+        p.revision = 101
+        result = get_protected_record_uids(p)
+        self.assertEqual(set(result.keys()), {'UID_CONFIG', 'UID_DOCKER'})
+
+    def test_different_params_instances_do_not_share_cache(self):
+        p1 = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+        p1.revision = 100
+        p2 = _params_with_records({'UID_OTHER': 'Unrelated'})
+        p2.revision = 100
+
+        self.assertEqual(set(get_protected_record_uids(p1).keys()), {'UID_CONFIG'})
+        self.assertEqual(get_protected_record_uids(p2), {})
+
+
 class TestHideFromRecordCache(TestCase):
     def test_hides_protected_uid_inside_the_block(self):
         p = _params_with_records({'PROTECTED': PROTECTED_TITLE, 'NORMAL': 'Other'})
@@ -129,8 +163,7 @@ class TestHideFromRecordCache(TestCase):
         self.assertIn('PROTECTED', p.record_cache)
 
     def test_reintroduction_during_block_is_blocked(self):
-        """A forced sync-down (or anything else) writing the protected UID back into
-        record_cache mid-command must not make it visible before the block exits."""
+        """A forced sync-down writing the protected UID back into record_cache mid-command must not make it visible."""
         p = _params_with_records({'PROTECTED': PROTECTED_TITLE, 'NORMAL': 'Other'})
         with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
             p.record_cache['PROTECTED'] = _record_cache_entry('PROTECTED', 'reintroduced')
@@ -152,4 +185,42 @@ class TestHideFromRecordCache(TestCase):
 
     def test_params_none_is_a_noop(self):
         with hide_from_record_cache(None, {'PROTECTED': PROTECTED_TITLE}):
+            pass
+
+    def test_nested_share_caches_are_guarded_too(self):
+        """load_pam_record falls back to nested_share_records, so guarding record_cache alone isn't enough."""
+        p = _params_with_records({'NORMAL': 'Other'})
+        p.nested_share_records = {'PROTECTED': {'title': 'nsf copy'}, 'OTHER_NSF': {'title': 'x'}}
+        p.nested_share_record_data = {'PROTECTED': {'data_json': {'title': 'nsf data copy'}}}
+
+        with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
+            self.assertNotIn('PROTECTED', p.nested_share_records)
+            self.assertIn('OTHER_NSF', p.nested_share_records)
+            self.assertNotIn('PROTECTED', p.nested_share_record_data)
+
+            # Reintroduction mid-command must be blocked here too.
+            p.nested_share_records['PROTECTED'] = {'title': 'reintroduced'}
+            self.assertNotIn('PROTECTED', p.nested_share_records)
+
+        self.assertIn('PROTECTED', p.nested_share_records)
+        self.assertIn('PROTECTED', p.nested_share_record_data)
+        self.assertIs(type(p.nested_share_records), dict)
+
+    def test_subfolder_record_cache_uid_is_stripped_for_the_duration(self):
+        """_build_folder_json leaks the bare UID from a folder's set even when the record fails to load."""
+        p = _params_with_records({'NORMAL': 'Other'})
+        p.subfolder_record_cache = {'FOLDER1': {'PROTECTED', 'NORMAL'}, 'FOLDER2': {'OTHER'}}
+
+        with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
+            self.assertNotIn('PROTECTED', p.subfolder_record_cache['FOLDER1'])
+            self.assertIn('NORMAL', p.subfolder_record_cache['FOLDER1'])
+            self.assertEqual(p.subfolder_record_cache['FOLDER2'], {'OTHER'})
+
+        self.assertIn('PROTECTED', p.subfolder_record_cache['FOLDER1'])
+        self.assertIn('NORMAL', p.subfolder_record_cache['FOLDER1'])
+
+    def test_missing_optional_caches_do_not_raise(self):
+        """A params fixture with only default-empty NSF/subfolder caches must not break the guard."""
+        p = _params_with_records({'NORMAL': 'Other'})
+        with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
             pass

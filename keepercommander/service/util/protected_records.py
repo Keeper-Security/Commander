@@ -15,13 +15,18 @@ from __future__ import annotations
 
 import contextlib
 import os
+import weakref
 from collections import UserDict
 from typing import Dict, FrozenSet, Iterable, Tuple
 
-# Docker mode passes the config record's UID to the container regardless of what
-# title it was set up with (--record-name can override the default title), so this
-# is the only reliable way to identify that record when a custom title was chosen.
+# Docker mode passes the config record's UID here regardless of what title --record-name gave it at setup time.
 _DOCKER_RECORD_UID_ENV = 'COMMANDER_RECORD'
+
+# uid-keyed caches resolve_single_record/load_pam_record fall back to when a UID isn't in record_cache.
+_GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_record_data')
+
+# Memoizes the record_cache scan per params instance, invalidated by params.revision.
+_uid_scan_cache: 'weakref.WeakKeyDictionary' = weakref.WeakKeyDictionary()
 
 
 def _protected_titles() -> Tuple[str, ...]:
@@ -36,27 +41,12 @@ def get_protected_record_title_set() -> FrozenSet[str]:
     return frozenset(t.lower() for t in _protected_titles())
 
 
-def get_protected_record_uids(params) -> Dict[str, str]:
-    """Resolve current UIDs of Service Mode's own config records ({uid: title}).
-
-    Matches by title (not ownership), plus the Docker config record's UID from
-    COMMANDER_RECORD -- title alone would miss it if --record-name gave it a
-    custom title at setup time. A record that fails to decrypt/parse is skipped
-    (logged, not raised) rather than breaking every other Service Mode command.
-    """
-    found: Dict[str, str] = {}
-
-    docker_uid = (os.environ.get(_DOCKER_RECORD_UID_ENV) or '').strip()
-    if docker_uid:
-        found[docker_uid] = '<Docker config record>'
-
-    if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
-        return found
-
+def _scan_record_cache_for_protected_titles(params) -> Dict[str, str]:
     from ... import vault
     from ..decorators.logging import logger
 
     protected_titles = get_protected_record_title_set()
+    found: Dict[str, str] = {}
     for uid in params.record_cache:
         try:
             record = vault.KeeperRecord.load(params, uid)
@@ -68,15 +58,31 @@ def get_protected_record_uids(params) -> Dict[str, str]:
     return found
 
 
-class _GuardedRecordCache(UserDict):
-    """A record_cache view that can never hold the given protected UIDs.
+def get_protected_record_uids(params) -> Dict[str, str]:
+    """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus the Docker record's UID from COMMANDER_RECORD; scan result is memoized per params instance, invalidated by params.revision."""
+    found: Dict[str, str] = {}
 
-    Subclassing dict directly isn't reliable here: CPython's C-level dict methods
-    (setdefault, |=, etc.) don't reliably call an overridden __setitem__ on a dict
-    subclass. UserDict routes every mutation through __setitem__, so this holds even
-    if something (e.g. a forced sync-down triggered mid-command) tries to write the
-    protected UID back in while the wrapped command is still running.
-    """
+    docker_uid = (os.environ.get(_DOCKER_RECORD_UID_ENV) or '').strip()
+    if docker_uid:
+        found[docker_uid] = '<Docker config record>'
+
+    if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
+        return found
+
+    revision = getattr(params, 'revision', None)
+    cached = _uid_scan_cache.get(params)
+    if cached is not None and cached[0] == revision:
+        found.update(cached[1])
+        return found
+
+    scanned = _scan_record_cache_for_protected_titles(params)
+    _uid_scan_cache[params] = (revision, scanned)
+    found.update(scanned)
+    return found
+
+
+class _GuardedRecordCache(UserDict):
+    """A uid-keyed cache view that can never hold the given protected UIDs; UserDict (not dict) so every mutation reliably routes through __setitem__, even C-level ones like setdefault/|=."""
 
     def __init__(self, source, protected_uids: Iterable[str]):
         self._protected_uids = frozenset(protected_uids)
@@ -90,24 +96,44 @@ class _GuardedRecordCache(UserDict):
 
 @contextlib.contextmanager
 def hide_from_record_cache(params, protected_uids: Dict[str, str]):
-    """Make params.record_cache unable to hold protected_uids for the duration of the with-block.
-
-    Guards against reintroduction during execution (not just a one-time pop before
-    dispatch), then restores the original entries and a plain dict container on
-    exit, however the block exits -- so nothing outside this call (including
-    Service Mode's own internal config-record maintenance, which shares the same
-    params singleton) is ever left permanently unable to see these records.
-    """
+    """For the with-block, guards record_cache/nested_share_records/nested_share_record_data against reintroduction (not just a one-time pop) and strips protected UIDs from subfolder_record_cache, restoring everything on exit; relies on Service Mode commands running one at a time (same assumption capture_output_and_logs already makes) and may leave record_cache stale until the next sync if one lands mid-command."""
     if params is None or not protected_uids:
         yield
         return
 
-    original = params.record_cache
-    saved_entries = {uid: original[uid] for uid in protected_uids if uid in original}
-    params.record_cache = _GuardedRecordCache(original, protected_uids)
+    protected_uid_set = frozenset(protected_uids)
+
+    original_caches = {}
+    saved_entries = {}
+    for attr in _GUARDED_CACHE_ATTRS:
+        source = getattr(params, attr, None)
+        if not isinstance(source, dict):
+            continue
+        original_caches[attr] = source
+        saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}
+        setattr(params, attr, _GuardedRecordCache(source, protected_uid_set))
+
+    subfolder_cache = getattr(params, 'subfolder_record_cache', None)
+    removed_from_folders: Dict[str, set] = {}
+    if isinstance(subfolder_cache, dict):
+        for folder_uid, uids in subfolder_cache.items():
+            if not isinstance(uids, set):
+                continue
+            hit = uids & protected_uid_set
+            if hit:
+                removed_from_folders[folder_uid] = hit
+                uids -= hit
+
     try:
         yield
     finally:
-        restored = dict(params.record_cache)
-        restored.update(saved_entries)
-        params.record_cache = restored
+        for attr in original_caches:
+            restored = dict(getattr(params, attr))
+            restored.update(saved_entries[attr])
+            setattr(params, attr, restored)
+
+        if isinstance(subfolder_cache, dict):
+            for folder_uid, hit in removed_from_folders.items():
+                uids = subfolder_cache.get(folder_uid)
+                if isinstance(uids, set):
+                    uids |= hit

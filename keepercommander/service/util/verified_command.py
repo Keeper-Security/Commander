@@ -114,7 +114,7 @@ class Verifycommand:
 
     @staticmethod
     def validate_service_mode_protected_record_command(command_tokens, protected_uids=None):
-        """Block any Service Mode command whose arguments literally reference a protected config record by title or UID (checked for every command, not a curated list, since new commands keep adding new ways to reference a record)."""
+        """Reject any command with a protected title/UID as a whole token or --flag=value; indirect forms (comma lists, path-qualified titles) rely on protected_records.hide_from_record_cache instead."""
         if not command_tokens:
             return None
 
