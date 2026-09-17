@@ -92,7 +92,8 @@ class RecordLink:
                             fail_on_corrupt=self.fail_on_corrupt,
                             log_prefix=self.log_prefix,
                             save_batch_count=self.save_batch_count,
-                            agent=self.agent)
+                            agent=self.agent,
+                            path_aware=True)
             sync_point = self._dag.load(sync_point=0)
             self.logger.debug(f"the record linking sync point is {sync_point or 0}")
             if not self.dag.has_graph:

@@ -107,10 +107,12 @@ class RmMappedUser(BaseModel):
     :param id: Provider identifier for the user.
     :param name: Human-readable user name.
     :param role_ids: Ids of the roles this user holds (references RmMappedRole.id).
+    :param group_ids: Ids of the groups this user belongs to (references RmMappedGroup.id).
     """
     id: str
     name: Optional[str] = None
     role_ids: List[str] = []
+    group_ids: List[str] = []
 
 
 class RmMappedGroup(BaseModel):

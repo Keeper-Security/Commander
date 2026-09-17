@@ -21,6 +21,7 @@ class DAGEdge:
                  head_uid: str,
                  version: int = 0,
                  content: Optional[Any] = None,
+                 path_aware: Optional[bool] = None,
                  path: Optional[str] = None,
                  modified: bool = True,
                  block_content_auto_save: bool = False,
@@ -37,7 +38,8 @@ class DAGEdge:
         :param head_uid: The vertex uid that has this edge's vertex. The vertex uid that the edge arrow points at.
         :param version: Version of this edge.
         :param content: The content of this edge.
-        :param path: Short tag about this edge. Do
+        :param ignore_path:
+        :param path: Short tag about this edge.
         :param modified:
         :param block_content_auto_save:
         :param from_load: Is this being called from the load() method?
@@ -60,6 +62,9 @@ class DAGEdge:
         # This could happen if we create a duplicate new or modified edge.
         # We want to only save the newest duplicated edge, so skip prior ones.
         self.skip_on_save: bool = False
+
+        # If an edge need to be filtered, should the path be used?
+        self.path_aware = path_aware
 
         # Block auto save in the content setter.
         # When creating an edge, don't save until the edge is added to the edge list.
