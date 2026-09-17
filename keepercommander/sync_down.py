@@ -641,13 +641,17 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 if au.removed:
                     app_users.pop(au.username, None)
                 else:
-                    app_users[au.username] = {
+                    entry = {
                         'app_record_uid': app_record_uid,
                         'username': au.username,
                         'can_manage_users': au.canManageUsers,
                         'can_manage_shares': au.canManageShares,
                         'can_manage_devices': au.canManageDevices,
                     }
+                    if au.recordKey:
+                        entry['record_key'] = utils.base64_url_encode(au.recordKey)
+                        entry['record_key_type'] = au.recordKeyType
+                    app_users[au.username] = entry
 
         if len(response.ksmAppTeams) > 0:
             for at in response.ksmAppTeams:
@@ -660,13 +664,17 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 if at.removed:
                     app_teams.pop(team_uid, None)
                 else:
-                    app_teams[team_uid] = {
+                    entry = {
                         'app_record_uid': app_record_uid,
                         'team_uid': team_uid,
                         'can_manage_users': at.canManageUsers,
                         'can_manage_shares': at.canManageShares,
                         'can_manage_devices': at.canManageDevices,
                     }
+                    if at.recordKey:
+                        entry['record_key'] = utils.base64_url_encode(at.recordKey)
+                        entry['record_key_type'] = at.recordKeyType
+                    app_teams[team_uid] = entry
 
         params.sync_down_token = response.continuationToken
 
@@ -756,6 +764,28 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
         del params.meta_data_cache[record_uid]
     to_delete.clear()
 
+    logging.debug('Decrypting KSM app user record keys')
+    for app_users in params.ksm_app_users.values():
+        for entry in app_users.values():
+            if 'record_key_unencrypted' in entry or 'record_key' not in entry:
+                continue
+            try:
+                record_key_encrypted = utils.base64_url_decode(entry['record_key'])
+                key_type = entry['record_key_type']
+                if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                    record_key = crypto.decrypt_aes_v1(record_key_encrypted, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
+                    record_key = crypto.decrypt_rsa(record_key_encrypted, params.rsa_key2)
+                elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                    record_key = crypto.decrypt_aes_v2(record_key_encrypted, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                    record_key = crypto.decrypt_ec(record_key_encrypted, params.ecc_key)
+                else:
+                    raise Exception('Unsupported key type')
+                entry['record_key_unencrypted'] = record_key
+            except Exception as e:
+                logging.debug('KSM app user %s record key decryption error: %s', entry.get('username'), e)
+
     logging.debug('Decrypting team keys')
     for team_uid, team in params.team_cache.items():
         if 'team_key_unencrypted' not in team:
@@ -820,6 +850,38 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
     for team_uid in to_delete:
         del params.team_cache[team_uid]
     to_delete.clear()
+
+    logging.debug('Decrypting KSM app team record keys')
+    for app_teams in params.ksm_app_teams.values():
+        for entry in app_teams.values():
+            if 'record_key_unencrypted' in entry or 'record_key' not in entry:
+                continue
+            team = params.team_cache.get(entry['team_uid'])
+            if not team or 'team_key_unencrypted' not in team:
+                continue
+            try:
+                record_key_encrypted = utils.base64_url_decode(entry['record_key'])
+                key_type = entry['record_key_type']
+                team_key = team['team_key_unencrypted']
+                if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                    record_key = crypto.decrypt_aes_v1(record_key_encrypted, team_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
+                    if 'team_private_key_unencrypted' not in team:
+                        raise Exception('Team private key not available')
+                    team_pk = crypto.load_rsa_private_key(team['team_private_key_unencrypted'])
+                    record_key = crypto.decrypt_rsa(record_key_encrypted, team_pk)
+                elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                    record_key = crypto.decrypt_aes_v2(record_key_encrypted, team_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                    if 'team_ec_private_key_unencrypted' not in team:
+                        raise Exception('Team EC private key not available')
+                    team_pk = crypto.load_ec_private_key(team['team_ec_private_key_unencrypted'])
+                    record_key = crypto.decrypt_ec(record_key_encrypted, team_pk)
+                else:
+                    raise Exception('Unsupported key type')
+                entry['record_key_unencrypted'] = record_key
+            except Exception as e:
+                logging.debug('KSM app team %s record key decryption error: %s', entry.get('team_uid'), e)
 
     # NSF folder keys may be wrapped with team keys (ENCRYPTED_BY_TEAM_KEY /
     # folderAccesses). Decrypt only after team keys are available.
