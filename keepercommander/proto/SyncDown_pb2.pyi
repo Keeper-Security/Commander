@@ -1,11 +1,11 @@
-from . import record_pb2 as _record_pb2
-from . import breachwatch_pb2 as _breachwatch_pb2
-from . import APIRequest_pb2 as _APIRequest_pb2
-from . import enterprise_pb2 as _enterprise_pb2
-from . import NotificationCenter_pb2 as _NotificationCenter_pb2
-from . import dag_pb2 as _dag_pb2
-from . import folder_pb2 as _folder_pb2
-from . import record_sharing_pb2 as _record_sharing_pb2
+import record_pb2 as _record_pb2
+import breachwatch_pb2 as _breachwatch_pb2
+import APIRequest_pb2 as _APIRequest_pb2
+import enterprise_pb2 as _enterprise_pb2
+import NotificationCenter_pb2 as _NotificationCenter_pb2
+import dag_pb2 as _dag_pb2
+import folder_pb2 as _folder_pb2
+import record_sharing_pb2 as _record_sharing_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
