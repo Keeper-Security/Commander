@@ -23,6 +23,7 @@ from ..util.tunneling import (
     tailscale_up,
     start_tailscale_funnel,
     get_tailscale_funnel_url,
+    reset_tailscale_log,
 )
 from ..util.exceptions import ValidationError
 
@@ -82,6 +83,7 @@ class TailscaleConfigurator:
             return None
 
         logger.debug("Configuring Tailscale Funnel")
+        reset_tailscale_log()
 
         try:
             logger.debug("Checking Tailscale CLI availability")

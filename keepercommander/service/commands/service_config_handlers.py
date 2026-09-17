@@ -106,16 +106,13 @@ class ServiceConfigHandler:
             cloudflare_public_url = f"https://{cloudflare_domain}"
             logger.debug("Cloudflare enabled - disabling tailscale and TLS")
         elif tailscale_enabled == "y":
-            # tailscale enabled → disable TLS, but validate required fields
-            if not args.tailscale_auth_key:
-                raise ValidationError("Tailscale auth key is required when using Tailscale Funnel.")
-
+            # tailscale enabled → disable TLS
             tls_enabled = "n"
             certfile = ""
             certpassword = ""
             cloudflare_token = ""
             cloudflare_domain = ""
-            tailscale_auth_key = self.service_config.validator.validate_tailscale_auth_key(args.tailscale_auth_key)
+            tailscale_auth_key = self.service_config.validator.validate_tailscale_auth_key(args.tailscale)
             tailscale_advertise_tags = args.tailscale_advertise_tags or ""
             # URL is only known once Funnel actually starts at service-start time.
             logger.debug("Tailscale enabled - disabling TLS")
