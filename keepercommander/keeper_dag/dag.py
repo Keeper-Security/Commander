@@ -60,7 +60,9 @@ class DAG:
                  data_requires_encryption: bool = False,
                  log_prefix: str = "GraphSync",
                  save_batch_count: Optional[int] = None,
+                 path_aware: bool = False,
                  agent: Optional[str] = None,
+
                  dedup_edges: bool = False):
 
         """
@@ -85,6 +87,7 @@ class DAG:
         :param data_requires_encryption: Data edges are already encrypted. Default is False.
         :param log_prefix: Text prepended to the log messages. Handy if dealing with multiple graphs.
         :param save_batch_count: The number of edges to save at one time.
+        :param path_aware: Use path when managing edges.
         :param agent: User Agent to send with web service requests.
         :param dedup_edges: Remove modified edges if the same edge added before save.
         :return: Instance of GraphSync
@@ -104,6 +107,9 @@ class DAG:
         # If warning is turned on, log dup and stacktrace.
         self.dedup_edge = value_to_boolean(os.environ.get("GS_DEDUP_EDGES", dedup_edges))
         self.dedup_edge_warning = value_to_boolean(os.environ.get("GS_DEDUP_EDGES_WARN", False))
+
+        # If True, edges will use their type and the path as a unqiue key.
+        self.path_aware = path_aware
 
         if self.dedup_edge and auto_save:
             raise Exception("Cannot run dedup_edge and auto_save at the same time. The dedup_edge feature only works "
@@ -703,7 +709,9 @@ class DAG:
                        f"edge type {edge_type}", level=3)
 
             if edge_type == EdgeType.DELETION:
-                tail.disconnect_from(head)
+                tail.disconnect_from(vertex=head,
+                                     path=data.path,
+                                     path_aware=self.path_aware)
             else:
                 content = data.content
                 if content is not None:
@@ -711,16 +719,18 @@ class DAG:
                         content = str_to_bytes(content)
 
                 # Connect this vertex to the head vertex. It belongs to that head vertex.
-                tail.belongs_to(
-                    vertex=head,
-                    edge_type=edge_type,
-                    content=content,
-                    # ACL and LINK edges are not encrypted.
-                    is_encrypted=False,
-                    path=data.path,
-                    modified=False,
-                    from_load=True
-                )
+                if tail and head:
+                    tail.belongs_to(
+                        vertex=head,
+                        edge_type=edge_type,
+                        content=content,
+                        # ACL and LINK edges are not encrypted.
+                        is_encrypted=False,
+                        path_aware=self.path_aware,
+                        path=data.path,
+                        modified=False,
+                        from_load=True
+                    )
 
         self.debug("", level=2)
         self.debug("  PROCESS the DATA edges", level=2)
@@ -759,6 +769,7 @@ class DAG:
                 content=content,
                 # Assume DATA is encrypted; it might not be but, we will handle that later.
                 is_encrypted=True,
+                path_aware=self.path_aware,
                 path=data.path,
                 modified=False,
                 from_load=True,

@@ -85,7 +85,7 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
         if record_link.dag.has_graph is True:
             print(self._h("Record Linking Graph"))
             graph.do_list(params=params, gateway_context=gateway_context, graph_type="rl", debug_level=debug_level,
-                          indent=1)
+                          indent=1, show_data=False)
 
             print("")
             print(self._h("User to Service/Task Graph"))
