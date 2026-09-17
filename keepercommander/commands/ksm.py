@@ -1315,8 +1315,15 @@ class KSMCommand(Command):
     def resolve_enterprise_user_id(params, email):
         for user in (params.enterprise.get('users', []) if params.enterprise else []):
             if user.get('username', '').lower() == email.lower():
-                return user.get('enterprise_user_id')
+                return user.get('user_id')
         return None
+
+    @staticmethod
+    def resolve_username_by_user_id(params, user_id):
+        for user in (params.enterprise.get('users', []) if params.enterprise else []):
+            if user.get('user_id') == user_id:
+                return user.get('username')
+        return str(user_id)
 
     @staticmethod
     def resolve_team_uid(params, team_name_or_uid):
@@ -1344,7 +1351,16 @@ class KSMCommand(Command):
             return
 
         app_uid = app.get('record_uid')
-        users = params.ksm_app_users.get(app_uid, {})
+        app_info = KSMCommand.get_app_info(params, app_uid)
+        users = {}
+        for ai in app_info:
+            for u in ai.users:
+                email = KSMCommand.resolve_username_by_user_id(params, u.userId)
+                users[email] = {
+                    'can_manage_users': u.canManageUsers,
+                    'can_manage_shares': u.canManageShares,
+                    'can_manage_devices': u.canManageDevices,
+                }
 
         if format_type == 'json':
             rows = [{
@@ -1357,8 +1373,7 @@ class KSMCommand(Command):
 
         print(f'\n{bcolors.BOLD}Application Users{bcolors.ENDC}\n')
         if not users:
-            print(f'{bcolors.WARNING}No application users found for this app. '
-                  f'Run "sync-down" if a membership was recently added.{bcolors.ENDC}\n')
+            print(f'{bcolors.WARNING}No application users found for this app.{bcolors.ENDC}\n')
             return
 
         fields = ['Email', 'Can Manage Users', 'Can Manage Shares', 'Can Manage Devices']
@@ -1375,7 +1390,16 @@ class KSMCommand(Command):
             return
 
         app_uid = app.get('record_uid')
-        teams = params.ksm_app_teams.get(app_uid, {})
+        app_info = KSMCommand.get_app_info(params, app_uid)
+        teams = {}
+        for ai in app_info:
+            for t in ai.teams:
+                team_uid = utils.base64_url_encode(t.teamUid)
+                teams[team_uid] = {
+                    'can_manage_users': t.canManageUsers,
+                    'can_manage_shares': t.canManageShares,
+                    'can_manage_devices': t.canManageDevices,
+                }
 
         if format_type == 'json':
             rows = [{
@@ -1389,8 +1413,7 @@ class KSMCommand(Command):
 
         print(f'\n{bcolors.BOLD}Application Teams{bcolors.ENDC}\n')
         if not teams:
-            print(f'{bcolors.WARNING}No application teams found for this app. '
-                  f'Run "sync-down" if a membership was recently added.{bcolors.ENDC}\n')
+            print(f'{bcolors.WARNING}No application teams found for this app.{bcolors.ENDC}\n')
             return
 
         fields = ['Team Name', 'Team UID', 'Can Manage Users', 'Can Manage Shares', 'Can Manage Devices']
