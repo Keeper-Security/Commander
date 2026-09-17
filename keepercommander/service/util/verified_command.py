@@ -17,6 +17,10 @@ class Verifycommand:
     # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
     _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
 
+    _PROTECTED_RECORD_MSG = (
+        'Service Mode configuration records are not accessible through Service Mode'
+    )
+
     # Legacy Commands category — plugin-based rotation/connection commands have no safe Service Mode form
     # and are blocked unconditionally, regardless of what an API key's command_list allows.
     _LEGACY_COMMANDS = frozenset({
@@ -97,6 +101,23 @@ class Verifycommand:
             error = validator(command_tokens, request_temp_dir)
             if error:
                 return error
+        return None
+
+    @staticmethod
+    def validate_service_mode_protected_record_command(command_tokens, protected_uids=None):
+        """Block any Service Mode command whose arguments literally reference a protected config record by title or UID (checked for every command, not a curated list, since new commands keep adding new ways to reference a record)."""
+        if not command_tokens:
+            return None
+
+        from .protected_records import get_protected_record_title_set
+        protected_titles = get_protected_record_title_set()
+
+        uid_set = set(protected_uids) if protected_uids else set()
+        for tok in command_tokens[1:]:
+            if tok.lower() in protected_titles:
+                return Verifycommand._PROTECTED_RECORD_MSG
+            if tok in uid_set:
+                return Verifycommand._PROTECTED_RECORD_MSG
         return None
 
     @staticmethod
