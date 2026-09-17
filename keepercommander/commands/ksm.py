@@ -1312,6 +1312,43 @@ class KSMCommand(Command):
         return rs.appInfo
 
     @staticmethod
+    def get_membership_record_key(params, app_record_uid):
+        # type: (KeeperParams, str) -> Optional[bytes]
+        """The caller's own wrapped-then-decrypted app record key from KA-6845 app_user/app_team
+        sync-down (params.ksm_app_users/ksm_app_teams), for members who aren't the app's owner and
+        so have no synced Record in record_cache to pull a key from."""
+        user_entry = params.ksm_app_users.get(app_record_uid, {}).get(params.user)
+        if user_entry and user_entry.get('record_key_unencrypted'):
+            return user_entry['record_key_unencrypted']
+
+        app_teams = params.ksm_app_teams.get(app_record_uid, {})
+        for team_uid in params.team_cache:
+            team_entry = app_teams.get(team_uid)
+            if team_entry and team_entry.get('record_key_unencrypted'):
+                return team_entry['record_key_unencrypted']
+        return None
+
+    @staticmethod
+    def resolve_app_master_key(params, app_name_or_uid):
+        # type: (KeeperParams, str) -> Optional[tuple]
+        """Resolves (app_record_uid, decrypted master key) for an app the caller can access.
+
+        Owners resolve via the synced-down record in record_cache. Members with no
+        owned/synced record (KA-6845 app_user/app_team access) fall back to their own wrapped
+        key delivered via sync-down -- app_name_or_uid must be a uid in that case, since a name
+        can't be resolved without the record already in cache.
+        """
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
+        if rec_cache_val:
+            return rec_cache_val.get('record_uid'), rec_cache_val.get('record_key_unencrypted')
+
+        app_record_uid = app_name_or_uid
+        master_key = KSMCommand.get_membership_record_key(params, app_record_uid)
+        if not master_key:
+            return None
+        return app_record_uid, master_key
+
+    @staticmethod
     def resolve_enterprise_user_id(params, email):
         for user in (params.enterprise.get('users', []) if params.enterprise else []):
             if user.get('username', '').lower() == email.lower():
@@ -2688,14 +2725,12 @@ class KSMCommand(Command):
         if not app_name_or_uid:
             raise Exception("No app provided")
 
-        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
-
-        if not rec_cache_val:
+        resolved = KSMCommand.resolve_app_master_key(params, app_name_or_uid)
+        if not resolved:
             raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+        app_record_uid, master_key = resolved
 
-        logging.debug("App uid=%s, unlock_ip=%s" % (rec_cache_val.get('record_uid'), unlock_ip))
-
-        master_key = rec_cache_val.get('record_key_unencrypted')
+        logging.debug("App uid=%s, unlock_ip=%s" % (app_record_uid, unlock_ip))
 
         keys_str = ""
         otat_str = ""
@@ -2716,7 +2751,7 @@ class KSMCommand(Command):
             encrypted_master_key = crypto.encrypt_aes_v2(master_key, secret_bytes)
 
             rq = APIRequest_pb2.AddAppClientRequest()
-            rq.appRecordUid = utils.base64_url_decode(rec_cache_val.get('record_uid'))
+            rq.appRecordUid = utils.base64_url_decode(app_record_uid)
             rq.encryptedAppKey = encrypted_master_key
             rq.lockIp = not is_ip_unlocked
             rq.firstAccessExpireOn = first_access_expire_on_ms
