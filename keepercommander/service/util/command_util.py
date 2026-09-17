@@ -25,7 +25,7 @@ from .throttle import (
     is_throttle_error,
     throttle_error_response,
 )
-from .protected_records import get_protected_record_uids
+from .protected_records import get_protected_record_uids, hide_from_record_cache
 from .verified_command import Verifycommand
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data, sanitize_command_fields
@@ -210,15 +210,8 @@ class CommandExecutor:
                     response = CommandExecutor.encrypt_response(response)
                     return response, status_code
 
-            saved_cache_entries = {
-                uid: params.record_cache[uid] for uid in protected_uids if uid in params.record_cache
-            }
-            for uid in saved_cache_entries:
-                del params.record_cache[uid]
-            try:
+            with hide_from_record_cache(params, protected_uids):
                 return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
-            finally:
-                params.record_cache.update(saved_cache_entries)
             response = return_value if return_value else printed_output
 
             # Debug logging with sanitization

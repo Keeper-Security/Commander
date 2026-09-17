@@ -463,3 +463,25 @@ class TestProtectedServiceConfigRecords(TestCase):
 
     def test_empty_tokens_returns_none(self):
         self.assertIsNone(Verifycommand.validate_service_mode_protected_record_command([]))
+
+    def test_blocks_equals_form_uid(self):
+        for cmd in (
+            f'record-update --record={self.PROTECTED_UID} title=x',
+            f'get --record-uid={self.PROTECTED_UID}',
+            f'share-folder --record={self.PROTECTED_UID} -e a@b.com',
+            f'share-folder -r={self.PROTECTED_UID} -e a@b.com',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self._check(cmd))
+
+    def test_blocks_equals_form_title(self):
+        self.assertIsNotNone(
+            self._check(f'record-update --record="{self.PROTECTED_TITLE}" title=x')
+        )
+
+    def test_equals_form_unrelated_value_is_allowed(self):
+        self.assertIsNone(self._check('record-update --record=SOME_OTHER_UID title=x'))
+        self.assertIsNone(self._check('record-update --title="My Normal Record" x=y'))
+
+    def test_equals_form_with_no_value_does_not_crash(self):
+        self.assertIsNone(self._check('get --record-uid='))
