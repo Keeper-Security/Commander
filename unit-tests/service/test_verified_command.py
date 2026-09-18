@@ -373,3 +373,115 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertFalse(is_file('--title'))
         self.assertFalse(is_file('profile=x'))
         self.assertFalse(is_file('my.file=x'))  # not a file-type field after parse_field
+
+
+class TestProtectedServiceConfigRecords(TestCase):
+    """No Service Mode command may touch Service Mode's own config records by literal title or UID -- checked
+    unconditionally for every command (not a curated list) so no current or future command can slip through."""
+
+    PROTECTED_TITLE = 'Commander Service Mode Config'
+    PROTECTED_UID = 'PROTECTED_UID_1234'
+
+    def _check(self, cmd, protected_uids=None):
+        return Verifycommand.validate_service_mode_protected_record_command(
+            _tokens(cmd), protected_uids or {self.PROTECTED_UID}
+        )
+
+    def test_blocks_by_title_across_classic_commands(self):
+        for cmd in (
+            f'get "{self.PROTECTED_TITLE}"',
+            f'g "{self.PROTECTED_TITLE}"',
+            f'list "{self.PROTECTED_TITLE}"',
+            f'l "{self.PROTECTED_TITLE}"',
+            f'search "{self.PROTECTED_TITLE}"',
+            f's "{self.PROTECTED_TITLE}"',
+            f'record-update --record "{self.PROTECTED_TITLE}" title=x',
+            f'ru --record "{self.PROTECTED_TITLE}" title=x',
+            f'share-record "{self.PROTECTED_TITLE}" --email a@b.com',
+            f'sr "{self.PROTECTED_TITLE}" --email a@b.com',
+            f'rm "{self.PROTECTED_TITLE}"',
+            f'share-folder --record "{self.PROTECTED_TITLE}" -e a@b.com',
+            f'record-history "{self.PROTECTED_TITLE}"',
+            f'clipboard-copy "{self.PROTECTED_TITLE}"',
+            f'totp "{self.PROTECTED_TITLE}"',
+            f'one-time-share "{self.PROTECTED_TITLE}"',
+            f'ls "{self.PROTECTED_TITLE}"',
+            f'tree "{self.PROTECTED_TITLE}"',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self._check(cmd))
+
+    def test_blocks_by_title_across_nsf_commands(self):
+        for cmd in (
+            f'nsf-get "{self.PROTECTED_TITLE}"',
+            f'nsf-share-record "{self.PROTECTED_TITLE}" --email a@b.com',
+            f'nsf-record-update --record "{self.PROTECTED_TITLE}" title=x',
+            f'nsf-transfer-record "{self.PROTECTED_TITLE}" a@b.com',
+            f'nsf-record-details "{self.PROTECTED_TITLE}"',
+            f'nsf-rm "{self.PROTECTED_TITLE}"',
+            f'nsf-move "{self.PROTECTED_TITLE}" root',
+            f'nsf-ln "{self.PROTECTED_TITLE}" SomeFolder',
+            f'nsf-shortcut keep "{self.PROTECTED_TITLE}"',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self._check(cmd))
+
+    def test_blocks_by_title_case_insensitive(self):
+        self.assertIsNotNone(self._check('get "COMMANDER service MODE config"'))
+
+    def test_blocks_by_uid_regardless_of_command(self):
+        for cmd in (
+            f'get {self.PROTECTED_UID}',
+            f'list {self.PROTECTED_UID}',
+            f'search {self.PROTECTED_UID}',
+            f'record-update --record {self.PROTECTED_UID} title=x',
+            f'share-record {self.PROTECTED_UID} --email a@b.com',
+            f'share-folder --record {self.PROTECTED_UID} -e a@b.com',
+            f'rm {self.PROTECTED_UID}',
+            f'nsf-get {self.PROTECTED_UID}',
+            f'nsf-transfer-record {self.PROTECTED_UID} a@b.com',
+            # A command with no known relationship to records at all -- still
+            # caught, since the check is unconditional, not command-specific.
+            f'keep-alive {self.PROTECTED_UID}',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self._check(cmd))
+
+    def test_uid_match_is_case_sensitive(self):
+        self.assertIsNone(self._check(f'get {self.PROTECTED_UID.lower()}'))
+
+    def test_unrelated_title_and_uid_are_allowed(self):
+        self.assertIsNone(self._check('get "My Normal Record"'))
+        self.assertIsNone(self._check('rm SOME_OTHER_UID'))
+        self.assertIsNone(self._check('record-add --title "My Normal Record"'))
+
+    def test_no_protected_uids_still_blocks_by_title(self):
+        err = Verifycommand.validate_service_mode_protected_record_command(
+            _tokens(f'get "{self.PROTECTED_TITLE}"'), None
+        )
+        self.assertIsNotNone(err)
+
+    def test_empty_tokens_returns_none(self):
+        self.assertIsNone(Verifycommand.validate_service_mode_protected_record_command([]))
+
+    def test_blocks_equals_form_uid(self):
+        for cmd in (
+            f'record-update --record={self.PROTECTED_UID} title=x',
+            f'get --record-uid={self.PROTECTED_UID}',
+            f'share-folder --record={self.PROTECTED_UID} -e a@b.com',
+            f'share-folder -r={self.PROTECTED_UID} -e a@b.com',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self._check(cmd))
+
+    def test_blocks_equals_form_title(self):
+        self.assertIsNotNone(
+            self._check(f'record-update --record="{self.PROTECTED_TITLE}" title=x')
+        )
+
+    def test_equals_form_unrelated_value_is_allowed(self):
+        self.assertIsNone(self._check('record-update --record=SOME_OTHER_UID title=x'))
+        self.assertIsNone(self._check('record-update --title="My Normal Record" x=y'))
+
+    def test_equals_form_with_no_value_does_not_crash(self):
+        self.assertIsNone(self._check('get --record-uid='))
