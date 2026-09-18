@@ -36,8 +36,10 @@ from .tunnel.port_forward.tunnel_helpers import find_open_port, is_port_open, ge
     wait_for_tunnel_connection, create_rust_webrtc_settings, \
     print_above_keeper_prompt
 from .pam.router_helper import get_dag_leafs
-from .pam.vault_target import update_pam_record, reload_pam_record_if_nsf_updated
+from .pam.vault_target import update_pam_record, reload_pam_record_if_nsf_updated, records_in_folder
+from .pam_import.keeper_ai_settings import get_resource_jit_settings
 from .pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+from .pam_launch.terminal_connection import _extract_user_record_credentials
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -51,7 +53,7 @@ from ..display import bcolors
 from ..error import CommandError
 import json
 from ..params import LAST_RECORD_UID
-from ..subfolder import find_folders
+from ..subfolder import find_folders, try_resolve_path
 from ..utils import value_to_boolean
 from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname
 
@@ -88,6 +90,93 @@ def _coerce_settings_subdicts(entry, *keys):
             entry[key] = {}
             changed = True
     return changed
+
+
+def _resource_has_ephemeral_jit(params, record_uid):
+    """True if the resource's jit_settings.createEphemeral is enabled on the DAG.
+
+    Non-fatal on any read failure (unconfigured/unreadable jit_settings just
+    means the record isn't JIT-configured, which is the normal case).
+    """
+    try:
+        jit = get_resource_jit_settings(params, record_uid)
+    except Exception as e:
+        logging.debug(f"Could not read jit_settings for {record_uid}: {e}")
+        return False
+    return bool(jit and jit.get('createEphemeral'))
+
+
+def _classify_proxy_target(record_uid, record_type, protocol, is_keeper_proxy, launch_credential):
+    """Classify a `pam tunnel start` target into a proxy backend, given the
+    record's type/protocol and which of --proxy / --credential were passed.
+
+    Pure decision logic (no params/network access) so it's directly
+    unit-testable. Returns (is_keeperdb_proxy, is_keeperrdp_proxy, error) —
+    ``error`` is a message to print and abort on, or None to proceed.
+    """
+    if record_type == 'pamDatabase':
+        is_keeperdb_proxy, is_keeperrdp_proxy = True, False
+    elif record_type == 'pamMachine' and protocol == 'rdp':
+        is_keeperdb_proxy, is_keeperrdp_proxy = False, True
+    else:
+        detail = f' (protocol="{protocol}")' if record_type == 'pamMachine' else ''
+        if launch_credential and not is_keeper_proxy:
+            return False, False, "--credential requires a proxied tunnel; plain tunnels don't authenticate."
+        return False, False, (
+            f'--proxy is supported on pamDatabase or pamMachine+RDP records. '
+            f'Record {record_uid} is of type "{record_type}"{detail}.'
+        )
+
+    if launch_credential and is_keeperdb_proxy:
+        return False, False, "--credential is not yet supported for KeeperDB Proxy tunnels."
+
+    return is_keeperdb_proxy, is_keeperrdp_proxy, None
+
+
+def _pam_allow_supply_user(pam_settings_value):
+    """Read pamSettings.connection.allowSupplyUser — the checkbox that gates
+    --credential's userSupplied override (and, on the connections side, the
+    equivalent -cr/--credential flag)."""
+    if not isinstance(pam_settings_value, dict):
+        return False
+    return bool((pam_settings_value.get('connection') or {}).get('allowSupplyUser'))
+
+
+def _resolve_credential_record(params, token):
+    """Resolve a --credential/-cr token (UID, path, or title) to a record UID.
+
+    Lightweight resolver for `pam tunnel start --credential`: supports UID and
+    path/title lookup across any record type. Unlike `pam launch`'s resolver,
+    it has no substring fallback and no interactive multi-match picker —
+    ambiguous or unmatched input simply returns None so the caller can print a
+    single clear error.
+    """
+    if not token:
+        return None
+    token = token.strip()
+
+    if token in params.record_cache:
+        return token
+
+    rs = try_resolve_path(params, token)
+    if rs is not None:
+        folder, name = rs
+        if folder is not None and name:
+            folder_uid = folder.uid or ''
+            for uid in (records_in_folder(params, folder_uid) or []):
+                record = vault.KeeperRecord.load(params, uid)
+                if record and record.title and record.title.lower() == name.lower():
+                    return uid
+
+    token_lower = token.lower()
+    matches = []
+    for uid in params.record_cache:
+        record = vault.KeeperRecord.load(params, uid)
+        if record and record.title and record.title.lower() == token_lower:
+            matches.append(uid)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 # Group Commands
@@ -574,12 +663,16 @@ class PAMTunnelEditCommand(Command):
                         f'{bcolors.FAIL}--keeper-db-proxy is only supported for pamDatabase records. '
                         f'Record "{record_name}" is of type "{record_type}".{bcolors.ENDC}')
                 if keeper_db_proxy == 'on' and not tmp_dag.check_if_resource_has_launch_credential(record_uid):
-                    raise CommandError('',
-                        f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
-                        f'Please assign launch credentials to the record before enabling '
-                        f'the database proxy.\n'
-                        f'Use: {bcolors.OKBLUE}pam connection edit <record> '
-                        f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                    if not _resource_has_ephemeral_jit(params, record_uid):
+                        raise CommandError('',
+                            f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
+                            f'Please assign launch credentials to the record before enabling '
+                            f'the database proxy.\n'
+                            f'Use: {bcolors.OKBLUE}pam connection edit <record> '
+                            f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                    logging.debug(f"No linked launch credential found for record {record_uid}; "
+                                  f"ephemeral JIT is enabled, proceeding without a static "
+                                  f"launch credential")
                 if not pam_settings:
                     pam_settings = vault.TypedField.new_field('pamSettings', {"connection": {}, "portForward": {}}, "")
                     record.custom.append(pam_settings)
@@ -642,12 +735,16 @@ class PAMTunnelEditCommand(Command):
                                 dirty = True
                     else:
                         if keeper_proxy == 'on' and not tmp_dag.check_if_resource_has_launch_credential(record_uid):
-                            raise CommandError('',
-                                f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
-                                f'Please assign launch credentials to the record before enabling '
-                                f'the proxy.\n'
-                                f'Use: {bcolors.OKBLUE}pam connection edit <record> '
-                                f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                            if not _resource_has_ephemeral_jit(params, record_uid):
+                                raise CommandError('',
+                                    f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
+                                    f'Please assign launch credentials to the record before enabling '
+                                    f'the proxy.\n'
+                                    f'Use: {bcolors.OKBLUE}pam connection edit <record> '
+                                    f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                            logging.debug(f"No linked launch credential found for record {record_uid}; "
+                                          f"ephemeral JIT is enabled, proceeding without a static "
+                                          f"launch credential")
                         if not pam_settings:
                             pam_settings = vault.TypedField.new_field('pamSettings', {"connection": {}, "portForward": {}}, "")
                             record.custom.append(pam_settings)
@@ -704,6 +801,12 @@ class PAMTunnelStartCommand(Command):
                                 help='Activate Keeper Proxy (KeeperDB for pamDatabase, KeeperRDP for '
                                      'pamMachine + RDP): the gateway substitutes credentials from your '
                                      'Keeper vault when the local client connects to the tunnel.')
+    pam_cmd_parser.add_argument('--credential', '-cr', required=False, dest='launch_credential', type=str,
+                                help='Record (UID, path, or title) to use for KeeperRDP Proxy tunnel '
+                                     'credentials, overriding the resource\'s linked launch credential or '
+                                     'ephemeral-JIT setting. Requires "Allow users to select credentials '
+                                     'from their vault" (allowSupplyUser) on the record. Not supported for '
+                                     'plain (non-proxied) tunnels.')
     pam_cmd_parser.add_argument('--reason', '-r', required=False, dest='workflow_reason', type=str,
                                 help='Justification text for workflow access request. Used when the record\'s '
                                      'workflow requires a reason; non-interactive equivalent of the inline prompt.')
@@ -957,21 +1060,29 @@ class PAMTunnelStartCommand(Command):
         # presence + launch-credential preflight) and the post-start
         # banner.
         is_keeper_proxy = bool(kwargs.get('proxy'))
+        # --credential/-cr: explicit credential override for a KeeperRDP Proxy
+        # tunnel. Valid only when the target actually resolves to a KeeperRDP
+        # Proxy tunnel (allowKeeperRDPProxy on a pamMachine+RDP record) — that's
+        # the only backend that authenticates against the target, so it's the
+        # only one an explicit credential can apply to. Detected independent of
+        # --proxy: the gateway auto-routes to KeeperRDP Proxy from the record's
+        # own allowKeeperRDPProxy setting regardless of whether --proxy was
+        # passed on this invocation (same as --target-host/allowSupplyHost
+        # today), so --credential alone is enough to opt in.
+        launch_credential = kwargs.get('launch_credential')
         is_keeperdb_proxy = False
         is_keeperrdp_proxy = False
         db_type_for_banner = None
-        if is_keeper_proxy:
+        credential_type_override = None
+        credential_data_override = None
+        if is_keeper_proxy or launch_credential:
             record_type = record.record_type
             protocol = self._resolve_connection_protocol(pam_settings_value)
 
-            if record_type == 'pamDatabase':
-                is_keeperdb_proxy = True
-            elif record_type == 'pamMachine' and protocol == 'rdp':
-                is_keeperrdp_proxy = True
-            else:
-                detail = f' (protocol="{protocol}")' if record_type == 'pamMachine' else ''
-                print(f"{bcolors.FAIL}--proxy is supported on pamDatabase or pamMachine+RDP records. "
-                      f"Record {record_uid} is of type \"{record_type}\"{detail}.{bcolors.ENDC}")
+            is_keeperdb_proxy, is_keeperrdp_proxy, proxy_target_error = _classify_proxy_target(
+                record_uid, record_type, protocol, is_keeper_proxy, launch_credential)
+            if proxy_target_error:
+                print(f"{bcolors.FAIL}{proxy_target_error}{bcolors.ENDC}")
                 return
 
             if is_keeperdb_proxy:
@@ -992,12 +1103,16 @@ class PAMTunnelStartCommand(Command):
                 _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
                 _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
                 if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
-                    print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
-                          f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
-                    print(f"{bcolors.WARNING}Use: "
-                          f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
-                          f"{bcolors.ENDC}")
-                    return
+                    if not _resource_has_ephemeral_jit(params, record_uid):
+                        print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                              f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                        print(f"{bcolors.WARNING}Use: "
+                              f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                              f"{bcolors.ENDC}")
+                        return
+                    logging.debug(f"No linked launch credential found for record {record_uid}; "
+                                  f"ephemeral JIT is enabled, proceeding without a static "
+                                  f"launch credential")
                 db_type_for_banner = self._resolve_database_type(record, pam_settings_value)
             else:
                 # KeeperRDP Proxy: validate the record flag set via
@@ -1021,16 +1136,46 @@ class PAMTunnelStartCommand(Command):
                 # into tunnel_params via _process_user_record, so failing
                 # without one yields the cryptic
                 # `gateway_webrtcaction_missing_rdp_credentials`.
-                _est, _ett, _tk = get_keeper_tokens(params)
-                _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
-                _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
-                if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
-                    print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
-                          f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
-                    print(f"{bcolors.WARNING}Use: "
-                          f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
-                          f"{bcolors.ENDC}")
-                    return
+                # --credential supplies its own credential and bypasses this
+                # requirement entirely — independent of the ephemeral fallback
+                # above (see plan Section 2.1 NB2).
+                if not launch_credential:
+                    _est, _ett, _tk = get_keeper_tokens(params)
+                    _existing_cfg = get_config_uid(params, _est, _ett, record_uid)
+                    _proxy_dag = TunnelDAG(params, _est, _ett, _existing_cfg, transmission_key=_tk)
+                    if not _proxy_dag.check_if_resource_has_launch_credential(record_uid):
+                        if not _resource_has_ephemeral_jit(params, record_uid):
+                            print(f"{bcolors.FAIL}No Launch Credentials assigned to record \"{record_uid}\". "
+                                  f"Please assign launch credentials before using --proxy.{bcolors.ENDC}")
+                            print(f"{bcolors.WARNING}Use: "
+                                  f"{bcolors.OKBLUE}pam connection edit <record> --launch-user (-lu) <pamUser_record>"
+                                  f"{bcolors.ENDC}")
+                            return
+                        logging.debug(f"No linked launch credential found for record {record_uid}; "
+                                      f"ephemeral JIT is enabled, proceeding without a static "
+                                      f"launch credential")
+
+                if launch_credential:
+                    if not _pam_allow_supply_user(pam_settings_value):
+                        print(f"{bcolors.FAIL}--credential requires the \"Allow users to select "
+                              f"credentials from their vault\" option to be enabled on "
+                              f"record \"{record_uid}\".{bcolors.ENDC}")
+                        print(f"{bcolors.WARNING}Enable it with: {bcolors.OKBLUE}record-update "
+                              f"-r {record_uid} pamSettings=$JSON:"
+                              f'{{"connection":{{"allowSupplyUser":true}}}}{bcolors.ENDC}')
+                        return
+                    credential_record_uid = _resolve_credential_record(params, launch_credential)
+                    if not credential_record_uid:
+                        print(f"{bcolors.FAIL}--credential record \"{launch_credential}\" not found.{bcolors.ENDC}")
+                        return
+                    credential_fields = _extract_user_record_credentials(params, credential_record_uid)
+                    credential_type_override = 'userSupplied'
+                    credential_data_override = {
+                        'username': credential_fields.get('username', ''),
+                        'password': credential_fields.get('password', ''),
+                    }
+                    logging.debug(f"Using --credential override for tunnel start on record "
+                                  f"{record_uid}: credential record={credential_record_uid}")
 
         # Get target host and port
         if allow_supply_host:
@@ -1232,6 +1377,16 @@ class PAMTunnelStartCommand(Command):
                       f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
             return
 
+        # Ephemeral-JIT account creation on the gateway takes 30-90s (mirrors
+        # the connection path's timeout bump in terminal_connection.py) — only
+        # relevant for proxy tunnels, and only when no explicit --credential
+        # override is in play (an override skips ephemeral entirely).
+        is_ephemeral = (
+            (is_keeperdb_proxy or is_keeperrdp_proxy)
+            and not credential_type_override
+            and _resource_has_ephemeral_jit(params, record_uid)
+        )
+
         # When `allow_ephemeral_fallback` is on we're about to attempt
         # the legacy default port and the pre-probe said it was free.
         # In the rare TOCTOU window the bind can still race and lose,
@@ -1250,6 +1405,9 @@ class PAMTunnelStartCommand(Command):
                     target_host, target_port, socks, trickle_ice,
                     record.title, allow_supply_host=allow_supply_host,
                     two_factor_value=two_factor_value,
+                    credential_type=credential_type_override,
+                    credential_data=credential_data_override,
+                    is_ephemeral=is_ephemeral,
                 )
             finally:
                 logging.disable(logging.NOTSET)
@@ -1259,6 +1417,9 @@ class PAMTunnelStartCommand(Command):
                 target_host, target_port, socks, trickle_ice,
                 record.title, allow_supply_host=allow_supply_host,
                 two_factor_value=two_factor_value,
+                credential_type=credential_type_override,
+                credential_data=credential_data_override,
+                is_ephemeral=is_ephemeral,
             )
 
         # No-`--port` legacy default fallback. If Rust failed to bind the
@@ -1299,6 +1460,9 @@ class PAMTunnelStartCommand(Command):
                     target_host, target_port, socks, trickle_ice,
                     record.title, allow_supply_host=allow_supply_host,
                     two_factor_value=two_factor_value,
+                    credential_type=credential_type_override,
+                    credential_data=credential_data_override,
+                    is_ephemeral=is_ephemeral,
                 )
 
         if result and result.get("success"):
