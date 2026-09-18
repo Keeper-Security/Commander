@@ -177,6 +177,43 @@ GATEWAY_TIMEOUT = int(os.getenv('GATEWAY_TIMEOUT')) if os.getenv('GATEWAY_TIMEOU
 # VERIFY_SSL applies to WebSocket SSL only; HTTP uses params.ssl_verify.
 VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 
+
+def ephemeral_gateway_timeout_ms(is_ephemeral, default=GATEWAY_TIMEOUT):
+    """Gateway wait timeout (ms) for a tunnel-start offer.
+
+    Ephemeral JIT account creation on the gateway takes 30-90s (mirrors the
+    connection path's bump in terminal_connection.py) — the normal
+    ``default`` (30s) is too tight for it.
+    """
+    if not is_ephemeral:
+        return default
+    try:
+        return int(os.environ.get('PAM_GATEWAY_OFFER_TIMEOUT_EPHEMERAL_MS', '120000'))
+    except (TypeError, ValueError):
+        return 120000
+
+
+def credential_override_data_fields(credential_type, credential_data):
+    """Fields to merge into a tunnel-start offer's encrypted inner payload
+    for a --credential/-cr override. Only 'userSupplied' is recognized today
+    (the only value Commander's --credential flag sends); anything else
+    yields no fields, so plain tunnel starts are unaffected.
+    """
+    if credential_type != 'userSupplied' or not credential_data:
+        return {}
+    return {
+        'username': credential_data.get('username', ''),
+        'password': credential_data.get('password', ''),
+    }
+
+
+def credential_override_input_fields(credential_type):
+    """Fields to merge into a tunnel-start offer's outer (unencrypted)
+    gateway action inputs for a --credential/-cr override."""
+    if credential_type != 'userSupplied':
+        return {}
+    return {'credentialType': 'userSupplied', 'allowSupplyUser': True}
+
 # ICE candidate buffering - store until SDP answer is received
 
 # Global conversation key management for multiple concurrent tunnels
@@ -2337,7 +2374,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None, kind='start', probe_duration=30, probe_turn_only=False, probe_stun_only=False):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None, kind='start', probe_duration=30, probe_turn_only=False, probe_stun_only=False, credential_type=None, credential_data=None, is_ephemeral=False):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
 
@@ -2662,6 +2699,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # used for validators (record-type check, `allowKeeperXxxProxy`
         # presence check, launch-credential preflight) and to print the
         # right banner; it does not need to round-trip to the gateway.
+        #
+        # credential_type/credential_data are the exception: an explicit
+        # --credential override DOES need to round-trip, since it's telling
+        # the gateway to use inline username/password instead of its own
+        # ephemeral/linked resolution.
+        data.update(credential_override_data_fields(credential_type, credential_data))
+
         string_data = json.dumps(data)
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
@@ -2700,6 +2744,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 }
                 if two_factor_value:
                     inputs['twoFactorValue'] = two_factor_value
+                inputs.update(credential_override_input_fields(credential_type))
 
                 router_response = router_send_action_to_gateway(
                     params=params,
@@ -2710,7 +2755,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
                     is_streaming=trickle_ice,
-                    gateway_timeout=GATEWAY_TIMEOUT,
+                    gateway_timeout=ephemeral_gateway_timeout_ms(is_ephemeral),
                     **offer_kwargs
                 )
 
