@@ -30,6 +30,7 @@ from ...docker import (
 )
 from .approvals_setup import ApprovalsChannelProfile, collect_approvals_config, is_valid_keeper_uid
 from .approvals_sync import merge_approvals_custom_fields, run_approvals_sync_down
+from .command_policy import sanitize_commands
 
 UUID_PATTERN = re.compile(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -120,6 +121,15 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         if self.get_approvals_profile() is not None:
             commands = f'{commands},{self.get_command_name()}'
         return commands
+
+    def get_banned_commands(self) -> tuple:
+        """Commands to always strip from this integration's command list; override per integration if needed."""
+        return ()
+
+    def sanitize_service_commands(self, commands: str) -> str:
+        """Restrict `commands` to this integration's own get_service_commands() list."""
+        allowed = self.get_service_commands().split(',')
+        return sanitize_commands(commands, allowed, self.get_banned_commands())
 
     # -- Parser (auto-built from name, cached per subclass) ----------
 
@@ -456,10 +466,13 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 )
 
         try:
+            cfg = asdict(service_config)
+            cfg['commands'] = self.sanitize_service_commands(cfg.get('commands') or '')
             builder = DockerComposeBuilder(
-                setup_result, asdict(service_config),
+                setup_result, cfg,
                 commander_service_name=self.get_commander_service_name(),
-                commander_container_name=self.get_commander_container_name()
+                commander_container_name=self.get_commander_container_name(),
+                commander_environment={self.get_record_env_key(): record_uid},
             )
             yaml_content = builder.add_integration_service(
                 service_name=service_name,
