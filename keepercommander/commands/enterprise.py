@@ -1244,19 +1244,44 @@ class EnterpriseNodeCommand(EnterpriseCommand):
             if not matched_nodes:
                 raise CommandError('enterprise-node', 'No nodes to toggle.')
 
+            toggled_nodes = []
             for mn in matched_nodes:
                 node_id = mn['node_id']
                 data = mn['data']
-                displayname = data['displayname']
+                displayname = data.get('displayname') or str(node_id)
+                was_isolated = bool(mn.get('restrict_visibility'))
+                is_root = not mn.get('parent_id')
                 request = enterprise_pb2.SetRestrictVisibilityRequest()
-                request.nodeId = node_id
+                # Root isolation is an enterprise-level flag returned in
+                # GeneralDataEntity rather than on the root Node entity.
+                request.nodeId = 0 if is_root else node_id
                 try:
                     api.communicate_rest(params, request, 'enterprise/set_restrict_visibility')
-                    mn['restrict_visibility'] = not (mn.get('restrict_visibility') or False)
-                    logging.warning('good result: {}'.format(displayname))
+                    toggled_nodes.append((node_id, displayname, was_isolated))
                 except Exception as e:
                     logging.warning('node \"%s\": toggle isolation failed: %s', displayname, e)
-            api.query_enterprise(params)
+            if toggled_nodes:
+                api.query_enterprise(params, force=True)
+                refreshed_nodes = {
+                    x['node_id']: x for x in (params.enterprise or {}).get('nodes', [])
+                }
+                for node_id, displayname, was_isolated in toggled_nodes:
+                    refreshed_node = refreshed_nodes.get(node_id)
+                    if not refreshed_node:
+                        logging.warning(
+                            'node \"%s\": isolation toggle could not be verified after refresh',
+                            displayname)
+                        continue
+                    is_isolated = bool(refreshed_node.get('restrict_visibility'))
+                    if is_isolated == was_isolated:
+                        logging.warning(
+                            'node \"%s\": server accepted the isolation toggle, '
+                            'but the state did not change',
+                            displayname)
+                    else:
+                        logging.info(
+                            'node \"%s\": isolation is now %s',
+                            displayname, 'enabled' if is_isolated else 'disabled')
         else:
             for node_name in unmatched_nodes:
                 logging.warning('Node \'%s\' is not found: Skipping', node_name)
