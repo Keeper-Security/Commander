@@ -25,6 +25,7 @@ from .throttle import (
     is_throttle_error,
     throttle_error_response,
 )
+from .protected_records import get_protected_record_uids, hide_from_record_cache
 from .verified_command import Verifycommand
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data, sanitize_command_fields
@@ -172,16 +173,18 @@ class CommandExecutor:
             # Mode will treat as safe, not the whole shared OS temp root.
             request_temp_dir = os.path.dirname(temp_files[0]) if temp_files else None
 
+            def blocked(error):
+                logger.warning(
+                    f"Service Mode blocked command '{command_tokens[0] if command_tokens else ''}': {error}"
+                )
+                return {"status": "error", "error": error}, 403
+
             # Same tokens the CLI will run — do not use raw HTTP split(" ")
             service_mode_error = Verifycommand.validate_service_mode_restrictions(
                 command_tokens, request_temp_dir
             )
             if service_mode_error:
-                logger.warning(
-                    f"Service Mode blocked command '{command_tokens[0] if command_tokens else ''}': "
-                    f"{service_mode_error}"
-                )
-                return {"status": "error", "error": service_mode_error}, 403
+                return blocked(service_mode_error)
 
             force_error = Verifycommand.validate_enterprise_user_add_role_force(
                 command_tokens, params
@@ -189,16 +192,27 @@ class CommandExecutor:
             if force_error:
                 return {"status": "error", "error": force_error}, 400
 
-            sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
-            if sailpoint_enabled:
-                from ..commands.integrations.sailpoint.service import SailPointService
-                command, sailpoint_response = SailPointService.handle_command(params, command)
-                if sailpoint_response is not None:
-                    response, status_code = sailpoint_response
-                    response = CommandExecutor.encrypt_response(response)
-                    return response, status_code
+            # Checked for every command (not a curated list) so no current or future
+            # command can be missed as a way to reference these records.
+            protected_uids = get_protected_record_uids(params)
+            protected_command_error = Verifycommand.validate_service_mode_protected_record_command(
+                command_tokens, protected_uids
+            )
+            if protected_command_error:
+                return blocked(protected_command_error)
 
-            return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
+            sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
+
+            with hide_from_record_cache(params, protected_uids):
+                if sailpoint_enabled:
+                    from ..commands.integrations.sailpoint.service import SailPointService
+                    command, sailpoint_response = SailPointService.handle_command(params, command)
+                    if sailpoint_response is not None:
+                        response, status_code = sailpoint_response
+                        response = CommandExecutor.encrypt_response(response)
+                        return response, status_code
+
+                return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
             # Debug logging with sanitization
