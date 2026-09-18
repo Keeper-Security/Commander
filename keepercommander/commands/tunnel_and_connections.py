@@ -11,14 +11,13 @@
 
 import argparse
 import datetime
-import http.client
 import json
 import logging
 import os
 import platform
+import requests
 import signal
 import socket
-import ssl
 import struct
 import subprocess
 import sys
@@ -1732,48 +1731,60 @@ class PAMTunnelDiagnoseCommand(Command):
 
     # ── individual Python-side tests ──────────────────────────────────────────
     @classmethod
-    def _test_https(cls, hostname: str, port: int = 443) -> Tuple[bool, str, int]:
+    def _test_https(cls, hostname: str, port: int = 443, proxies=None, verify=True) -> Tuple[bool, str, int]:
         """Returns (passed, detail, ms)."""
         t0 = time.monotonic()
-        conn = None
+        resp = None
         try:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(hostname, port=port, context=ctx, timeout=10)
-            conn.request('GET', '/', headers={'User-Agent': 'keeper-pam-diagnose/1.0'})
-            resp = conn.getresponse()
+            resp = requests.get(
+                f'https://{hostname}:{port}/',
+                headers={'User-Agent': 'keeper-pam-diagnose/1.0'},
+                proxies=proxies,
+                verify=verify,
+                timeout=10,
+                stream=True,
+            )
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 400, f'HTTP {resp.status}  (reachable)', ms
+            return 100 <= resp.status_code < 400, f'HTTP {resp.status_code}  (reachable)', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
-            if conn:
-                try: conn.close()
-                except Exception: pass
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     @classmethod
-    def _test_websocket(cls, hostname: str, port: int = 443) -> Tuple[bool, str, int]:
+    def _test_websocket(cls, hostname: str, port: int = 443, proxies=None, verify=True) -> Tuple[bool, str, int]:
         """HTTP Upgrade probe — any 4xx means the server is reachable."""
         t0 = time.monotonic()
-        conn = None
+        resp = None
         try:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(hostname, port=port, context=ctx, timeout=10)
-            conn.request('GET', '/', headers={
-                'Upgrade': 'websocket',
-                'Connection': 'Upgrade',
-                'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
-                'Sec-WebSocket-Version': '13',
-                'User-Agent': 'keeper-pam-diagnose/1.0',
-            })
-            resp = conn.getresponse()
+            resp = requests.get(
+                f'https://{hostname}:{port}/',
+                headers={
+                    'Upgrade': 'websocket',
+                    'Connection': 'Upgrade',
+                    'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+                    'Sec-WebSocket-Version': '13',
+                    'User-Agent': 'keeper-pam-diagnose/1.0',
+                },
+                proxies=proxies,
+                verify=verify,
+                timeout=10,
+                stream=True,
+            )
             ms = int((time.monotonic() - t0) * 1000)
-            return 100 <= resp.status < 400, f'HTTP {resp.status}', ms
+            return 100 <= resp.status_code < 400, f'HTTP {resp.status_code}', ms
         except Exception as exc:
             return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
         finally:
-            if conn:
-                try: conn.close()
-                except Exception: pass
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     @classmethod
     def _test_tcp_stun(cls, hostname: str) -> Tuple[bool, str, int, Optional[str]]:
@@ -1963,10 +1974,12 @@ class PAMTunnelDiagnoseCommand(Command):
         except Exception as exc:
             _record(f'DNS  {server_host}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
 
-        passed, detail, ms = self._test_https(server_host)
+        passed, detail, ms = self._test_https(
+            server_host, proxies=params.rest_context.proxies, verify=params.ssl_verify)
         _record(f'HTTPS  {server_host}:443', passed, detail, ms)
 
-        passed, detail, ms = self._test_websocket(connect_host)
+        passed, detail, ms = self._test_websocket(
+            connect_host, proxies=params.rest_context.proxies, verify=params.ssl_verify)
         _record(f'WebSocket  {connect_host}:443', passed, detail, ms)
 
         print()
