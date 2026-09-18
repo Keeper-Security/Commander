@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 
 from keepercommander.error import CommandError
+from keepercommander.commands.tunnel_and_connections import PAMTunnelDiagnoseCommand
 
 import datetime
 import socket
@@ -154,3 +155,83 @@ class TestGenerateRandomBytes(unittest.TestCase):
         random_bytes1 = generate_random_bytes()
         random_bytes2 = generate_random_bytes()
         self.assertNotEqual(random_bytes1, random_bytes2)
+
+
+class TestPAMTunnelDiagnose(unittest.TestCase):
+    def test_execute_passes_session_proxy_to_https_probes(self):
+        proxies = {'http': 'http://proxy.example:8080', 'https': 'http://proxy.example:8080'}
+        params = mock.MagicMock()
+        params.server = 'keepersecurity.com'
+        params.rest_context.proxies = proxies
+        params.ssl_verify = '/path/to/ca.pem'
+
+        with mock.patch('keepercommander.commands.tunnel_and_connections.get_relay_host',
+                        return_value='relay.example'), \
+                mock.patch('keepercommander.commands.tunnel_and_connections.get_router_host',
+                           return_value='router.example'), \
+                mock.patch('keepercommander.commands.tunnel_and_connections.get_or_create_tube_registry',
+                           return_value=None), \
+                mock.patch('keepercommander.commands.tunnel_and_connections.socket.getaddrinfo',
+                           return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('203.0.113.1', 0))]), \
+                mock.patch('keepercommander.commands.tunnel_and_connections.socket.gethostbyname',
+                           return_value='203.0.113.1'), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_https',
+                                  return_value=(True, 'reachable', 1)) as test_https, \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_websocket',
+                                  return_value=(True, 'reachable', 1)) as test_websocket, \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_tcp_stun',
+                                  return_value=(True, 'reachable', 1, None)), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_udp_stun',
+                                  return_value=(True, 'reachable', 1, None)), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_turn',
+                                  return_value=(True, 'reachable', 1)), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_udp_port',
+                                  return_value=(True, 1)):
+            PAMTunnelDiagnoseCommand().execute(params)
+
+        test_https.assert_called_once_with(
+            'keepersecurity.com', proxies=proxies, verify='/path/to/ca.pem')
+        test_websocket.assert_called_once_with(
+            'router.example', proxies=proxies, verify='/path/to/ca.pem')
+
+    def test_https_uses_configured_proxy(self):
+        proxies = {'http': 'http://proxy.example:8080', 'https': 'http://proxy.example:8080'}
+        with mock.patch('keepercommander.commands.tunnel_and_connections.requests.get') as mock_get:
+            mock_get.return_value.status_code = 200
+
+            passed, _, _ = PAMTunnelDiagnoseCommand._test_https(
+                'api.example', proxies=proxies, verify='/path/to/ca.pem')
+
+        self.assertTrue(passed)
+        mock_get.assert_called_once_with(
+            'https://api.example:443/',
+            headers={'User-Agent': 'keeper-pam-diagnose/1.0'},
+            proxies=proxies,
+            verify='/path/to/ca.pem',
+            timeout=10,
+            stream=True,
+        )
+
+    def test_websocket_uses_configured_proxy(self):
+        proxies = {'http': 'http://proxy.example:8080', 'https': 'http://proxy.example:8080'}
+        with mock.patch('keepercommander.commands.tunnel_and_connections.requests.get') as mock_get:
+            mock_get.return_value.status_code = 101
+
+            passed, _, _ = PAMTunnelDiagnoseCommand._test_websocket(
+                'router.example', proxies=proxies, verify='/path/to/ca.pem')
+
+        self.assertTrue(passed)
+        mock_get.assert_called_once_with(
+            'https://router.example:443/',
+            headers={
+                'Upgrade': 'websocket',
+                'Connection': 'Upgrade',
+                'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+                'Sec-WebSocket-Version': '13',
+                'User-Agent': 'keeper-pam-diagnose/1.0',
+            },
+            proxies=proxies,
+            verify='/path/to/ca.pem',
+            timeout=10,
+            stream=True,
+        )
