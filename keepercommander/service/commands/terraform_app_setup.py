@@ -26,6 +26,7 @@ from ..docker import (
 )
 from ..decorators.min_commander_version import TERRAFORM_DOCKER_ENV
 from ..util.exceptions import ValidationError
+from .integrations.command_policy import sanitize_commands
 from .service_docker_setup import ServiceDockerSetupCommand
 
 
@@ -47,7 +48,7 @@ class TerraformSetupConstants:
         'share-folder', 'rmdir', 'rndir', 'mkdir', 'epm', 'scim', 'mv', 'pam',
         'secrets-manager', 'ln', 'share-record',
         'nsf-mkdir', 'nsf-get', 'nsf-rmdir', 'nsf-record-add', 'nsf-record-update',
-        'nsf-rm', 'nsf-rndir', 'nsf-share-folder', 'nsf-share-record', 'nsf-ln',
+        'nsf-rm', 'nsf-rndir', 'nsf-share-folder', 'nsf-share-record', 'nsf-ln', 'nsf-move',
     )
     SERVICE_COMMANDS = ','.join(SERVICE_COMMANDS_LIST)
 
@@ -113,7 +114,7 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
 
     def _validate_terraform_commands(self, params) -> str:
         try:
-            return RuntimeServiceConfig().validate_command_list(
+            validated = RuntimeServiceConfig().validate_command_list(
                 TerraformSetupConstants.SERVICE_COMMANDS, params
             )
         except ValidationError as e:
@@ -121,6 +122,7 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
                 self.get_parser().prog,
                 f'Terraform command allowlist validation failed: {e}',
             )
+        return sanitize_commands(validated, TerraformSetupConstants.SERVICE_COMMANDS_LIST)
 
     def _get_commands_config(self, params) -> str:
         return self._validate_terraform_commands(params)
