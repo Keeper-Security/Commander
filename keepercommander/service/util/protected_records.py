@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import weakref
 from collections import UserDict
 from typing import Dict, FrozenSet, Iterable, Tuple
 
@@ -24,9 +23,6 @@ _DOCKER_RECORD_UID_ENV = 'COMMANDER_RECORD'
 
 # uid-keyed caches resolve_single_record/load_pam_record fall back to when a UID isn't in record_cache.
 _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_record_data')
-
-# Memoizes the record_cache scan per params instance, invalidated by params.revision.
-_uid_scan_cache: 'weakref.WeakKeyDictionary' = weakref.WeakKeyDictionary()
 
 
 def _protected_titles() -> Tuple[str, ...]:
@@ -41,25 +37,8 @@ def get_protected_record_title_set() -> FrozenSet[str]:
     return frozenset(t.lower() for t in _protected_titles())
 
 
-def _scan_record_cache_for_protected_titles(params) -> Dict[str, str]:
-    from ... import vault
-    from ..decorators.logging import logger
-
-    protected_titles = get_protected_record_title_set()
-    found: Dict[str, str] = {}
-    for uid in params.record_cache:
-        try:
-            record = vault.KeeperRecord.load(params, uid)
-        except Exception as e:
-            logger.debug(f'protected_records: could not load record {uid} ({type(e).__name__}); skipping')
-            continue
-        if record and record.title.lower() in protected_titles:
-            found[uid] = record.title
-    return found
-
-
 def get_protected_record_uids(params) -> Dict[str, str]:
-    """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus the Docker record's UID from COMMANDER_RECORD; scan result is memoized per params instance, invalidated by params.revision."""
+    """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus the Docker record's UID from COMMANDER_RECORD; not cached, since a stale result on this security check is worse than the cost of a full-vault scan."""
     found: Dict[str, str] = {}
 
     docker_uid = (os.environ.get(_DOCKER_RECORD_UID_ENV) or '').strip()
@@ -69,15 +48,18 @@ def get_protected_record_uids(params) -> Dict[str, str]:
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
         return found
 
-    revision = getattr(params, 'revision', None)
-    cached = _uid_scan_cache.get(params)
-    if cached is not None and cached[0] == revision:
-        found.update(cached[1])
-        return found
+    from ... import vault
+    from ..decorators.logging import logger
 
-    scanned = _scan_record_cache_for_protected_titles(params)
-    _uid_scan_cache[params] = (revision, scanned)
-    found.update(scanned)
+    protected_titles = get_protected_record_title_set()
+    for uid in params.record_cache:
+        try:
+            record = vault.KeeperRecord.load(params, uid)
+        except Exception as e:
+            logger.debug(f'protected_records: could not load record {uid} ({type(e).__name__}); skipping')
+            continue
+        if record and record.title.lower() in protected_titles:
+            found[uid] = record.title
     return found
 
 
@@ -127,13 +109,25 @@ def hide_from_record_cache(params, protected_uids: Dict[str, str]):
     try:
         yield
     finally:
+        from ..decorators.logging import logger
+
         for attr in original_caches:
-            restored = dict(getattr(params, attr))
-            restored.update(saved_entries[attr])
-            setattr(params, attr, restored)
+            try:
+                restored = dict(getattr(params, attr, None) or {})
+                restored.update(saved_entries[attr])
+                setattr(params, attr, restored)
+            except Exception as e:
+                logger.debug(f'hide_from_record_cache: failed to restore {attr} ({type(e).__name__}); restoring protected entries only')
+                try:
+                    setattr(params, attr, dict(saved_entries[attr]))
+                except Exception:
+                    pass
 
         if isinstance(subfolder_cache, dict):
             for folder_uid, hit in removed_from_folders.items():
-                uids = subfolder_cache.get(folder_uid)
-                if isinstance(uids, set):
-                    uids |= hit
+                try:
+                    uids = subfolder_cache.get(folder_uid)
+                    if isinstance(uids, set):
+                        uids |= hit
+                except Exception as e:
+                    logger.debug(f'hide_from_record_cache: failed to restore subfolder {folder_uid} ({type(e).__name__})')

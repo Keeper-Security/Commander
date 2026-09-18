@@ -245,3 +245,30 @@ class TestProtectedRecordCommandExecution(TestCase):
         ) as mock_get_uids:
             CommandExecutor.execute('whoami')
             mock_get_uids.assert_called_once()
+
+    def test_sailpoint_handling_runs_inside_the_record_cache_guard(self):
+        """SailPoint's own pre-processing (handle_command) can resolve/act on
+        records before cli.do_command ever runs -- it must run with the guard
+        already active, not before it, or a folder/recursive share under
+        SailPoint mode could reach the protected record before it's hidden."""
+        params = _params_with_protected_and_normal_record()
+        seen_during_handle_command = {}
+
+        def fake_handle_command(p, command):
+            seen_during_handle_command['keys'] = set(p.record_cache.keys())
+            return command, None
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=fake_handle_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(PROTECTED_UID, seen_during_handle_command['keys'])
+        self.assertIn(NORMAL_UID, seen_during_handle_command['keys'])
+        # Restored after the whole guarded block exits, same as the non-SailPoint case.
+        self.assertIn(PROTECTED_UID, params.record_cache)

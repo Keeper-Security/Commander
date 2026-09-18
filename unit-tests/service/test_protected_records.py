@@ -104,39 +104,28 @@ class TestGetProtectedRecordUids(TestCase):
         self.assertEqual(set(result.keys()), {'UID_CONFIG'})
 
 
-class TestGetProtectedRecordUidsCaching(TestCase):
-    """The record_cache scan must not re-run for the same params/revision but must re-run when revision changes."""
+class TestGetProtectedRecordUidsNotCached(TestCase):
+    """Not memoized -- a newly added protected record must be picked up immediately, without needing a revision change."""
 
-    def test_repeat_call_same_revision_does_not_rescan(self):
+    def test_newly_added_record_is_found_without_a_revision_change(self):
         p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
         p.revision = 100
         first = get_protected_record_uids(p)
+        self.assertEqual(set(first.keys()), {'UID_CONFIG'})
 
-        # Mutate the cache without bumping revision -- the cached result should
-        # win, proving the second call didn't re-scan.
         p.record_cache['UID_DOCKER'] = _record_cache_entry('UID_DOCKER', PROTECTED_DOCKER_TITLE)
         second = get_protected_record_uids(p)
-        self.assertEqual(second, first)
-        self.assertNotIn('UID_DOCKER', second)
+        self.assertEqual(set(second.keys()), {'UID_CONFIG', 'UID_DOCKER'})
 
-    def test_revision_change_triggers_rescan(self):
-        p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+    def test_removed_record_is_no_longer_found(self):
+        p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE, 'UID_DOCKER': PROTECTED_DOCKER_TITLE})
         p.revision = 100
-        get_protected_record_uids(p)
+        first = get_protected_record_uids(p)
+        self.assertEqual(set(first.keys()), {'UID_CONFIG', 'UID_DOCKER'})
 
-        p.record_cache['UID_DOCKER'] = _record_cache_entry('UID_DOCKER', PROTECTED_DOCKER_TITLE)
-        p.revision = 101
-        result = get_protected_record_uids(p)
-        self.assertEqual(set(result.keys()), {'UID_CONFIG', 'UID_DOCKER'})
-
-    def test_different_params_instances_do_not_share_cache(self):
-        p1 = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
-        p1.revision = 100
-        p2 = _params_with_records({'UID_OTHER': 'Unrelated'})
-        p2.revision = 100
-
-        self.assertEqual(set(get_protected_record_uids(p1).keys()), {'UID_CONFIG'})
-        self.assertEqual(get_protected_record_uids(p2), {})
+        del p.record_cache['UID_DOCKER']
+        second = get_protected_record_uids(p)
+        self.assertEqual(set(second.keys()), {'UID_CONFIG'})
 
 
 class TestHideFromRecordCache(TestCase):
@@ -224,3 +213,25 @@ class TestHideFromRecordCache(TestCase):
         p = _params_with_records({'NORMAL': 'Other'})
         with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
             pass
+
+    def test_attribute_replaced_with_none_mid_command_does_not_mask_the_original_error(self):
+        """A command that clears/replaces a guarded attribute mid-execution must not
+        turn a real error into a confusing 'NoneType is not iterable' one, and the
+        protected entry must still be restored on a best-effort basis."""
+        p = _params_with_records({'PROTECTED': PROTECTED_TITLE})
+        with self.assertRaises(ValueError) as ctx:
+            with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
+                p.record_cache = None
+                raise ValueError('original command error')
+        self.assertEqual(str(ctx.exception), 'original command error')
+        self.assertIn('PROTECTED', p.record_cache)
+
+    def test_attribute_replaced_with_plain_dict_preserves_its_contents(self):
+        """A command that replaces the guarded attribute with a fresh plain dict
+        (not just mutating the guarded one) must not lose that dict's entries."""
+        p = _params_with_records({'PROTECTED': PROTECTED_TITLE, 'NORMAL': 'Other'})
+        with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
+            p.record_cache = {'REPLACED': _record_cache_entry('REPLACED', 'from a full reassignment')}
+
+        self.assertIn('REPLACED', p.record_cache)
+        self.assertIn('PROTECTED', p.record_cache)

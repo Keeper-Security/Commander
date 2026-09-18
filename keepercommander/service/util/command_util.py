@@ -202,15 +202,16 @@ class CommandExecutor:
                 return blocked(protected_command_error)
 
             sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
-            if sailpoint_enabled:
-                from ..commands.integrations.sailpoint.service import SailPointService
-                command, sailpoint_response = SailPointService.handle_command(params, command)
-                if sailpoint_response is not None:
-                    response, status_code = sailpoint_response
-                    response = CommandExecutor.encrypt_response(response)
-                    return response, status_code
 
             with hide_from_record_cache(params, protected_uids):
+                if sailpoint_enabled:
+                    from ..commands.integrations.sailpoint.service import SailPointService
+                    command, sailpoint_response = SailPointService.handle_command(params, command)
+                    if sailpoint_response is not None:
+                        response, status_code = sailpoint_response
+                        response = CommandExecutor.encrypt_response(response)
+                        return response, status_code
+
                 return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
