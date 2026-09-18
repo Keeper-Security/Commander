@@ -527,6 +527,97 @@ class TestEnterprise(TestCase):
         }
         splunk.convert_event(props, self.get_audit_event())
 
+    def test_audit_log_ownership_skips_non_owned_record(self):
+        """When both shared and owned records exist, only owned is selected."""
+        from keepercommander.params import RecordOwner
+
+        shared = mock.MagicMock(spec=vault.PasswordRecord)
+        shared.record_uid = 'SHARED_UID'
+        shared.title = 'Audit Log: Sumologic'
+
+        owned = mock.MagicMock(spec=vault.PasswordRecord)
+        owned.record_uid = 'OWNED_UID'
+        owned.title = 'Audit Log: Sumologic'
+
+        params = mock.MagicMock(spec=KeeperParams)
+        params.record_cache = {'SHARED_UID': {}, 'OWNED_UID': {}}
+        params.record_owner_cache = {
+            'SHARED_UID': RecordOwner(False, 'attacker'),
+            'OWNED_UID': RecordOwner(True, 'operator'),
+        }
+        params.meta_data_cache = {}
+
+        with mock.patch('keepercommander.commands.aram.vault.KeeperRecord.load') as mock_load:
+            def load_side_effect(_params, uid):
+                return {'SHARED_UID': shared, 'OWNED_UID': owned}[uid]
+            mock_load.side_effect = load_side_effect
+
+            record = None
+            record_name = 'Audit Log: Sumologic'
+            for r_uid in params.record_cache:
+                rec = mock_load(params, r_uid)
+                if record_name in [rec.record_uid, rec.title]:
+                    if not aram._is_owned_audit_log_record(params, r_uid):
+                        continue
+                    record = rec
+                    break
+
+            self.assertEqual(record.record_uid, 'OWNED_UID')
+
+    def test_audit_log_ownership_returns_none_when_only_shared(self):
+        """When only a shared record matches, none is returned."""
+        from keepercommander.params import RecordOwner
+
+        shared = mock.MagicMock(spec=vault.PasswordRecord)
+        shared.record_uid = 'SHARED_UID'
+        shared.title = 'Audit Log: Sumologic'
+
+        params = mock.MagicMock(spec=KeeperParams)
+        params.record_cache = {'SHARED_UID': {}}
+        params.record_owner_cache = {'SHARED_UID': RecordOwner(False, 'attacker')}
+        params.meta_data_cache = {}
+
+        with mock.patch('keepercommander.commands.aram.vault.KeeperRecord.load') as mock_load:
+            mock_load.return_value = shared
+
+            record = None
+            record_name = 'Audit Log: Sumologic'
+            for r_uid in params.record_cache:
+                rec = mock_load(params, r_uid)
+                if record_name in [rec.record_uid, rec.title]:
+                    if not aram._is_owned_audit_log_record(params, r_uid):
+                        continue
+                    record = rec
+                    break
+
+            self.assertIsNone(record)
+
+    def test_audit_log_ownership_uses_meta_data_cache_fallback(self):
+        """Ownership check falls back to meta_data_cache if record_owner_cache missing."""
+        from keepercommander.params import RecordOwner
+
+        owned = mock.MagicMock(spec=vault.PasswordRecord)
+        owned.record_uid = 'OWNED_UID'
+        owned.title = 'Audit Log: Sumologic'
+
+        params = mock.MagicMock(spec=KeeperParams)
+        params.record_cache = {'OWNED_UID': {}}
+        params.record_owner_cache = {}
+        params.meta_data_cache = {'OWNED_UID': {'owner': True}}
+
+        result = aram._is_owned_audit_log_record(params, 'OWNED_UID')
+        self.assertTrue(result)
+
+    def test_audit_log_ownership_fails_closed_on_unknown(self):
+        """Ownership check returns False when ownership is unknown."""
+        params = mock.MagicMock(spec=KeeperParams)
+        params.record_cache = {}
+        params.record_owner_cache = {}
+        params.meta_data_cache = {}
+
+        result = aram._is_owned_audit_log_record(params, 'UNKNOWN_UID')
+        self.assertFalse(result)
+
     def test_audit_audit_report_parse_date_filter(self):
         cmd = aram.AuditReportCommand()
 
