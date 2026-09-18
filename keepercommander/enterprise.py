@@ -185,6 +185,7 @@ class _EnterpriseLoader(object):
 
             params.enterprise['keys'] = keys
         entities = set()
+        root_restrict_visibility = None
         while True:
             rq = proto.EnterpriseDataRequest()
             if self._continuationToken:
@@ -202,6 +203,8 @@ class _EnterpriseLoader(object):
                 params.enterprise['enterprise_name'] = self._enterprise.enterprise_name
                 if rs.generalData.distributor:
                     params.enterprise['distributor'] = True
+            if rs.HasField('generalData'):
+                root_restrict_visibility = rs.generalData.restrictVisibility
 
             for ed in rs.data:
                 entities.add(ed.entity)
@@ -212,6 +215,11 @@ class _EnterpriseLoader(object):
             self._continuationToken = rs.continuationToken
             if not rs.hasMore:
                 break
+        if root_restrict_visibility is not None:
+            root_node = next((x for x in params.enterprise.get('nodes', []) if not x.get('parent_id')), None)
+            if root_node:
+                _set_or_remove(root_node, 'restrict_visibility',
+                               True if root_restrict_visibility else None)
         if proto.MANAGED_NODES in entities:
             try:
                 self.load_missing_role_keys(params)
@@ -456,8 +464,9 @@ class _EnterpriseNodeEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'rsa_enabled', True if proto_entity.rsaEnabled else None)
         _set_or_remove(keeper_entity, 'sso_service_provider_id',
                        proto_entity.ssoServiceProviderId if proto_entity.ssoServiceProviderId > 0 else None)
-        _set_or_remove(keeper_entity, 'restrict_visibility',
-                       proto_entity.restrictVisibility if proto_entity.restrictVisibility else None)
+        if keeper_entity.get('parent_id'):
+            _set_or_remove(keeper_entity, 'restrict_visibility',
+                           proto_entity.restrictVisibility if proto_entity.restrictVisibility else None)
 
         data = {}
         if 'encrypted_data' in keeper_entity:

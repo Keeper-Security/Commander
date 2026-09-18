@@ -5,9 +5,10 @@ from typing import Optional
 from unittest import TestCase, mock
 
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
-from keepercommander import api, crypto, utils, vault
+from keepercommander import api, crypto, enterprise as enterprise_data, utils, vault
 from keepercommander.params import KeeperParams, PublicKeys
 from keepercommander.error import CommandError
+from keepercommander.proto import enterprise_pb2
 from data_vault import VaultEnvironment, get_connected_params
 from keepercommander.commands import enterprise, aram
 
@@ -46,6 +47,41 @@ class TestEnterprise(TestCase):
         self.assertIsNotNone(params.enterprise)
         self.assertEqual(params.enterprise['unencrypted_tree_key'], ent_env.tree_key)
         self.assertEqual(len(params.enterprise['nodes']), 2)
+
+    def test_general_data_restrict_visibility_controls_root_node(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        params.enterprise['keys'] = {}
+        root = next(x for x in params.enterprise['nodes'] if x['node_id'] == ent_env.node1_id)
+        child = next(x for x in params.enterprise['nodes'] if x['node_id'] == ent_env.node2_id)
+        root['restrict_visibility'] = True
+        child['restrict_visibility'] = True
+
+        response = enterprise_pb2.EnterpriseDataResponse()
+        response.generalData.enterpriseName = params.enterprise['enterprise_name']
+        response.generalData.restrictVisibility = False
+        response.hasMore = False
+
+        loader = enterprise_data._EnterpriseLoader(params.enterprise['unencrypted_tree_key'])
+        with mock.patch('keepercommander.enterprise.api.communicate_rest', return_value=response):
+            loader.load(params)
+
+        self.assertNotIn('restrict_visibility', root)
+        self.assertTrue(child['restrict_visibility'])
+
+        response.generalData.restrictVisibility = True
+        with mock.patch('keepercommander.enterprise.api.communicate_rest', return_value=response):
+            loader.load(params)
+
+        self.assertTrue(root['restrict_visibility'])
+        self.assertTrue(child['restrict_visibility'])
+
+        response = enterprise_pb2.EnterpriseDataResponse()
+        response.hasMore = False
+        with mock.patch('keepercommander.enterprise.api.communicate_rest', return_value=response):
+            loader.load(params)
+
+        self.assertTrue(root['restrict_visibility'])
 
     def test_enterprise_info_command(self):
         params = get_connected_params()
@@ -163,6 +199,93 @@ class TestEnterprise(TestCase):
 
         request = execute_batch.call_args.args[1][0]
         self.assertEqual(request['parent_id'], ent_env.node1_id)
+
+    def test_enterprise_node_toggle_root_isolation(self):
+        for was_isolated in (False, True):
+            with self.subTest(was_isolated=was_isolated):
+                params = get_connected_params()
+                api.query_enterprise(params)
+                root = next(x for x in params.enterprise['nodes']
+                            if x['node_id'] == ent_env.node1_id)
+                root['data']['displayname'] = 'Enterprise 1'
+                if was_isolated:
+                    root['restrict_visibility'] = True
+
+                def refresh_enterprise(p, force=False, tree_key=None):
+                    self.assertTrue(force)
+                    refreshed_root = next(x for x in p.enterprise['nodes']
+                                          if x['node_id'] == ent_env.node1_id)
+                    if was_isolated:
+                        refreshed_root.pop('restrict_visibility', None)
+                    else:
+                        refreshed_root['restrict_visibility'] = True
+
+                cmd = enterprise.EnterpriseNodeCommand()
+                with mock.patch(
+                        'keepercommander.commands.enterprise.api.communicate_rest'
+                ) as communicate_rest, mock.patch(
+                        'keepercommander.commands.enterprise.api.query_enterprise',
+                        side_effect=refresh_enterprise
+                ) as query_enterprise:
+                    cmd.execute(
+                        params,
+                        node=[str(ent_env.node1_id)],
+                        toggle_isolated=True,
+                    )
+
+                request = communicate_rest.call_args.args[1]
+                self.assertEqual(request.nodeId, 0)
+                query_enterprise.assert_called_once_with(params, force=True)
+
+    def test_enterprise_node_toggle_child_isolation(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        def refresh_enterprise(p, force=False, tree_key=None):
+            self.assertTrue(force)
+            child = next(x for x in p.enterprise['nodes']
+                         if x['node_id'] == ent_env.node2_id)
+            child['restrict_visibility'] = True
+
+        cmd = enterprise.EnterpriseNodeCommand()
+        with mock.patch(
+                'keepercommander.commands.enterprise.api.communicate_rest'
+        ) as communicate_rest, mock.patch(
+                'keepercommander.commands.enterprise.api.query_enterprise',
+                side_effect=refresh_enterprise
+        ):
+            cmd.execute(
+                params,
+                node=[str(ent_env.node2_id)],
+                toggle_isolated=True,
+            )
+
+        request = communicate_rest.call_args.args[1]
+        self.assertEqual(request.nodeId, ent_env.node2_id)
+
+    def test_enterprise_node_toggle_isolation_reports_noop(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+        child = next(x for x in params.enterprise['nodes']
+                     if x['node_id'] == ent_env.node2_id)
+        child['restrict_visibility'] = True
+
+        cmd = enterprise.EnterpriseNodeCommand()
+        with mock.patch(
+                'keepercommander.commands.enterprise.api.communicate_rest'
+        ), mock.patch(
+                'keepercommander.commands.enterprise.api.query_enterprise'
+        ), self.assertLogs(level=logging.WARNING) as logs:
+            cmd.execute(
+                params,
+                node=[str(ent_env.node2_id)],
+                toggle_isolated=True,
+            )
+
+        self.assertTrue(any(
+            'server accepted the isolation toggle, but the state did not change' in message
+            for message in logs.output
+        ))
 
     def test_enterprise_add_user(self):
         params = get_connected_params()
