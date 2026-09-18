@@ -17,6 +17,10 @@ class Verifycommand:
     # Aliases from record.py — CommandExecutor checks tokens before cli expands them.
     _RECORD_EDIT_COMMANDS = frozenset({'record-add', 'ra', 'record-update', 'ru'})
 
+    _PROTECTED_RECORD_MSG = (
+        'Service Mode configuration records are not accessible through Service Mode'
+    )
+
     # Legacy Commands category — plugin-based rotation/connection commands have no safe Service Mode form
     # and are blocked unconditionally, regardless of what an API key's command_list allows.
     _LEGACY_COMMANDS = frozenset({
@@ -97,6 +101,33 @@ class Verifycommand:
             error = validator(command_tokens, request_temp_dir)
             if error:
                 return error
+        return None
+
+    @staticmethod
+    def _record_reference_candidates(tok):
+        """tok itself, plus its value if tok is a --flag=value (or -f=value) option."""
+        if '=' in tok:
+            _, _, value = tok.partition('=')
+            if value:
+                return (tok, value)
+        return (tok,)
+
+    @staticmethod
+    def validate_service_mode_protected_record_command(command_tokens, protected_uids=None):
+        """Reject any command with a protected title/UID as a whole token or --flag=value; indirect forms (comma lists, path-qualified titles) rely on protected_records.hide_from_record_cache instead."""
+        if not command_tokens:
+            return None
+
+        from .protected_records import get_protected_record_title_set
+        protected_titles = get_protected_record_title_set()
+
+        uid_set = set(protected_uids) if protected_uids else set()
+        for tok in command_tokens[1:]:
+            for candidate in Verifycommand._record_reference_candidates(tok):
+                if candidate.lower() in protected_titles:
+                    return Verifycommand._PROTECTED_RECORD_MSG
+                if candidate in uid_set:
+                    return Verifycommand._PROTECTED_RECORD_MSG
         return None
 
     @staticmethod
