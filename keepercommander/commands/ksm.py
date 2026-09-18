@@ -1317,6 +1317,9 @@ class KSMCommand(Command):
         """The caller's own wrapped-then-decrypted app record key from KA-6845 app_user/app_team
         sync-down (params.ksm_app_users/ksm_app_teams), for members who aren't the app's owner and
         so have no synced Record in record_cache to pull a key from."""
+        logging.debug('get_membership_record_key: app_record_uid=%s params.user=%s ksm_app_users keys=%s entries=%s',
+                      app_record_uid, params.user, list(params.ksm_app_users.keys()),
+                      params.ksm_app_users.get(app_record_uid))
         user_entry = params.ksm_app_users.get(app_record_uid, {}).get(params.user)
         if user_entry and user_entry.get('record_key_unencrypted'):
             return user_entry['record_key_unencrypted']
@@ -1764,7 +1767,8 @@ class KSMCommand(Command):
                             expire_status = "active"
                         
                         short_client_id = shorten_client_id(ai.clients, client_id, KSMCommand.CLIENT_SHORT_ID_LENGTH)
-                        
+                        owner_username = KSMCommand.resolve_username_by_user_id(params, c.userId)
+
                         client_device_data = {
                             "device_name": c.id,
                             "short_id": short_client_id,
@@ -1776,7 +1780,8 @@ class KSMCommand(Command):
                             "last_access": last_access_ts,
                             "ip_lock_enabled": c.lockIp,
                             "ip_address": c.ipAddress if c.ipAddress else None,
-                            "locked": c.locked
+                            "locked": c.locked,
+                            "owner": owner_username
                         }
                         app_data["client_devices"].append(client_device_data)
                         
@@ -1798,6 +1803,7 @@ class KSMCommand(Command):
                                                 f"=============================\n" \
                                                 f'  Device Name: {bcolors.OKGREEN}{c.id}{bcolors.ENDC}\n' \
                                                 f'  Short ID: {bcolors.OKGREEN}{short_client_id}{bcolors.ENDC}\n' \
+                                                f'  Owner: {bcolors.OKGREEN}{owner_username}{bcolors.ENDC}\n' \
                                                 f'  Created On: {created_on}\n' \
                                                 f'  Expires On: {expire_access}\n' \
                                                 f'  First Access: {first_access}\n' \
