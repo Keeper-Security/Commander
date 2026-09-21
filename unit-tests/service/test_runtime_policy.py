@@ -20,6 +20,7 @@ from keepercommander.service.commands.integrations.runtime_policy import apply_r
 from keepercommander.service.commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
 from keepercommander.service.commands.terraform_app_setup import TerraformSetupConstants
+from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV
 from keepercommander.service.util.exceptions import ValidationError
 
 
@@ -67,7 +68,7 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         self.assertEqual(set(args.commands.split(',')), allowed)
 
     def test_terraform_env_confines_to_terraform_allowlist(self):
-        with mock.patch.dict(os.environ, {'KEEPER_TERRAFORM': '1'}, clear=True):
+        with mock.patch.dict(os.environ, {TERRAFORM_DOCKER_ENV: 'tf-record-uid'}, clear=True):
             args = _Args(commands=TerraformSetupConstants.SERVICE_COMMANDS + ',clipboard-copy')
             apply_runtime_command_policy(args)
         self.assertEqual(
@@ -85,7 +86,7 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
 
     def test_multiple_integration_env_vars_raises(self):
         with mock.patch.dict(
-            os.environ, {'SLACK_RECORD': 'uid-1', 'KEEPER_TERRAFORM': '1'}, clear=True
+            os.environ, {'SLACK_RECORD': 'uid-1', TERRAFORM_DOCKER_ENV: 'tf-record-uid'}, clear=True
         ):
             args = _Args(commands='search,malicious-command')
             with self.assertRaises(ValidationError):

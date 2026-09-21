@@ -16,10 +16,16 @@ from __future__ import annotations
 import contextlib
 import os
 from collections import UserDict
-from typing import Dict, FrozenSet, Iterable, Tuple
+from typing import Dict, FrozenSet, Iterable, Optional, Tuple
 
-# Docker mode passes the config record's UID here regardless of what title --record-name gave it at setup time.
-_DOCKER_RECORD_UID_ENV = 'COMMANDER_RECORD'
+# Each integration's own setup pins its config record's UID here, regardless of its title. Extend when a new integration gets an always-hidden record.
+_PINNED_RECORD_UID_ENVS: Dict[str, str] = {
+    'COMMANDER_RECORD': '<Docker config record>',
+    'TERRAFORM_RECORD': '<Terraform config record>',
+    'SLACK_RECORD': '<Slack config record>',
+    'TEAMS_RECORD': '<Teams config record>',
+    'GCHAT_RECORD': '<GChat config record>',
+}
 
 # uid-keyed caches resolve_single_record/load_pam_record fall back to when a UID isn't in record_cache.
 _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_record_data')
@@ -28,8 +34,18 @@ _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_re
 def _protected_titles() -> Tuple[str, ...]:
     """The literal titles of Service Mode's own config records; imported lazily to avoid a circular import through verified_command."""
     from ..config.file_handler import SERVICE_CONFIG_RECORD_TITLES
-    from ..docker.models import DockerSetupConstants
-    return (*SERVICE_CONFIG_RECORD_TITLES, DockerSetupConstants.DEFAULT_RECORD_NAME)
+    from ..commands.terraform_app_setup import TerraformSetupConstants
+    from ..commands.integrations.slack_app_setup import SlackAppSetupCommand
+    from ..commands.integrations.teams_app_setup import TeamsAppSetupCommand
+    from ..docker.models import DockerSetupConstants, GChatConstants
+    return (
+        *SERVICE_CONFIG_RECORD_TITLES,
+        DockerSetupConstants.DEFAULT_RECORD_NAME,
+        TerraformSetupConstants.DEFAULT_RECORD_NAME,
+        GChatConstants.DEFAULT_RECORD_NAME,
+        SlackAppSetupCommand().get_default_record_name(),
+        TeamsAppSetupCommand().get_default_record_name(),
+    )
 
 
 def get_protected_record_title_set() -> FrozenSet[str]:
@@ -38,12 +54,13 @@ def get_protected_record_title_set() -> FrozenSet[str]:
 
 
 def get_protected_record_uids(params) -> Dict[str, str]:
-    """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus the Docker record's UID from COMMANDER_RECORD; not cached, since a stale result on this security check is worse than the cost of a full-vault scan."""
+    """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus each integration's pinned UID env var (_PINNED_RECORD_UID_ENVS); not cached, since a stale result on this security check is worse than the cost of a full-vault scan."""
     found: Dict[str, str] = {}
 
-    docker_uid = (os.environ.get(_DOCKER_RECORD_UID_ENV) or '').strip()
-    if docker_uid:
-        found[docker_uid] = '<Docker config record>'
+    for env_name, label in _PINNED_RECORD_UID_ENVS.items():
+        uid = (os.environ.get(env_name) or '').strip()
+        if uid:
+            found[uid] = label
 
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
         return found
@@ -61,6 +78,29 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         if record and record.title.lower() in protected_titles:
             found[uid] = record.title
     return found
+
+
+# {command: pinned-UID env var} for the live, intentionally-exposed feature that must keep working
+# ({slack,gchat}-app-setup --sync-down);
+_SYNC_DOWN_EXEMPT_ENV_BY_COMMAND: Dict[str, str] = {
+    'slack-app-setup': 'SLACK_RECORD',
+    'gchat-app-setup': 'GCHAT_RECORD',
+}
+
+
+def resolve_sync_down_exempt_uid(command_tokens) -> Optional[str]:
+    """For '{slack,teams,gchat}-app-setup ... --sync-down ...', the one UID this dispatch may bypass Layers A/B for -- always this integration's own pinned-env UID, never derived from what the admin passes (e.g. -r/--integration-record), so a different integration's protected record can never be reached this way."""
+    if not command_tokens:
+        return None
+
+    env_name = _SYNC_DOWN_EXEMPT_ENV_BY_COMMAND.get(command_tokens[0].lower())
+    if not env_name:
+        return None
+
+    if not any(tok == '--sync-down' for tok in command_tokens[1:]):
+        return None
+
+    return (os.environ.get(env_name) or '').strip() or None
 
 
 class _GuardedRecordCache(UserDict):

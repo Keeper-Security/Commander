@@ -23,8 +23,8 @@ from .logging import logger
 
 # Hyphenated only: Werkzeug/WSGI silently drops headers that contain underscores.
 MIN_COMMANDER_VERSION_HEADER = 'Min-Commander-Version'
-# Set on terraform-app-setup compose; not a secret — instance identity only.
-TERRAFORM_DOCKER_ENV = 'KEEPER_TERRAFORM'
+# Set on terraform-app-setup compose to the Terraform config record's UID.
+TERRAFORM_DOCKER_ENV = 'TERRAFORM_RECORD'
 
 
 def _parse_version(version_str: str) -> Optional[Version]:

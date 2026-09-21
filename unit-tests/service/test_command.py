@@ -272,3 +272,80 @@ class TestProtectedRecordCommandExecution(TestCase):
         self.assertIn(NORMAL_UID, seen_during_handle_command['keys'])
         # Restored after the whole guarded block exits, same as the non-SailPoint case.
         self.assertIn(PROTECTED_UID, params.record_cache)
+
+
+class TestSyncDownExemptionCommandExecution(TestCase):
+    """slack-app-setup --sync-down must keep working for its OWN config record while every
+    other protected record (including a different integration's) stays blocked."""
+
+    SLACK_UID = 'SLACK_CONFIG_UID'
+    GCHAT_UID = 'GCHAT_CONFIG_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            self.SLACK_UID: _record_cache_entry(self.SLACK_UID, 'Commander Service Mode Slack App Config'),
+            self.GCHAT_UID: _record_cache_entry(self.GCHAT_UID, 'Commander Service Mode Google Chat App Config'),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        return p
+
+    def _run(self, command, params, capture_side_effect=None):
+        env = {'SLACK_RECORD': self.SLACK_UID, 'GCHAT_RECORD': self.GCHAT_UID}
+        with mock.patch.dict('os.environ', env), mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs',
+            side_effect=capture_side_effect, return_value=('ok', 'ok', '') if capture_side_effect is None else None,
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(command)
+        return response, status_code, mock_capture
+
+    def test_get_slack_record_is_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'get {self.SLACK_UID}', params)
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+    def test_slack_sync_down_default_flow_is_not_blocked_and_sees_its_own_record(self):
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        response, status_code, mock_capture = self._run(
+            'slack-app-setup --sync-down', params, capture_side_effect=fake_capture
+        )
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()
+        self.assertIn(self.SLACK_UID, seen['keys'])         # not hidden for this one dispatch
+        self.assertIn(self.GCHAT_UID, params.record_cache)  # untouched throughout
+
+    def test_slack_sync_down_with_explicit_own_uid_is_not_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(
+            f'slack-app-setup --sync-down -r {self.SLACK_UID}', params
+        )
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()
+
+    def test_slack_sync_down_with_a_different_integrations_uid_is_still_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(
+            f'slack-app-setup --sync-down -r {self.GCHAT_UID}', params
+        )
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+    def test_slack_setup_without_sync_down_gets_no_exemption(self):
+        """The main (non --sync-down) flow must not get the record cache exemption
+        just because it names the record's own UID."""
+        params = self._params()
+        response, status_code, mock_capture = self._run(
+            f'slack-app-setup --slack-record-name {self.SLACK_UID}', params
+        )
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()

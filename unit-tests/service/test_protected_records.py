@@ -7,6 +7,7 @@ from keepercommander.service.util.protected_records import (
     get_protected_record_title_set,
     get_protected_record_uids,
     hide_from_record_cache,
+    resolve_sync_down_exempt_uid,
 )
 
 PROTECTED_TITLE = 'Commander Service Mode Config'
@@ -37,6 +38,13 @@ class TestGetProtectedRecordTitleSet(TestCase):
         self.assertIn('commander service mode config', titles)
         self.assertIn('commander service mode docker config', titles)
         self.assertIn('commander service mode', titles)
+
+    def test_contains_terraform_slack_teams_gchat_titles(self):
+        titles = get_protected_record_title_set()
+        self.assertIn('commander service mode terraform config', titles)
+        self.assertIn('commander service mode slack app config', titles)
+        self.assertIn('commander service mode teams app config', titles)
+        self.assertIn('commander service mode google chat app config', titles)
 
 
 class TestGetProtectedRecordUids(TestCase):
@@ -87,6 +95,32 @@ class TestGetProtectedRecordUids(TestCase):
             self.assertIn('DOCKER_CUSTOM_UID', get_protected_record_uids(None))
 
     def test_no_docker_env_var_falls_back_to_title_only(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+            result = get_protected_record_uids(p)
+        self.assertEqual(set(result.keys()), {'UID_CONFIG'})
+
+    def test_terraform_record_protected_by_uid_even_with_custom_title(self):
+        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': 'TF_CUSTOM_UID'}):
+            p = _params_with_records({'TF_CUSTOM_UID': 'My Totally Custom Terraform Title'})
+            self.assertIn('TF_CUSTOM_UID', get_protected_record_uids(p))
+
+    def test_slack_record_protected_by_uid_even_with_custom_title(self):
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_CUSTOM_UID'}):
+            p = _params_with_records({'SLACK_CUSTOM_UID': 'My Totally Custom Slack Title'})
+            self.assertIn('SLACK_CUSTOM_UID', get_protected_record_uids(p))
+
+    def test_teams_record_protected_by_uid_even_with_custom_title(self):
+        with mock.patch.dict(os.environ, {'TEAMS_RECORD': 'TEAMS_CUSTOM_UID'}):
+            p = _params_with_records({'TEAMS_CUSTOM_UID': 'My Totally Custom Teams Title'})
+            self.assertIn('TEAMS_CUSTOM_UID', get_protected_record_uids(p))
+
+    def test_gchat_record_protected_by_uid_even_with_custom_title(self):
+        with mock.patch.dict(os.environ, {'GCHAT_RECORD': 'GCHAT_CUSTOM_UID'}):
+            p = _params_with_records({'GCHAT_CUSTOM_UID': 'My Totally Custom GChat Title'})
+            self.assertIn('GCHAT_CUSTOM_UID', get_protected_record_uids(p))
+
+    def test_no_pinned_env_vars_falls_back_to_title_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
             result = get_protected_record_uids(p)
@@ -235,3 +269,44 @@ class TestHideFromRecordCache(TestCase):
 
         self.assertIn('REPLACED', p.record_cache)
         self.assertIn('PROTECTED', p.record_cache)
+
+
+class TestResolveSyncDownExemptUid(TestCase):
+    def test_returns_env_uid_for_slack_sync_down(self):
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
+            self.assertEqual(
+                resolve_sync_down_exempt_uid(['slack-app-setup', '--sync-down']), 'SLACK_UID'
+            )
+
+    def test_returns_env_uid_regardless_of_explicit_dash_r_value(self):
+        """Never derived from the admin's own -r value -- always the env-pinned UID."""
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
+            self.assertEqual(
+                resolve_sync_down_exempt_uid(['slack-app-setup', '--sync-down', '-r', 'SOME_OTHER_UID']),
+                'SLACK_UID',
+            )
+
+    def test_none_without_sync_down_token(self):
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
+            self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup']))
+
+    def test_none_for_unrelated_command(self):
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
+            self.assertIsNone(resolve_sync_down_exempt_uid(['get', '--sync-down']))
+
+    def test_none_when_env_var_unset(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup', '--sync-down']))
+
+    def test_gchat_uses_its_own_env_var(self):
+        with mock.patch.dict(os.environ, {'GCHAT_RECORD': 'G_UID'}, clear=True):
+            self.assertEqual(resolve_sync_down_exempt_uid(['gchat-app-setup', '--sync-down']), 'G_UID')
+
+    def test_teams_has_no_sync_down_exemption_yet(self):
+        """Teams has no approvals profile yet, so --sync-down isn't even a registered flag for it;
+        this must stay None rather than exempting a UID for a flow that can't actually run."""
+        with mock.patch.dict(os.environ, {'TEAMS_RECORD': 'T_UID'}, clear=True):
+            self.assertIsNone(resolve_sync_down_exempt_uid(['teams-app-setup', '--sync-down']))
+
+    def test_empty_tokens_returns_none(self):
+        self.assertIsNone(resolve_sync_down_exempt_uid([]))
