@@ -23,8 +23,11 @@ from .logging import logger
 
 # Hyphenated only: Werkzeug/WSGI silently drops headers that contain underscores.
 MIN_COMMANDER_VERSION_HEADER = 'Min-Commander-Version'
-# Set on terraform-app-setup compose; not a secret — instance identity only.
-TERRAFORM_DOCKER_ENV = 'KEEPER_TERRAFORM'
+# Set on terraform-app-setup compose to the Terraform config record's UID.
+TERRAFORM_DOCKER_ENV = 'TERRAFORM_RECORD'
+# Pre-rename value (was '1', not a UID). Recognized so containers upgraded without re-running
+# terraform-app-setup don't silently lose enforcement; drop after a migration period.
+TERRAFORM_DOCKER_ENV_LEGACY = 'KEEPER_TERRAFORM'
 
 
 def _parse_version(version_str: str) -> Optional[Version]:
@@ -41,8 +44,11 @@ _RUNNING_VERSION = _parse_version(_RUNNING_VERSION_RAW)
 
 
 def _is_terraform_docker() -> bool:
-    """True when this process was started from terraform-app-setup compose."""
-    return bool((os.environ.get(TERRAFORM_DOCKER_ENV) or '').strip())
+    """True when this process was started from terraform-app-setup compose (new or pre-rename env var)."""
+    return bool(
+        (os.environ.get(TERRAFORM_DOCKER_ENV) or '').strip()
+        or (os.environ.get(TERRAFORM_DOCKER_ENV_LEGACY) or '').strip()
+    )
 
 
 def _read_min_commander_version_header() -> Optional[str]:

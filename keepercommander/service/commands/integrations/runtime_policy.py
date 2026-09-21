@@ -50,19 +50,21 @@ def _integration_sanitizers():
     from .sailpoint_app_setup import SailPointAppSetupCommand
     from .slack_app_setup import SlackAppSetupCommand
     from .teams_app_setup import TeamsAppSetupCommand
-    from ...decorators.min_commander_version import TERRAFORM_DOCKER_ENV
+    from ...decorators.min_commander_version import TERRAFORM_DOCKER_ENV, TERRAFORM_DOCKER_ENV_LEGACY
 
     slack = SlackAppSetupCommand()
     teams = TeamsAppSetupCommand()
     gchat = GChatAppSetupCommand()
     sailpoint = SailPointAppSetupCommand()
+    terraform_sanitizer = lambda commands: sanitize_commands(
+        commands, TerraformSetupConstants.SERVICE_COMMANDS_LIST
+    )
 
     return {
         slack.get_record_env_key(): slack.sanitize_service_commands,
         teams.get_record_env_key(): teams.sanitize_service_commands,
         gchat.get_record_env_key(): gchat.sanitize_service_commands,
         sailpoint.get_record_env_key(): sailpoint.sanitize_service_commands,
-        TERRAFORM_DOCKER_ENV: lambda commands: sanitize_commands(
-            commands, TerraformSetupConstants.SERVICE_COMMANDS_LIST
-        ),
+        TERRAFORM_DOCKER_ENV: terraform_sanitizer,
+        TERRAFORM_DOCKER_ENV_LEGACY: terraform_sanitizer,
     }

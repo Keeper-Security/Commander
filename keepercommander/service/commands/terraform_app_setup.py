@@ -136,7 +136,7 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
             asdict(config),
             commander_service_name=TerraformSetupConstants.COMMANDER_SERVICE_NAME,
             commander_container_name=TerraformSetupConstants.COMMANDER_CONTAINER_NAME,
-            commander_environment={TERRAFORM_DOCKER_ENV: '1'},
+            commander_environment={TERRAFORM_DOCKER_ENV: setup_result.record_uid},
         )
         return builder.build()
 

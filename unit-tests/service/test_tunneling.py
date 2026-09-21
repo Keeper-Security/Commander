@@ -227,7 +227,11 @@ class TestDownloadCloudflared(unittest.TestCase):
     def test_lookup_failure_is_logged_not_swallowed_silently(self):
         # Force platform.system() to an unsupported value so _download_cloudflared
         # raises right after the (logged) lookup failure, without attempting a real download.
-        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+        # sys.platform is pinned to a POSIX value too -- the PATH lookup this test exercises
+        # is skipped entirely on real win32 (see test_windows_never_searches_path_or_cwd), so
+        # this must not depend on which OS actually runs the test.
+        with mock.patch('keepercommander.service.util.tunneling.sys.platform', 'darwin'), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
                          side_effect=OSError("cloudflared not found")), \
              mock.patch('keepercommander.service.util.tunneling.logging.debug') as mock_debug, \
              mock.patch('platform.system', return_value='unsupported'):
