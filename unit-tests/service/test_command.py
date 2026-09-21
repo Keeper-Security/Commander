@@ -3,7 +3,7 @@ import unittest
 
 from unittest import TestCase, mock
 from flask import Flask
-from keepercommander import params as params_module
+from keepercommander import params as params_module, vault
 from keepercommander.subfolder import RootFolderNode, SharedFolderNode
 from keepercommander.service.util.command_util import CommandExecutor
 from keepercommander.service.util.exceptions import CommandExecutionError
@@ -532,12 +532,35 @@ class TestReservedAttachmentCommandExecution(TestCase):
         }
         return p
 
+    @staticmethod
+    def _record_with_reserved_attachment(uid, title):
+        record = vault.PasswordRecord()
+        record.record_uid = uid
+        record.title = title
+        record.attachments = [vault.AttachmentFile({'id': f'{uid}_ATTA', 'name': 'config.json'})]
+        return record
+
+    @staticmethod
+    def _plain_record(uid, title):
+        record = vault.PasswordRecord()
+        record.record_uid = uid
+        record.title = title
+        return record
+
+    _TITLES = {ARBITRARY_UID: 'My Totally Unrelated Title', NORMAL_UID: 'My Normal Record'}
+
     def _run(self, command, params, reserved_uids=(ARBITRARY_UID,)):
+        records = {
+            uid: (
+                self._record_with_reserved_attachment(uid, self._TITLES[uid])
+                if uid in reserved_uids else self._plain_record(uid, self._TITLES[uid])
+            )
+            for uid in params.record_cache
+        }
         with mock.patch(
             'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
         ), mock.patch(
-            'keepercommander.service.util.protected_records._has_reserved_attachment',
-            side_effect=lambda p, record: record.record_uid in reserved_uids,
+            'keepercommander.vault.KeeperRecord.load', side_effect=lambda p, uid: records.get(uid)
         ), mock.patch.object(
             CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
         ) as mock_capture:
@@ -552,6 +575,12 @@ class TestReservedAttachmentCommandExecution(TestCase):
 
     def test_file_report_omits_record_with_reserved_attachment(self):
         params = self._params()
+        records = {
+            self.ARBITRARY_UID: self._record_with_reserved_attachment(
+                self.ARBITRARY_UID, self._TITLES[self.ARBITRARY_UID]
+            ),
+            NORMAL_UID: self._plain_record(NORMAL_UID, self._TITLES[NORMAL_UID]),
+        }
         seen = {}
 
         def fake_capture(p, command):
@@ -561,8 +590,7 @@ class TestReservedAttachmentCommandExecution(TestCase):
         with mock.patch(
             'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
         ), mock.patch(
-            'keepercommander.service.util.protected_records._has_reserved_attachment',
-            side_effect=lambda p, record: record.record_uid == self.ARBITRARY_UID,
+            'keepercommander.vault.KeeperRecord.load', side_effect=lambda p, uid: records.get(uid)
         ), mock.patch.object(CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture):
             response, status_code = CommandExecutor.execute('file-report')
 

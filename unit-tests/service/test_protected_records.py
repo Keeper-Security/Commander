@@ -7,8 +7,7 @@ from keepercommander.subfolder import RootFolderNode, SharedFolderNode
 from keepercommander.utils import generate_uid
 from keepercommander.service.util.protected_records import (
     _attachment_file_uids,
-    _expand_with_attachment_uids,
-    _has_reserved_attachment,
+    _has_reserved_legacy_attachment,
     get_protected_folder_uids,
     get_protected_record_title_set,
     get_protected_record_uids,
@@ -465,119 +464,44 @@ class TestHideFromFolderCache(TestCase):
             self.assertNotIn('FOLDER1', p.root_folder.subfolders)
 
 
-class TestHasReservedAttachment(TestCase):
+class TestHasReservedLegacyAttachment(TestCase):
     def test_password_record_with_reserved_attachment_name(self):
         record = vault.PasswordRecord()
         record.attachments = [vault.AttachmentFile({'name': 'config.json', 'title': 'config.json'})]
-        self.assertTrue(_has_reserved_attachment(None, record))
+        self.assertTrue(_has_reserved_legacy_attachment(record))
 
     def test_password_record_with_reserved_title_but_different_name(self):
         """attachment.py itself checks title OR name -- match either."""
         record = vault.PasswordRecord()
         record.attachments = [vault.AttachmentFile({'name': 'file123', 'title': 'service_config.json'})]
-        self.assertTrue(_has_reserved_attachment(None, record))
+        self.assertTrue(_has_reserved_legacy_attachment(record))
 
     def test_password_record_with_unrelated_attachment(self):
         record = vault.PasswordRecord()
         record.attachments = [vault.AttachmentFile({'name': 'notes.pdf', 'title': 'notes.pdf'})]
-        self.assertFalse(_has_reserved_attachment(None, record))
+        self.assertFalse(_has_reserved_legacy_attachment(record))
 
     def test_password_record_with_no_attachments(self):
-        record = vault.PasswordRecord()
-        self.assertFalse(_has_reserved_attachment(None, record))
+        self.assertFalse(_has_reserved_legacy_attachment(vault.PasswordRecord()))
 
-    def test_typed_record_with_reserved_file_ref(self):
-        record = vault.TypedRecord()
-        record.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1']})]
-        file_record = vault.FileRecord()
-        file_record.title = 'config.json'
-        file_record.name = 'config.json'
-        with mock.patch('keepercommander.vault.KeeperRecord.load', return_value=file_record):
-            self.assertTrue(_has_reserved_attachment(object(), record))
-
-    def test_typed_record_with_unrelated_file_ref(self):
-        record = vault.TypedRecord()
-        record.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1']})]
-        file_record = vault.FileRecord()
-        file_record.title = 'notes.pdf'
-        file_record.name = 'notes.pdf'
-        with mock.patch('keepercommander.vault.KeeperRecord.load', return_value=file_record):
-            self.assertFalse(_has_reserved_attachment(object(), record))
-
-    def test_typed_record_with_no_file_ref(self):
-        record = vault.TypedRecord()
-        self.assertFalse(_has_reserved_attachment(object(), record))
-
-    def test_neither_password_nor_typed_record(self):
-        record = vault.FileRecord()
-        self.assertFalse(_has_reserved_attachment(None, record))
+    def test_non_password_record_is_always_false(self):
+        """TypedRecord's fileRef attachments are handled inline in get_protected_record_uids
+        (via the reserved_file_uids/pending_attachments cross-reference), not here."""
+        self.assertFalse(_has_reserved_legacy_attachment(vault.TypedRecord()))
+        self.assertFalse(_has_reserved_legacy_attachment(vault.FileRecord()))
 
 
 class TestGetProtectedRecordUidsWithReservedAttachments(TestCase):
-    def test_arbitrary_titled_record_with_reserved_attachment_is_protected(self):
-        """A record with none of the known titles is still protected if it carries
-        one of Commander's own reserved config-file attachments."""
-        p = _params_with_records({'UID_ARBITRARY': 'My Totally Unrelated Title'})
-        with mock.patch(
-            'keepercommander.service.util.protected_records._has_reserved_attachment',
-            side_effect=lambda params, record: record.record_uid == 'UID_ARBITRARY',
-        ):
-            result = get_protected_record_uids(p)
-        self.assertIn('UID_ARBITRARY', result)
+    """Records are loaded exactly once each -- attachment detection must not add extra
+    per-attachment KeeperRecord.load calls (previously N extra loads per fileRef attachment)."""
 
-    def test_arbitrary_titled_record_without_reserved_attachment_is_not_protected(self):
-        p = _params_with_records({'UID_ARBITRARY': 'My Totally Unrelated Title'})
-        with mock.patch(
-            'keepercommander.service.util.protected_records._has_reserved_attachment',
-            return_value=False,
-        ):
-            result = get_protected_record_uids(p)
-        self.assertEqual(result, {})
+    @staticmethod
+    def _params_with(records: dict):
+        """records: {uid: KeeperRecord-like object}, each already carrying its own .record_uid."""
+        p = _params_with_records({uid: 'placeholder' for uid in records})
+        return p, records
 
-
-class TestExpandWithAttachmentUids(TestCase):
-    """Regression test for a live gap: get 'service_config.json' returned the attachment's own
-    FileRecord (a separate record_cache entry, its own UID) directly, since only the parent
-    record was ever added to protected_uids -- the attachment's own UID was never blocked."""
-
-    def test_typed_record_file_ref_uid_is_protected(self):
-        parent = vault.TypedRecord()
-        parent.record_uid = 'PARENT_UID'
-        parent.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1']})]
-        found = {'PARENT_UID': 'Commander Service Mode Slack App Config'}
-
-        p = _params_with_records({'PARENT_UID': 'x', 'FILE_UID_1': 'y'})
-        with mock.patch('keepercommander.vault.KeeperRecord.load', return_value=parent):
-            _expand_with_attachment_uids(p, found)
-        self.assertIn('FILE_UID_1', found)
-
-    def test_legacy_password_record_attachment_id_is_protected(self):
-        parent = vault.PasswordRecord()
-        parent.record_uid = 'PARENT_UID'
-        parent.attachments = [vault.AttachmentFile({'id': 'ATTA_ID_1', 'name': 'config.json'})]
-        found = {'PARENT_UID': 'Commander Service Mode Docker Config'}
-
-        p = _params_with_records({'PARENT_UID': 'x'})
-        with mock.patch('keepercommander.vault.KeeperRecord.load', return_value=parent):
-            _expand_with_attachment_uids(p, found)
-        self.assertIn('ATTA_ID_1', found)
-
-    def test_noop_without_record_cache(self):
-        found = {'PARENT_UID': 'x'}
-        _expand_with_attachment_uids(params_module.KeeperParams(), found)
-        self.assertEqual(found, {'PARENT_UID': 'x'})
-
-    def test_noop_when_protected_uid_is_not_loadable(self):
-        found = {'PARENT_UID': 'x'}
-        p = _params_with_records({'PARENT_UID': 'x'})
-        with mock.patch('keepercommander.vault.KeeperRecord.load', return_value=None):
-            _expand_with_attachment_uids(p, found)
-        self.assertEqual(found, {'PARENT_UID': 'x'})
-
-    def test_end_to_end_arbitrary_titled_parent_with_attachment_protects_the_file_uid(self):
-        """Reproduces the exact reported scenario: a record with a normal title carrying a
-        service_config.json fileRef attachment -- both the parent and the attachment's own
-        FileRecord UID must come back protected."""
+    def test_arbitrary_titled_typed_record_with_reserved_file_ref_is_protected(self):
         parent = vault.TypedRecord()
         parent.record_uid = 'PARENT_UID'
         parent.title = 'My Totally Unrelated Title'
@@ -588,12 +512,80 @@ class TestExpandWithAttachmentUids(TestCase):
         file_record.title = 'service_config.json'
         file_record.name = 'service_config.json'
 
-        records = {'PARENT_UID': parent, 'FILE_UID_1': file_record}
-        p = _params_with_records({'PARENT_UID': 'x', 'FILE_UID_1': 'y'})
+        p, records = self._params_with({'PARENT_UID': parent, 'FILE_UID_1': file_record})
         with mock.patch('keepercommander.vault.KeeperRecord.load', side_effect=lambda params, uid: records.get(uid)):
             result = get_protected_record_uids(p)
         self.assertIn('PARENT_UID', result)
         self.assertIn('FILE_UID_1', result)
+
+    def test_arbitrary_titled_password_record_with_reserved_attachment_is_protected(self):
+        parent = vault.PasswordRecord()
+        parent.record_uid = 'PARENT_UID'
+        parent.title = 'My Totally Unrelated Title'
+        parent.attachments = [vault.AttachmentFile({'id': 'ATTA_1', 'name': 'config.json'})]
+
+        p, records = self._params_with({'PARENT_UID': parent})
+        with mock.patch('keepercommander.vault.KeeperRecord.load', side_effect=lambda params, uid: records.get(uid)):
+            result = get_protected_record_uids(p)
+        self.assertIn('PARENT_UID', result)
+        self.assertIn('ATTA_1', result)
+
+    def test_unrelated_attachment_name_is_not_protected(self):
+        parent = vault.TypedRecord()
+        parent.record_uid = 'PARENT_UID'
+        parent.title = 'My Totally Unrelated Title'
+        parent.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1']})]
+
+        file_record = vault.FileRecord()
+        file_record.record_uid = 'FILE_UID_1'
+        file_record.title = 'notes.pdf'
+        file_record.name = 'notes.pdf'
+
+        p, records = self._params_with({'PARENT_UID': parent, 'FILE_UID_1': file_record})
+        with mock.patch('keepercommander.vault.KeeperRecord.load', side_effect=lambda params, uid: records.get(uid)):
+            result = get_protected_record_uids(p)
+        self.assertEqual(result, {})
+
+    def test_reserved_attachment_on_an_already_title_protected_record_is_still_swept_in(self):
+        parent = vault.TypedRecord()
+        parent.record_uid = 'PARENT_UID'
+        parent.title = PROTECTED_TITLE
+        parent.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1']})]
+
+        file_record = vault.FileRecord()
+        file_record.record_uid = 'FILE_UID_1'
+        file_record.title = 'service_config.json'
+        file_record.name = 'service_config.json'
+
+        p, records = self._params_with({'PARENT_UID': parent, 'FILE_UID_1': file_record})
+        with mock.patch('keepercommander.vault.KeeperRecord.load', side_effect=lambda params, uid: records.get(uid)):
+            result = get_protected_record_uids(p)
+        self.assertIn('PARENT_UID', result)
+        self.assertIn('FILE_UID_1', result)
+
+    def test_load_is_called_exactly_once_per_record_cache_entry(self):
+        """Regression test for the N-vs-3N perf issue: attachment detection must not add
+        extra per-attachment loads on top of the one load every record already gets."""
+        parent = vault.TypedRecord()
+        parent.record_uid = 'PARENT_UID'
+        parent.title = 'Unrelated'
+        parent.fields = [vault.TypedField({'type': 'fileRef', 'value': ['FILE_UID_1', 'FILE_UID_2']})]
+
+        file_record_1 = vault.FileRecord()
+        file_record_1.record_uid = 'FILE_UID_1'
+        file_record_1.title = 'notes.pdf'
+        file_record_2 = vault.FileRecord()
+        file_record_2.record_uid = 'FILE_UID_2'
+        file_record_2.title = 'photo.png'
+
+        p, records = self._params_with(
+            {'PARENT_UID': parent, 'FILE_UID_1': file_record_1, 'FILE_UID_2': file_record_2}
+        )
+        with mock.patch(
+            'keepercommander.vault.KeeperRecord.load', side_effect=lambda params, uid: records.get(uid)
+        ) as mock_load:
+            get_protected_record_uids(p)
+        self.assertEqual(mock_load.call_count, len(records))
 
 
 class TestAttachmentFileUids(TestCase):

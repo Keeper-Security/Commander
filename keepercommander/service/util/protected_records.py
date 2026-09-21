@@ -53,44 +53,15 @@ def _attachment_file_uids(record) -> list:
     return []
 
 
-def _has_reserved_attachment(params, record) -> bool:
-    """True if record carries a legacy or typed-record attachment named config.json/service_config.json."""
+def _has_reserved_legacy_attachment(record) -> bool:
+    """True if a PasswordRecord's own .attachments (no extra load -- filenames live on the attachment
+    object itself) include one literally named config.json/service_config.json."""
     from ... import vault
 
-    if isinstance(record, vault.PasswordRecord):
-        return any(
-            (atta.title or atta.name or '').lower() in _RESERVED_ATTACHMENT_NAMES
-            for atta in (record.attachments or [])
-        )
-    for file_uid in _attachment_file_uids(record):
-        try:
-            file_record = vault.KeeperRecord.load(params, file_uid)
-        except Exception:
-            continue
-        if isinstance(file_record, vault.FileRecord) and \
-                (file_record.title or file_record.name or '').lower() in _RESERVED_ATTACHMENT_NAMES:
-            return True
-    return False
-
-
-def _expand_with_attachment_uids(params, found: Dict[str, str]) -> None:
-    """Any file attachment on an already-protected record is protected too -- otherwise get can still
-    reach the attachment's own FileRecord UID directly, even though the parent record is unreachable."""
-    record_cache = getattr(params, 'record_cache', None)
-    if not isinstance(record_cache, dict):
-        return
-
-    from ... import vault
-
-    for uid in list(found.keys()):
-        try:
-            record = vault.KeeperRecord.load(params, uid)
-        except Exception:
-            continue
-        if record is None:
-            continue
-        for file_uid in _attachment_file_uids(record):
-            found.setdefault(file_uid, '<attachment on a protected record>')
+    return isinstance(record, vault.PasswordRecord) and any(
+        (atta.title or atta.name or '').lower() in _RESERVED_ATTACHMENT_NAMES
+        for atta in (record.attachments or [])
+    )
 
 
 def _protected_titles() -> Tuple[str, ...]:
@@ -131,12 +102,16 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         found[uid] = label
 
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
-        _expand_with_attachment_uids(params, found)
         return found
 
     from ... import vault
 
     protected_titles = get_protected_record_title_set()
+    # One load per record_cache entry, no more -- a FileRecord attachment target is itself an
+    # entry in this same cache, so its name is picked up by this same pass rather than a second,
+    # per-attachment load 
+    reserved_file_uids: Set[str] = set()
+    pending_attachments: Dict[str, list] = {}
     for uid in params.record_cache:
         try:
             record = vault.KeeperRecord.load(params, uid)
@@ -145,12 +120,28 @@ def get_protected_record_uids(params) -> Dict[str, str]:
             continue
         if not record:
             continue
+
+        if isinstance(record, vault.FileRecord):
+            if (record.title or record.name or '').lower() in _RESERVED_ATTACHMENT_NAMES:
+                reserved_file_uids.add(uid)
+            continue
+
         if record.title.lower() in protected_titles:
             found[uid] = record.title
-        elif _has_reserved_attachment(params, record):
+        elif _has_reserved_legacy_attachment(record):
             found[uid] = '<record with a reserved config attachment>'
 
-    _expand_with_attachment_uids(params, found)
+        file_uids = _attachment_file_uids(record)
+        if file_uids:
+            pending_attachments[uid] = file_uids
+
+    for parent_uid, file_uids in pending_attachments.items():
+        if parent_uid not in found and any(file_uid in reserved_file_uids for file_uid in file_uids):
+            found[parent_uid] = '<record with a reserved config attachment>'
+        if parent_uid in found:
+            for file_uid in file_uids:
+                found.setdefault(file_uid, '<attachment on a protected record>')
+
     return found
 
 
@@ -271,28 +262,33 @@ def hide_from_folder_cache(params, protected_folder_uids: Set[str]):
 
     folder_cache = getattr(params, 'folder_cache', None)
     root_folder = getattr(params, 'root_folder', None)
-    removed_from_parents: Dict[str, list] = {}
-    if isinstance(folder_cache, dict):
-        for uid in protected_uid_set:
-            node = folder_cache.get(uid)
-            parent_uid = getattr(node, 'parent_uid', None) if node is not None else None
-            parent = folder_cache.get(parent_uid) if parent_uid else root_folder
-            subfolders = getattr(parent, 'subfolders', None) if parent is not None else None
-            if isinstance(subfolders, list) and uid in subfolders:
-                subfolders.remove(uid)
-                removed_from_parents[uid] = subfolders
-
+    # {uid: (subfolders_list, original_index)} -- built up incrementally inside the try below so a
+    # failure partway through setup still leaves whatever was already removed restorable in finally,
+    # rather than mutating this live list before there's any guarantee finally will run at all.
+    removed_from_parents: Dict[str, tuple] = {}
     original_caches = {}
     saved_entries = {}
-    for attr in _GUARDED_FOLDER_CACHE_ATTRS:
-        source = getattr(params, attr, None)
-        if not isinstance(source, dict):
-            continue
-        original_caches[attr] = source
-        saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}
-        setattr(params, attr, _GuardedRecordCache(source, protected_uid_set))
 
     try:
+        if isinstance(folder_cache, dict):
+            for uid in protected_uid_set:
+                node = folder_cache.get(uid)
+                parent_uid = getattr(node, 'parent_uid', None) if node is not None else None
+                parent = folder_cache.get(parent_uid) if parent_uid else root_folder
+                subfolders = getattr(parent, 'subfolders', None) if parent is not None else None
+                if isinstance(subfolders, list) and uid in subfolders:
+                    index = subfolders.index(uid)
+                    subfolders.remove(uid)
+                    removed_from_parents[uid] = (subfolders, index)
+
+        for attr in _GUARDED_FOLDER_CACHE_ATTRS:
+            source = getattr(params, attr, None)
+            if not isinstance(source, dict):
+                continue
+            original_caches[attr] = source
+            saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}
+            setattr(params, attr, _GuardedRecordCache(source, protected_uid_set))
+
         yield
     finally:
         from ..decorators.logging import logger
@@ -309,9 +305,9 @@ def hide_from_folder_cache(params, protected_folder_uids: Set[str]):
                 except Exception:
                     pass
 
-        for uid, subfolders in removed_from_parents.items():
+        for uid, (subfolders, index) in removed_from_parents.items():
             try:
                 if uid not in subfolders:
-                    subfolders.append(uid)
+                    subfolders.insert(min(index, len(subfolders)), uid)
             except Exception as e:
                 logger.debug(f'hide_from_folder_cache: failed to restore subfolders entry for {uid} ({type(e).__name__})')
