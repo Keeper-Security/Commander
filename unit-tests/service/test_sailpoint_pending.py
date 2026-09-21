@@ -1013,6 +1013,65 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         self.assertIsNotNone(short)
         self.assertEqual(short[1], 403)
 
+    def test_before_command_blocks_numeric_id_across_mutation_categories(self):
+        """Same numeric-id bypass, exercised for remove-role/add-team/remove-team/node."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'victim@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        for cmd in (
+            'enterprise-user 555 --remove-role Admin',
+            'enterprise-user 555 --add-team AWS',
+            'enterprise-user 555 --remove-team AWS',
+            'enterprise-user 555 --node OtherNode',
+        ):
+            with mock.patch(
+                'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+                return_value=caps,
+            ):
+                _, short = hook.before_command(params, cmd)
+            self.assertIsNotNone(short, cmd)
+            self.assertEqual(short[1], 403, cmd)
+
+    def test_before_command_blocks_at_all_for_non_role_actions_too(self):
+        """Guard blocks '@all' even for actions Commander itself would silently no-op."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'managed@co.com', 'enterprise_user_id': 2, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            _, short = hook.before_command(params, 'eu @all --add-team AWS')
+
+        self.assertIsNotNone(short)
+        self.assertEqual(short[1], 403)
+
     def test_before_command_rejects_banned_commands_at_runtime(self):
         """Banned commands rejected even if present in stored config (in-place upgrade scenario)."""
         from keepercommander.service.commands.integrations.sailpoint.command_hook import (
