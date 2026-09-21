@@ -55,18 +55,23 @@ def get_protected_record_title_set() -> FrozenSet[str]:
 
 def get_protected_record_uids(params) -> Dict[str, str]:
     """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus each integration's pinned UID env var (_PINNED_RECORD_UID_ENVS); not cached, since a stale result on this security check is worse than the cost of a full-vault scan."""
-    found: Dict[str, str] = {}
+    from ..commands.integrations.approvals_setup import is_valid_keeper_uid
+    from ..decorators.logging import logger
 
+    found: Dict[str, str] = {}
     for env_name, label in _PINNED_RECORD_UID_ENVS.items():
         uid = (os.environ.get(env_name) or '').strip()
-        if uid:
-            found[uid] = label
+        if not uid:
+            continue
+        if not is_valid_keeper_uid(uid):
+            logger.warning(f'protected_records: {env_name} is set but not a valid record UID; falling back to title matching for it')
+            continue
+        found[uid] = label
 
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
         return found
 
     from ... import vault
-    from ..decorators.logging import logger
 
     protected_titles = get_protected_record_title_set()
     for uid in params.record_cache:
@@ -80,24 +85,26 @@ def get_protected_record_uids(params) -> Dict[str, str]:
     return found
 
 
-# {command: pinned-UID env var} for the live, intentionally-exposed feature that must keep working
-# ({slack,gchat}-app-setup --sync-down);
-_SYNC_DOWN_EXEMPT_ENV_BY_COMMAND: Dict[str, str] = {
-    'slack-app-setup': 'SLACK_RECORD',
-    'gchat-app-setup': 'GCHAT_RECORD',
-}
+def _sync_down_exempt_commands() -> Dict[str, str]:
+    """{command name: pinned-UID env var}, derived from each integration's own class instead of duplicated
+    literals. Only integrations with a live --sync-down flow are listed (Teams has no approvals profile yet,
+    so it has no --sync-down flag to exempt), so an unlisted command fails closed with no exemption at all."""
+    from ..commands.integrations.gchat_app_setup import GChatAppSetupCommand
+    from ..commands.integrations.slack_app_setup import SlackAppSetupCommand
+    return {cmd.get_command_name(): cmd.get_record_env_key() for cmd in (SlackAppSetupCommand(), GChatAppSetupCommand())}
 
 
 def resolve_sync_down_exempt_uid(command_tokens) -> Optional[str]:
-    """For '{slack,teams,gchat}-app-setup ... --sync-down ...', the one UID this dispatch may bypass Layers A/B for -- always this integration's own pinned-env UID, never derived from what the admin passes (e.g. -r/--integration-record), so a different integration's protected record can never be reached this way."""
+    """For '{slack,gchat}-app-setup ... --sync-down ...', the one UID this dispatch may bypass Layers A/B for -- always this integration's own pinned-env UID, never derived from what the admin passes (e.g. -r/--integration-record), so a different integration's protected record can never be reached this way."""
     if not command_tokens:
         return None
 
-    env_name = _SYNC_DOWN_EXEMPT_ENV_BY_COMMAND.get(command_tokens[0].lower())
+    env_name = _sync_down_exempt_commands().get(command_tokens[0].lower())
     if not env_name:
         return None
 
-    if not any(tok == '--sync-down' for tok in command_tokens[1:]):
+    from .verified_command import Verifycommand
+    if not Verifycommand._has_option(command_tokens, '--sync-down'):
         return None
 
     return (os.environ.get(env_name) or '').strip() or None

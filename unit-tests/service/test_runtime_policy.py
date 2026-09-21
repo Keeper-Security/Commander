@@ -20,7 +20,7 @@ from keepercommander.service.commands.integrations.runtime_policy import apply_r
 from keepercommander.service.commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
 from keepercommander.service.commands.terraform_app_setup import TerraformSetupConstants
-from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV
+from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV, TERRAFORM_DOCKER_ENV_LEGACY
 from keepercommander.service.util.exceptions import ValidationError
 
 
@@ -69,6 +69,16 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
 
     def test_terraform_env_confines_to_terraform_allowlist(self):
         with mock.patch.dict(os.environ, {TERRAFORM_DOCKER_ENV: 'tf-record-uid'}, clear=True):
+            args = _Args(commands=TerraformSetupConstants.SERVICE_COMMANDS + ',clipboard-copy')
+            apply_runtime_command_policy(args)
+        self.assertEqual(
+            set(args.commands.split(',')), set(TerraformSetupConstants.SERVICE_COMMANDS_LIST)
+        )
+
+    def test_legacy_terraform_env_confines_to_terraform_allowlist(self):
+        """A container upgraded without re-running terraform-app-setup still has the old
+        KEEPER_TERRAFORM marker -- the startup sanitizer must not silently skip it."""
+        with mock.patch.dict(os.environ, {TERRAFORM_DOCKER_ENV_LEGACY: '1'}, clear=True):
             args = _Args(commands=TerraformSetupConstants.SERVICE_COMMANDS + ',clipboard-copy')
             apply_runtime_command_policy(args)
         self.assertEqual(

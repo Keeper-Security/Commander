@@ -349,3 +349,72 @@ class TestSyncDownExemptionCommandExecution(TestCase):
         )
         self.assertEqual(status_code, 403)
         mock_capture.assert_not_called()
+
+    def test_gchat_sync_down_default_flow_is_not_blocked_and_sees_its_own_record(self):
+        """Same as Slack's own-record flow, but for GChat -- proves the exemption isn't Slack-specific."""
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        response, status_code, mock_capture = self._run(
+            'gchat-app-setup --sync-down', params, capture_side_effect=fake_capture
+        )
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()
+        self.assertIn(self.GCHAT_UID, seen['keys'])
+        self.assertIn(self.SLACK_UID, params.record_cache)
+
+    def test_gchat_sync_down_with_a_different_integrations_uid_is_still_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(
+            f'gchat-app-setup --sync-down -r {self.SLACK_UID}', params
+        )
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+
+class TestTerraformRecordProtectionCommandExecution(TestCase):
+    """Same UID-pinning protection Docker/Slack/GChat get, proven at the CommandExecutor.execute() boundary."""
+
+    TERRAFORM_UID = 'TERRAFORM_CONFIG_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            self.TERRAFORM_UID: _record_cache_entry(self.TERRAFORM_UID, 'Commander Service Mode Terraform Config'),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        return p
+
+    def _run(self, command, params):
+        with mock.patch.dict('os.environ', {'TERRAFORM_RECORD': self.TERRAFORM_UID}), mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(command)
+        return response, status_code, mock_capture
+
+    def test_get_terraform_record_is_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'get {self.TERRAFORM_UID}', params)
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+    def test_share_record_on_terraform_record_is_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(
+            f'share-record {self.TERRAFORM_UID} --email a@b.com', params
+        )
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+    def test_normal_record_is_unaffected(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'get {NORMAL_UID}', params)
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()

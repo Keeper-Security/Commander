@@ -3,6 +3,7 @@ import os
 from unittest import TestCase, mock
 
 from keepercommander import params as params_module
+from keepercommander.utils import generate_uid
 from keepercommander.service.util.protected_records import (
     get_protected_record_title_set,
     get_protected_record_uids,
@@ -85,14 +86,16 @@ class TestGetProtectedRecordUids(TestCase):
 
     def test_docker_record_protected_by_uid_even_with_custom_title(self):
         """--record-name can give the Docker config record a custom title; COMMANDER_RECORD must still identify it."""
-        with mock.patch.dict(os.environ, {'COMMANDER_RECORD': 'DOCKER_CUSTOM_UID'}):
-            p = _params_with_records({'DOCKER_CUSTOM_UID': 'My Totally Custom Docker Title'})
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'COMMANDER_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom Docker Title'})
             result = get_protected_record_uids(p)
-        self.assertIn('DOCKER_CUSTOM_UID', result)
+        self.assertIn(uid, result)
 
     def test_docker_env_uid_present_even_without_params(self):
-        with mock.patch.dict(os.environ, {'COMMANDER_RECORD': 'DOCKER_CUSTOM_UID'}):
-            self.assertIn('DOCKER_CUSTOM_UID', get_protected_record_uids(None))
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'COMMANDER_RECORD': uid}):
+            self.assertIn(uid, get_protected_record_uids(None))
 
     def test_no_docker_env_var_falls_back_to_title_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -100,25 +103,36 @@ class TestGetProtectedRecordUids(TestCase):
             result = get_protected_record_uids(p)
         self.assertEqual(set(result.keys()), {'UID_CONFIG'})
 
+    def test_malformed_env_uid_falls_back_to_title_matching(self):
+        """A misconfigured pinning env var (not a real record UID) must not become a phantom protected token."""
+        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': '1'}):
+            p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+            result = get_protected_record_uids(p)
+        self.assertEqual(set(result.keys()), {'UID_CONFIG'})
+
     def test_terraform_record_protected_by_uid_even_with_custom_title(self):
-        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': 'TF_CUSTOM_UID'}):
-            p = _params_with_records({'TF_CUSTOM_UID': 'My Totally Custom Terraform Title'})
-            self.assertIn('TF_CUSTOM_UID', get_protected_record_uids(p))
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom Terraform Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
 
     def test_slack_record_protected_by_uid_even_with_custom_title(self):
-        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_CUSTOM_UID'}):
-            p = _params_with_records({'SLACK_CUSTOM_UID': 'My Totally Custom Slack Title'})
-            self.assertIn('SLACK_CUSTOM_UID', get_protected_record_uids(p))
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom Slack Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
 
     def test_teams_record_protected_by_uid_even_with_custom_title(self):
-        with mock.patch.dict(os.environ, {'TEAMS_RECORD': 'TEAMS_CUSTOM_UID'}):
-            p = _params_with_records({'TEAMS_CUSTOM_UID': 'My Totally Custom Teams Title'})
-            self.assertIn('TEAMS_CUSTOM_UID', get_protected_record_uids(p))
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'TEAMS_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom Teams Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
 
     def test_gchat_record_protected_by_uid_even_with_custom_title(self):
-        with mock.patch.dict(os.environ, {'GCHAT_RECORD': 'GCHAT_CUSTOM_UID'}):
-            p = _params_with_records({'GCHAT_CUSTOM_UID': 'My Totally Custom GChat Title'})
-            self.assertIn('GCHAT_CUSTOM_UID', get_protected_record_uids(p))
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'GCHAT_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom GChat Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
 
     def test_no_pinned_env_vars_falls_back_to_title_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -310,3 +324,11 @@ class TestResolveSyncDownExemptUid(TestCase):
 
     def test_empty_tokens_returns_none(self):
         self.assertIsNone(resolve_sync_down_exempt_uid([]))
+
+    def test_matches_unambiguous_abbreviation_of_sync_down(self):
+        """Reuses Verifycommand's abbreviation-aware flag matching, so an abbreviated
+        --sync-down (as argparse's own allow_abbrev would accept) isn't missed."""
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
+            self.assertEqual(
+                resolve_sync_down_exempt_uid(['slack-app-setup', '--sync-d']), 'SLACK_UID'
+            )

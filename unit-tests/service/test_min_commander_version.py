@@ -18,6 +18,7 @@ from packaging.version import Version
 from keepercommander.service.decorators.min_commander_version import (
     MIN_COMMANDER_VERSION_HEADER,
     TERRAFORM_DOCKER_ENV,
+    TERRAFORM_DOCKER_ENV_LEGACY,
     check_min_commander_version,
     min_commander_version_check,
     _parse_version,
@@ -166,7 +167,10 @@ class TestMinCommanderVersionCheck(TestCase):
         '17.0.0',
     )
     def test_non_terraform_docker_ignores_min_version_header(self):
-        env = {k: v for k, v in os.environ.items() if k != TERRAFORM_DOCKER_ENV}
+        env = {
+            k: v for k, v in os.environ.items()
+            if k not in (TERRAFORM_DOCKER_ENV, TERRAFORM_DOCKER_ENV_LEGACY)
+        }
         with mock.patch.dict(os.environ, env, clear=True):
             with self.app.test_request_context(
                 '/api/v2/executecommand-async',
@@ -174,6 +178,26 @@ class TestMinCommanderVersionCheck(TestCase):
                 headers={MIN_COMMANDER_VERSION_HEADER: '99.0.0'},
             ):
                 self.assertIsNone(check_min_commander_version())
+
+    @mock.patch.dict(os.environ, {TERRAFORM_DOCKER_ENV_LEGACY: '1'}, clear=True)
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION',
+        Version('17.0.0'),
+    )
+    @mock.patch(
+        'keepercommander.service.decorators.min_commander_version._RUNNING_VERSION_RAW',
+        '17.0.0',
+    )
+    def test_legacy_terraform_env_var_still_enforces(self):
+        """A container upgraded without re-running terraform-app-setup still has the old
+        KEEPER_TERRAFORM marker -- enforcement must not silently disable itself."""
+        with self.app.test_request_context(
+            '/api/v2/executecommand-async',
+            method='POST',
+            headers={MIN_COMMANDER_VERSION_HEADER: '18.1.0'},
+        ):
+            body, status = check_min_commander_version()
+            self.assertEqual(status, 426)
 
     @mock.patch.dict(os.environ, _TERRAFORM_DOCKER_ENV, clear=False)
     @mock.patch(
