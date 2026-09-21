@@ -13,10 +13,12 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Optional, Set
+from typing import Any, Dict, Iterable, Optional, Set
 
 from ..... import api
 from .....params import KeeperParams
+
+_ALL_PSEUDO_USER = '@all'
 
 
 class SailPointScimGuard:
@@ -60,33 +62,70 @@ class SailPointScimGuard:
             return False
         return any(n in scim_nodes for n in cls._node_ancestors(params, int(node_id)))
 
+    @staticmethod
+    def _build_user_lookup(params: KeeperParams) -> Dict[str, Any]:
+        """Mirrors EnterpriseUserCommand's own lookup: id, username, then aliases."""
+        lookup: Dict[str, Any] = {}
+        for user in params.enterprise.get('users') or []:
+            if 'enterprise_user_id' in user:
+                lookup[str(user['enterprise_user_id'])] = user
+            username = user.get('username')
+            if username:
+                lookup[username.lower()] = user
+        for alias in params.enterprise.get('user_aliases') or []:
+            username = (alias.get('username') or '').lower()
+            if username and username not in lookup:
+                user_id = str(alias.get('enterprise_user_id'))
+                if user_id in lookup:
+                    lookup[username] = lookup[user_id]
+        return lookup
+
+    @staticmethod
+    def _is_all_pseudo_user(identifier: str) -> bool:
+        return (identifier or '').strip().lower() == _ALL_PSEUDO_USER
+
     @classmethod
-    def find_user(cls, params: KeeperParams, email: str):
+    def find_user(cls, params: KeeperParams, identifier: str) -> Optional[Dict[str, Any]]:
         cls.ensure_enterprise(params)
         if not params.enterprise:
             return None
-        target = email.strip().lower()
-        return next(
-            (
-                user for user in params.enterprise.get('users') or []
-                if (user.get('username') or '').lower() == target
-            ),
-            None,
-        )
+        target = (identifier or '').strip().lower()
+        if not target:
+            return None
+        return cls._build_user_lookup(params).get(target)
 
     @classmethod
-    def is_scim_managed_user(cls, params: KeeperParams, email: str) -> bool:
-        user = cls.find_user(params, email)
+    def is_scim_managed_user(cls, params: KeeperParams, identifier: str) -> bool:
+        user = cls.find_user(params, identifier)
         if not user:
             return False
         return cls.is_scim_managed_node(params, user.get('node_id'))
 
     @classmethod
-    def identity_change_error(cls, params: KeeperParams, email: str) -> Optional[str]:
-        if cls.is_scim_managed_user(params, email):
+    def is_scim_managed_identifier(cls, params: KeeperParams, identifier: str) -> bool:
+        """Like is_scim_managed_user, but '@all' matches if any user is SCIM-managed."""
+        if not cls._is_all_pseudo_user(identifier):
+            return cls.is_scim_managed_user(params, identifier)
+        cls.ensure_enterprise(params)
+        if not params.enterprise:
+            return False
+        return any(
+            cls.is_scim_managed_node(params, user.get('node_id'))
+            for user in params.enterprise.get('users') or []
+        )
+
+    @classmethod
+    def identity_change_error(cls, params: KeeperParams, identifier: str) -> Optional[str]:
+        if not cls.is_scim_managed_identifier(params, identifier):
+            return None
+        if cls._is_all_pseudo_user(identifier):
             return (
-                f'User {email} is managed by an existing SCIM provider. '
+                '@all includes one or more users managed by an existing SCIM provider. '
                 'SailPoint may only change folder/record (and admin) entitlements; '
-                'node/team/role identity changes are not allowed.'
+                'node/team/role identity changes are not allowed for those users.'
             )
-        return None
+        return (
+            f'User {identifier} is managed by an existing SCIM provider. '
+            'SailPoint may only change folder/record (and admin) entitlements; '
+            'node/team/role identity changes are not allowed.'
+        )
