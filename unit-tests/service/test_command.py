@@ -515,3 +515,63 @@ class TestProtectedFolderCommandExecution(TestCase):
 
         self.assertIn(self.PROTECTED_FOLDER_UID, params.folder_cache)
         self.assertIn(self.PROTECTED_FOLDER_UID, params.root_folder.subfolders)
+
+
+class TestReservedAttachmentCommandExecution(TestCase):
+    """A record with an arbitrary, non-default title must still be blocked if it carries
+    one of Commander's own reserved config-file attachments (config.json/service_config.json)."""
+
+    ARBITRARY_UID = 'ARBITRARY_TITLED_RECORD_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            self.ARBITRARY_UID: _record_cache_entry(self.ARBITRARY_UID, 'My Totally Unrelated Title'),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        return p
+
+    def _run(self, command, params, reserved_uids=(ARBITRARY_UID,)):
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch(
+            'keepercommander.service.util.protected_records._has_reserved_attachment',
+            side_effect=lambda p, record: record.record_uid in reserved_uids,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(command)
+        return response, status_code, mock_capture
+
+    def test_get_on_record_with_reserved_attachment_is_blocked(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'get {self.ARBITRARY_UID}', params)
+        self.assertEqual(status_code, 403)
+        mock_capture.assert_not_called()
+
+    def test_file_report_omits_record_with_reserved_attachment(self):
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch(
+            'keepercommander.service.util.protected_records._has_reserved_attachment',
+            side_effect=lambda p, record: record.record_uid == self.ARBITRARY_UID,
+        ), mock.patch.object(CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture):
+            response, status_code = CommandExecutor.execute('file-report')
+
+        self.assertEqual(status_code, 200)
+        self.assertNotIn(self.ARBITRARY_UID, seen['keys'])
+        self.assertIn(NORMAL_UID, seen['keys'])
+
+    def test_record_without_reserved_attachment_is_unaffected(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'get {NORMAL_UID}', params, reserved_uids=())
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()

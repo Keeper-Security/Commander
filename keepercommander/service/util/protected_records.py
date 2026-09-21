@@ -34,6 +34,64 @@ _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_re
 # directly or via subfolder.try_resolve_path/get_folder_uids.
 _GUARDED_FOLDER_CACHE_ATTRS = ('folder_cache', 'shared_folder_cache', 'subfolder_cache')
 
+# Commander's own session (config.json) and Service Mode's own runtime (service_config.json)
+# config files -- always attached under these exact, hardcoded names, never user-choosable.
+_RESERVED_ATTACHMENT_NAMES = frozenset({'config.json', 'service_config.json'})
+
+
+def _attachment_file_uids(record) -> list:
+    """UIDs of every file attachment on record -- legacy PasswordRecord.attachments' ids, or a
+    typed record's fileRef entries (each its own separate FileRecord, loadable/gettable by that UID)."""
+    from ... import vault
+
+    if isinstance(record, vault.PasswordRecord):
+        return [atta.id for atta in (record.attachments or []) if atta.id]
+    if isinstance(record, vault.TypedRecord):
+        typed_field = record.get_typed_field('fileRef')
+        if typed_field and isinstance(typed_field.value, list):
+            return [uid for uid in typed_field.value if isinstance(uid, str)]
+    return []
+
+
+def _has_reserved_attachment(params, record) -> bool:
+    """True if record carries a legacy or typed-record attachment named config.json/service_config.json."""
+    from ... import vault
+
+    if isinstance(record, vault.PasswordRecord):
+        return any(
+            (atta.title or atta.name or '').lower() in _RESERVED_ATTACHMENT_NAMES
+            for atta in (record.attachments or [])
+        )
+    for file_uid in _attachment_file_uids(record):
+        try:
+            file_record = vault.KeeperRecord.load(params, file_uid)
+        except Exception:
+            continue
+        if isinstance(file_record, vault.FileRecord) and \
+                (file_record.title or file_record.name or '').lower() in _RESERVED_ATTACHMENT_NAMES:
+            return True
+    return False
+
+
+def _expand_with_attachment_uids(params, found: Dict[str, str]) -> None:
+    """Any file attachment on an already-protected record is protected too -- otherwise get can still
+    reach the attachment's own FileRecord UID directly, even though the parent record is unreachable."""
+    record_cache = getattr(params, 'record_cache', None)
+    if not isinstance(record_cache, dict):
+        return
+
+    from ... import vault
+
+    for uid in list(found.keys()):
+        try:
+            record = vault.KeeperRecord.load(params, uid)
+        except Exception:
+            continue
+        if record is None:
+            continue
+        for file_uid in _attachment_file_uids(record):
+            found.setdefault(file_uid, '<attachment on a protected record>')
+
 
 def _protected_titles() -> Tuple[str, ...]:
     """The literal titles of Service Mode's own config records; imported lazily to avoid a circular import through verified_command."""
@@ -73,6 +131,7 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         found[uid] = label
 
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
+        _expand_with_attachment_uids(params, found)
         return found
 
     from ... import vault
@@ -84,8 +143,14 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         except Exception as e:
             logger.debug(f'protected_records: could not load record {uid} ({type(e).__name__}); skipping')
             continue
-        if record and record.title.lower() in protected_titles:
+        if not record:
+            continue
+        if record.title.lower() in protected_titles:
             found[uid] = record.title
+        elif _has_reserved_attachment(params, record):
+            found[uid] = '<record with a reserved config attachment>'
+
+    _expand_with_attachment_uids(params, found)
     return found
 
 
