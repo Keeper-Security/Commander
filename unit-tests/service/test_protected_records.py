@@ -3,10 +3,13 @@ import os
 from unittest import TestCase, mock
 
 from keepercommander import params as params_module
+from keepercommander.subfolder import RootFolderNode, SharedFolderNode
 from keepercommander.utils import generate_uid
 from keepercommander.service.util.protected_records import (
+    get_protected_folder_uids,
     get_protected_record_title_set,
     get_protected_record_uids,
+    hide_from_folder_cache,
     hide_from_record_cache,
     resolve_sync_down_exempt_uid,
 )
@@ -332,3 +335,128 @@ class TestResolveSyncDownExemptUid(TestCase):
         with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
             self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup', '--s']))
             self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup', '--sync']))
+
+
+def _folder_node(uid, name, parent_uid=None):
+    node = SharedFolderNode()
+    node.uid = uid
+    node.parent_uid = parent_uid
+    node.name = name
+    return node
+
+
+def _params_with_folder(folder_uid='FOLDER1', record_uid='PROTECTED', parent_uid=None):
+    p = params_module.KeeperParams()
+    p.root_folder = RootFolderNode()
+    node = _folder_node(folder_uid, 'Commander Service Mode - Docker', parent_uid)
+    p.folder_cache = {folder_uid: node}
+    parent_list = p.root_folder.subfolders if not parent_uid else None
+    if parent_list is not None:
+        parent_list.append(folder_uid)
+    p.shared_folder_cache = {folder_uid: {'name_unencrypted': node.name}}
+    p.subfolder_cache = {folder_uid: {'type': 'shared_folder', 'shared_folder_uid': folder_uid}}
+    p.subfolder_record_cache = {folder_uid: {record_uid}, 'OTHER_FOLDER': {'OTHER_RECORD'}}
+    return p
+
+
+class TestGetProtectedFolderUids(TestCase):
+    def test_returns_folder_containing_a_protected_record(self):
+        p = _params_with_folder(folder_uid='FOLDER1', record_uid='PROTECTED')
+        result = get_protected_folder_uids(p, {'PROTECTED': 'Commander Service Mode Docker Config'})
+        self.assertEqual(result, {'FOLDER1'})
+
+    def test_no_protected_records_present(self):
+        p = _params_with_folder(folder_uid='FOLDER1', record_uid='PROTECTED')
+        self.assertEqual(get_protected_folder_uids(p, {'UNRELATED': 'x'}), set())
+
+    def test_empty_protected_record_uids_is_a_noop(self):
+        p = _params_with_folder()
+        self.assertEqual(get_protected_folder_uids(p, {}), set())
+
+    def test_params_none(self):
+        self.assertEqual(get_protected_folder_uids(None, {'PROTECTED': 'x'}), set())
+
+    def test_missing_subfolder_record_cache_is_ignored(self):
+        p = params_module.KeeperParams()
+        self.assertEqual(get_protected_folder_uids(p, {'PROTECTED': 'x'}), set())
+
+    def test_renamed_folder_is_still_found(self):
+        """Derived from record containment, not a title list -- a rename doesn't lose protection."""
+        p = _params_with_folder(folder_uid='FOLDER1', record_uid='PROTECTED')
+        p.folder_cache['FOLDER1'].name = 'My Totally Renamed Folder'
+        p.shared_folder_cache['FOLDER1']['name_unencrypted'] = 'My Totally Renamed Folder'
+        result = get_protected_folder_uids(p, {'PROTECTED': 'Commander Service Mode Docker Config'})
+        self.assertEqual(result, {'FOLDER1'})
+
+
+class TestHideFromFolderCache(TestCase):
+    def test_hides_protected_folder_from_all_three_caches_inside_the_block(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            self.assertNotIn('FOLDER1', p.folder_cache)
+            self.assertNotIn('FOLDER1', p.shared_folder_cache)
+            self.assertNotIn('FOLDER1', p.subfolder_cache)
+
+    def test_strips_uid_from_root_folder_subfolders_during_the_block(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            self.assertNotIn('FOLDER1', p.root_folder.subfolders)
+
+    def test_strips_uid_from_parent_folders_subfolders_when_nested(self):
+        p = _params_with_folder(folder_uid='FOLDER1', parent_uid='PARENT')
+        parent = _folder_node('PARENT', 'Some Parent Folder')
+        p.folder_cache['PARENT'] = parent
+        parent.subfolders.append('FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            self.assertNotIn('FOLDER1', parent.subfolders)
+        self.assertIn('FOLDER1', parent.subfolders)
+
+    def test_restores_everything_after_the_block(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            pass
+        self.assertIn('FOLDER1', p.folder_cache)
+        self.assertIn('FOLDER1', p.shared_folder_cache)
+        self.assertIn('FOLDER1', p.subfolder_cache)
+        self.assertIn('FOLDER1', p.root_folder.subfolders)
+
+    def test_restores_even_if_block_raises(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with self.assertRaises(ValueError):
+            with hide_from_folder_cache(p, {'FOLDER1'}):
+                raise ValueError('boom')
+        self.assertIn('FOLDER1', p.folder_cache)
+        self.assertIn('FOLDER1', p.root_folder.subfolders)
+
+    def test_reintroduction_during_block_is_blocked(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            p.folder_cache['FOLDER1'] = _folder_node('FOLDER1', 'reintroduced')
+            self.assertNotIn('FOLDER1', p.folder_cache)
+        self.assertIn('FOLDER1', p.folder_cache)
+
+    def test_no_protected_folders_is_a_noop(self):
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, set()):
+            self.assertIn('FOLDER1', p.folder_cache)
+
+    def test_params_none_is_a_noop(self):
+        with hide_from_folder_cache(None, {'FOLDER1'}):
+            pass
+
+    def test_missing_root_folder_does_not_raise(self):
+        """A params fixture with no root_folder set (e.g. never synced) must not crash the guard."""
+        p = _params_with_folder(folder_uid='FOLDER1')
+        p.root_folder = None
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            self.assertNotIn('FOLDER1', p.folder_cache)
+
+    def test_a_resync_mid_block_self_heals_without_reintroducing_the_folder(self):
+        """A forced resync mid-command rebuilds folder_cache/root_folder from the (still-guarded)
+        raw subfolder_cache/shared_folder_cache, so the protected folder must not reappear."""
+        p = _params_with_folder(folder_uid='FOLDER1')
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            from keepercommander.sync_down import prepare_folder_tree
+            prepare_folder_tree(p)
+            self.assertNotIn('FOLDER1', p.folder_cache)
+            self.assertNotIn('FOLDER1', p.root_folder.subfolders)

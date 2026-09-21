@@ -4,6 +4,7 @@ import unittest
 from unittest import TestCase, mock
 from flask import Flask
 from keepercommander import params as params_module
+from keepercommander.subfolder import RootFolderNode, SharedFolderNode
 from keepercommander.service.util.command_util import CommandExecutor
 from keepercommander.service.util.exceptions import CommandExecutionError
 from keepercommander.service.util.parse_keeper_response import parse_keeper_response
@@ -418,3 +419,99 @@ class TestTerraformRecordProtectionCommandExecution(TestCase):
         response, status_code, mock_capture = self._run(f'get {NORMAL_UID}', params)
         self.assertEqual(status_code, 200)
         mock_capture.assert_called_once()
+
+class TestProtectedFolderCommandExecution(TestCase):
+    """The shared folder holding a protected config record must be just as unreachable
+    as the record itself -- ls/tree/rndir/mv/share-folder all resolve folders through the
+    same caches hide_from_folder_cache guards."""
+
+    PROTECTED_FOLDER_UID = 'PROTECTED_FOLDER_UID'
+    PROTECTED_FOLDER_TITLE = 'Commander Service Mode - Docker'
+    NORMAL_FOLDER_UID = 'NORMAL_FOLDER_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            PROTECTED_UID: _record_cache_entry(PROTECTED_UID, PROTECTED_TITLE),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        p.root_folder = RootFolderNode()
+
+        protected_node = SharedFolderNode()
+        protected_node.uid = self.PROTECTED_FOLDER_UID
+        protected_node.name = self.PROTECTED_FOLDER_TITLE
+        normal_node = SharedFolderNode()
+        normal_node.uid = self.NORMAL_FOLDER_UID
+        normal_node.name = 'My Normal Folder'
+
+        p.folder_cache = {self.PROTECTED_FOLDER_UID: protected_node, self.NORMAL_FOLDER_UID: normal_node}
+        p.root_folder.subfolders = [self.PROTECTED_FOLDER_UID, self.NORMAL_FOLDER_UID]
+        p.shared_folder_cache = {
+            self.PROTECTED_FOLDER_UID: {'name_unencrypted': self.PROTECTED_FOLDER_TITLE},
+            self.NORMAL_FOLDER_UID: {'name_unencrypted': 'My Normal Folder'},
+        }
+        p.subfolder_cache = {
+            self.PROTECTED_FOLDER_UID: {'type': 'shared_folder', 'shared_folder_uid': self.PROTECTED_FOLDER_UID},
+            self.NORMAL_FOLDER_UID: {'type': 'shared_folder', 'shared_folder_uid': self.NORMAL_FOLDER_UID},
+        }
+        p.subfolder_record_cache = {
+            self.PROTECTED_FOLDER_UID: {PROTECTED_UID},
+            self.NORMAL_FOLDER_UID: {NORMAL_UID},
+        }
+        return p
+
+    def _run(self, command, params):
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(command)
+        return response, status_code, mock_capture
+
+    def test_blocked_folder_commands_never_reach_cli_dispatch(self):
+        """Layer B's literal-token scan is UID-only for folders (by design -- see the plan);
+        a title-only reference isn't caught here, it fails to resolve at all once Layer A
+        hides the folder from folder_cache/shared_folder_cache, proven separately in
+        TestHideFromFolderCache and test_folder_caches_hidden_during_dispatch_and_restored_after."""
+        for command in (
+            f'ls {self.PROTECTED_FOLDER_UID}',
+            f'tree {self.PROTECTED_FOLDER_UID}',
+            f'rndir {self.PROTECTED_FOLDER_UID} x',
+            f'mv {self.PROTECTED_FOLDER_UID} /',
+            f'share-folder {self.PROTECTED_FOLDER_UID} -e a@b.com',
+        ):
+            with self.subTest(command=command):
+                params = self._params()
+                response, status_code, mock_capture = self._run(command, params)
+                self.assertEqual(status_code, 403)
+                mock_capture.assert_not_called()
+
+    def test_normal_folder_commands_are_unaffected(self):
+        params = self._params()
+        response, status_code, mock_capture = self._run(f'ls {self.NORMAL_FOLDER_UID}', params)
+        self.assertEqual(status_code, 200)
+        mock_capture.assert_called_once()
+
+    def test_folder_caches_hidden_during_dispatch_and_restored_after(self):
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['folder_keys'] = set(p.folder_cache.keys())
+            seen['subfolders'] = list(p.root_folder.subfolders)
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture):
+            response, status_code = CommandExecutor.execute(f'ls {self.NORMAL_FOLDER_UID}')
+
+        self.assertEqual(status_code, 200)
+        self.assertNotIn(self.PROTECTED_FOLDER_UID, seen['folder_keys'])
+        self.assertIn(self.NORMAL_FOLDER_UID, seen['folder_keys'])
+        self.assertNotIn(self.PROTECTED_FOLDER_UID, seen['subfolders'])
+
+        self.assertIn(self.PROTECTED_FOLDER_UID, params.folder_cache)
+        self.assertIn(self.PROTECTED_FOLDER_UID, params.root_folder.subfolders)

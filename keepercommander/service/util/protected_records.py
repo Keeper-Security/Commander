@@ -9,14 +9,14 @@
 # Contact: ops@keepersecurity.com
 #
 
-"""Identify Service Mode's own config records so they can be hidden from commands."""
+"""Identify Service Mode's own config records and folders so they can be hidden from commands."""
 
 from __future__ import annotations
 
 import contextlib
 import os
 from collections import UserDict
-from typing import Dict, FrozenSet, Iterable, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 
 # Each integration's own setup pins its config record's UID here, regardless of its title. Extend when a new integration gets an always-hidden record.
 _PINNED_RECORD_UID_ENVS: Dict[str, str] = {
@@ -29,6 +29,10 @@ _PINNED_RECORD_UID_ENVS: Dict[str, str] = {
 
 # uid-keyed caches resolve_single_record/load_pam_record fall back to when a UID isn't in record_cache.
 _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_record_data')
+
+# Raw + derived folder caches every folder-resolving command reads through,
+# directly or via subfolder.try_resolve_path/get_folder_uids.
+_GUARDED_FOLDER_CACHE_ATTRS = ('folder_cache', 'shared_folder_cache', 'subfolder_cache')
 
 
 def _protected_titles() -> Tuple[str, ...]:
@@ -83,6 +87,19 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         if record and record.title.lower() in protected_titles:
             found[uid] = record.title
     return found
+
+
+def get_protected_folder_uids(params, protected_record_uids: Dict[str, str]) -> Set[str]:
+    """Folders directly containing an already-protected record, via subfolder_record_cache (folder_uid -> set of record UIDs) -- derived from record protection rather than a separate per-integration title list, so it stays correct even if a folder is renamed."""
+    subfolder_record_cache = getattr(params, 'subfolder_record_cache', None)
+    if params is None or not protected_record_uids or not isinstance(subfolder_record_cache, dict):
+        return set()
+
+    record_uids = protected_record_uids.keys()
+    return {
+        folder_uid for folder_uid, uids in subfolder_record_cache.items()
+        if folder_uid and isinstance(uids, (set, frozenset)) and uids & record_uids
+    }
 
 
 def _sync_down_exempt_commands() -> Dict[str, str]:
@@ -175,3 +192,61 @@ def hide_from_record_cache(params, protected_uids: Dict[str, str]):
                         uids |= hit
                 except Exception as e:
                     logger.debug(f'hide_from_record_cache: failed to restore subfolder {folder_uid} ({type(e).__name__})')
+
+
+@contextlib.contextmanager
+def hide_from_folder_cache(params, protected_folder_uids: Set[str]):
+    """For the with-block, hides protected_folder_uids from folder_cache/shared_folder_cache/subfolder_cache and
+    from their parent's (or root_folder's) .subfolders list, restoring everything on exit """
+    if params is None or not protected_folder_uids:
+        yield
+        return
+
+    protected_uid_set = frozenset(protected_folder_uids)
+
+    folder_cache = getattr(params, 'folder_cache', None)
+    root_folder = getattr(params, 'root_folder', None)
+    removed_from_parents: Dict[str, list] = {}
+    if isinstance(folder_cache, dict):
+        for uid in protected_uid_set:
+            node = folder_cache.get(uid)
+            parent_uid = getattr(node, 'parent_uid', None) if node is not None else None
+            parent = folder_cache.get(parent_uid) if parent_uid else root_folder
+            subfolders = getattr(parent, 'subfolders', None) if parent is not None else None
+            if isinstance(subfolders, list) and uid in subfolders:
+                subfolders.remove(uid)
+                removed_from_parents[uid] = subfolders
+
+    original_caches = {}
+    saved_entries = {}
+    for attr in _GUARDED_FOLDER_CACHE_ATTRS:
+        source = getattr(params, attr, None)
+        if not isinstance(source, dict):
+            continue
+        original_caches[attr] = source
+        saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}
+        setattr(params, attr, _GuardedRecordCache(source, protected_uid_set))
+
+    try:
+        yield
+    finally:
+        from ..decorators.logging import logger
+
+        for attr in original_caches:
+            try:
+                restored = dict(getattr(params, attr, None) or {})
+                restored.update(saved_entries[attr])
+                setattr(params, attr, restored)
+            except Exception as e:
+                logger.debug(f'hide_from_folder_cache: failed to restore {attr} ({type(e).__name__}); restoring protected entries only')
+                try:
+                    setattr(params, attr, dict(saved_entries[attr]))
+                except Exception:
+                    pass
+
+        for uid, subfolders in removed_from_parents.items():
+            try:
+                if uid not in subfolders:
+                    subfolders.append(uid)
+            except Exception as e:
+                logger.debug(f'hide_from_folder_cache: failed to restore subfolders entry for {uid} ({type(e).__name__})')
