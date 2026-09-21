@@ -325,10 +325,10 @@ class TestResolveSyncDownExemptUid(TestCase):
     def test_empty_tokens_returns_none(self):
         self.assertIsNone(resolve_sync_down_exempt_uid([]))
 
-    def test_matches_unambiguous_abbreviation_of_sync_down(self):
-        """Reuses Verifycommand's abbreviation-aware flag matching, so an abbreviated
-        --sync-down (as argparse's own allow_abbrev would accept) isn't missed."""
+    def test_abbreviated_flag_does_not_grant_the_exemption(self):
+        """Exact match only -- granting an exemption is the permissive direction, so an
+        abbreviation like '--s' (ambiguous with --skip-device-setup on the real parser
+        anyway) must not be treated as --sync-down."""
         with mock.patch.dict(os.environ, {'SLACK_RECORD': 'SLACK_UID'}, clear=True):
-            self.assertEqual(
-                resolve_sync_down_exempt_uid(['slack-app-setup', '--sync-d']), 'SLACK_UID'
-            )
+            self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup', '--s']))
+            self.assertIsNone(resolve_sync_down_exempt_uid(['slack-app-setup', '--sync']))

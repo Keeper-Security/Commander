@@ -196,7 +196,7 @@ class CommandExecutor:
             # command can be missed as a way to reference these records.
             protected_uids = get_protected_record_uids(params)
 
-            # {slack,teams,gchat}-app-setup --sync-down needs its own config record reachable.
+            # {slack,gchat}-app-setup --sync-down needs its own config record reachable.
             sync_down_exempt_uid = resolve_sync_down_exempt_uid(command_tokens)
             if sync_down_exempt_uid is not None:
                 protected_uids = {

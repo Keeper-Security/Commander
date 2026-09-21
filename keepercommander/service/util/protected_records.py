@@ -86,9 +86,7 @@ def get_protected_record_uids(params) -> Dict[str, str]:
 
 
 def _sync_down_exempt_commands() -> Dict[str, str]:
-    """{command name: pinned-UID env var}, derived from each integration's own class instead of duplicated
-    literals. Only integrations with a live --sync-down flow are listed (Teams has no approvals profile yet,
-    so it has no --sync-down flag to exempt), so an unlisted command fails closed with no exemption at all."""
+    """{command name: pinned-UID env var}, derived from each integration's own class instead of duplicated literals."""
     from ..commands.integrations.gchat_app_setup import GChatAppSetupCommand
     from ..commands.integrations.slack_app_setup import SlackAppSetupCommand
     return {cmd.get_command_name(): cmd.get_record_env_key() for cmd in (SlackAppSetupCommand(), GChatAppSetupCommand())}
@@ -103,8 +101,7 @@ def resolve_sync_down_exempt_uid(command_tokens) -> Optional[str]:
     if not env_name:
         return None
 
-    from .verified_command import Verifycommand
-    if not Verifycommand._has_option(command_tokens, '--sync-down'):
+    if '--sync-down' not in command_tokens[1:]:
         return None
 
     return (os.environ.get(env_name) or '').strip() or None
