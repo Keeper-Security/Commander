@@ -987,6 +987,22 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 break
 
     if len(to_delete) > 0:
+        logging.debug('Resolve record keys. KSM app membership')
+        for record_uid in list(to_delete):
+            user_entry = params.ksm_app_users.get(record_uid, {}).get(params.user)
+            if user_entry and 'record_key_unencrypted' in user_entry:
+                params.record_cache[record_uid]['record_key_unencrypted'] = user_entry['record_key_unencrypted']
+                to_delete.remove(record_uid)
+                continue
+            app_teams = params.ksm_app_teams.get(record_uid, {})
+            for team_uid in params.team_cache:
+                team_entry = app_teams.get(team_uid)
+                if team_entry and 'record_key_unencrypted' in team_entry:
+                    params.record_cache[record_uid]['record_key_unencrypted'] = team_entry['record_key_unencrypted']
+                    to_delete.remove(record_uid)
+                    break
+
+    if len(to_delete) > 0:
         logging.debug('Decrypt linked keys')
         for child_uid, parents in params.record_link_cache.items():
             if child_uid in to_delete:
