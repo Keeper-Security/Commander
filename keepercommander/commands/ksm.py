@@ -1713,6 +1713,8 @@ class KSMCommand(Command):
                     "app_name": app.get("title"),
                     "app_uid": app_uid_str,
                     "users": [],
+                    "app_users": [],
+                    "app_teams": [],
                     "client_devices": [],
                     "shares": []
                 }
@@ -1739,7 +1741,26 @@ class KSMCommand(Command):
                         if up.get('expiration') and up['expiration'] > 0:
                             user_data["expiration"] = up['expiration']
                         app_data["users"].append(user_data)
-                
+
+                # KA-6845 App Sharing v2 membership -- distinct from the legacy record-share
+                # permissions above, so kept as its own section rather than merged into "users".
+                for u in ai.users:
+                    app_data["app_users"].append({
+                        "username": KSMCommand.resolve_username_by_user_id(params, u.userId),
+                        "can_manage_users": u.canManageUsers,
+                        "can_manage_shares": u.canManageShares,
+                        "can_manage_devices": u.canManageDevices,
+                    })
+                for t in ai.teams:
+                    team_uid = utils.base64_url_encode(t.teamUid)
+                    app_data["app_teams"].append({
+                        "team_uid": team_uid,
+                        "team_name": KSMCommand.resolve_team_name(params, team_uid),
+                        "can_manage_users": t.canManageUsers,
+                        "can_manage_shares": t.canManageShares,
+                        "can_manage_devices": t.canManageDevices,
+                    })
+
                 if format_type == 'table':
                     print(f'\nSecrets Manager Application\n'
                         f'App Name: {app.get("title")}\n'
@@ -1832,6 +1853,25 @@ class KSMCommand(Command):
                             users_table.append([u["username"], role_str, editable_str, shareable_str])
                         users_table.sort(key=lambda x: (0 if 'Owner' in x[1] else 1, x[0].lower()))
                         dump_report_data(users_table, users_table_fields, fmt='table')
+
+                    if app_data["app_users"] or app_data["app_teams"]:
+                        print(bcolors.BOLD + "\nApplication Members\n" + bcolors.ENDC)
+                        members_table_fields = ['Username / Team', 'Type', 'Can Manage Users', 'Can Manage Shares', 'Can Manage Devices']
+                        members_table = []
+                        for u in app_data["app_users"]:
+                            members_table.append([
+                                u["username"], 'User',
+                                KSMCommand._yes_no(u["can_manage_users"]),
+                                KSMCommand._yes_no(u["can_manage_shares"]),
+                                KSMCommand._yes_no(u["can_manage_devices"])])
+                        for t in app_data["app_teams"]:
+                            members_table.append([
+                                t["team_name"] or t["team_uid"], 'Team',
+                                KSMCommand._yes_no(t["can_manage_users"]),
+                                KSMCommand._yes_no(t["can_manage_shares"]),
+                                KSMCommand._yes_no(t["can_manage_devices"])])
+                        members_table.sort(key=lambda x: (x[1], x[0].lower()))
+                        dump_report_data(members_table, members_table_fields, fmt='table')
 
                     print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
 
