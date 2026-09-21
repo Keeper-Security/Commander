@@ -94,7 +94,7 @@ class SailPointParseTest(unittest.TestCase):
             'enterprise-user user@co.com --add-role Admin'
         )
         self.assertIsNotNone(parsed)
-        self.assertEqual(parsed.emails, ['user@co.com'])
+        self.assertEqual(parsed.identifiers, ['user@co.com'])
         self.assertTrue(parsed.has_role_change)
         self.assertFalse(parsed.has_team_change)
         self.assertFalse(parsed.has_node_change)
@@ -122,13 +122,13 @@ class SailPointParseTest(unittest.TestCase):
             'enterprise-user 1469016254185479 --add-role Admin'
         )
         self.assertIsNotNone(parsed)
-        self.assertEqual(parsed.emails, ['1469016254185479'])
+        self.assertEqual(parsed.identifiers, ['1469016254185479'])
         self.assertTrue(parsed.has_role_change)
 
     def test_parse_identity_mutation_accepts_at_all(self):
         parsed = SailPointCommandParser.parse_identity_mutation('eu @all --add-role Admin')
         self.assertIsNotNone(parsed)
-        self.assertEqual(parsed.emails, ['@all'])
+        self.assertEqual(parsed.identifiers, ['@all'])
         self.assertTrue(parsed.has_role_change)
 
     def test_parse_share_record(self):
