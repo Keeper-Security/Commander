@@ -25,7 +25,13 @@ from .throttle import (
     is_throttle_error,
     throttle_error_response,
 )
-from .protected_records import get_protected_record_uids, hide_from_record_cache
+from .protected_records import (
+    get_protected_folder_uids,
+    get_protected_record_uids,
+    hide_from_folder_cache,
+    hide_from_record_cache,
+    resolve_sync_down_exempt_uid,
+)
 from .verified_command import Verifycommand
 from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data, sanitize_command_fields
@@ -195,15 +201,28 @@ class CommandExecutor:
             # Checked for every command (not a curated list) so no current or future
             # command can be missed as a way to reference these records.
             protected_uids = get_protected_record_uids(params)
+
+            # {slack,gchat}-app-setup --sync-down needs its own config record reachable.
+            sync_down_exempt_uid = resolve_sync_down_exempt_uid(command_tokens)
+            if sync_down_exempt_uid is not None:
+                protected_uids = {
+                    uid: title for uid, title in protected_uids.items() if uid != sync_down_exempt_uid
+                }
+
+            # Derived from the record set so the exemption above reaches the exempted integration's own folder too.
+            protected_folder_uids = get_protected_folder_uids(params, protected_uids)
+
             protected_command_error = Verifycommand.validate_service_mode_protected_record_command(
-                command_tokens, protected_uids
+                command_tokens,
+                {**protected_uids, **{uid: '<protected folder>' for uid in protected_folder_uids}},
             )
             if protected_command_error:
                 return blocked(protected_command_error)
 
             sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
 
-            with hide_from_record_cache(params, protected_uids):
+            with hide_from_record_cache(params, protected_uids), \
+                 hide_from_folder_cache(params, protected_folder_uids):
                 if sailpoint_enabled:
                     from ..commands.integrations.sailpoint.service import SailPointService
                     command, sailpoint_response = SailPointService.handle_command(params, command)

@@ -502,6 +502,16 @@ This automates the complete setup for Slack App integration:
 
 The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.
 
+**Generated compose environment for the Slack service:**
+
+| Env var | Value |
+|---------|-------|
+| `KSM_CONFIG` | Base64 KSM config |
+| `COMMANDER_RECORD` | Commander Docker config record UID |
+| `SLACK_RECORD` | Slack config record UID |
+
+Image name used in compose: `keeper/slack-app:latest`.
+
 ### Google Chat App Integration Setup
 
 For integrating Commander Service Mode with Google Chat, use the `gchat-app-setup` command:
