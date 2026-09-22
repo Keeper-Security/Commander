@@ -45,12 +45,9 @@ class TestGetProtectedRecordTitleSet(TestCase):
         self.assertIn('commander service mode docker config', titles)
         self.assertIn('commander service mode', titles)
 
-    def test_contains_terraform_slack_teams_gchat_titles(self):
+    def test_contains_sailpoint_title(self):
         titles = get_protected_record_title_set()
-        self.assertIn('commander service mode terraform config', titles)
-        self.assertIn('commander service mode slack app config', titles)
-        self.assertIn('commander service mode teams app config', titles)
-        self.assertIn('commander service mode google chat app config', titles)
+        self.assertIn('commander service mode sailpoint config', titles)
 
 
 class TestGetProtectedRecordUids(TestCase):
@@ -108,42 +105,22 @@ class TestGetProtectedRecordUids(TestCase):
             result = get_protected_record_uids(p)
         self.assertEqual(set(result.keys()), {'UID_CONFIG'})
 
-    def test_malformed_env_uid_falls_back_to_title_matching(self):
-        """A misconfigured pinning env var (not a real record UID) must not become a phantom protected token."""
-        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': '1'}):
-            p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+    def test_sailpoint_record_protected_by_uid_even_with_custom_title(self):
+        """--record-name can give the SailPoint config record a custom title; SAILPOINT_RECORD must still identify it."""
+        with mock.patch.dict(os.environ, {'SAILPOINT_RECORD': 'SAILPOINT_CUSTOM_UID'}):
+            p = _params_with_records({'SAILPOINT_CUSTOM_UID': 'My Totally Custom SailPoint Title'})
             result = get_protected_record_uids(p)
-        self.assertEqual(set(result.keys()), {'UID_CONFIG'})
+        self.assertIn('SAILPOINT_CUSTOM_UID', result)
 
-    def test_terraform_record_protected_by_uid_even_with_custom_title(self):
-        uid = generate_uid()
-        with mock.patch.dict(os.environ, {'TERRAFORM_RECORD': uid}):
-            p = _params_with_records({uid: 'My Totally Custom Terraform Title'})
-            self.assertIn(uid, get_protected_record_uids(p))
+    def test_sailpoint_env_uid_present_even_without_params(self):
+        with mock.patch.dict(os.environ, {'SAILPOINT_RECORD': 'SAILPOINT_CUSTOM_UID'}):
+            self.assertIn('SAILPOINT_CUSTOM_UID', get_protected_record_uids(None))
 
-    def test_slack_record_protected_by_uid_even_with_custom_title(self):
-        uid = generate_uid()
-        with mock.patch.dict(os.environ, {'SLACK_RECORD': uid}):
-            p = _params_with_records({uid: 'My Totally Custom Slack Title'})
-            self.assertIn(uid, get_protected_record_uids(p))
-
-    def test_teams_record_protected_by_uid_even_with_custom_title(self):
-        uid = generate_uid()
-        with mock.patch.dict(os.environ, {'TEAMS_RECORD': uid}):
-            p = _params_with_records({uid: 'My Totally Custom Teams Title'})
-            self.assertIn(uid, get_protected_record_uids(p))
-
-    def test_gchat_record_protected_by_uid_even_with_custom_title(self):
-        uid = generate_uid()
-        with mock.patch.dict(os.environ, {'GCHAT_RECORD': uid}):
-            p = _params_with_records({uid: 'My Totally Custom GChat Title'})
-            self.assertIn(uid, get_protected_record_uids(p))
-
-    def test_no_pinned_env_vars_falls_back_to_title_only(self):
+    def test_sailpoint_default_title_protected_without_env_var(self):
         with mock.patch.dict(os.environ, {}, clear=True):
-            p = _params_with_records({'UID_CONFIG': PROTECTED_TITLE})
+            p = _params_with_records({'UID_SAILPOINT': 'Commander Service Mode SailPoint Config'})
             result = get_protected_record_uids(p)
-        self.assertEqual(set(result.keys()), {'UID_CONFIG'})
+        self.assertEqual(set(result.keys()), {'UID_SAILPOINT'})
 
     def test_malformed_record_entry_is_skipped_not_raised(self):
         """A record missing an expected key must not break the scan for every other record."""

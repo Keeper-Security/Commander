@@ -40,6 +40,11 @@ class Verifycommand:
         "The '--' argument separator is not permitted through Service Mode"
     )
 
+    # expand_cmd_args (commands/base.py) substitutes ${VARNAME} after this check runs but before execution -- ban it outright.
+    _ENV_VAR_EXPANSION_MSG = (
+        "The '${VARNAME}' environment-variable syntax is not permitted through Service Mode"
+    )
+
     # WARNING: everything below is a DENYLIST. Any command/flag that reads or
     # writes a host file and is NOT enumerated here is allowed by default.
     # Adding a new command with local file I/O? Add it here, or it silently
@@ -89,6 +94,7 @@ class Verifycommand:
 
         for validator in (
             Verifycommand.validate_service_mode_double_dash,
+            Verifycommand.validate_service_mode_env_var_expansion_command,
             Verifycommand.validate_service_mode_legacy_command,
             Verifycommand.validate_service_mode_pam_tunnel_command,
             Verifycommand.validate_service_mode_download_attachment_command,
@@ -135,6 +141,14 @@ class Verifycommand:
         """Block bare '--' anywhere in Service Mode input; error or None."""
         if '--' in command_tokens:
             return Verifycommand._DOUBLE_DASH_MSG
+        return None
+
+    @staticmethod
+    def validate_service_mode_env_var_expansion_command(command_tokens, request_temp_dir=None):
+        """Block '${VARNAME}' anywhere in Service Mode input; error or None."""
+        from ...commands.base import parameter_pattern
+        if any(parameter_pattern.search(tok) for tok in command_tokens):
+            return Verifycommand._ENV_VAR_EXPANSION_MSG
         return None
 
     @staticmethod
