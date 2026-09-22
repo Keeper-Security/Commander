@@ -1312,6 +1312,32 @@ class KSMCommand(Command):
         return rs.appInfo
 
     @staticmethod
+    def _auto_share_app_folders(params, app_uid, *, users=None, teams=None):
+        # type: (KeeperParams, str, Optional[List[str]], Optional[List[str]]) -> None
+        """Grant new app_user/app_team members read-only access to the app's linked
+        top-level shared folders (KA-6845 auto-add-to-shares)."""
+        from .register import ShareFolderCommand
+
+        app_info = KSMCommand.get_app_info(params, app_uid)
+        share_folder_uids = {
+            utils.base64_url_encode(s.secretUid)
+            for ai in app_info for s in ai.shares
+            if s.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER
+        }
+        share_folder_uids &= params.shared_folder_cache.keys()
+        if not share_folder_uids:
+            return
+
+        kwargs = {'action': 'grant', 'manage_records': 'off', 'manage_users': 'off'}
+        requests = []
+        for sf_uid in share_folder_uids:
+            curr_sf = params.shared_folder_cache[sf_uid]
+            rq = ShareFolderCommand.prepare_request(
+                params, kwargs, curr_sf, users or [], teams or [], [])
+            requests.append(rq)
+        ShareFolderCommand.send_requests(params, [requests])
+
+    @staticmethod
     def get_membership_record_key(params, app_record_uid):
         # type: (KeeperParams, str) -> Optional[bytes]
         """The caller's own wrapped-then-decrypted app record key from KA-6845 app_user/app_team
@@ -1503,6 +1529,7 @@ class KSMCommand(Command):
         rq.users.append(entry)
         api.communicate_rest(params, rq, 'vault/app_user_add')
         print(bcolors.OKGREEN + f'\nSuccessfully added user "{email}" to app uid={app_uid}\n' + bcolors.ENDC)
+        KSMCommand._auto_share_app_folders(params, app_uid, users=[email])
 
     @staticmethod
     def update_app_user(params, app_name_or_uid, email, can_manage_users, can_manage_shares, can_manage_devices):
@@ -1585,6 +1612,7 @@ class KSMCommand(Command):
         rq.teams.append(entry)
         api.communicate_rest(params, rq, 'vault/app_team_add')
         print(bcolors.OKGREEN + f'\nSuccessfully added team "{team_name_or_uid}" to app uid={app_uid}\n' + bcolors.ENDC)
+        KSMCommand._auto_share_app_folders(params, app_uid, teams=[team_uid])
 
     @staticmethod
     def update_app_team(params, app_name_or_uid, team_name_or_uid, can_manage_users, can_manage_shares, can_manage_devices):
