@@ -730,7 +730,14 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
                 team['team_key_unencrypted'] = team_key
                 if 'team_private_key' in team:
                     encrypted_team_private_key = utils.base64_url_decode(team['team_private_key'])
-                    team['team_private_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_team_private_key, team_key)
+                    # Team RSA private keys can be wrapped with either AES-GCM (current)
+                    # or legacy AES-CBC. Try
+                    # GCM first, fall back to CBC on failure, rather than assuming CBC and
+                    # raising "not a multiple of the block length" on GCM ciphertext.
+                    try:
+                        team['team_private_key_unencrypted'] = crypto.decrypt_aes_v2(encrypted_team_private_key, team_key)
+                    except Exception:
+                        team['team_private_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_team_private_key, team_key)
                 if 'team_ec_private_key' in team:
                     encrypted_team_private_key = utils.base64_url_decode(team['team_ec_private_key'])
                     team['team_ec_private_key_unencrypted'] = crypto.decrypt_aes_v2(encrypted_team_private_key, team_key)

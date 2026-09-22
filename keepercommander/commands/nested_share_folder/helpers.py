@@ -250,6 +250,49 @@ def is_nested_share_folder(params, folder_uid):
     return folder_uid in getattr(params, 'nested_share_folders', {})
 
 
+def is_nested_share_record_decrypted(params, record_uid):
+    """Return True when *record_uid* is a Nested Share Record whose key was
+    successfully decrypted AND its data payload decrypted/parsed cleanly.
+
+    Unlike ``is_nested_share_record`` (existence in the cache), this excludes
+    records still pending or unable to be decrypted — either because the
+    record key itself never decrypted, or because the key decrypted but the
+    record's content still failed to decrypt/parse — so display commands
+    (nsf-list, nsf-get, tree) don't surface them with a placeholder title.
+    Mutation commands should keep using ``is_nested_share_record``/
+    ``ensure_nested_share_record`` — an undecryptable record should still be
+    removable, movable, etc.
+    """
+    if not record_uid:
+        return False
+    robj = getattr(params, 'nested_share_records', {}).get(record_uid)
+    if not robj or 'record_key_unencrypted' not in robj:
+        return False
+    rd_obj = getattr(params, 'nested_share_record_data', {}).get(record_uid)
+    if rd_obj and rd_obj.get('data') and 'data_json' not in rd_obj:
+        return False
+    return True
+
+
+def is_nested_share_folder_decrypted(params, folder_uid):
+    """Return True when *folder_uid* is a Nested Share Folder whose key was
+    successfully decrypted and validated against its folder data.
+
+    Unlike ``is_nested_share_folder`` (existence in the cache), this excludes
+    folders still pending or unable to be decrypted, so display commands
+    (nsf-list, nsf-get, tree) don't surface them with a placeholder name.
+    Mutation commands should keep using ``is_nested_share_folder``/
+    ``ensure_nested_share_folder`` — an undecryptable folder should still be
+    removable, movable, etc.
+    """
+    if not folder_uid:
+        return False
+    if folder_uid == ROOT_FOLDER_UID:
+        return True
+    fobj = getattr(params, 'nested_share_folders', {}).get(folder_uid)
+    return bool(fobj) and 'folder_key_unencrypted' in fobj
+
+
 def ensure_nested_share_record(params, record_uid, cmd_name, identifier=None):
     """Raise ``CommandError`` if *record_uid* is not a Nested Share Record."""
     if not is_nested_share_record(params, record_uid):

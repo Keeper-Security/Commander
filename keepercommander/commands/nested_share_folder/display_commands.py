@@ -29,6 +29,7 @@ from .helpers import (
     get_access_role_label, format_role_display,
     format_timestamp, load_record_metadata, command_error_handler,
     ensure_nested_share_record, collect_records_in_folder, ROOT_FOLDER_UID,
+    is_nested_share_folder_decrypted, is_nested_share_record_decrypted,
 )
 from .parsers import (
     nested_share_record_get_details_parser,
@@ -134,7 +135,9 @@ class NestedShareGetCommand(Command):
     @staticmethod
     def _resolve_as_folder(params, uid):
         nsf_folders = getattr(params, 'nested_share_folders', {})
-        if uid in nsf_folders:
+        # Folders whose key never decrypted/validated have no usable name/data
+        # to show — treat them as not found instead of surfacing a blank entry.
+        if uid in nsf_folders and is_nested_share_folder_decrypted(params, uid):
             return uid
         lower = uid.lower()
         matches = [f for f, o in nsf_folders.items() if o.get('name', '').lower() == lower]
@@ -150,7 +153,9 @@ class NestedShareGetCommand(Command):
     @staticmethod
     def _resolve_as_record(params, uid):
         nsf_records = getattr(params, 'nested_share_records', {})
-        if uid in nsf_records:
+        # Records whose key or data never decrypted have no usable content to
+        # show — treat them as not found instead of surfacing a blank entry.
+        if uid in nsf_records and is_nested_share_record_decrypted(params, uid):
             return uid
         lower = uid.lower()
         nsf_data = getattr(params, 'nested_share_record_data', {})

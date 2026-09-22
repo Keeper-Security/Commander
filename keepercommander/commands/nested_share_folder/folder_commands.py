@@ -30,6 +30,7 @@ from .helpers import (
     check_folder_edit_permission, check_folder_share_permission, check_folder_delete_permission,
     classify_share_recipient,
     ensure_nested_share_folder, is_nested_share_folder,
+    is_nested_share_folder_decrypted, is_nested_share_record_decrypted,
     is_nested_share_folder_owner_email, owner_share_target_message,
 )
 from .parsers import (
@@ -289,6 +290,10 @@ class NestedShareFolderListCommand(Command):
         nsf_folders = getattr(params, 'nested_share_folders', {})
         rows = []
         for folder_uid, fobj in nsf_folders.items():
+            # Skip folders whose key never decrypted/validated (see sync.py's
+            # _decrypt_nested_share_folder_keys) instead of listing them as 'Unnamed'.
+            if not is_nested_share_folder_decrypted(params, folder_uid):
+                continue
             title = fobj.get('name', 'Unnamed')
             parent_uid = normalize_parent_uid(fobj.get('parent_uid', ''))
             rows.append(['Folder', folder_uid, title, '', '', parent_uid])
@@ -303,6 +308,10 @@ class NestedShareFolderListCommand(Command):
 
         rows = []
         for record_uid in nsf_records:
+            # Skip records whose key or data never decrypted instead of
+            # listing them with a placeholder 'Unknown' title.
+            if not is_nested_share_record_decrypted(params, record_uid):
+                continue
             title, rec_type, description = 'Unknown', 'Unknown', ''
             if record_uid in nsf_record_data and 'data_json' in nsf_record_data[record_uid]:
                 dj = nsf_record_data[record_uid]['data_json']

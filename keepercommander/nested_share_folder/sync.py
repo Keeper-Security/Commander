@@ -730,7 +730,36 @@ def _team_decrypt_material(params, team_uid):
     return aes_key, rsa_key, ecc_key
 
 
-def _try_decrypt_from_folder_access(folder_uid, params):
+def _validate_folder_key_against_data(folder_obj, folder_key):
+    """Confirm *folder_key* actually decrypts ``folder_obj['data']``.
+
+    A candidate key can pass its 32-byte length check while still being wrong
+    (e.g. an unauthenticated legacy CBC fallback decrypt against the wrong
+    parent/team key). Folder data is authenticated AES-GCM, so a failure here
+    proves the key is wrong. Returns True (and caches name/color) if the key is
+    confirmed, or unverifiable because there's no data to check; False if the
+    key is proven wrong and must be discarded rather than cached.
+    """
+    data = folder_obj.get('data')
+    if not data:
+        return True
+    try:
+        data_bytes = crypto.decrypt_aes_v2(data, folder_key)
+        data_json = json.loads(data_bytes.decode('utf-8'))
+        if not isinstance(data_json, dict):
+            # Corrupted/garbage plaintext can still parse as valid JSON (e.g. a
+            # list). Treat anything that isn't the expected object shape as a
+            # failed decrypt rather than crashing downstream .get() calls.
+            raise ValueError('folder data did not decrypt to a JSON object')
+    except Exception:
+        return False
+    folder_obj['name'] = data_json.get('name', 'Unnamed Folder')
+    if 'color' in data_json:
+        folder_obj['color'] = data_json['color']
+    return True
+
+
+def _try_decrypt_from_folder_access(folder_uid, params, folder_obj=None):
     """Unwrap a folder key from folderAccesses (user or team), mirroring Web Vault.
 
     Team-shared NSF folders store the sharee's copy of the folder key in
@@ -787,6 +816,11 @@ def _try_decrypt_from_folder_access(folder_uid, params):
                 folder_key = _try_decrypt_with_user_keys(encrypted_key, params)
 
             if folder_key and len(folder_key) == 32:
+                if folder_obj is not None and not _validate_folder_key_against_data(folder_obj, folder_key):
+                    # Length check passed but the key doesn't actually open this
+                    # folder's data (likely an unauthenticated CBC false-positive).
+                    # Keep trying other access entries instead of caching a wrong key.
+                    continue
                 return folder_key
         except Exception as e:
             logging.debug(
@@ -826,19 +860,25 @@ def _decrypt_nested_share_folder_keys(params):
                             break
                         if key_type == folder_pb2.ENCRYPTED_BY_USER_KEY:
                             # FolderKeyEncryptionType is KEY SOURCE, not algorithm.
-                            folder_key = _try_decrypt_with_user_keys(enc_key, params)
-                            if folder_key:
+                            candidate = _try_decrypt_with_user_keys(enc_key, params)
+                            if candidate and _validate_folder_key_against_data(folder_obj, candidate):
+                                folder_key = candidate
                                 break
                             force_accesses = True
                         elif key_type == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
-                            parent_uid = fk.get('parent_uid') or folder_obj.get('parent_uid')
+                            # The folder's own hierarchy parent_uid is the authoritative
+                            # placement and must win over the key entry's parent_uid, which
+                            # can go stale (e.g. after a folder move). Mirrors Web Vault's
+                            # hierarchyParentUid ?? keyParentUid precedence.
+                            parent_uid = folder_obj.get('parent_uid') or fk.get('parent_uid')
                             if parent_uid and parent_uid in params.nested_share_folders:
                                 parent_folder = params.nested_share_folders[parent_uid]
                                 if 'folder_key_unencrypted' in parent_folder:
-                                    folder_key = _try_decrypt_symmetric(
+                                    candidate = _try_decrypt_symmetric(
                                         enc_key, parent_folder['folder_key_unencrypted']
                                     )
-                                    if folder_key:
+                                    if candidate and _validate_folder_key_against_data(folder_obj, candidate):
+                                        folder_key = candidate
                                         break
                             # Sharees often get PARENT_KEY metadata without the owner parent.
                             force_accesses = True
@@ -846,21 +886,15 @@ def _decrypt_nested_share_folder_keys(params):
                         logging.debug('Failed to decrypt folder key for %s: %s', folder_uid, e)
 
             if not folder_key and (force_accesses or folder_uid in params.nested_share_folder_accesses):
-                folder_key = _try_decrypt_from_folder_access(folder_uid, params)
+                # _try_decrypt_from_folder_access validates each candidate against
+                # folder_obj['data'] itself and skips ones that don't actually open it.
+                folder_key = _try_decrypt_from_folder_access(folder_uid, params, folder_obj)
 
             if folder_key:
+                # A key only reaches here once confirmed against folder_obj['data']
+                # (or there was no data to confirm against), so it's safe to cache.
                 folder_obj['folder_key_unencrypted'] = folder_key
                 newly_decrypted = True
-
-                if 'data' in folder_obj and folder_obj['data']:
-                    try:
-                        data_bytes = crypto.decrypt_aes_v2(folder_obj['data'], folder_key)
-                        data_json = json.loads(data_bytes.decode('utf-8'))
-                        folder_obj['name'] = data_json.get('name', 'Unnamed Folder')
-                        if 'color' in data_json:
-                            folder_obj['color'] = data_json['color']
-                    except Exception as e:
-                        logging.debug('Failed to decrypt folder data for %s: %s', folder_uid, e)
 
     _decrypt_nested_share_record_keys(params)
 
@@ -966,6 +1000,13 @@ def _decrypt_record_data(record_uid, record_key, params):
         except Exception:
             data_bytes = crypto.decrypt_aes_v1(rd_obj['data'], record_key)
         data_json = json.loads(data_bytes.decode('utf-8'))
+        if not isinstance(data_json, dict):
+            # Corrupted/garbage plaintext can still parse as valid JSON (e.g. a
+            # list). Don't cache it as data_json — every consumer expects a
+            # dict and calls .get() on it. Leaving data_json unset makes
+            # is_nested_share_record_decrypted() correctly treat this record
+            # as undecrypted instead of crashing display commands later.
+            raise ValueError('record data did not decrypt to a JSON object')
         rd_obj['data_json'] = data_json
     except Exception as e:
         logging.warning(f"Failed to decrypt record data for {record_uid}: {e}")
@@ -1082,6 +1123,11 @@ def _decrypt_nested_share_record_keys(params):
                         try:
                             data_bytes = crypto.decrypt_aes_v2(rd_obj['data'], fobj['folder_key_unencrypted'])
                             data_json = json.loads(data_bytes.decode('utf-8'))
+                            if not isinstance(data_json, dict):
+                                # Corrupted/garbage plaintext can still parse as
+                                # valid JSON (e.g. a list) — this candidate folder
+                                # key isn't the real record key, keep looking.
+                                raise ValueError('record data did not decrypt to a JSON object')
                             rd_obj['data_json'] = data_json
                             record_obj['record_key_unencrypted'] = fobj['folder_key_unencrypted']
                             logging.debug(f"Record {record_uid}: decrypted data directly with folder key {folder_uid}")
