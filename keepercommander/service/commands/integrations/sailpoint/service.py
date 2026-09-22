@@ -138,6 +138,7 @@ class SailPointService:
         cls.bind_params(params)
         uid = cls.record_uid(params)
         if not cls.record_has_marker(params, uid):
+            logger.debug(f'SailPoint: record {uid} has no active marker; skipping all command gating for this request')
             return command, None
         return SailPointCommandHook(uid).before_command(params, command)
 
@@ -147,5 +148,6 @@ class SailPointService:
         cls.bind_params(params)
         uid = cls.record_uid(params)
         if not cls.record_has_marker(params, uid):
+            logger.debug(f'SailPoint: record {uid} has no active marker; skipping pending-entitlement queue for this request')
             return
         SailPointCommandHook(uid).after_command(params, command, success)

@@ -90,6 +90,7 @@ def get_protected_record_uids(params) -> Dict[str, str]:
         return found
 
     from ... import vault
+    from ..decorators.logging import logger
 
     protected_titles = get_protected_record_title_set()
     # One load per record_cache entry, no more -- a FileRecord attachment target is itself an

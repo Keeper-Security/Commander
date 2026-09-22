@@ -221,17 +221,19 @@ class CommandExecutor:
 
             sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
 
-            # Runs before the record is hidden so SailPoint's own gate can read it; hidden again below for the actual dispatch.
-            if sailpoint_enabled:
-                from ..commands.integrations.sailpoint.service import SailPointService
-                command, sailpoint_response = SailPointService.handle_command(params, command)
-                if sailpoint_response is not None:
-                    response, status_code = sailpoint_response
-                    response = CommandExecutor.encrypt_response(response)
-                    return response, status_code
+            # Folder stays hidden for the whole request -- handle_command never needs folder visibility,
+            # only the record's own UID. Record stays visible for handle_command, hidden again below for dispatch.
+            with hide_from_folder_cache(params, protected_folder_uids):
+                if sailpoint_enabled:
+                    from ..commands.integrations.sailpoint.service import SailPointService
+                    command, sailpoint_response = SailPointService.handle_command(params, command)
+                    if sailpoint_response is not None:
+                        response, status_code = sailpoint_response
+                        response = CommandExecutor.encrypt_response(response)
+                        return response, status_code
 
-            with hide_from_record_cache(params, protected_uids):
-                return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
+                with hide_from_record_cache(params, protected_uids):
+                    return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
             # Debug logging with sanitization

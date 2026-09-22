@@ -297,3 +297,71 @@ class TestProtectedRecordCommandExecution(TestCase):
         self.assertEqual(status_code, 403)
         mock_handle_command.assert_not_called()
         mock_capture.assert_not_called()
+
+
+class TestProtectedFolderCommandExecution(TestCase):
+    """Regression test: hide_from_folder_cache was imported and fed protected_folder_uids,
+    but never actually invoked as a context manager, so a protected record's folder kept
+    showing up in tree/ls even though the record itself was correctly hidden."""
+
+    FOLDER_UID = 'PROTECTED_FOLDER_UID'
+    RECORD_UID = 'PROTECTED_FOLDER_RECORD_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            self.RECORD_UID: _record_cache_entry(self.RECORD_UID, 'Commander Service Mode SailPoint Config'),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        p.root_folder = RootFolderNode()
+        node = SharedFolderNode()
+        node.uid = self.FOLDER_UID
+        node.name = 'Commander Service Mode - SailPoint'
+        p.folder_cache = {self.FOLDER_UID: node}
+        p.root_folder.subfolders = [self.FOLDER_UID]
+        p.shared_folder_cache = {self.FOLDER_UID: {'name_unencrypted': node.name}}
+        p.subfolder_cache = {self.FOLDER_UID: {'type': 'shared_folder', 'shared_folder_uid': self.FOLDER_UID}}
+        p.subfolder_record_cache = {self.FOLDER_UID: {self.RECORD_UID}}
+        return p
+
+    def test_folder_hidden_during_actual_dispatch(self):
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['folder_keys'] = set(p.folder_cache.keys())
+            seen['subfolders'] = list(p.root_folder.subfolders)
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(self.FOLDER_UID, seen['folder_keys'])
+        self.assertNotIn(self.FOLDER_UID, seen['subfolders'])
+        self.assertIn(self.FOLDER_UID, params.folder_cache)
+        self.assertIn(self.FOLDER_UID, params.root_folder.subfolders)
+
+    def test_folder_hidden_during_sailpoint_handle_command_too(self):
+        """Unlike the record, the folder has no reason to be visible to handle_command,
+        so it must stay hidden for the whole request, not just the final dispatch."""
+        params = self._params()
+        seen = {}
+
+        def fake_handle_command(p, command):
+            seen['folder_keys'] = set(p.folder_cache.keys())
+            return command, None
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=fake_handle_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(self.FOLDER_UID, seen['folder_keys'])
