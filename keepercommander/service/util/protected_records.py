@@ -21,6 +21,10 @@ from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 # Each integration's own setup pins its config record's UID here, regardless of its title. Extend when a new integration gets an always-hidden record.
 _PINNED_RECORD_UID_ENVS: Dict[str, str] = {
     'COMMANDER_RECORD': '<Docker config record>',
+    'TERRAFORM_RECORD': '<Terraform config record>',
+    'SLACK_RECORD': '<Slack config record>',
+    'TEAMS_RECORD': '<Teams config record>',
+    'GCHAT_RECORD': '<GChat config record>',
     'SAILPOINT_RECORD': '<SailPoint config record>',
 }
 
@@ -64,11 +68,18 @@ def _has_reserved_legacy_attachment(record) -> bool:
 def _protected_titles() -> Tuple[str, ...]:
     """The literal titles of Service Mode's own config records; imported lazily to avoid a circular import through verified_command."""
     from ..config.file_handler import SERVICE_CONFIG_RECORD_TITLES
-    from ..docker.models import DockerSetupConstants
+    from ..commands.terraform_app_setup import TerraformSetupConstants
+    from ..commands.integrations.slack_app_setup import SlackAppSetupCommand
+    from ..commands.integrations.teams_app_setup import TeamsAppSetupCommand
     from ..commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
+    from ..docker.models import DockerSetupConstants, GChatConstants
     return (
         *SERVICE_CONFIG_RECORD_TITLES,
         DockerSetupConstants.DEFAULT_RECORD_NAME,
+        TerraformSetupConstants.DEFAULT_RECORD_NAME,
+        GChatConstants.DEFAULT_RECORD_NAME,
+        SlackAppSetupCommand().get_default_record_name(),
+        TeamsAppSetupCommand().get_default_record_name(),
         SailPointAppSetupCommand().get_default_record_name(),
     )
 
@@ -80,17 +91,23 @@ def get_protected_record_title_set() -> FrozenSet[str]:
 
 def get_protected_record_uids(params) -> Dict[str, str]:
     """Resolve current UIDs of Service Mode's own config records ({uid: title}), matching by title plus each integration's pinned UID env var (_PINNED_RECORD_UID_ENVS); not cached, since a stale result on this security check is worse than the cost of a full-vault scan."""
+    from ..commands.integrations.approvals_setup import is_valid_keeper_uid
+    from ..decorators.logging import logger
+
     found: Dict[str, str] = {}
     for env_name, label in _PINNED_RECORD_UID_ENVS.items():
         uid = (os.environ.get(env_name) or '').strip()
-        if uid:
-            found[uid] = label
+        if not uid:
+            continue
+        if not is_valid_keeper_uid(uid):
+            logger.warning(f'protected_records: {env_name} is set but not a valid record UID; falling back to title matching for it')
+            continue
+        found[uid] = label
 
     if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
         return found
 
     from ... import vault
-    from ..decorators.logging import logger
 
     protected_titles = get_protected_record_title_set()
     # One load per record_cache entry, no more -- a FileRecord attachment target is itself an

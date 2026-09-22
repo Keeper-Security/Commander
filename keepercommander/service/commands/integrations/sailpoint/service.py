@@ -51,6 +51,16 @@ class SailPointService:
         )
 
     @classmethod
+    def _record_has_marker_safe(cls, params: KeeperParams, uid: str) -> bool:
+        """record_has_marker, but never raises -- a malformed/unreachable record fails closed
+        (treated as not-enabled) with a warning, instead of propagating into a 500 or aborting startup."""
+        try:
+            return cls.record_has_marker(params, uid)
+        except Exception as e:
+            logger.warning(f'SailPoint: marker check failed for record {uid}: {e}')
+            return False
+
+    @classmethod
     def record_uid(cls, params: Optional[KeeperParams] = None) -> Optional[str]:
         if params is not None:
             uid = getattr(params, cls.PARAMS_ATTR, None)
@@ -75,15 +85,11 @@ class SailPointService:
         Callers must gate on ``SAILPOINT_RECORD`` before invoking this.
         """
         uid = cls.record_uid(params)
-        try:
-            if not cls.record_has_marker(params, uid):
-                logger.warning(
-                    f'{SAILPOINT_RECORD_ENV}={uid} is set but record is missing '
-                    f'{SAILPOINT_MARKER_FIELD}; SailPoint mode not enabled'
-                )
-                return
-        except Exception as e:
-            logger.warning(f'SailPoint marker check failed; mode not enabled: {e}')
+        if not cls._record_has_marker_safe(params, uid):
+            logger.warning(
+                f'{SAILPOINT_RECORD_ENV}={uid} is set but record is missing '
+                f'{SAILPOINT_MARKER_FIELD}; SailPoint mode not enabled'
+            )
             return
 
         cls.bind_params(params, uid)
@@ -109,14 +115,10 @@ class SailPointService:
             logger.warning('SailPoint poller not started: Keeper params not loaded')
             return
         uid = cls.record_uid(params)
-        try:
-            if not cls.record_has_marker(params, uid):
-                logger.warning(
-                    f'SailPoint poller not started: record {uid} missing {SAILPOINT_MARKER_FIELD}'
-                )
-                return
-        except Exception as e:
-            logger.warning(f'SailPoint poller not started: marker check failed: {e}')
+        if not cls._record_has_marker_safe(params, uid):
+            logger.warning(
+                f'SailPoint poller not started: record {uid} missing {SAILPOINT_MARKER_FIELD}'
+            )
             return
         cls.bind_params(params, uid)
         try:
@@ -137,7 +139,7 @@ class SailPointService:
         """
         cls.bind_params(params)
         uid = cls.record_uid(params)
-        if not cls.record_has_marker(params, uid):
+        if not cls._record_has_marker_safe(params, uid):
             logger.debug(f'SailPoint: record {uid} has no active marker; skipping all command gating for this request')
             return command, None
         return SailPointCommandHook(uid).before_command(params, command)
@@ -147,7 +149,7 @@ class SailPointService:
         """Callers must gate on ``SAILPOINT_RECORD`` before invoking this."""
         cls.bind_params(params)
         uid = cls.record_uid(params)
-        if not cls.record_has_marker(params, uid):
+        if not cls._record_has_marker_safe(params, uid):
             logger.debug(f'SailPoint: record {uid} has no active marker; skipping pending-entitlement queue for this request')
             return
         SailPointCommandHook(uid).after_command(params, command, success)
