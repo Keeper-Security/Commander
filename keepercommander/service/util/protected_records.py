@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import os
 from collections import UserDict
+from collections.abc import MutableMapping
 from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 
 # Each integration's own setup pins its config record's UID here, regardless of its title. Extend when a new integration gets an always-hidden record.
@@ -209,7 +210,7 @@ def hide_from_record_cache(params, protected_uids: Dict[str, str]):
     saved_entries = {}
     for attr in _GUARDED_CACHE_ATTRS:
         source = getattr(params, attr, None)
-        if not isinstance(source, dict):
+        if not isinstance(source, MutableMapping):
             continue
         original_caches[attr] = source
         saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}
@@ -286,7 +287,7 @@ def hide_from_folder_cache(params, protected_folder_uids: Set[str]):
 
         for attr in _GUARDED_FOLDER_CACHE_ATTRS:
             source = getattr(params, attr, None)
-            if not isinstance(source, dict):
+            if not isinstance(source, MutableMapping):
                 continue
             original_caches[attr] = source
             saved_entries[attr] = {uid: source[uid] for uid in protected_uid_set if uid in source}

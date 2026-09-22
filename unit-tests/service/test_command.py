@@ -337,6 +337,38 @@ class TestProtectedRecordCommandExecution(TestCase):
         self.assertEqual(status_code, 500)
         mock_capture.assert_not_called()
 
+    def test_sailpoint_own_record_stays_hidden_during_dispatch_when_another_record_is_also_protected(self):
+        """Regression test: when a second protected record forces the outer (handle_command)
+        guard to actually wrap record_cache, the inner (dispatch) guard must still hide
+        SailPoint's own UID too, not silently no-op because the cache is no longer a plain dict."""
+        sailpoint_uid = 'SAILPOINT_OWN_UID'
+        params = params_module.KeeperParams()
+        params.service_mode = False
+        params.record_cache = {
+            sailpoint_uid: _record_cache_entry(sailpoint_uid, 'Commander Service Mode SailPoint Config'),
+            PROTECTED_UID: _record_cache_entry(PROTECTED_UID, PROTECTED_TITLE),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        seen_during_dispatch = {}
+
+        def fake_capture(p, command):
+            seen_during_dispatch['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': sailpoint_uid}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=lambda p, command: (command, None),
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture,
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(sailpoint_uid, seen_during_dispatch['keys'])
+        self.assertNotIn(PROTECTED_UID, seen_during_dispatch['keys'])
+        self.assertIn(NORMAL_UID, seen_during_dispatch['keys'])
+
 
 class TestSyncDownExemptionCommandExecution(TestCase):
     """slack-app-setup --sync-down must keep working for its OWN config record while every

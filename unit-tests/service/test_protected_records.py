@@ -271,6 +271,24 @@ class TestHideFromRecordCache(TestCase):
         self.assertIn('PROTECTED', p.nested_share_record_data)
         self.assertIs(type(p.nested_share_records), dict)
 
+    def test_nested_call_still_hides_its_own_uid_set(self):
+        """Regression test: the outer call replaces record_cache with a _GuardedRecordCache
+        (a UserDict, not a dict), so a naive isinstance(source, dict) check in the inner call
+        would skip wrapping entirely and silently no-op instead of hiding OUTER_ONLY too."""
+        p = _params_with_records({'OUTER_ONLY': 'x', 'BOTH': 'y', 'NORMAL': 'Other'})
+        with hide_from_record_cache(p, {'BOTH': 'y'}):
+            self.assertIn('OUTER_ONLY', p.record_cache)
+            with hide_from_record_cache(p, {'OUTER_ONLY': 'x', 'BOTH': 'y'}):
+                self.assertNotIn('OUTER_ONLY', p.record_cache)
+                self.assertNotIn('BOTH', p.record_cache)
+                self.assertIn('NORMAL', p.record_cache)
+            self.assertIn('OUTER_ONLY', p.record_cache)
+            self.assertNotIn('BOTH', p.record_cache)
+
+        self.assertIs(type(p.record_cache), dict)
+        self.assertIn('OUTER_ONLY', p.record_cache)
+        self.assertIn('BOTH', p.record_cache)
+
     def test_subfolder_record_cache_uid_is_stripped_for_the_duration(self):
         """_build_folder_json leaks the bare UID from a folder's set even when the record fails to load."""
         p = _params_with_records({'NORMAL': 'Other'})
@@ -451,6 +469,27 @@ class TestHideFromFolderCache(TestCase):
             with hide_from_folder_cache(p, {'FOLDER1'}):
                 raise ValueError('boom')
         self.assertIn('FOLDER1', p.folder_cache)
+
+    def test_nested_call_still_hides_its_own_uid_set(self):
+        """Same nesting bug as record_cache's -- the outer call's _GuardedRecordCache must not
+        make the inner call skip wrapping and silently no-op for a folder only it hides."""
+        p = _params_with_folder(folder_uid='FOLDER1')
+        node2 = _folder_node('FOLDER2', 'Commander Service Mode - Terraform')
+        p.folder_cache['FOLDER2'] = node2
+        p.root_folder.subfolders.append('FOLDER2')
+        p.shared_folder_cache['FOLDER2'] = {'name_unencrypted': node2.name}
+        p.subfolder_cache['FOLDER2'] = {'type': 'shared_folder', 'shared_folder_uid': 'FOLDER2'}
+
+        with hide_from_folder_cache(p, {'FOLDER1'}):
+            self.assertIn('FOLDER2', p.folder_cache)
+            with hide_from_folder_cache(p, {'FOLDER1', 'FOLDER2'}):
+                self.assertNotIn('FOLDER1', p.folder_cache)
+                self.assertNotIn('FOLDER2', p.folder_cache)
+            self.assertIn('FOLDER2', p.folder_cache)
+            self.assertNotIn('FOLDER1', p.folder_cache)
+
+        self.assertIn('FOLDER1', p.folder_cache)
+        self.assertIn('FOLDER2', p.folder_cache)
         self.assertIn('FOLDER1', p.root_folder.subfolders)
 
     def test_reintroduction_during_block_is_blocked(self):
