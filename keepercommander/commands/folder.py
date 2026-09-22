@@ -37,6 +37,7 @@ from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, Shared
     FolderPathAmbiguousError, contained_folders, lookup_path, path_split, try_resolve_path, \
     find_folders, get_contained_record_uids, get_contained_folder_uids, \
     ambiguous_identifier_message
+from .nested_share_folder.helpers import is_nested_share_folder_decrypted
 
 
 def register_commands(commands):
@@ -2688,13 +2689,20 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
 
         if is_root and hasattr(params, 'nested_share_folders') and params.nested_share_folders:
             for nsf_uid, nsf_folder in params.nested_share_folders.items():
+                # Skip folders whose key never decrypted/validated instead of
+                # listing them with a placeholder 'Unnamed' name.
+                if not is_nested_share_folder_decrypted(params, nsf_uid):
+                    continue
                 parent_uid = nsf_folder.get('parent_uid')
                 is_root_folder = (
                     parent_uid is None or
                     parent_uid == '' or
                     parent_uid == 'root' or
-                    parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA' or
-                    (parent_uid and parent_uid not in params.nested_share_folders)
+                    parent_uid.startswith('AAAAAAAAAAA') or
+                    # Also promote to root display when the stated parent exists
+                    # but never decrypted — otherwise this folder would be
+                    # orphaned (its parent node is never added to the tree).
+                    (parent_uid and not is_nested_share_folder_decrypted(params, parent_uid))
                 )
                 if is_root_folder:
                     already_added = any(hasattr(n, 'uid') and n.uid == nsf_uid for n in dir_nodes if n)
@@ -2714,6 +2722,10 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
 
         elif not isinstance(node, Record) and hasattr(params, 'nested_share_folders') and node_uid:
             for child_uid, child_folder in params.nested_share_folders.items():
+                # Skip folders whose key never decrypted/validated instead of
+                # listing them with a placeholder 'Unnamed' name.
+                if not is_nested_share_folder_decrypted(params, child_uid):
+                    continue
                 parent_uid = child_folder.get('parent_uid', '')
                 if parent_uid == node_uid:
                     already_added = any(hasattr(n, 'uid') and n.uid == child_uid for n in dir_nodes if n)
