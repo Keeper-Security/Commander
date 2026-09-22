@@ -573,6 +573,72 @@ class SailPointRecordResolutionTest(unittest.TestCase):
         self.assertEqual(cmd.get_default_folder_name(), 'Commander Service Mode - SailPoint')
 
 
+class SailPointMarkerFailureModeTest(unittest.TestCase):
+    """A marker read that raises must fail closed for per-request paths (deny/propagate);
+    startup paths may still safely degrade to 'not enabled'."""
+
+    def test_handle_command_propagates_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            with self.assertRaises(RuntimeError):
+                SailPointService.handle_command(params, 'get SOME_OTHER_RECORD_UID')
+
+    def test_after_command_propagates_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            with self.assertRaises(RuntimeError):
+                SailPointService.after_command(params, 'get SOME_OTHER_RECORD_UID', success=True)
+
+    def test_maybe_enable_degrades_to_not_enabled_on_marker_check_failure(self):
+        """Startup path -- nothing has executed yet, so degrading to 'not enabled' is safe."""
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        args = mock.Mock(commands=None)
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            SailPointService.maybe_enable(params, args)
+        self.assertFalse(hasattr(params, SailPointService.PARAMS_ATTR))
+
+    def test_start_background_services_degrades_to_not_started_on_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.poller import (
+            SailPointEntitlementPoller,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.core.globals.get_current_params', return_value=params
+        ), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ), mock.patch.object(
+            SailPointEntitlementPoller, 'start'
+        ) as mock_start:
+            SailPointService.start_background_services()
+        mock_start.assert_not_called()
+
+
 class SailPointShareTargetValidationTest(unittest.TestCase):
     def _params(self):
         params = mock.Mock()

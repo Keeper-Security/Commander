@@ -248,7 +248,7 @@ class TestProtectedRecordCommandExecution(TestCase):
             mock_get_uids.assert_called_once()
 
     def test_sailpoint_handling_runs_before_the_record_cache_guard(self):
-        """handle_command needs the record visible to read its own marker/capability fields.
+        """handle_command needs its OWN record visible to read its marker/capability fields.
         Safe because Layer B already blocks direct references, and _before_share only resolves exact cache keys."""
         params = _params_with_protected_and_normal_record()
         seen_during_handle_command = {}
@@ -264,7 +264,7 @@ class TestProtectedRecordCommandExecution(TestCase):
 
         with mock.patch(
             'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
-        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': PROTECTED_UID}), mock.patch(
             'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
             side_effect=fake_handle_command,
         ), mock.patch.object(
@@ -281,6 +281,29 @@ class TestProtectedRecordCommandExecution(TestCase):
         # Restored after the whole request completes.
         self.assertIn(PROTECTED_UID, params.record_cache)
 
+    def test_other_protected_records_stay_hidden_from_sailpoint_handle_command(self):
+        """Regression test: only SailPoint's own pinned UID is exempt from handle_command's guard;
+        every other protected record (PROTECTED_UID standing in for e.g. Docker's) must stay hidden."""
+        params = _params_with_protected_and_normal_record()
+        seen_during_handle_command = {}
+
+        def fake_handle_command(p, command):
+            seen_during_handle_command['keys'] = set(p.record_cache.keys())
+            return command, None
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-own-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=fake_handle_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(PROTECTED_UID, seen_during_handle_command['keys'])
+        self.assertIn(NORMAL_UID, seen_during_handle_command['keys'])
+
     def test_direct_reference_to_protected_record_never_reaches_sailpoint_handle_command(self):
         """Layer B blocks a command that directly names the protected UID/title before
         SailPoint's handle_command ever runs, regardless of the record being unhidden for it."""
@@ -296,6 +319,22 @@ class TestProtectedRecordCommandExecution(TestCase):
 
         self.assertEqual(status_code, 403)
         mock_handle_command.assert_not_called()
+        mock_capture.assert_not_called()
+
+    def test_sailpoint_marker_check_failure_denies_the_request(self):
+        """A transient marker-read failure must deny the request, not silently skip SailPoint's gating."""
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.record_has_marker',
+            side_effect=RuntimeError('decrypt failed'),
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertEqual(status_code, 500)
         mock_capture.assert_not_called()
 
 

@@ -219,11 +219,15 @@ class CommandExecutor:
             if protected_command_error:
                 return blocked(protected_command_error)
 
-            sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
+            sailpoint_uid = (os.environ.get('SAILPOINT_RECORD') or '').strip()
+            sailpoint_enabled = bool(sailpoint_uid)
 
-            # Folder stays hidden for the whole request -- handle_command never needs folder visibility,
-            # only the record's own UID. Record stays visible for handle_command, hidden again below for dispatch.
-            with hide_from_folder_cache(params, protected_folder_uids):
+            # Only SailPoint's own record is exempt from handle_command's guard; every other
+            # protected record (and the folder cache, which has no exemption) stays hidden throughout.
+            handle_command_uids = {uid: title for uid, title in protected_uids.items() if uid != sailpoint_uid}
+
+            with hide_from_folder_cache(params, protected_folder_uids), \
+                    hide_from_record_cache(params, handle_command_uids):
                 if sailpoint_enabled:
                     from ..commands.integrations.sailpoint.service import SailPointService
                     command, sailpoint_response = SailPointService.handle_command(params, command)
