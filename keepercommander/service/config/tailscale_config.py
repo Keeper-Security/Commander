@@ -22,7 +22,9 @@ from ..util.tunneling import (
     start_tailscale_daemon,
     tailscale_up,
     start_tailscale_funnel,
+    stop_tailscale_funnel,
     get_tailscale_funnel_url,
+    get_tailscale_funnel_status,
     reset_tailscale_log,
 )
 from ..util.exceptions import ValidationError
@@ -72,6 +74,17 @@ class TailscaleConfigurator:
         logger.debug(f"{action_label.capitalize()} succeeded")
 
     @staticmethod
+    def _verify_funnel_active(local_port: int, max_retries: int = 3, retry_delay: float = 1) -> bool:
+        """`--bg` can exit 0 without the target ever going active; confirm via tailscaled's own status."""
+        import time
+        for attempt in range(max_retries):
+            if get_tailscale_funnel_status(local_port):
+                return True
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+        return False
+
+    @staticmethod
     @debug_decorator
     def configure_tailscale(config_data: Dict[str, Any], service_config: ServiceConfig) -> Optional[int]:
         """
@@ -108,6 +121,16 @@ class TailscaleConfigurator:
 
             logger.debug(f"Starting Tailscale Funnel for port {config_data['port']}")
             start_tailscale_funnel(config_data["port"])
+
+            if not TailscaleConfigurator._verify_funnel_active(config_data["port"]):
+                try:
+                    stop_tailscale_funnel(config_data["port"])
+                except Exception as cleanup_error:
+                    logger.debug(f"Funnel rollback failed: {cleanup_error}")
+                raise Exception(
+                    "Tailscale Funnel did not become active after starting. First-time Funnel use "
+                    "on this tailnet may be pending admin-console approval -- run `tailscale funnel status`."
+                )
 
             public_url = get_tailscale_funnel_url(config_data["port"])
             config_data["tailscale_public_url"] = public_url or ""
