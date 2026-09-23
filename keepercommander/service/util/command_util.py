@@ -253,7 +253,10 @@ class CommandExecutor:
 
             if status_code == 200 and sailpoint_enabled:
                 try:
-                    SailPointService.after_command(params, command, success=True)
+                    # Same rule as the pre-dispatch phase: every protected record except
+                    # SailPoint's own stays hidden here too.
+                    with hide_from_record_cache(params, handle_command_uids):
+                        SailPointService.after_command(params, command, success=True)
                 except Exception as e:
                     logger.error(f'SailPoint post-process failed: {sanitize_debug_data(str(e))}')
                     err = {
