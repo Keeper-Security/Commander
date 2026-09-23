@@ -25,14 +25,7 @@ from .constants import PARAMS_ATTR, SAILPOINT_MARKER_FIELD, SAILPOINT_RECORD_ENV
 
 
 class SailPointService:
-    """
-    Entry point for SailPoint Service Mode.
-
-    Pending entitlements and SailPoint settings live on a dedicated vault
-    config record (``Commander Service Mode SailPoint Config``). Runtime
-    resolves that UID from ``SAILPOINT_RECORD`` (compose env) or
-    ``params.sailpoint_record_uid``. Docker config stays on ``COMMANDER_RECORD``.
-    """
+    """Entry point for SailPoint Service Mode; settings/pending entitlements live on the record pinned by SAILPOINT_RECORD."""
 
     PARAMS_ATTR = PARAMS_ATTR
 
@@ -49,6 +42,16 @@ class SailPointService:
             and parse_bool(field.get_default_value(), default=False)
             for field in record.custom
         )
+
+    @classmethod
+    def _record_has_marker_safe(cls, params: KeeperParams, uid: str) -> bool:
+        """record_has_marker, but never raises; startup-only -- handle_command/after_command
+        must call record_has_marker directly so a check failure denies the request instead of silently skipping it."""
+        try:
+            return cls.record_has_marker(params, uid)
+        except Exception as e:
+            logger.warning(f'SailPoint: marker check failed for record {uid}: {e}')
+            return False
 
     @classmethod
     def record_uid(cls, params: Optional[KeeperParams] = None) -> Optional[str]:
@@ -68,22 +71,13 @@ class SailPointService:
 
     @classmethod
     def maybe_enable(cls, params: KeeperParams, args) -> None:
-        """
-        Bind params and sanitize the Service Mode command allowlist when the
-        SailPoint config record has the integration marker.
-
-        Callers must gate on ``SAILPOINT_RECORD`` before invoking this.
-        """
+        """Bind params and sanitize the allowlist when the config record has the marker; callers must gate on SAILPOINT_RECORD first."""
         uid = cls.record_uid(params)
-        try:
-            if not cls.record_has_marker(params, uid):
-                logger.warning(
-                    f'{SAILPOINT_RECORD_ENV}={uid} is set but record is missing '
-                    f'{SAILPOINT_MARKER_FIELD}; SailPoint mode not enabled'
-                )
-                return
-        except Exception as e:
-            logger.warning(f'SailPoint marker check failed; mode not enabled: {e}')
+        if not cls._record_has_marker_safe(params, uid):
+            logger.warning(
+                f'{SAILPOINT_RECORD_ENV}={uid} is set but record is missing '
+                f'{SAILPOINT_MARKER_FIELD}; SailPoint mode not enabled'
+            )
             return
 
         cls.bind_params(params, uid)
@@ -98,25 +92,17 @@ class SailPointService:
 
     @classmethod
     def start_background_services(cls) -> None:
-        """
-        Start the entitlement poller when SailPoint is enabled.
-
-        Callers must gate on ``SAILPOINT_RECORD`` before invoking this.
-        """
+        """Start the entitlement poller; callers must gate on SAILPOINT_RECORD before invoking this."""
         from ....core.globals import get_current_params
         params = get_current_params()
         if not params:
             logger.warning('SailPoint poller not started: Keeper params not loaded')
             return
         uid = cls.record_uid(params)
-        try:
-            if not cls.record_has_marker(params, uid):
-                logger.warning(
-                    f'SailPoint poller not started: record {uid} missing {SAILPOINT_MARKER_FIELD}'
-                )
-                return
-        except Exception as e:
-            logger.warning(f'SailPoint poller not started: marker check failed: {e}')
+        if not cls._record_has_marker_safe(params, uid):
+            logger.warning(
+                f'SailPoint poller not started: record {uid} missing {SAILPOINT_MARKER_FIELD}'
+            )
             return
         cls.bind_params(params, uid)
         try:
@@ -129,15 +115,12 @@ class SailPointService:
     def handle_command(
         cls, params: KeeperParams, command: str
     ) -> Tuple[str, Optional[Tuple[Any, int]]]:
-        """
-        Prepare a SailPoint Service Mode command.
-
-        Returns ``(command_to_run, short_circuit)``. Callers must gate on
-        ``SAILPOINT_RECORD`` before invoking this.
-        """
+        """Prepare a SailPoint command, returning (command_to_run, short_circuit); callers must gate on SAILPOINT_RECORD first."""
         cls.bind_params(params)
         uid = cls.record_uid(params)
+        # Not swallowed here -- a check failure must deny the request, not silently skip gating.
         if not cls.record_has_marker(params, uid):
+            logger.debug(f'SailPoint: record {uid} has no active marker; skipping all command gating for this request')
             return command, None
         return SailPointCommandHook(uid).before_command(params, command)
 
@@ -146,6 +129,8 @@ class SailPointService:
         """Callers must gate on ``SAILPOINT_RECORD`` before invoking this."""
         cls.bind_params(params)
         uid = cls.record_uid(params)
+        # Not swallowed here either -- callers turn a raised exception into an explicit 500.
         if not cls.record_has_marker(params, uid):
+            logger.debug(f'SailPoint: record {uid} has no active marker; skipping pending-entitlement queue for this request')
             return
         SailPointCommandHook(uid).after_command(params, command, success)

@@ -219,10 +219,15 @@ class CommandExecutor:
             if protected_command_error:
                 return blocked(protected_command_error)
 
-            sailpoint_enabled = bool((os.environ.get('SAILPOINT_RECORD') or '').strip())
+            sailpoint_uid = (os.environ.get('SAILPOINT_RECORD') or '').strip()
+            sailpoint_enabled = bool(sailpoint_uid)
 
-            with hide_from_record_cache(params, protected_uids), \
-                 hide_from_folder_cache(params, protected_folder_uids):
+            # Only SailPoint's own record is exempt from handle_command's guard; every other
+            # protected record (and the folder cache, which has no exemption) stays hidden throughout.
+            handle_command_uids = {uid: title for uid, title in protected_uids.items() if uid != sailpoint_uid}
+
+            with hide_from_folder_cache(params, protected_folder_uids), \
+                    hide_from_record_cache(params, handle_command_uids):
                 if sailpoint_enabled:
                     from ..commands.integrations.sailpoint.service import SailPointService
                     command, sailpoint_response = SailPointService.handle_command(params, command)
@@ -231,7 +236,8 @@ class CommandExecutor:
                         response = CommandExecutor.encrypt_response(response)
                         return response, status_code
 
-                return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
+                with hide_from_record_cache(params, protected_uids):
+                    return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
             # Debug logging with sanitization
@@ -247,7 +253,10 @@ class CommandExecutor:
 
             if status_code == 200 and sailpoint_enabled:
                 try:
-                    SailPointService.after_command(params, command, success=True)
+                    # Same rule as the pre-dispatch phase: every protected record except
+                    # SailPoint's own stays hidden here too.
+                    with hide_from_record_cache(params, handle_command_uids):
+                        SailPointService.after_command(params, command, success=True)
                 except Exception as e:
                     logger.error(f'SailPoint post-process failed: {sanitize_debug_data(str(e))}')
                     err = {
