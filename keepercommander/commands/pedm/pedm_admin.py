@@ -2325,8 +2325,11 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             if approval_type and approval_type != status.lower():
                 continue
 
-            account_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.account_info.items())]
-            application_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.application_info.items())]
+            account_info = [f'{k}={v}' for k, v in approval.account_info.items()]
+            application_info = [f'{k}={v}' for k, v in approval.application_info.items()]
+            if fmt != 'json':
+                account_info = [y[:30] for y in account_info]
+                application_info = [y[:30] for y in application_info]
             justification = approval.justification
             if fmt != 'json' and isinstance(justification, str):
                 try:
