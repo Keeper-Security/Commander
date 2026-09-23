@@ -1772,6 +1772,7 @@ class KSMCommand(Command):
 
                 # KA-6845 App Sharing v2 membership -- distinct from the legacy record-share
                 # permissions above, so kept as its own section rather than merged into "users".
+                # The owner is included here by the server (no real app_user row exists for them).
                 for u in ai.users:
                     app_data["app_users"].append({
                         "username": KSMCommand.resolve_username_by_user_id(params, u.userId),
