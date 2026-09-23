@@ -773,6 +773,10 @@ def start_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT
     """
     if not local_port:
         raise ValueError("Port must be provided to start Tailscale Funnel.")
+    if funnel_port not in TAILSCALE_FUNNEL_ALLOWED_PORTS:
+        raise ValueError(
+            f"Invalid Tailscale Funnel port {funnel_port}; must be one of {TAILSCALE_FUNNEL_ALLOWED_PORTS}."
+        )
 
     cmd = ["tailscale", "funnel", "--bg", f"--https={funnel_port}", f"localhost:{local_port}"]
     log_file = _get_tailscale_log_path()
