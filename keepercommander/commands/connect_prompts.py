@@ -170,7 +170,8 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
     - Single/double quoted strings (quote escaping)
     - Escaped characters (backslash)
     - Shell statement separators (; \n && ||)
-    - Comments (#) — everything after # until newline is ignored
+    - Comments (#) — # only starts a comment when it begins a word
+      (at line start or preceded by whitespace)
     """
     if not script:
         return []
@@ -187,6 +188,13 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
             parts.append(stmt)
         buf.clear()
 
+    def is_word_boundary(pos: int) -> bool:
+        """True if position is at the start of a shell word (start of line or after whitespace)."""
+        if pos == 0:
+            return True
+        prev_char = script[pos - 1]
+        return prev_char in (' ', '\t', '\n', ';', '&', '|', '(', ')')
+
     while i < n:
         c = script[i]
         if escaped:
@@ -202,8 +210,8 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
         elif c in ('"', "'"):
             quote = c
             buf.append(c)
-        elif c == '#' and quote is None:
-            # Comment: skip until newline
+        elif c == '#' and quote is None and is_word_boundary(i):
+            # Comment: skip until newline (only if # starts a word)
             while i < n and script[i] != '\n':
                 i += 1
             continue

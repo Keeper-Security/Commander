@@ -122,6 +122,29 @@ class TestSplitterDoesNotHidePayloads(unittest.TestCase):
         self.assertEqual(len(stmts), 2)
         self.assertEqual(stmts[0], 'echo "#"')
 
+    def test_hash_inside_unquoted_word_is_not_a_comment(self):
+        # # is only a comment at word boundary (start of line or after whitespace)
+        # Not in the middle of a word like "safe#"
+        script = 'echo safe# > /tmp/output; echo next'
+        stmts = cp.split_shell_statements(script)
+        self.assertEqual(len(stmts), 2, f"Expected 2 statements, got {len(stmts)}: {stmts}")
+        self.assertEqual(stmts[0], 'echo safe# > /tmp/output')
+        self.assertEqual(stmts[1], 'echo next')
+
+    def test_hash_after_whitespace_starts_comment(self):
+        # # after whitespace is a comment
+        stmts = cp.split_shell_statements('echo safe # this is a comment\necho next')
+        self.assertEqual(len(stmts), 2)
+        self.assertEqual(stmts[0], 'echo safe')
+        self.assertEqual(stmts[1], 'echo next')
+
+    def test_hash_at_line_start_starts_comment(self):
+        # # at start of line is a comment
+        stmts = cp.split_shell_statements('echo a\n# comment\necho b')
+        self.assertEqual(len(stmts), 2)
+        self.assertEqual(stmts[0], 'echo a')
+        self.assertEqual(stmts[1], 'echo b')
+
 
 class TestRecordTextIsSanitized(unittest.TestCase):
     def test_ansi_escape_in_record_title_is_escaped(self):
