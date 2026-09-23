@@ -896,94 +896,175 @@ class ShareFolderCommand(Command):
         return rq
 
     @staticmethod
+    def _confirm_ksm_cascade(params, chunk):
+        # type: (KeeperParams, List[folder_pb2.SharedFolderUpdateV3Request]) -> bool
+        """Look up which KSM app devices would be cascade-deleted by the user/team removals in
+        `chunk`, and prompt the user with the specifics before retrying with forceRemoveShare=True.
+        Returns False (falls back to the generic error) if no removal is found in `chunk`, or if no
+        matching device cascade could be resolved locally."""
+        from .ksm import KSMCommand
+
+        removals = []
+        for rq_item in chunk:
+            usernames = list(rq_item.sharedFolderRemoveUser)
+            team_uids = [utils.base64_url_encode(t) for t in rq_item.sharedFolderRemoveTeam]
+            if usernames or team_uids:
+                removals.append((utils.base64_url_encode(rq_item.sharedFolderUid), usernames, team_uids))
+        if not removals:
+            return False
+
+        removed_usernames_lower = {u.lower() for _, usernames, _ in removals for u in usernames}
+        removed_team_uids = {t for _, _, team_uids in removals for t in team_uids}
+        sf_uids = {sf_uid for sf_uid, _, _ in removals}
+
+        team_member_usernames = set()
+        if removed_team_uids and params.enterprise:
+            user_by_id = {u.get('user_id'): u.get('username') for u in params.enterprise.get('users', [])}
+            for tu in params.enterprise.get('team_users', []):
+                if tu.get('team_uid') in removed_team_uids:
+                    username = user_by_id.get(tu.get('enterprise_user_id'))
+                    if username:
+                        team_member_usernames.add(username.lower())
+
+        affected_usernames = removed_usernames_lower | team_member_usernames
+
+        cascade = {}   # username -> {app_title: device_count}
+        for app_uid, rec in params.record_cache.items():
+            if rec.get('version') != 5:
+                continue
+            try:
+                app_info_list = KSMCommand.get_app_info(params, app_uid)
+            except Exception:
+                continue
+            for ai in app_info_list:
+                share_sf_uids = {utils.base64_url_encode(s.secretUid) for s in ai.shares
+                                 if s.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER}
+                if not share_sf_uids & sf_uids:
+                    continue
+                app_title = KSMCommand.get_app_title(params, app_uid) or app_uid
+                for client in ai.clients:
+                    username = KSMCommand.resolve_username_by_user_id(params, client.userId)
+                    if username and username.lower() in affected_usernames:
+                        cascade.setdefault(username, {}).setdefault(app_title, 0)
+                        cascade[username][app_title] += 1
+
+        if not cascade:
+            return False
+
+        total_devices = sum(count for apps in cascade.values() for count in apps.values())
+        total_apps = {app for apps in cascade.values() for app in apps}
+        detail = '\n'.join(
+            f'  {username}: ' + ', '.join(f'{title} ({count})' for title, count in apps.items())
+            for username, apps in cascade.items())
+        prompt = (
+            f'Removing the following will delete {total_devices} device(s) across {len(total_apps)} '
+            f'app(s):\n{detail}\nProceed?')
+        answer = user_choice(prompt, 'yn', 'n')
+        return answer.lower() in ('y', 'yes')
+
+    @staticmethod
+    def _log_share_update_results(params, chunk, rss):
+        for rq_item, rs in zip(chunk, rss.sharedFoldersUpdateV3Response):
+            user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
+            team_cache = params.available_team_cache or []
+            for attr in (
+                    'sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus',
+                    'sharedFolderRemoveTeamStatus'):
+                if hasattr(rs, attr):
+                    statuses = getattr(rs, attr)
+                    for t in statuses:
+                        team_uid = utils.base64_url_encode(t.teamUid)
+                        team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
+                        if team:
+                            status = t.status
+                            exp_text = format_share_expiration_ms(team_exp.get(team_uid, 0))
+                            exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
+                            if status == 'success':
+                                logging.info('Team share \'%s\' %s%s', team['team_name'],
+                                             'added' if attr == 'sharedFolderAddTeamStatus' else
+                                             'updated' if attr == 'sharedFolderUpdateTeamStatus' else
+                                             'removed', exp_suffix)
+                            else:
+                                logging.warning('Team share \'%s\' failed', team['team_name'])
+
+            for attr in (
+                    'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus',
+                    'sharedFolderRemoveUserStatus'):
+                if hasattr(rs, attr):
+                    statuses = getattr(rs, attr)
+                    for s in statuses:
+                        username = s.username
+                        status = s.status
+                        exp_text = format_share_expiration_ms(user_exp.get(username.lower(), 0))
+                        if status == 'success':
+                            if exp_text and attr in (
+                                    'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus'):
+                                logging.info(
+                                    'Folder access granted to user \'%s\', expires %s',
+                                    username, exp_text)
+                            elif attr == 'sharedFolderRemoveUserStatus':
+                                logging.info(
+                                    'Folder access removed for user \'%s\'', username)
+                            else:
+                                exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
+                                logging.info('User share \'%s\' %s%s', username,
+                                             'added' if attr == 'sharedFolderAddUserStatus' else
+                                             'updated' if attr == 'sharedFolderUpdateUserStatus' else
+                                             'removed', exp_suffix)
+                        elif status == 'invited':
+                            logging.info('User \'%s\' invited', username)
+                        else:
+                            logging.warning(
+                                'User share \'%s\' failed: %s', username, status)
+
+            for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
+                         'sharedFolderRemoveRecordStatus'):
+                if hasattr(rs, attr):
+                    statuses = getattr(rs, attr)
+                    for r in statuses:
+                        record_uid = utils.base64_url_encode(r.recordUid)
+                        status = r.status
+                        title = _record_share_log_title(params, record_uid)
+                        if status == 'success':
+                            logging.info('Record share \'%s\' %s', title,
+                                         'added' if attr == 'sharedFolderAddRecordStatus' else
+                                         'updated' if attr == 'sharedFolderUpdateRecordStatus' else
+                                         'removed')
+                        else:
+                            logging.warning('Record share \'%s\' failed', title)
+
+    @staticmethod
     def send_requests(params, partitioned_requests):
         for requests in partitioned_requests:
             while requests:
                 params.sync_data = True
                 chunk = requests[:999]
                 requests = requests[999:]
-                rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
-                rqs.sharedFoldersUpdateV3.extend(chunk)
-                try:
-                    rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
-                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
-                    for rq_item, rs in zip(chunk, rss.sharedFoldersUpdateV3Response):
-                        user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
-                        team_cache = params.available_team_cache or []
-                        for attr in (
-                                'sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus',
-                                'sharedFolderRemoveTeamStatus'):
-                            if hasattr(rs, attr):
-                                statuses = getattr(rs, attr)
-                                for t in statuses:
-                                    team_uid = utils.base64_url_encode(t.teamUid)
-                                    team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
-                                    if team:
-                                        status = t.status
-                                        exp_text = format_share_expiration_ms(team_exp.get(team_uid, 0))
-                                        exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
-                                        if status == 'success':
-                                            logging.info('Team share \'%s\' %s%s', team['team_name'],
-                                                         'added' if attr == 'sharedFolderAddTeamStatus' else
-                                                         'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                                         'removed', exp_suffix)
-                                        else:
-                                            logging.warning('Team share \'%s\' failed', team['team_name'])
-
-                        for attr in (
-                                'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus',
-                                'sharedFolderRemoveUserStatus'):
-                            if hasattr(rs, attr):
-                                statuses = getattr(rs, attr)
-                                for s in statuses:
-                                    username = s.username
-                                    status = s.status
-                                    exp_text = format_share_expiration_ms(user_exp.get(username.lower(), 0))
-                                    if status == 'success':
-                                        if exp_text and attr in (
-                                                'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus'):
-                                            logging.info(
-                                                'Folder access granted to user \'%s\', expires %s',
-                                                username, exp_text)
-                                        elif attr == 'sharedFolderRemoveUserStatus':
-                                            logging.info(
-                                                'Folder access removed from user \'%s\'', username)
-                                        else:
-                                            exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
-                                            logging.info('User share \'%s\' %s%s', username,
-                                                         'added' if attr == 'sharedFolderAddUserStatus' else
-                                                         'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                                         'removed', exp_suffix)
-                                    elif status == 'invited':
-                                        logging.info('User \'%s\' invited', username)
-                                    else:
-                                        logging.warning(
-                                            'User share \'%s\' failed: %s', username, status)
-
-                        for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
-                                     'sharedFolderRemoveRecordStatus'):
-                            if hasattr(rs, attr):
-                                statuses = getattr(rs, attr)
-                                for r in statuses:
-                                    record_uid = utils.base64_url_encode(r.recordUid)
-                                    status = r.status
-                                    title = _record_share_log_title(params, record_uid)
-                                    if status == 'success':
-                                        logging.info('Record share \'%s\' %s', title,
-                                                     'added' if attr == 'sharedFolderAddRecordStatus' else
-                                                     'updated' if attr == 'sharedFolderUpdateRecordStatus' else
-                                                     'removed')
-                                    else:
-                                        logging.warning('Record share \'%s\' failed', title)
-                except KeeperApiError as kae:
-                    if kae.result_code == 'access_denied' and kae.additional_info == 'KSM_CASCADE_REQUIRED':
-                        raise CommandError(
-                            'share-folder',
-                            'One or more removed users or teams have a device on a KSM application linked to '
-                            'this shared folder. Removing them will delete those devices. Re-run this command '
-                            'with --force-remove-share to confirm.')
-                    if kae.result_code != 'bad_inputs_nothing_to_do':
-                        raise kae
+                confirmed_force = False
+                while True:
+                    rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                    rqs.sharedFoldersUpdateV3.extend(chunk)
+                    try:
+                        rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                                   rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                        ShareFolderCommand._log_share_update_results(params, chunk, rss)
+                        break
+                    except KeeperApiError as kae:
+                        if kae.result_code == 'access_denied' and kae.additional_info == 'KSM_CASCADE_REQUIRED':
+                            if not confirmed_force and ShareFolderCommand._confirm_ksm_cascade(params, chunk):
+                                confirmed_force = True
+                                for rq_item in chunk:
+                                    if rq_item.sharedFolderRemoveUser or rq_item.sharedFolderRemoveTeam:
+                                        rq_item.forceRemoveShare = True
+                                continue
+                            raise CommandError(
+                                'share-folder',
+                                'One or more removed users or teams have a device on a KSM application linked to '
+                                'this shared folder. Removing them will delete those devices. Re-run this command '
+                                'with --force-remove-share to confirm.')
+                        if kae.result_code != 'bad_inputs_nothing_to_do':
+                            raise kae
+                        break
 
 
 class ShareRecordCommand(Command):
