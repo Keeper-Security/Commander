@@ -514,8 +514,9 @@ class SshAgentContext(logging.Handler):
                         raise ValueError(f'Unsupported EC key: {curve_name.decode()}')
 
                     public_key_bytes, pos = ssh_agent_get_next_value(request, pos)
-                    key.key_blob = ssh_agent_encode_bytes(key_type) + ssh_agent_encode_bytes(public_key_bytes)
-                    public_numbers = ec.EllipticCurvePublicNumbers.from_encoded_point(curve, public_key_bytes)
+                    key.key_blob = ssh_agent_encode_bytes(key_type) + ssh_agent_encode_bytes(curve_name) + ssh_agent_encode_bytes(public_key_bytes)
+                    public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, public_key_bytes)
+                    public_numbers = public_key.public_numbers()
 
                     priv_key, pos = ssh_agent_get_next_value(request, pos)
                     private_int = int.from_bytes(priv_key, byteorder='big')
