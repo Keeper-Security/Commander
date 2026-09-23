@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -270,6 +271,82 @@ class TestTunnelLogFiles(unittest.TestCase):
         with mock.patch('keepercommander.utils.get_default_path', return_value=overridden_dir):
             log_file = tunneling.get_tunnel_log_file('ngrok_subprocess.log')
             self.assertTrue(log_file.startswith(os.path.join(overridden_dir, 'service_logs')))
+
+
+class TestStartTailscaleFunnel(unittest.TestCase):
+    def test_rejects_port_not_in_allowed_set(self):
+        """Tailscale Funnel only accepts 443/8443/10000 as the external-facing port -
+        catch an invalid value before it ever reaches the CLI."""
+        with self.assertRaises(ValueError):
+            tunneling.start_tailscale_funnel(local_port=8080, funnel_port=9999)
+
+    def test_accepts_each_allowed_port(self):
+        with tempfile.NamedTemporaryFile() as tmp:
+            for allowed_port in tunneling.TAILSCALE_FUNNEL_ALLOWED_PORTS:
+                with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+                     mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                                 return_value=mock.Mock(returncode=0)) as mock_run:
+                    tunneling.start_tailscale_funnel(local_port=8080, funnel_port=allowed_port)
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn(f"--https={allowed_port}", cmd)
+
+    def test_missing_local_port_raises(self):
+        with self.assertRaises(ValueError):
+            tunneling.start_tailscale_funnel(local_port=None)
+
+    def test_raises_with_guidance_when_cli_exits_nonzero(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            with self.assertRaisesRegex(Exception, "Failed to start Tailscale Funnel"):
+                tunneling.start_tailscale_funnel(local_port=8080)
+
+
+class TestGetTailscaleFunnelStatus(unittest.TestCase):
+    """Schema verified live against a real `tailscale funnel status --json` while a
+    Funnel target was actually running: {"Web": {"<host>:<port>": {"Handlers":
+    {"<path>": {"Proxy": "http://localhost:<port>"}}}}}."""
+
+    def test_true_when_local_port_is_an_active_proxy_target(self):
+        payload = {"Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}}}
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertTrue(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_no_matching_target(self):
+        payload = {"Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}}}
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_no_funnel_configured_at_all(self):
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout='{}')):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_on_cli_failure_not_raised(self):
+        """A status check is diagnostic, not authoritative - a CLI/parsing error must
+        report 'not active' rather than bubbling up and crashing the caller."""
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         side_effect=Exception("boom")):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+
+class TestStopTailscaleFunnel(unittest.TestCase):
+    def test_returns_true_on_success(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)):
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+
+    def test_returns_false_on_nonzero_exit(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            self.assertFalse(tunneling.stop_tailscale_funnel(8080))
 
 
 if __name__ == '__main__':
