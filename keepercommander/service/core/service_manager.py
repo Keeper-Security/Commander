@@ -67,6 +67,11 @@ class ServiceManager:
             
         SignalHandler.setup_signal_handlers(cls._handle_shutdown)
             
+        # Initialized before any operation that could raise, so the outer except
+        # below can always safely check them to roll back a partially-started Funnel.
+        tailscale_enabled = False
+        tailscale_port = None
+
         try:
             service_config = ServiceConfig()
             config_data = service_config.load_config()
@@ -119,9 +124,6 @@ class ServiceManager:
 
                 logger.error(f"\n{str(e)}")
                 return
-
-            tailscale_enabled = False
-            tailscale_port = None
 
             try:
                 TailscaleConfigurator.configure_tailscale(config_data, service_config)
@@ -367,6 +369,17 @@ class ServiceManager:
         except Exception as e:
             logger.error(f"Error: Failed to start Commander Service")
             logger.error(f"Reason: {e}")
+            # Tailscale Funnel may already be live at this point (configured earlier
+            # in this same call) even though the service subprocess/Flask app itself
+            # failed to start -- stop it so a failed startup doesn't leave a public
+            # endpoint pointing at a service that never actually came up.
+            if tailscale_enabled and tailscale_port:
+                try:
+                    from ..util.tunneling import stop_tailscale_funnel
+                    stop_tailscale_funnel(tailscale_port)
+                    logger.debug("Stopped Tailscale Funnel after service startup failure")
+                except Exception as cleanup_error:
+                    logger.debug(f"Failed to stop Tailscale Funnel during startup-failure rollback: {cleanup_error}")
             cls._handle_shutdown()
 
     @classmethod
@@ -564,6 +577,17 @@ class ServiceManager:
                 logger.debug(f"Service status check: {status}")
                 return status
             except psutil.NoSuchProcess:
+                # Funnel is managed by tailscaled, not tied to the Commander process --
+                # an unexpected crash/SIGKILL of the service can leave it publicly
+                # exposed with nothing behind it. Reconcile it here rather than only
+                # on an explicit service-stop.
+                if process_info.tailscale_enabled and process_info.tailscale_port:
+                    try:
+                        from ..util.tunneling import stop_tailscale_funnel
+                        stop_tailscale_funnel(process_info.tailscale_port)
+                        logger.debug("Reconciled dangling Tailscale Funnel after detecting Commander process was no longer running")
+                    except Exception as cleanup_error:
+                        logger.debug(f"Failed to reconcile Tailscale Funnel: {cleanup_error}")
                 ProcessInfo.clear()
                 pass
         else:
