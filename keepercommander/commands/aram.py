@@ -339,6 +339,19 @@ def load_syslog_templates(params):
                 syslog_templates[name] = syslog
 
 
+def _is_owned_audit_log_record(params: KeeperParams, record_uid: str) -> bool:
+    """True if the current account owns this record.
+
+    Uses ``record_owner_cache`` first, then ``meta_data_cache`` from
+    recordMetaData (server-asserted). Unknown ownership fails closed.
+    """
+    owner = (params.record_owner_cache or {}).get(record_uid)
+    if owner and owner.owner:
+        return True
+    meta = (getattr(params, 'meta_data_cache', None) or {}).get(record_uid) or {}
+    return bool(meta.get('owner'))
+
+
 class AuditLogBaseExport(abc.ABC):
     def __init__(self):
         self.store_record = False
@@ -494,7 +507,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                     for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
                         try:
                             print('Testing \'{0}\' ...'.format(test_url), file=sys.stderr, end='', flush=True)
-                            rs = requests.post(test_url, json='', verify=False)
+                            rs = requests.post(test_url, json='')
                             if rs.status_code == 401:
                                 js = rs.json()
                                 if 'code' in js:
@@ -519,7 +532,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                         return
                     try:
                         auth={'Authorization': 'Splunk {0}'.format(test_token)}
-                        rs = requests.post(url, json='', headers=auth, verify=False)
+                        rs = requests.post(url, json='', headers=auth)
                         if rs.status_code == 400:
                             js = rs.json()
                             if 'code' in js:
@@ -553,7 +566,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
         auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
         try:
             logging.captureWarnings(True)
-            rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
+            rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth)
         finally:
             logging.captureWarnings(False)
 
@@ -942,7 +955,11 @@ class AuditLogCommand(EnterpriseCommand):
         for r_uid in params.record_cache:
             rec = vault.KeeperRecord.load(params, r_uid)
             if record_name in [rec.record_uid, rec.title]:
+                if not _is_owned_audit_log_record(params, r_uid):
+                    print(f'Note: Record "{rec.title}" is not owned by you and will not be used.')
+                    continue
                 record = rec
+                break
         if record is None:
             answer = user_choice('Do you want to create a Keeper record to store audit log settings?', 'yn', 'n')
             if answer.lower() == 'y':
@@ -956,6 +973,8 @@ class AuditLogCommand(EnterpriseCommand):
                     record = vault.KeeperRecord.load(params, record_uid)
         if record is None:
             raise CommandError('audit-log', 'Record not found')
+
+        print(f'Export Destination: "{record.title}" ({record.record_uid})')
 
         shared_folder_uids = kwargs.get('shared_folder_uid')
         node_ids = kwargs.get('node_id')
