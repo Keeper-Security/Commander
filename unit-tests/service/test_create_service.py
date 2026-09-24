@@ -39,7 +39,7 @@ class TestCreateService(unittest.TestCase):
     def test_handle_configuration_streamlined(self):
         """Test streamlined configuration handling."""
         config_data = self.command.service_config.create_default_config()
-        args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
+        args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, tailscale=None, tailscale_advertise_tags=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
         with patch.object(self.command.config_handler, 'handle_streamlined_config') as mock_streamlined:
             self.command._handle_configuration(config_data, self.params, args)
@@ -48,7 +48,7 @@ class TestCreateService(unittest.TestCase):
     def test_handle_configuration_interactive(self):
         """Test interactive configuration handling."""
         config_data = self.command.service_config.create_default_config()
-        args =  StreamlineArgs(port=None, commands=None, ngrok=None, allowedip='' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled=None, update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
+        args =  StreamlineArgs(port=None, commands=None, ngrok=None, allowedip='' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, tailscale=None, tailscale_advertise_tags=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled=None, update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
         with patch.object(self.command.config_handler, 'handle_interactive_config') as mock_interactive, \
             patch.object(self.command.security_handler, 'configure_security') as mock_security:
@@ -59,7 +59,7 @@ class TestCreateService(unittest.TestCase):
     def test_create_and_save_record(self):
         """Test record creation and saving."""
         config_data = self.command.service_config.create_default_config()
-        args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
+        args = StreamlineArgs(port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, tailscale=None, tailscale_advertise_tags=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
         with patch.object(self.command.service_config, 'create_record') as mock_create_record, \
             patch.object(self.command.service_config, 'save_config') as mock_save_config:
@@ -82,7 +82,7 @@ class TestCreateService(unittest.TestCase):
                 
     def test_validation_error_handling(self):
         """Test handling of validation errors during execution."""
-        args =  StreamlineArgs(port=-1, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
+        args =  StreamlineArgs(port=-1, commands='record-list', ngrok=None, allowedip='0.0.0.0' ,deniedip='', ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None, tailscale=None, tailscale_advertise_tags=None, certfile='', certpassword='', fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None, ratelimit=None, encryption_key=None, token_expiration=None)
             
         with patch('builtins.print') as mock_print:
             with patch.object(self.command.service_config, 'create_default_config') as mock_create_config:
@@ -103,6 +103,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare='cf_token123',
             cloudflare_custom_domain='tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -129,6 +131,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare=None,
             cloudflare_custom_domain='tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -157,6 +161,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare='cf_token123',
             cloudflare_custom_domain=None,
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -185,6 +191,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain='ngrok.example.com', 
             cloudflare='cf_token123',
             cloudflare_custom_domain='tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -224,6 +232,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare='cf_token123',
             cloudflare_custom_domain='tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -274,6 +284,8 @@ class TestCreateService(unittest.TestCase):
                                     ngrok_custom_domain=None,
                                     cloudflare='cf_token123',
                                     cloudflare_custom_domain='tunnel.example.com',
+                                    tailscale=None,
+                                    tailscale_advertise_tags=None,
                                     certfile='',
                                     certpassword='',
                                     fileformat='json',
@@ -300,6 +312,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare='eyJhIjoiYWJjZGVmZ2hpams',  # Base64-like token
             cloudflare_custom_domain='tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -328,6 +342,8 @@ class TestCreateService(unittest.TestCase):
             ngrok_custom_domain=None, 
             cloudflare='cf_token123',
             cloudflare_custom_domain='my-tunnel.example.com',
+            tailscale=None,
+            tailscale_advertise_tags=None,
             certfile='', 
             certpassword='', 
             fileformat='json', 
@@ -343,6 +359,134 @@ class TestCreateService(unittest.TestCase):
             config_data = self.command.service_config.create_default_config()
             self.command._handle_configuration(config_data, self.params, args)
             mock_streamlined.assert_called_once_with(config_data, args, self.params)
+
+    def test_get_parser_tailscale(self):
+        """Test that -ts alone carries the auth key value, with no separate -tsk flag."""
+        parser = self.command.get_parser()
+
+        args = parser.parse_args(['--tailscale', 'tskey-auth-dummy'])
+        self.assertEqual(args.tailscale, 'tskey-auth-dummy')
+        self.assertFalse(hasattr(args, 'tailscale_auth_key'))
+
+        args = parser.parse_args(['-ts', 'tskey-auth-dummy', '-tst', 'tag:commander-service'])
+        self.assertEqual(args.tailscale, 'tskey-auth-dummy')
+        self.assertEqual(args.tailscale_advertise_tags, 'tag:commander-service')
+
+    def test_tailscale_streamlined_configuration(self):
+        """Test streamlined configuration with Tailscale, -ts alone enabling it."""
+        config_data = self.command.service_config.create_default_config()
+        args = StreamlineArgs(
+            port=8080,
+            commands='record-list',
+            ngrok=None,
+            allowedip='0.0.0.0',
+            deniedip='',
+            ngrok_custom_domain=None,
+            cloudflare=None,
+            cloudflare_custom_domain=None,
+            tailscale='tskey-auth-dummy',
+            tailscale_advertise_tags=None,
+            certfile='',
+            certpassword='',
+            fileformat='json',
+            run_mode='foreground',
+            queue_enabled='y',
+            update_vault_record=None,
+            ratelimit=None,
+            encryption_key=None,
+            token_expiration=None
+        )
+
+        self.command.config_handler.handle_streamlined_config(config_data, args, self.params)
+        self.assertEqual(config_data['tailscale'], 'y')
+        self.assertEqual(config_data['tailscale_auth_key'], 'tskey-auth-dummy')
+
+    def test_tailscale_advertise_tags_streamlined(self):
+        """Test that -tst is threaded through to the internal config alongside -ts."""
+        config_data = self.command.service_config.create_default_config()
+        args = StreamlineArgs(
+            port=8080,
+            commands='record-list',
+            ngrok=None,
+            allowedip='0.0.0.0',
+            deniedip='',
+            ngrok_custom_domain=None,
+            cloudflare=None,
+            cloudflare_custom_domain=None,
+            tailscale='tskey-client-dummy',
+            tailscale_advertise_tags='tag:commander-service',
+            certfile='',
+            certpassword='',
+            fileformat='json',
+            run_mode='foreground',
+            queue_enabled='y',
+            update_vault_record=None,
+            ratelimit=None,
+            encryption_key=None,
+            token_expiration=None
+        )
+
+        self.command.config_handler.handle_streamlined_config(config_data, args, self.params)
+        self.assertEqual(config_data['tailscale_advertise_tags'], 'tag:commander-service')
+
+    def test_tailscale_omitted_disables_it(self):
+        """Test that omitting -ts disables Tailscale without requiring any other flag."""
+        config_data = self.command.service_config.create_default_config()
+        args = StreamlineArgs(
+            port=8080,
+            commands='record-list',
+            ngrok=None,
+            allowedip='0.0.0.0',
+            deniedip='',
+            ngrok_custom_domain=None,
+            cloudflare=None,
+            cloudflare_custom_domain=None,
+            tailscale=None,
+            tailscale_advertise_tags=None,
+            certfile='',
+            certpassword='',
+            fileformat='json',
+            run_mode='foreground',
+            queue_enabled='y',
+            update_vault_record=None,
+            ratelimit=None,
+            encryption_key=None,
+            token_expiration=None
+        )
+
+        self.command.config_handler.handle_streamlined_config(config_data, args, self.params)
+        self.assertEqual(config_data['tailscale'], 'n')
+        self.assertEqual(config_data['tailscale_auth_key'], '')
+
+    def test_tailscale_and_ngrok_mutual_exclusion(self):
+        """Test that Ngrok takes priority and disables Tailscale, matching the Cloudflare/Ngrok exclusion pattern."""
+        config_data = self.command.service_config.create_default_config()
+        args = StreamlineArgs(
+            port=8080,
+            commands='record-list',
+            ngrok='ngrok_token123',
+            allowedip='0.0.0.0',
+            deniedip='',
+            ngrok_custom_domain='ngrok.example.com',
+            cloudflare=None,
+            cloudflare_custom_domain=None,
+            tailscale='tskey-auth-dummy',
+            tailscale_advertise_tags=None,
+            certfile='',
+            certpassword='',
+            fileformat='json',
+            run_mode='foreground',
+            queue_enabled='y',
+            update_vault_record=None,
+            ratelimit=None,
+            encryption_key=None,
+            token_expiration=None
+        )
+
+        self.command.config_handler.handle_streamlined_config(config_data, args, self.params)
+        self.assertEqual(config_data['ngrok'], 'y')
+        self.assertEqual(config_data['tailscale'], 'n')
+        self.assertEqual(config_data['tailscale_auth_key'], '')
 
 if __name__ == '__main__':
     unittest.main()
