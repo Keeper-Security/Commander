@@ -247,11 +247,43 @@ class TestProtectedRecordCommandExecution(TestCase):
             CommandExecutor.execute('whoami')
             mock_get_uids.assert_called_once()
 
-    def test_sailpoint_handling_runs_inside_the_record_cache_guard(self):
-        """SailPoint's own pre-processing (handle_command) can resolve/act on
-        records before cli.do_command ever runs -- it must run with the guard
-        already active, not before it, or a folder/recursive share under
-        SailPoint mode could reach the protected record before it's hidden."""
+    def test_sailpoint_handling_runs_before_the_record_cache_guard(self):
+        """handle_command needs its OWN record visible to read its marker/capability fields.
+        Safe because Layer B already blocks direct references, and _before_share only resolves exact cache keys."""
+        params = _params_with_protected_and_normal_record()
+        seen_during_handle_command = {}
+        seen_during_dispatch = {}
+
+        def fake_handle_command(p, command):
+            seen_during_handle_command['keys'] = set(p.record_cache.keys())
+            return command, None
+
+        def fake_capture(p, command):
+            seen_during_dispatch['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': PROTECTED_UID}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=fake_handle_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture,
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        # Unhidden for SailPoint's own gate -- it needs to read its own config record.
+        self.assertIn(PROTECTED_UID, seen_during_handle_command['keys'])
+        self.assertIn(NORMAL_UID, seen_during_handle_command['keys'])
+        # Hidden again for the actual dispatched command -- an admin still can't reach it.
+        self.assertNotIn(PROTECTED_UID, seen_during_dispatch['keys'])
+        self.assertIn(NORMAL_UID, seen_during_dispatch['keys'])
+        # Restored after the whole request completes.
+        self.assertIn(PROTECTED_UID, params.record_cache)
+
+    def test_other_protected_records_stay_hidden_from_sailpoint_handle_command(self):
+        """Regression test: only SailPoint's own pinned UID is exempt from handle_command's guard;
+        every other protected record (PROTECTED_UID standing in for e.g. Docker's) must stay hidden."""
         params = _params_with_protected_and_normal_record()
         seen_during_handle_command = {}
 
@@ -261,18 +293,114 @@ class TestProtectedRecordCommandExecution(TestCase):
 
         with mock.patch(
             'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
-        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-own-uid'}), mock.patch(
             'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
             side_effect=fake_handle_command,
         ), mock.patch.object(
-            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
         ):
             CommandExecutor.execute(f'get {NORMAL_UID}')
 
         self.assertNotIn(PROTECTED_UID, seen_during_handle_command['keys'])
         self.assertIn(NORMAL_UID, seen_during_handle_command['keys'])
-        # Restored after the whole guarded block exits, same as the non-SailPoint case.
-        self.assertIn(PROTECTED_UID, params.record_cache)
+
+    def test_direct_reference_to_protected_record_never_reaches_sailpoint_handle_command(self):
+        """Layer B blocks a command that directly names the protected UID/title before
+        SailPoint's handle_command ever runs, regardless of the record being unhidden for it."""
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+        ) as mock_handle_command, mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(f'get {PROTECTED_UID}')
+
+        self.assertEqual(status_code, 403)
+        mock_handle_command.assert_not_called()
+        mock_capture.assert_not_called()
+
+    def test_sailpoint_marker_check_failure_denies_the_request(self):
+        """A transient marker-read failure must deny the request, not silently skip SailPoint's gating."""
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.record_has_marker',
+            side_effect=RuntimeError('decrypt failed'),
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
+        ) as mock_capture:
+            response, status_code = CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertEqual(status_code, 500)
+        mock_capture.assert_not_called()
+
+    def test_sailpoint_own_record_stays_hidden_during_dispatch_when_another_record_is_also_protected(self):
+        """Regression test: when a second protected record forces the outer (handle_command)
+        guard to actually wrap record_cache, the inner (dispatch) guard must still hide
+        SailPoint's own UID too, not silently no-op because the cache is no longer a plain dict."""
+        sailpoint_uid = 'SAILPOINT_OWN_UID'
+        params = params_module.KeeperParams()
+        params.service_mode = False
+        params.record_cache = {
+            sailpoint_uid: _record_cache_entry(sailpoint_uid, 'Commander Service Mode SailPoint Config'),
+            PROTECTED_UID: _record_cache_entry(PROTECTED_UID, PROTECTED_TITLE),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        seen_during_dispatch = {}
+
+        def fake_capture(p, command):
+            seen_during_dispatch['keys'] = set(p.record_cache.keys())
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': sailpoint_uid}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=lambda p, command: (command, None),
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture,
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(sailpoint_uid, seen_during_dispatch['keys'])
+        self.assertNotIn(PROTECTED_UID, seen_during_dispatch['keys'])
+        self.assertIn(NORMAL_UID, seen_during_dispatch['keys'])
+
+    def test_other_protected_records_stay_hidden_during_sailpoint_after_command(self):
+        """after_command follows the same rule as handle_command: SailPoint's own record stays
+        visible (it writes the pending-entitlement queue there), every other protected record stays hidden."""
+        sailpoint_uid = 'SAILPOINT_OWN_UID'
+        params = params_module.KeeperParams()
+        params.service_mode = False
+        params.record_cache = {
+            sailpoint_uid: _record_cache_entry(sailpoint_uid, 'Commander Service Mode SailPoint Config'),
+            PROTECTED_UID: _record_cache_entry(PROTECTED_UID, PROTECTED_TITLE),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        seen_during_after_command = {}
+
+        def fake_after_command(p, command, success=True):
+            seen_during_after_command['keys'] = set(p.record_cache.keys())
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': sailpoint_uid}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=lambda p, command: (command, None),
+        ), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.after_command',
+            side_effect=fake_after_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', ''),
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertIn(sailpoint_uid, seen_during_after_command['keys'])
+        self.assertNotIn(PROTECTED_UID, seen_during_after_command['keys'])
+        self.assertIn(NORMAL_UID, seen_during_after_command['keys'])
 
 
 class TestSyncDownExemptionCommandExecution(TestCase):
@@ -420,6 +548,7 @@ class TestTerraformRecordProtectionCommandExecution(TestCase):
         self.assertEqual(status_code, 200)
         mock_capture.assert_called_once()
 
+
 class TestProtectedFolderCommandExecution(TestCase):
     """The shared folder holding a protected config record must be just as unreachable
     as the record itself -- ls/tree/rndir/mv/share-folder all resolve folders through the
@@ -515,6 +644,74 @@ class TestProtectedFolderCommandExecution(TestCase):
 
         self.assertIn(self.PROTECTED_FOLDER_UID, params.folder_cache)
         self.assertIn(self.PROTECTED_FOLDER_UID, params.root_folder.subfolders)
+
+
+class TestSailPointFolderProtectionCommandExecution(TestCase):
+    """Regression test: hide_from_folder_cache was imported and fed protected_folder_uids,
+    but never actually invoked as a context manager, so a protected record's folder kept
+    showing up in tree/ls even though the record itself was correctly hidden."""
+
+    FOLDER_UID = 'PROTECTED_FOLDER_UID'
+    RECORD_UID = 'PROTECTED_FOLDER_RECORD_UID'
+
+    def _params(self):
+        p = params_module.KeeperParams()
+        p.service_mode = False
+        p.record_cache = {
+            self.RECORD_UID: _record_cache_entry(self.RECORD_UID, 'Commander Service Mode SailPoint Config'),
+            NORMAL_UID: _record_cache_entry(NORMAL_UID, 'My Normal Record'),
+        }
+        p.root_folder = RootFolderNode()
+        node = SharedFolderNode()
+        node.uid = self.FOLDER_UID
+        node.name = 'Commander Service Mode - SailPoint'
+        p.folder_cache = {self.FOLDER_UID: node}
+        p.root_folder.subfolders = [self.FOLDER_UID]
+        p.shared_folder_cache = {self.FOLDER_UID: {'name_unencrypted': node.name}}
+        p.subfolder_cache = {self.FOLDER_UID: {'type': 'shared_folder', 'shared_folder_uid': self.FOLDER_UID}}
+        p.subfolder_record_cache = {self.FOLDER_UID: {self.RECORD_UID}}
+        return p
+
+    def test_folder_hidden_during_actual_dispatch(self):
+        params = self._params()
+        seen = {}
+
+        def fake_capture(p, command):
+            seen['folder_keys'] = set(p.folder_cache.keys())
+            seen['subfolders'] = list(p.root_folder.subfolders)
+            return 'ok', 'ok', ''
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.object(CommandExecutor, 'capture_output_and_logs', side_effect=fake_capture):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(self.FOLDER_UID, seen['folder_keys'])
+        self.assertNotIn(self.FOLDER_UID, seen['subfolders'])
+        self.assertIn(self.FOLDER_UID, params.folder_cache)
+        self.assertIn(self.FOLDER_UID, params.root_folder.subfolders)
+
+    def test_folder_hidden_during_sailpoint_handle_command_too(self):
+        """Unlike the record, the folder has no reason to be visible to handle_command,
+        so it must stay hidden for the whole request, not just the final dispatch."""
+        params = self._params()
+        seen = {}
+
+        def fake_handle_command(p, command):
+            seen['folder_keys'] = set(p.folder_cache.keys())
+            return command, None
+
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded', return_value=params
+        ), mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.service.SailPointService.handle_command',
+            side_effect=fake_handle_command,
+        ), mock.patch.object(
+            CommandExecutor, 'capture_output_and_logs', return_value=('ok', 'ok', '')
+        ):
+            CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertNotIn(self.FOLDER_UID, seen['folder_keys'])
 
 
 class TestReservedAttachmentCommandExecution(TestCase):

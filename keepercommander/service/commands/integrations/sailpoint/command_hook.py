@@ -81,7 +81,7 @@ class SailPointCommandHook:
 
         mutation = SailPointCommandParser.parse_identity_mutation(command)
         if mutation:
-            err = self._first_scim_identity_error(params, mutation.emails)
+            err = self._first_scim_identity_error(params, mutation.identifiers)
             if err:
                 return self._reject(command, err, 403)
         return command, None

@@ -347,6 +347,27 @@ class TestServiceModeCommandPolicy(TestCase):
         self.assertIsNone(check(_tokens('pam tunnel edit uid')))
         self.assertIsNone(check(_tokens('get RECORD_UID')))
 
+    def test_env_var_expansion_blocked_everywhere(self):
+        """expand_cmd_args substitutes ${VARNAME} after this check runs, so it must be banned outright."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = "'${VARNAME}'"
+        for cmd in (
+            "record-add --folder FOLDER_UID '${PAYLOAD}'",
+            "record-add --field=${PAYLOAD}",
+            "get ${last_record_uid}",
+            "share-folder ${LAST_FOLDER_UID} -e a@b.com",
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+
+        # Unrelated commands without ${...} syntax remain unaffected.
+        self.assertIsNone(check(_tokens('get RECORD_UID')))
+        self.assertIsNone(check(_tokens('record-add --title=x login=user')))
+        # A single literal '$' or unmatched braces are not the ${VARNAME} pattern.
+        self.assertIsNone(check(_tokens('record-add --field=$5.00')))
+
     def test_temp_path_leaf_symlink_is_not_containment(self):
         """A symlink planted at the temp-dir leaf must not escape containment."""
         request_temp_dir = tempfile.mkdtemp()

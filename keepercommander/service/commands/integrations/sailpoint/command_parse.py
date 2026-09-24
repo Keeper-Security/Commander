@@ -63,7 +63,7 @@ class ParsedShare:
 class ParsedIdentityMutation:
     """enterprise-user identity change (role/team/node) — used for SCIM coexistence."""
 
-    emails: List[str] = field(default_factory=list)
+    identifiers: List[str] = field(default_factory=list)
     has_role_change: bool = False
     has_team_change: bool = False
     has_node_change: bool = False
@@ -134,14 +134,15 @@ class SailPointCommandParser:
         if not parsed:
             return None
         ns, _unknown = parsed
-        emails = [e for e in (ns.email or []) if isinstance(e, str) and '@' in e]
+        # No '@' filter here (unlike parse_invite/parse_transfer): the SCIM guard must see IDs and '@all' too.
+        identifiers = [e for e in (ns.email or []) if isinstance(e, str) and e.strip()]
         has_role = bool(ns.add_role or ns.remove_role)
         has_team = bool(ns.add_team or ns.remove_team)
         has_node = bool(ns.node)
-        if not (has_role or has_team or has_node) or not emails:
+        if not (has_role or has_team or has_node) or not identifiers:
             return None
         return ParsedIdentityMutation(
-            emails=emails,
+            identifiers=identifiers,
             has_role_change=has_role,
             has_team_change=has_team,
             has_node_change=has_node,

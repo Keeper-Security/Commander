@@ -94,7 +94,7 @@ class SailPointParseTest(unittest.TestCase):
             'enterprise-user user@co.com --add-role Admin'
         )
         self.assertIsNotNone(parsed)
-        self.assertEqual(parsed.emails, ['user@co.com'])
+        self.assertEqual(parsed.identifiers, ['user@co.com'])
         self.assertTrue(parsed.has_role_change)
         self.assertFalse(parsed.has_team_change)
         self.assertFalse(parsed.has_node_change)
@@ -114,6 +114,22 @@ class SailPointParseTest(unittest.TestCase):
                 'enterprise-user user@co.com --lock'
             )
         )
+
+    def test_parse_identity_mutation_accepts_numeric_id(self):
+        # enterprise-user accepts a numeric enterprise_user_id in place of an
+        # email; the SCIM guard must see it too, not silently no-op.
+        parsed = SailPointCommandParser.parse_identity_mutation(
+            'enterprise-user 1469016254185479 --add-role Admin'
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.identifiers, ['1469016254185479'])
+        self.assertTrue(parsed.has_role_change)
+
+    def test_parse_identity_mutation_accepts_at_all(self):
+        parsed = SailPointCommandParser.parse_identity_mutation('eu @all --add-role Admin')
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.identifiers, ['@all'])
+        self.assertTrue(parsed.has_role_change)
 
     def test_parse_share_record(self):
         parsed = SailPointCommandParser.parse_share('share-record -e user@co.com -w RECORD_UID')
@@ -391,6 +407,70 @@ class SailPointScimGuardTest(unittest.TestCase):
             self.assertIsNotNone(err)
             query.assert_called()
 
+    def test_find_user_by_numeric_id(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        user = SailPointScimGuard.find_user(params, '555')
+        self.assertIsNotNone(user)
+        self.assertEqual(user['username'], 'user@co.com')
+
+    def test_find_user_by_alias(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'primary@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'user_aliases': [{'username': 'alias@co.com', 'enterprise_user_id': 555}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        user = SailPointScimGuard.find_user(params, 'alias@co.com')
+        self.assertIsNotNone(user)
+        self.assertEqual(user['username'], 'primary@co.com')
+
+    def test_identity_change_error_blocks_numeric_id_for_scim_user(self):
+        # The exact bypass this test guards against: the same user refused by
+        # email must also be refused when named by their enterprise user id.
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'user@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        by_email = SailPointScimGuard.identity_change_error(params, 'user@co.com')
+        by_id = SailPointScimGuard.identity_change_error(params, '555')
+        self.assertIsNotNone(by_email)
+        self.assertIsNotNone(by_id)
+
+    def test_identity_change_error_at_all_blocks_when_any_scim_user_exists(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [
+                {'username': 'plain@co.com', 'enterprise_user_id': 1, 'node_id': 1},
+                {'username': 'managed@co.com', 'enterprise_user_id': 2, 'node_id': 10},
+            ],
+            'nodes': [
+                {'node_id': 1, 'parent_id': None},
+                {'node_id': 10, 'parent_id': None, 'scim_id': 1},
+            ],
+            'scims': [],
+        }
+        err = SailPointScimGuard.identity_change_error(params, '@all')
+        self.assertIsNotNone(err)
+        self.assertIn('@all', err)
+
+    def test_identity_change_error_at_all_allows_when_no_scim_user(self):
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'plain@co.com', 'enterprise_user_id': 1, 'node_id': 1}],
+            'nodes': [{'node_id': 1, 'parent_id': None}],
+            'scims': [],
+        }
+        err = SailPointScimGuard.identity_change_error(params, '@all')
+        self.assertIsNone(err)
+
 
 class SailPointApplierTest(unittest.TestCase):
     def test_apply_nsf_folder_and_record_commands(self):
@@ -491,6 +571,72 @@ class SailPointRecordResolutionTest(unittest.TestCase):
         self.assertEqual(cmd.get_default_record_name(), 'Commander Service Mode SailPoint Config')
         self.assertEqual(cmd.get_record_env_key(), 'SAILPOINT_RECORD')
         self.assertEqual(cmd.get_default_folder_name(), 'Commander Service Mode - SailPoint')
+
+
+class SailPointMarkerFailureModeTest(unittest.TestCase):
+    """A marker read that raises must fail closed for per-request paths (deny/propagate);
+    startup paths may still safely degrade to 'not enabled'."""
+
+    def test_handle_command_propagates_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            with self.assertRaises(RuntimeError):
+                SailPointService.handle_command(params, 'get SOME_OTHER_RECORD_UID')
+
+    def test_after_command_propagates_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            with self.assertRaises(RuntimeError):
+                SailPointService.after_command(params, 'get SOME_OTHER_RECORD_UID', success=True)
+
+    def test_maybe_enable_degrades_to_not_enabled_on_marker_check_failure(self):
+        """Startup path -- nothing has executed yet, so degrading to 'not enabled' is safe."""
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        args = mock.Mock(commands=None)
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ):
+            SailPointService.maybe_enable(params, args)
+        self.assertFalse(hasattr(params, SailPointService.PARAMS_ATTR))
+
+    def test_start_background_services_degrades_to_not_started_on_marker_check_failure(self):
+        from keepercommander.service.commands.integrations.sailpoint.service import (
+            SailPointService,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.poller import (
+            SailPointEntitlementPoller,
+        )
+        from keepercommander.params import KeeperParams
+
+        params = KeeperParams()
+        with mock.patch.dict('os.environ', {'SAILPOINT_RECORD': 'sailpoint-uid'}), mock.patch(
+            'keepercommander.service.core.globals.get_current_params', return_value=params
+        ), mock.patch.object(
+            SailPointService, 'record_has_marker', side_effect=RuntimeError('decrypt failed')
+        ), mock.patch.object(
+            SailPointEntitlementPoller, 'start'
+        ) as mock_start:
+            SailPointService.start_background_services()
+        mock_start.assert_not_called()
 
 
 class SailPointShareTargetValidationTest(unittest.TestCase):
@@ -867,6 +1013,130 @@ class SailPointCapabilityGateTest(unittest.TestCase):
         self.assertIsNotNone(short)
         self.assertEqual(short[1], 403)
         self.assertIn('--delete', short[0]['error'])
+
+    def test_before_command_blocks_identity_mutation_by_numeric_id_for_scim_user(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'victim@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            _, blocked_by_email = hook.before_command(
+                params, 'enterprise-user victim@co.com --add-role Admin'
+            )
+            _, blocked_by_id = hook.before_command(
+                params, 'enterprise-user 555 --add-role Admin'
+            )
+
+        self.assertIsNotNone(blocked_by_email)
+        self.assertEqual(blocked_by_email[1], 403)
+        self.assertIsNotNone(blocked_by_id)
+        self.assertEqual(blocked_by_id[1], 403)
+
+    def test_before_command_blocks_at_all_add_role_when_scim_user_exists(self):
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [
+                {'username': 'plain@co.com', 'enterprise_user_id': 1, 'node_id': 1},
+                {'username': 'managed@co.com', 'enterprise_user_id': 2, 'node_id': 10},
+            ],
+            'nodes': [
+                {'node_id': 1, 'parent_id': None},
+                {'node_id': 10, 'parent_id': None, 'scim_id': 1},
+            ],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            _, short = hook.before_command(params, 'eu @all --add-role Admin')
+
+        self.assertIsNotNone(short)
+        self.assertEqual(short[1], 403)
+
+    def test_before_command_blocks_numeric_id_across_mutation_categories(self):
+        """Same numeric-id bypass, exercised for remove-role/add-team/remove-team/node."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'victim@co.com', 'enterprise_user_id': 555, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        for cmd in (
+            'enterprise-user 555 --remove-role Admin',
+            'enterprise-user 555 --add-team AWS',
+            'enterprise-user 555 --remove-team AWS',
+            'enterprise-user 555 --node OtherNode',
+        ):
+            with mock.patch(
+                'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+                return_value=caps,
+            ):
+                _, short = hook.before_command(params, cmd)
+            self.assertIsNotNone(short, cmd)
+            self.assertEqual(short[1], 403, cmd)
+
+    def test_before_command_blocks_at_all_for_non_role_actions_too(self):
+        """Guard blocks '@all' even for actions Commander itself would silently no-op."""
+        from keepercommander.service.commands.integrations.sailpoint.command_hook import (
+            SailPointCommandHook,
+        )
+        from keepercommander.service.commands.integrations.sailpoint.config_fields import (
+            SailPointCapabilities,
+        )
+
+        params = mock.Mock()
+        params.enterprise = {
+            'users': [{'username': 'managed@co.com', 'enterprise_user_id': 2, 'node_id': 10}],
+            'nodes': [{'node_id': 10, 'parent_id': None, 'scim_id': 1}],
+            'scims': [],
+        }
+        caps = SailPointCapabilities(allow_roles=True, allow_teams=True)
+        hook = SailPointCommandHook('cfg-uid')
+
+        with mock.patch(
+            'keepercommander.service.commands.integrations.sailpoint.command_hook.read_capabilities',
+            return_value=caps,
+        ):
+            _, short = hook.before_command(params, 'eu @all --add-team AWS')
+
+        self.assertIsNotNone(short)
+        self.assertEqual(short[1], 403)
 
     def test_before_command_rejects_banned_commands_at_runtime(self):
         """Banned commands rejected even if present in stored config (in-place upgrade scenario)."""
