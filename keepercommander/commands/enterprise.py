@@ -117,6 +117,11 @@ SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_cou
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams',
                           'enforcement_count', 'enforcements', 'managed_node_count', 'managed_nodes', 'managed_nodes_permissions']
+# Always present in the output row/header, regardless of --columns; not selectable so excluded from validation.
+BASE_NODE_COLUMNS = {'node_id', 'name'}
+BASE_USER_COLUMNS = {'user_id', 'email'}
+BASE_TEAM_COLUMNS = {'team_uid', 'name'}
+BASE_ROLE_COLUMNS = {'role_id', 'name'}
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
@@ -658,7 +663,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if len(columns) == 0:
                     columns.update(('parent_node', 'parent_id', 'user_count', 'team_count', 'role_count'))
                 else:
-                    wc = columns.difference(supported_columns)
+                    wc = columns.difference(supported_columns, BASE_NODE_COLUMNS)
                     if len(wc) > 0:
                         logging.warning('\n\nSupported node columns: %s\n', ', '.join(supported_columns))
 
@@ -763,7 +768,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if len(columns) == 0:
                     columns.update(('name', 'status', 'transfer_status', 'node'))
                 else:
-                    wc = columns.difference(supported_columns)
+                    wc = columns.difference(supported_columns, BASE_USER_COLUMNS)
                     if len(wc) > 0:
                         logging.warning('\n\nSupported user columns: %s\n', ', '.join(supported_columns))
 
@@ -875,7 +880,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if len(params.enterprise['queued_team_users']) > 0:
                             columns.update(('queued_user_count',))
                 else:
-                    wc = columns.difference(supported_columns)
+                    wc = columns.difference(supported_columns, BASE_TEAM_COLUMNS)
                     if len(wc) > 0:
                         logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
 
@@ -939,7 +944,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if len(columns) == 0:
                     columns.update(('default_role', 'admin', 'node', 'user_count'))
                 else:
-                    wc = columns.difference(supported_columns)
+                    wc = columns.difference(supported_columns, BASE_ROLE_COLUMNS)
                     if len(wc) > 0:
                         logging.warning('\n\nSupported role columns: %s\n', ', '.join(supported_columns))
 
