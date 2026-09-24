@@ -123,6 +123,43 @@ class TestEnterprise(TestCase):
             'role_name': ent_env.role1_name,
         }])
 
+    def test_enterprise_info_columns_base_fields_no_warning(self):
+        """Base fields that are always present in the row (user_id/email, team_uid, node_id, role_id, and
+        name for teams/nodes/roles) should not trigger the "Supported X columns" warning."""
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseInfoCommand()
+
+        with mock.patch('logging.warning') as warn:
+            cmd.execute(params, users=True, format='json', columns='user_id,email,name', quiet=True)
+        warn.assert_not_called()
+
+        with mock.patch('logging.warning') as warn:
+            cmd.execute(params, teams=True, format='json', columns='team_uid,name,users', quiet=True)
+        warn.assert_not_called()
+
+        with mock.patch('logging.warning') as warn:
+            cmd.execute(params, nodes=True, format='json', columns='node_id,name,users', quiet=True)
+        warn.assert_not_called()
+
+        with mock.patch('logging.warning') as warn:
+            cmd.execute(params, roles=True, format='json', columns='role_id,name,admin', quiet=True)
+        warn.assert_not_called()
+
+    def test_enterprise_info_columns_invalid_field_still_warns(self):
+        """An actually unsupported column should still trigger the "Supported X columns" warning."""
+        params = get_connected_params()
+        api.query_enterprise(params)
+        cmd = enterprise.EnterpriseInfoCommand()
+
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, users=True, format='json', columns='bogus_column', quiet=True)
+        self.assertTrue(any('Supported user columns' in m for m in log.output))
+
+        with self.assertLogs(level=logging.WARNING) as log:
+            cmd.execute(params, teams=True, format='json', columns='bogus_column', quiet=True)
+        self.assertTrue(any('Supported team columns' in m for m in log.output))
+
     def test_enterprise_info_uses_root_displayname(self):
         params = get_connected_params()
         api.query_enterprise(params)
