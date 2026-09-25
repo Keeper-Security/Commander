@@ -569,6 +569,25 @@ class PAMCreateRecordRotationCommand(Command):
     def get_parser(self):
         return PAMCreateRecordRotationCommand.parser
 
+    def execute_args(self, params, args, **kwargs):
+        # Reached only via normal command dispatch (interactive shell, a one-shot
+        # `keeper pam rotation edit ...` invocation, or a run-batch script line) -
+        # never by callers that instantiate this class directly and call execute()
+        # themselves (bulk PAM import/extend), who keep trusting their own
+        # pre-warmed record_rotation_cache for speed.
+        kwargs.setdefault('trust_cache', False)
+        # Only a literal False opts into the forced-resync path; any other value
+        # (True, None, or anything else a caller might pass) is treated as True.
+        trust_cache = kwargs['trust_cache'] is not False
+        kwargs['trust_cache'] = trust_cache
+        try:
+            return super().execute_args(params, args, **kwargs)
+        finally:
+            if not trust_cache:
+                # Make sure the shell picks up the change (or the fresh sync we just
+                # forced) via the standard "sync after command" mechanism in do_command().
+                params.sync_data = True
+
     def execute(self, params, **kwargs):
         """Configure rotation settings for one or multiple PAM records.
 
@@ -577,6 +596,9 @@ class PAMCreateRecordRotationCommand(Command):
         resource linkage and then submits rotation requests to the Keeper
         PAM router service.
         """
+        # Only a literal False opts into the forced-resync path; any other value
+        # (True, missing/defaulted True, None, or anything else) is treated as True.
+        trust_cache = kwargs.pop('trust_cache', True) is not False
 
         def config_resource(_dag, target_record, target_config_uid, silent=None):
             if not _dag.linking_dag.has_graph:
@@ -1496,6 +1518,15 @@ class PAMCreateRecordRotationCommand(Command):
         else:
             if not kwargs.get('silent'):
                 logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
+
+        if not trust_cache:
+            # Refresh the local rotation cache before reading any cached revision below.
+            # A stale rotation revision here would collide with a real rotation change made
+            # elsewhere (another session, a scheduled rotation) since this cache was
+            # last warmed, and the router rejects the update with an error like
+            # mismatched_revision_blocking_update. Bulk callers that pre-warm record_rotation_cache
+            # themselves (pam project import/extend) pass trust_cache=True and skip this.
+            api.sync_down(params)
 
         schedule_config = kwargs.get('schedule_config') is True
         if schedule_config:
