@@ -188,6 +188,7 @@ class TestBatchModeTargetHostPort(unittest.TestCase):
         rec = _DummyTypedRecord()
         rec.record_uid = 'rec1'
         rec.title = 'rec1-title'
+        rec.record_type = 'pamMachine'
         rec.get_typed_field = lambda name, *a, **kw: pam if name == 'pamSettings' else None
 
         mock_load.return_value = rec
