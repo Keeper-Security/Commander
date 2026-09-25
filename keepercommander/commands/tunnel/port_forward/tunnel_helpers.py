@@ -177,6 +177,51 @@ GATEWAY_TIMEOUT = int(os.getenv('GATEWAY_TIMEOUT')) if os.getenv('GATEWAY_TIMEOU
 # VERIFY_SSL applies to WebSocket SSL only; HTTP uses params.ssl_verify.
 VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 
+
+def ephemeral_gateway_timeout_ms(is_ephemeral, default=GATEWAY_TIMEOUT):
+    """Gateway wait timeout (ms) for a tunnel-start offer.
+
+    Ephemeral JIT account creation on the gateway takes 30-90s (mirrors the
+    connection path's bump in terminal_connection.py) — the normal
+    ``default`` (30s) is too tight for it.
+    """
+    if not is_ephemeral:
+        return default
+    try:
+        return int(os.environ.get('PAM_GATEWAY_OFFER_TIMEOUT_EPHEMERAL_MS', '120000'))
+    except (TypeError, ValueError):
+        return 120000
+
+
+def credential_override_data_fields(credential_type, credential_data):
+    """Fields to merge into a tunnel-start offer's encrypted inner payload
+    for a --credential/-cr override. Only 'userSupplied' is recognized today
+    (the only value Commander's --credential flag sends); anything else
+    yields no fields, so plain tunnel starts are unaffected.
+
+    private_key/passphrase are only included when present, so KeeperRDP
+    Proxy overrides (username/password-only) are unaffected.
+    """
+    if credential_type != 'userSupplied' or not credential_data:
+        return {}
+    fields = {
+        'username': credential_data.get('username', ''),
+        'password': credential_data.get('password', ''),
+    }
+    if credential_data.get('private_key'):
+        fields['private_key'] = credential_data['private_key']
+    if credential_data.get('passphrase'):
+        fields['passphrase'] = credential_data['passphrase']
+    return fields
+
+
+def credential_override_input_fields(credential_type):
+    """Fields to merge into a tunnel-start offer's outer (unencrypted)
+    gateway action inputs for a --credential/-cr override."""
+    if credential_type != 'userSupplied':
+        return {}
+    return {'credentialType': 'userSupplied', 'allowSupplyUser': True}
+
 # ICE candidate buffering - store until SDP answer is received
 
 # Global conversation key management for multiple concurrent tunnels
@@ -312,7 +357,8 @@ class TunnelSession:
     """Container for tunnel session state organized by tube_id"""
     def __init__(self, tube_id, conversation_id, gateway_uid, symmetric_key,
                  offer_sent=False, host=None, port=None,
-                 record_title=None, record_uid=None, target_host=None, target_port=None):
+                 record_title=None, record_uid=None, target_host=None, target_port=None,
+                 proxy_kind=None, proxy_db_type=None):
         self.tube_id = tube_id
         self.conversation_id = conversation_id
         self.gateway_uid = gateway_uid
@@ -324,6 +370,12 @@ class TunnelSession:
         self.record_uid = record_uid
         self.target_host = target_host
         self.target_port = target_port
+        # Which Keeper Proxy backend (if any) fronts this tunnel — 'db' |
+        # 'rdp' | 'ssh' | None. Drives the proxy-ready banner printed from
+        # the WebRTC 'connected' signal callback below, once the tunnel is
+        # actually up (not immediately after the offer is merely accepted).
+        self.proxy_kind = proxy_kind
+        self.proxy_db_type = proxy_db_type
         self.buffered_ice_candidates = []
         self.creation_time = time.time()
         self.last_activity = time.time()
@@ -1250,6 +1302,27 @@ async def handle_websocket_messages(websocket, tube_registry, timeout, stop_even
         logging.debug("WebSocket handler completed")
 
 
+# Exact i18n keys GW's KeeperSSH Proxy setup path returns for its 3 fatal,
+# post-eager-validation failures (KeeperSshProxyAuthError/TimeoutError/
+# ConfigError — see dr-controller's WebRTCSessionAction.setup_keeperssh_proxy_for_tunnel).
+# Deliberately excludes the generic `..._keeperssh_proxy_error` code (missing
+# module / missing credentials / unexpected error) — those are covered by
+# earlier, synchronous validation and don't need this async fallback.
+#
+# NOTE: this is a match on the *untranslated* i18n key, not a stable error
+# code contract — GW's gettext-based i18n falls back to returning the raw
+# key verbatim only because no locale catalog (not even the "us_FB" English
+# fallback) has real text for these new keys yet. Once one does, `data`
+# becomes a translated sentence with no key substring in it and this match
+# silently stops firing (reverting to today's leaked-tube behavior for this
+# one case, not a new failure mode).
+_SSH_PROXY_FATAL_SETUP_ERROR_CODES = frozenset({
+    'gateway_webrtcaction_keeperssh_proxy_auth_failed',
+    'gateway_webrtcaction_keeperssh_proxy_timeout',
+    'gateway_webrtcaction_keeperssh_proxy_config_error',
+})
+
+
 def route_message_to_rust(response_item, tube_registry):
     """Route a single message to Rust - decrypt it first using the conversation's key"""
     try:
@@ -1562,6 +1635,39 @@ def route_message_to_rust(response_item, tube_registry):
                         if err_session is not None:
                             err_session.gateway_error_message = gateway_error_text
                             err_session.gateway_error_event.set()
+
+                        # KeeperSSH Proxy setup can fail asynchronously — Rust's
+                        # real upstream auth/connect attempt takes a real network
+                        # round trip, so the error can arrive after the synchronous
+                        # connect-retry window has already given up and treated the
+                        # tube as established (nothing else ever reads
+                        # gateway_error_message/_event again after that point, so
+                        # the tube would otherwise leak open forever). Close it here
+                        # instead, treating it as a failed tunnel open — but only
+                        # for the 3 known-fatal SSH Proxy setup codes, and only
+                        # within the same window as the longest legitimate startup
+                        # delay (ephemeral JIT account creation), so a plain
+                        # (non-proxied) SSH tunnel, a different proxy backend, or an
+                        # already-established/long-running KeeperSSH Proxy tunnel is
+                        # never torn down by this.
+                        if (
+                            gateway_error_text in _SSH_PROXY_FATAL_SETUP_ERROR_CODES
+                            and err_session is not None
+                            and (time.time() - err_session.creation_time)
+                                <= (ephemeral_gateway_timeout_ms(True) / 1000.0)
+                        ):
+                            logging.error(
+                                f"KeeperSSH Proxy failed to open for {conversation_id} "
+                                f"({gateway_error_text}); closing tube {err_tube_id}"
+                            )
+                            try:
+                                tube_registry.close_tube(err_tube_id, reason=CloseConnectionReasons.Normal)
+                            except Exception as close_exc:
+                                logging.debug(f"Failed to close tube {err_tube_id} after gateway error: {close_exc}")
+                            try:
+                                unregister_tunnel_session(err_tube_id)
+                            except Exception as unreg_exc:
+                                logging.debug(f"Failed to unregister tunnel session {err_tube_id} after gateway error: {unreg_exc}")
                 except Exception as stash_exc:
                     logging.debug(f"Failed to stash gateway error on session: {stash_exc}")
             elif payload_data.get('data', '') == '':
@@ -1659,6 +1765,55 @@ class SimpleRustPCCompat:
         self.endpoint_name = conversation_id
         self.record_uid = record_uid
         self.conversation_id = conversation_id
+
+
+def _print_proxy_ready_banner(session):
+    """Print the Keeper Proxy (KeeperDB/KeeperRDP/KeeperSSH) readiness
+    banner for `session`.
+
+    Called only from TunnelSignalHandler's WebRTC 'connected' callback,
+    never right after start_rust_tunnel returns — for a proxy tunnel, that
+    return only means the WebRTC offer was accepted, not that the gateway
+    has actually spawned the proxy and authenticated against the real
+    target yet. That can still fail (bad credentials, upstream timeout)
+    well after the offer is accepted, and a valid SDP answer is never even
+    generated in that case, so the 'connected' state this banner is gated
+    on never fires either — printing here means the banner only ever shows
+    for a tunnel that is actually up.
+    """
+    host, port = session.host, session.port
+    if session.proxy_kind == 'db':
+        db_type = session.proxy_db_type
+        suffix = f' ({db_type})' if db_type else ''
+        logging.info(f"\n{bcolors.OKGREEN}KeeperDB Proxy ready{suffix}{bcolors.ENDC}")
+        logging.info(f"  Listening:  {host}:{port}")
+        if db_type == 'mysql':
+            logging.info(f"  Connect:    mysql -h {host} -P {port} -u <any> -p")
+        elif db_type == 'postgresql':
+            logging.info(f"  Connect:    psql -h {host} -p {port} -U <any>")
+        elif db_type == 'mssql':
+            logging.info(f"  Connect:    sqlcmd -S {host},{port} -U <any> -P <any>")
+        else:
+            logging.info(f"  Connect:    use your database client to connect to {host}:{port}")
+        logging.info(f"{bcolors.OKBLUE}  Note:       when your DB client prompts for credentials you may "
+                     f"supply any value — the proxy will substitute the credentials configured in your "
+                     f"Keeper vault.{bcolors.ENDC}")
+    elif session.proxy_kind == 'rdp':
+        logging.info(f"\n{bcolors.OKGREEN}KeeperRDP Proxy ready{bcolors.ENDC}")
+        logging.info(f"  Listening:  {host}:{port}")
+        logging.info(f"  Connect:    mstsc /v:{host}:{port}    "
+                     f"(or wfreerdp /v:{host}:{port} /sec:tls /cert:ignore)")
+        logging.info(f"{bcolors.OKBLUE}  Note:       when your RDP client prompts for credentials supply any "
+                     f"value (or the per-session NLA token if NLA is enabled). The proxy substitutes the "
+                     f"credentials configured in your Keeper vault before forwarding to the target."
+                     f"{bcolors.ENDC}")
+    elif session.proxy_kind == 'ssh':
+        logging.info(f"\n{bcolors.OKGREEN}KeeperSSH Proxy ready{bcolors.ENDC}")
+        logging.info(f"  Listening:  {host}:{port}")
+        logging.info(f"  Connect:    ssh -p {port} <any>@{host}")
+        logging.info(f"{bcolors.OKBLUE}  Note:       when your SSH client prompts for credentials supply any "
+                     f"value. The proxy substitutes the credentials configured in your Keeper vault before "
+                     f"forwarding to the target.{bcolors.ENDC}")
 
 
 # Callback handler class for WebRTC signals
@@ -1769,7 +1924,15 @@ class TunnelSignalHandler:
 
                     # Get tunnel session for record details
                     if session and not self.silent:
-                        logging.info(f"\n{bcolors.OKGREEN}Connection established successfully.{bcolors.ENDC}")
+                        # Proxy-ready banner prints here, right before "Connection
+                        # established successfully" with no delimiter (e.g. shell
+                        # prompt) between them — see _print_proxy_ready_banner's
+                        # docstring for why this can't be printed any earlier.
+                        if session.proxy_kind:
+                            _print_proxy_ready_banner(session)
+                            logging.info(f"{bcolors.OKGREEN}Connection established successfully.{bcolors.ENDC}")
+                        else:
+                            logging.info(f"\n{bcolors.OKGREEN}Connection established successfully.{bcolors.ENDC}")
 
                         # Display record title if available
                         if session.record_title:
@@ -2337,7 +2500,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None, kind='start', probe_duration=30, probe_turn_only=False, probe_stun_only=False):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None, kind='start', probe_duration=30, probe_turn_only=False, probe_stun_only=False, credential_type=None, credential_data=None, is_ephemeral=False, proxy_kind=None, proxy_db_type=None):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
 
@@ -2480,7 +2643,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             record_title=record_title,
             record_uid=record_uid,
             target_host=target_host,
-            target_port=target_port
+            target_port=target_port,
+            proxy_kind=proxy_kind,
+            proxy_db_type=proxy_db_type,
         )
 
         # Register the temporary session so ICE candidates can be buffered immediately
@@ -2662,6 +2827,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # used for validators (record-type check, `allowKeeperXxxProxy`
         # presence check, launch-credential preflight) and to print the
         # right banner; it does not need to round-trip to the gateway.
+        #
+        # credential_type/credential_data are the exception: an explicit
+        # --credential override DOES need to round-trip, since it's telling
+        # the gateway to use inline username/password instead of its own
+        # ephemeral/linked resolution.
+        data.update(credential_override_data_fields(credential_type, credential_data))
+
         string_data = json.dumps(data)
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
@@ -2700,6 +2872,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 }
                 if two_factor_value:
                     inputs['twoFactorValue'] = two_factor_value
+                inputs.update(credential_override_input_fields(credential_type))
 
                 router_response = router_send_action_to_gateway(
                     params=params,
@@ -2710,7 +2883,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
                     is_streaming=trickle_ice,
-                    gateway_timeout=GATEWAY_TIMEOUT,
+                    gateway_timeout=ephemeral_gateway_timeout_ms(is_ephemeral),
                     **offer_kwargs
                 )
 
