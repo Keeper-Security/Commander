@@ -1,7 +1,0 @@
-Available on the internet:
-
-https://metron-mohsin-m5-3.taildb15b0.ts.net/
-|-- proxy http://localhost:8140
-
-Funnel started and running in the background.
-To disable the proxy, run: tailscale funnel --https=443 off
