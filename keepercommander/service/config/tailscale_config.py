@@ -21,6 +21,8 @@ from ..util.tunneling import (
     get_tailscale_daemon_start_guidance,
     start_tailscale_daemon,
     tailscale_up,
+    set_tailscale_operator,
+    TailscaleAccessDeniedError,
     start_tailscale_funnel,
     stop_tailscale_funnel,
     get_tailscale_funnel_url,
@@ -74,6 +76,27 @@ class TailscaleConfigurator:
         logger.debug(f"{action_label.capitalize()} succeeded")
 
     @staticmethod
+    def _authenticate(config_data: Dict[str, Any], service_config: ServiceConfig) -> None:
+        """Runs tailscale_up; on Linux operator-denied errors, offers a one-time fix and retries."""
+        try:
+            tailscale_up(config_data["tailscale_auth_key"], config_data.get("tailscale_advertise_tags"))
+        except TailscaleAccessDeniedError as e:
+            logger.warning(str(e))
+            print(str(e))
+            choice = service_config._get_yes_no_input(
+                service_config.messages.get(
+                    'tailscale_operator_prompt',
+                    'Grant this user Tailscale operator rights now (requires sudo, one-time)? (y/n): '
+                )
+            )
+            if choice != 'y':
+                raise ValidationError(str(e))
+
+            print('Attempting to grant Tailscale operator rights automatically...')
+            set_tailscale_operator()
+            tailscale_up(config_data["tailscale_auth_key"], config_data.get("tailscale_advertise_tags"))
+
+    @staticmethod
     def _verify_funnel_active(local_port: int, max_retries: int = 3, retry_delay: float = 1) -> bool:
         """`--bg` can exit 0 without the target ever going active; confirm via tailscaled's own status."""
         import time
@@ -117,7 +140,7 @@ class TailscaleConfigurator:
 
             # Auth key used only for `tailscale up`; never logged, never used for API auth.
             logger.debug("Authenticating with Tailscale")
-            tailscale_up(config_data["tailscale_auth_key"], config_data.get("tailscale_advertise_tags"))
+            TailscaleConfigurator._authenticate(config_data, service_config)
 
             logger.debug(f"Starting Tailscale Funnel for port {config_data['port']}")
             start_tailscale_funnel(config_data["port"])

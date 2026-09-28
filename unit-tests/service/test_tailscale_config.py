@@ -2,6 +2,8 @@ import unittest
 from unittest import mock
 
 from keepercommander.service.config.tailscale_config import TailscaleConfigurator
+from keepercommander.service.util.tunneling import TailscaleAccessDeniedError
+from keepercommander.service.util.exceptions import ValidationError
 
 
 def _base_config_data():
@@ -88,6 +90,60 @@ class TestConfigureTailscaleVerification(unittest.TestCase):
             self.assertIsNone(result)
             mock_get_url.assert_called_once_with(config_data["port"])
             self.assertEqual(config_data["tailscale_public_url"], 'https://node.example.ts.net')
+
+
+class TestAuthenticate(unittest.TestCase):
+    """The one-time Tailscale operator-grant fallback for tailscale_up failing
+    with TailscaleAccessDeniedError - common on a fresh Linux install where the
+    control socket is root-owned by default."""
+
+    def test_retries_and_succeeds_after_operator_granted(self):
+        config_data = _base_config_data()
+        service_config = mock.Mock()
+        service_config._get_yes_no_input.return_value = 'y'
+
+        with mock.patch('keepercommander.service.config.tailscale_config.tailscale_up',
+                         side_effect=[TailscaleAccessDeniedError("denied"), None]) as mock_up, \
+             mock.patch('keepercommander.service.config.tailscale_config.set_tailscale_operator') as mock_set_op:
+            TailscaleConfigurator._authenticate(config_data, service_config)
+
+            self.assertEqual(mock_up.call_count, 2)
+            mock_set_op.assert_called_once()
+
+    def test_declining_raises_validation_error_without_granting(self):
+        config_data = _base_config_data()
+        service_config = mock.Mock()
+        service_config._get_yes_no_input.return_value = 'n'
+
+        with mock.patch('keepercommander.service.config.tailscale_config.tailscale_up',
+                         side_effect=TailscaleAccessDeniedError("denied")), \
+             mock.patch('keepercommander.service.config.tailscale_config.set_tailscale_operator') as mock_set_op:
+            with self.assertRaises(ValidationError):
+                TailscaleConfigurator._authenticate(config_data, service_config)
+            mock_set_op.assert_not_called()
+
+    def test_second_failure_after_operator_grant_propagates(self):
+        """If granting operator rights doesn't actually fix it, the retry's
+        failure must propagate rather than being silently swallowed or retried forever."""
+        config_data = _base_config_data()
+        service_config = mock.Mock()
+        service_config._get_yes_no_input.return_value = 'y'
+
+        with mock.patch('keepercommander.service.config.tailscale_config.tailscale_up',
+                         side_effect=[TailscaleAccessDeniedError("denied"), Exception("still failing")]), \
+             mock.patch('keepercommander.service.config.tailscale_config.set_tailscale_operator'):
+            with self.assertRaisesRegex(Exception, "still failing"):
+                TailscaleConfigurator._authenticate(config_data, service_config)
+
+    def test_non_access_denied_failure_is_not_caught_here(self):
+        config_data = _base_config_data()
+        service_config = mock.Mock()
+
+        with mock.patch('keepercommander.service.config.tailscale_config.tailscale_up',
+                         side_effect=Exception("some other failure")):
+            with self.assertRaisesRegex(Exception, "some other failure"):
+                TailscaleConfigurator._authenticate(config_data, service_config)
+            service_config._get_yes_no_input.assert_not_called()
 
 
 if __name__ == '__main__':

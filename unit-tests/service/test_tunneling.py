@@ -349,5 +349,58 @@ class TestStopTailscaleFunnel(unittest.TestCase):
             self.assertFalse(tunneling.stop_tailscale_funnel(8080))
 
 
+class TestTailscaleUp(unittest.TestCase):
+    """A fresh Linux install leaves the tailscaled control socket root-owned by
+    default, so `tailscale up` fails there with a specific "checkprefs access
+    denied" message rather than a bad-key error - this must be distinguished
+    so callers can offer the one-time operator-grant fix instead of treating
+    it as an invalid auth key."""
+
+    def _run_with_log_content(self, log_content, returncode=1, advertise_tags=None):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp.write(log_content)
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=returncode)):
+                tunneling.tailscale_up('tskey-auth-xxx', advertise_tags)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_raises_access_denied_error_when_not_operator(self):
+        with self.assertRaises(tunneling.TailscaleAccessDeniedError):
+            self._run_with_log_content("Access denied: checkprefs access denied\n")
+
+    def test_raises_generic_exception_for_other_failures(self):
+        with self.assertRaises(Exception) as ctx:
+            self._run_with_log_content("backend error: invalid key\n")
+        self.assertNotIsInstance(ctx.exception, tunneling.TailscaleAccessDeniedError)
+
+    def test_missing_auth_key_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            tunneling.tailscale_up(None)
+
+
+class TestSetTailscaleOperator(unittest.TestCase):
+    def test_returns_false_when_username_unavailable(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(tunneling.set_tailscale_operator())
+
+    def test_runs_sudo_tailscale_set_operator_with_current_user(self):
+        with mock.patch.dict(os.environ, {'USER': 'alice'}), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.set_tailscale_operator())
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd, ["sudo", "tailscale", "set", "--operator=alice"])
+
+    def test_returns_false_when_command_fails(self):
+        with mock.patch.dict(os.environ, {'USER': 'alice'}), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            self.assertFalse(tunneling.set_tailscale_operator())
+
+
 if __name__ == '__main__':
     unittest.main()

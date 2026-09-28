@@ -723,6 +723,24 @@ def reset_tailscale_log():
         logging.debug(f"Could not reset Tailscale log: {type(e).__name__}")
 
 
+class TailscaleAccessDeniedError(Exception):
+    """Raised when `tailscale up`/`funnel` is denied for not being the tailscaled operator (fresh Linux installs)."""
+
+
+_TAILSCALE_ACCESS_DENIED_HINT = "checkprefs access denied"
+
+
+def set_tailscale_operator():
+    """One-time Linux fix: grants operator rights via `sudo tailscale set --operator=$USER`."""
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if not user:
+        logging.error("Could not determine current username for Tailscale operator setup")
+        return False
+    return _run_privileged_tailscale_command(
+        ["sudo", "tailscale", "set", f"--operator={user}"], TAILSCALE_DAEMON_START_TIMEOUT, "Operator setup"
+    )
+
+
 def tailscale_up(auth_key, advertise_tags=None):
     """
     Authenticate via `tailscale up --auth-key=... --advertise-tags=... --force-reauth`.
@@ -770,13 +788,25 @@ def tailscale_up(auth_key, advertise_tags=None):
             )
         if result.returncode != 0:
             hint = ""
+            access_denied = False
             try:
                 with open(log_file, 'r') as f:
-                    if "requires --advertise-tags" in f.read() and not advertise_tags:
+                    content = f.read()
+                    if "requires --advertise-tags" in content and not advertise_tags:
                         hint = " This auth key requires --advertise-tags (OAuth-issued key)."
+                    if _TAILSCALE_ACCESS_DENIED_HINT in content.lower():
+                        access_denied = True
             except OSError:
                 pass
+
             logging.error(f"Tailscale authentication failed, exit code {result.returncode}")
+
+            if access_denied:
+                raise TailscaleAccessDeniedError(
+                    "Tailscale denied the request because this user isn't the tailscaled "
+                    "operator on this machine (common on a fresh Linux install). Run "
+                    "'sudo tailscale set --operator=$USER' once, then retry."
+                )
             raise Exception(
                 f"Tailscale authentication failed (exit code {result.returncode}).{hint} "
                 f"See {log_file} for details."
