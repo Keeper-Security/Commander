@@ -129,7 +129,7 @@ def add_record_to_folder(params, record, folder_uid=None, pb_only:bool=False):
         record_rs = next((x for x in rs.records if utils.base64_url_encode(x.record_uid) == record.record_uid), None)
         if record_rs:
             if record_rs.status != record_pb2.RS_SUCCESS:
-                raise KeeperApiError(record_rs.status, rs.message)
+                raise KeeperApiError(record_rs.status, record_rs.message)
         record.revision = rs.revision
         if record.linked_keys:
             for file_uid in record.linked_keys:
