@@ -33,9 +33,13 @@ def _base_config(**overrides):
     return config
 
 
-def _build(config, commander_service_name='commander'):
+def _build(config, commander_service_name='commander', commander_container_name='keeper-service'):
     setup_result = mock.Mock(record_uid='rec-uid-123', b64_config='b64==')
-    builder = DockerComposeBuilder(setup_result, config, commander_service_name=commander_service_name)
+    builder = DockerComposeBuilder(
+        setup_result, config,
+        commander_service_name=commander_service_name,
+        commander_container_name=commander_container_name,
+    )
     return builder.build_dict()
 
 
@@ -106,10 +110,30 @@ class TestTailscaleSidecar(TestCase):
         self.assertEqual(post_start_cmd[:2], ['sh', '-c'])
         self.assertIn('tailscale funnel --bg --https=443 localhost:8900', post_start_cmd[2])
 
-    def test_tailscale_enabled_without_tags_omits_advertise_tags_arg(self):
+    def test_tailscale_container_name_matches_commander_naming_convention(self):
+        """Without an explicit container_name, Compose falls back to
+        <project>-tailscale-1 (unpredictable/inconsistent). Derive a real name
+        matching the existing keeper-service[-<integration>] convention instead."""
+        result = _build(
+            _base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'),
+            commander_service_name='commander-slack',
+            commander_container_name='keeper-service-slack',
+        )
+        self.assertEqual(result['services']['tailscale']['container_name'], 'keeper-tailscale-slack')
+
+    def test_tailscale_container_name_default_no_integration_suffix(self):
+        result = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))
+        self.assertEqual(result['services']['tailscale']['container_name'], 'keeper-tailscale')
+
+    def test_tailscale_enabled_without_tags_still_states_advertise_tags_explicitly(self):
+        """`--advertise-tags` must always be explicit (empty if unused), never omitted -
+        `tailscale up` requires every non-default setting restated on each call or it
+        errors out, and omitting the flag doesn't clear a tag left by a prior run on
+        the same node/volume (e.g. switching from an OAuth key to a plain key)."""
         result = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))
         extra_args = result['services']['tailscale']['environment']['TS_EXTRA_ARGS']
-        self.assertNotIn('--advertise-tags', extra_args)
+        self.assertIn('--advertise-tags=', extra_args)
+        self.assertNotIn('--advertise-tags=tag', extra_args)
         self.assertIn('--force-reauth', extra_args)
 
     def test_tailscale_enabled_reconfigures_commander_service_networking(self):

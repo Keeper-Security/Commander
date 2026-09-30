@@ -190,17 +190,24 @@ class DockerComposeBuilder:
         self._tailscale_sidecar_added = True
 
         port = self.config['port']
-        extra_args = '--force-reauth'
         tags = self.config.get('tailscale_advertise_tags')
-        if tags:
-            extra_args = f"--advertise-tags={tags} {extra_args}"
+        # --advertise-tags must always be stated explicitly (empty if unused), never
+        # omitted -- `tailscale up` requires every non-default setting to be re-specified
+        # on each call or it errors out; omitting the flag doesn't clear a tag left by a
+        # prior run (e.g. switching from an OAuth key to a plain key on the same node/volume).
+        extra_args = f"--advertise-tags={tags or ''} --force-reauth"
 
         funnel_cmd = (
             f"until tailscale status >/dev/null 2>&1; do sleep 1; done; "
             f"tailscale funnel --bg --https=443 localhost:{port}"
         )
 
+        # Matches the keeper-service[-<integration>] convention already used for the
+        # commander container name (e.g. keeper-service-slack -> keeper-tailscale-slack).
+        tailscale_container_name = self.commander_container_name.replace('service', 'tailscale', 1)
+
         self._services['tailscale'] = {
+            'container_name': tailscale_container_name,
             'image': 'tailscale/tailscale:latest',
             'hostname': self.commander_service_name,
             'environment': {
