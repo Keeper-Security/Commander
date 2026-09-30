@@ -108,20 +108,31 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         # Queue mode
         queue_enabled = self._get_queue_config()
         
-        # Tunneling options (ngrok/cloudflare are mutually exclusive)
+        # Tunneling options (ngrok/cloudflare/tailscale are mutually exclusive)
         ngrok_config = self._get_ngrok_config()
-        
-        if not ngrok_config['ngrok_enabled']:
-            cloudflare_config = self._get_cloudflare_config()
-        else:
+
+        if ngrok_config['ngrok_enabled']:
             cloudflare_config = {
-                'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
+                'cloudflare_enabled': False, 'cloudflare_tunnel_token': '',
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
-        
+            tailscale_config = {
+                'tailscale_enabled': False, 'tailscale_auth_key': '',
+                'tailscale_advertise_tags': '', 'tailscale_public_url': ''
+            }
+        else:
+            cloudflare_config = self._get_cloudflare_config()
+            if cloudflare_config['cloudflare_enabled']:
+                tailscale_config = {
+                    'tailscale_enabled': False, 'tailscale_auth_key': '',
+                    'tailscale_advertise_tags': '', 'tailscale_public_url': ''
+                }
+            else:
+                tailscale_config = self._get_tailscale_config()
+
         # Advanced security options
         security_config = self._get_advanced_security_config()
-        
+
         return ServiceConfig(
             port=port,
             commands=commands,
@@ -134,6 +145,10 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
             cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
             cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', ''),
+            tailscale_enabled=tailscale_config['tailscale_enabled'],
+            tailscale_auth_key=tailscale_config['tailscale_auth_key'],
+            tailscale_advertise_tags=tailscale_config['tailscale_advertise_tags'],
+            tailscale_public_url=tailscale_config.get('tailscale_public_url', ''),
             allowed_ip=security_config['allowed_ip'],
             denied_ip=security_config['denied_ip'],
             rate_limit=security_config['rate_limit'],
