@@ -113,6 +113,16 @@ class TestClassicToNsfConversionApi(TestCase):
             build_convert_records_request(
                 self.params, [self.record_uid], folder_uid=folder_uid)
 
+    def test_build_request_rejects_malformed_folder_uid(self):
+        folder_uid = 'not-a-uid'
+        self.params.nested_share_folders[folder_uid] = {
+            'folder_key_unencrypted': utils.generate_aes_key(),
+        }
+
+        with self.assertRaisesRegex(ValueError, 'valid Keeper UID'):
+            build_convert_records_request(
+                self.params, [self.record_uid], folder_uid=folder_uid)
+
     def test_convert_results_are_decoded(self):
         response = keeperdrive_convert_pb2.ConvertRecordResponse()
         result = response.results.add()
@@ -177,6 +187,37 @@ class TestClassicToNsfConversionCommand(TestCase):
             NestedShareConvertCommand().execute(
                 self.params, records=[self.record_uid],
                 folder_uid=folder_uid, force=True)
+        mock_convert.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands.RecordMixin.resolve_single_record',
+           return_value=None)
+    def test_command_rejects_unresolved_record(self, _mock_resolve_record, mock_convert):
+        with self.assertRaisesRegex(CommandError, 'Record .* was not found'):
+            NestedShareConvertCommand().execute(
+                self.params, records=['Missing'], folder_uid=None, force=True)
+
+        mock_convert.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.resolve_folder_identifier',
+           return_value=None)
+    def test_command_rejects_unresolved_folder(self, _mock_resolve_folder, mock_convert):
+        with self.assertRaisesRegex(CommandError, "Folder 'Missing' was not found"):
+            NestedShareConvertCommand().execute(
+                self.params, records=[self.record_uid], folder_uid='Missing', force=True)
+
+        mock_convert.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    def test_command_rejects_ambiguous_record_title(self, mock_convert):
+        other_uid = _uid()
+        self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Legacy"}'}
+
+        with self.assertRaisesRegex(CommandError, 'More than one record is titled'):
+            NestedShareConvertCommand().execute(
+                self.params, records=['Legacy'], folder_uid=None, force=True)
+
         mock_convert.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3',
