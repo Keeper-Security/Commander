@@ -27,6 +27,8 @@ class DockerComposeBuilder:
         self._service_cmd_parts: List[str] = []
         self._volumes: List[str] = []
         self._services: Dict[str, Dict[str, Any]] = {}
+        self._top_level_volumes: Dict[str, Any] = {}
+        self._tailscale_sidecar_added = False
 
     def build(self) -> str:
         if self.commander_service_name not in self._services:
@@ -36,7 +38,11 @@ class DockerComposeBuilder:
     def build_dict(self) -> Dict[str, Any]:
         if self.commander_service_name not in self._services:
             self._services[self.commander_service_name] = self._build_commander_service()
-        return {'services': self._services}
+        self._add_tailscale_sidecar_if_enabled()
+        result: Dict[str, Any] = {'services': self._services}
+        if self._top_level_volumes:
+            result['volumes'] = self._top_level_volumes
+        return result
     
     def add_integration_service(self, service_name: str, container_name: str,
                                 image: str, record_uid: str,
@@ -147,14 +153,88 @@ class DockerComposeBuilder:
             self._service_cmd_parts.append(f"-cf {self.config['cloudflare_tunnel_token']}")
             if self.config.get('cloudflare_custom_domain'):
                 self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
-    
+
+        # Tailscale is handled via a sidecar container (see _add_tailscale_sidecar_if_enabled),
+        # not a service-create flag -- Docker deployments are headless and can't answer the
+        # install/daemon-start prompts that -ts would otherwise trigger inside the container.
+
     def _add_docker_options(self) -> None:
         self._service_cmd_parts.extend([
             f"-ur {self.setup_result.record_uid}",
             f"--ksm-config {self.setup_result.b64_config}",
             f"--record {self.setup_result.record_uid}"
         ])
-    
+
+    def _add_tailscale_sidecar_if_enabled(self) -> None:
+        """
+        Add Tailscale as a sidecar (official tailscale/tailscale image) rather than
+        a service-create flag. Docker deployments are headless -- Commander's own
+        install/daemon-start prompts (tailscale_config.py) can't be answered inside
+        a detached container. The sidecar authenticates via TS_AUTHKEY with no
+        prompts. Ngrok/Cloudflare are unaffected -- they stay as service-create flags.
+
+        Enabling Funnel must run *inside* the sidecar's own container, not a
+        separate one -- verified empirically: `network_mode: service:X` only
+        shares the network namespace, not the filesystem, so a second container
+        can't reach tailscaled's control socket ("failed to connect to local
+        tailscaled"). A `post_start` hook on the sidecar itself runs in its
+        namespace and does work, but fires immediately on container start
+        (not gated by healthcheck), so the hook command waits for `tailscale
+        status` to succeed before calling `funnel` -- confirmed against a real
+        `tailscale status --> then funnel --bg` run with a fresh state volume.
+        """
+        if self._tailscale_sidecar_added:
+            return
+        if not (self.config.get('tailscale_enabled') and self.config.get('tailscale_auth_key')):
+            return
+        self._tailscale_sidecar_added = True
+
+        port = self.config['port']
+        tags = self.config.get('tailscale_advertise_tags')
+        # --advertise-tags must always be stated explicitly (empty if unused), never
+        # omitted -- `tailscale up` requires every non-default setting to be re-specified
+        # on each call or it errors out; omitting the flag doesn't clear a tag left by a
+        # prior run (e.g. switching from an OAuth key to a plain key on the same node/volume).
+        extra_args = f"--advertise-tags={tags or ''} --force-reauth"
+
+        funnel_cmd = (
+            f"until tailscale status >/dev/null 2>&1; do sleep 1; done; "
+            f"tailscale funnel --bg --https=443 localhost:{port}"
+        )
+
+        # Matches the keeper-service[-<integration>] convention already used for the
+        # commander container name (e.g. keeper-service-slack -> keeper-tailscale-slack).
+        tailscale_container_name = self.commander_container_name.replace('service', 'tailscale', 1)
+
+        self._services['tailscale'] = {
+            'container_name': tailscale_container_name,
+            'image': 'tailscale/tailscale:latest',
+            'hostname': self.commander_service_name,
+            'environment': {
+                'TS_AUTHKEY': self.config['tailscale_auth_key'],
+                'TS_EXTRA_ARGS': extra_args,
+                'TS_STATE_DIR': '/var/lib/tailscale',
+            },
+            'volumes': ['tailscale-state:/var/lib/tailscale'],
+            'healthcheck': {
+                'test': ['CMD', 'tailscale', 'status'],
+                'interval': '10s',
+                'timeout': '5s',
+                'retries': 12,
+            },
+            'post_start': [
+                {'command': ['sh', '-c', funnel_cmd]},
+            ],
+            'restart': 'unless-stopped',
+        }
+        self._top_level_volumes['tailscale-state'] = None
+
+        commander = self._services[self.commander_service_name]
+        commander.pop('ports', None)
+        commander['network_mode'] = 'service:tailscale'
+        commander.setdefault('depends_on', {})['tailscale'] = {'condition': 'service_healthy'}
+
+
     def _build_healthcheck(self) -> Dict[str, Any]:
         port = self.config['port']
         

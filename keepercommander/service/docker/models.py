@@ -76,6 +76,10 @@ class ServiceConfig:
     token_expiration: str = ''
     ngrok_public_url: str = ''
     cloudflare_public_url: str = ''
+    tailscale_enabled: bool = False
+    tailscale_auth_key: str = ''
+    tailscale_advertise_tags: str = ''
+    tailscale_public_url: str = ''
 
 
 @dataclass
