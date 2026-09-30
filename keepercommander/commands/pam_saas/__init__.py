@@ -320,7 +320,7 @@ def get_field_input(params: KeeperParams,
         if len(extra_text) > 0:
             prompt += f" (" + "; ".join(extra_text) + ")"
         prompt += " > "
-        value = input(prompt)
+        value = input(prompt).strip()
         if value == "":
             if current_value is not None:
                 value = current_value
@@ -331,7 +331,7 @@ def get_field_input(params: KeeperParams,
                 value = fh.read()
                 fh.close()
 
-        if value is not None:
+        if value is not None and value != "":
             if len(valid_values) > 0 and value not in valid_values:
                 print(f"{bcolors.FAIL}{value} is not a valid value.{bcolors.ENDC}")
                 continue
