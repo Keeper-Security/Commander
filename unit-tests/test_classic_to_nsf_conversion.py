@@ -90,6 +90,20 @@ class TestClassicToNsfConversionApi(TestCase):
         with self.assertRaisesRegex(ValueError, 'Record key not found'):
             build_convert_records_request(self.params, [self.record_uid])
 
+    def test_build_request_rejects_invalid_owner_key_length(self):
+        self.params.data_key = b'x' * 16
+        with self.assertRaisesRegex(ValueError, 'User data key must be a 32-byte key'):
+            build_convert_records_request(self.params, [self.record_uid])
+
+    def test_build_request_rejects_invalid_folder_key_length(self):
+        folder_uid = _uid()
+        self.params.nested_share_folders[folder_uid] = {
+            'folder_key_unencrypted': b'x' * 16,
+        }
+        with self.assertRaisesRegex(ValueError, 'Destination folder key must be a 32-byte key'):
+            build_convert_records_request(
+                self.params, [self.record_uid], folder_uid=folder_uid)
+
     def test_build_request_rejects_non_drive_target(self):
         folder_uid = _uid()
         self.params.subfolder_cache[folder_uid] = {
@@ -149,6 +163,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIsNone(results)
         self.assertIn('Warning:', output.getvalue())
         self.assertIn('Classic shared-folder membership', output.getvalue())
+        self.assertIn(self.record_uid, output.getvalue())
         self.assertIn('Destination: Vault (root)', output.getvalue())
         self.assertNotIn('server support', output.getvalue())
 
@@ -206,3 +221,43 @@ class TestClassicToNsfConversionCommand(TestCase):
             '\n'.join(captured.output))
         self.assertIn(f'Classic record "{other_uid}" was not converted:',
                       '\n'.join(captured.output))
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    def test_duplicate_results_are_reported_as_ambiguous_and_refresh(self, mock_convert):
+        other_uid = _uid()
+        self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Other"}'}
+        mock_convert.return_value = [
+            {'record_uid': self.record_uid, 'status': 'OK', 'success': True},
+            {'record_uid': self.record_uid, 'status': 'NOT_RECORD_OWNER', 'success': False},
+            {'record_uid': other_uid, 'status': 'NOT_RECORD_OWNER', 'success': False},
+        ]
+
+        with self.assertLogs(level='INFO') as captured:
+            NestedShareConvertCommand().execute(
+                self.params,
+                records=[self.record_uid, other_uid],
+                folder_uid=None,
+                force=True,
+            )
+
+        self.assertTrue(self.params.sync_data)
+        logs = '\n'.join(captured.output)
+        self.assertIn('returned duplicate results', logs)
+        self.assertIn('result for Classic record', logs)
+        self.assertNotIn(
+            f'Classic record "{self.record_uid}" converted to a Nested Share Record.', logs)
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    def test_unrequested_results_trigger_reconciliation(self, mock_convert):
+        unrequested_uid = _uid()
+        mock_convert.return_value = [
+            {'record_uid': self.record_uid, 'status': 'NOT_RECORD_OWNER', 'success': False},
+            {'record_uid': unrequested_uid, 'status': 'OK', 'success': True},
+        ]
+
+        with self.assertLogs(level='WARNING') as captured:
+            NestedShareConvertCommand().execute(
+                self.params, records=[self.record_uid], folder_uid=None, force=True)
+
+        self.assertTrue(self.params.sync_data)
+        self.assertIn('unrequested records', '\n'.join(captured.output))

@@ -15,6 +15,12 @@ from .common import get_folder_key, get_record_key, is_keeper_uid
 from .folder_api import resolve_folder_identifier
 
 MAX_CONVERT_RECORDS = 100
+AES_KEY_LENGTH = 32
+
+
+def _validate_aes_key(key: bytes, key_name: str) -> None:
+    if not isinstance(key, bytes) or len(key) != AES_KEY_LENGTH:
+        raise ValueError(f"{key_name} must be a {AES_KEY_LENGTH}-byte key")
 
 
 def _decode_uid(uid: str, field_name: str) -> bytes:
@@ -62,10 +68,13 @@ def build_convert_records_request(params, record_uids, folder_uid=None):
     if len(record_uids) > MAX_CONVERT_RECORDS:
         raise ValueError(f"Convert at most {MAX_CONVERT_RECORDS} records per request")
 
-    if not getattr(params, 'data_key', None):
+    data_key = getattr(params, 'data_key', None)
+    if not data_key:
         raise ValueError("User data key is not available; run sync-down and log in again")
+    _validate_aes_key(data_key, "User data key")
 
     folder_uid_bytes, folder_key = _resolve_target_folder(params, folder_uid)
+    _validate_aes_key(folder_key, "Destination folder key")
     rq = keeperdrive_convert_pb2.ConvertRecordRequest()
     seen = set()
 
@@ -76,9 +85,7 @@ def build_convert_records_request(params, record_uids, folder_uid=None):
         record_uid_bytes = _decode_uid(record_uid, "record_uid")
 
         record_key = get_record_key(params, record_uid, raise_on_missing=True)
-        if not isinstance(record_key, bytes) or len(record_key) != 32:
-            raise ValueError(
-                f"Record key for {record_uid} is unavailable or has an invalid length")
+        _validate_aes_key(record_key, f"Record key for {record_uid}")
 
         item = rq.records.add()
         item.record_uid = record_uid_bytes
@@ -86,7 +93,7 @@ def build_convert_records_request(params, record_uids, folder_uid=None):
         item.record_key_encrypted_by_folder_key = crypto.encrypt_aes_v2(
             record_key, folder_key)
         item.record_key_encrypted_by_owner_key = crypto.encrypt_aes_v2(
-            record_key, params.data_key)
+            record_key, data_key)
 
     return rq
 

@@ -130,7 +130,9 @@ class NestedShareConvertCommand(Command):
             'Classic shared-folder membership and additional Classic folder '
             'placements are not retained.'
             f'{bcolors.ENDC}')
-        print(f'Records selected: {len(record_uids)}')
+        print(f'Records to convert ({len(record_uids)}):')
+        for record_uid in record_uids:
+            print(f'  {record_uid}')
         print(f'Destination: {folder_description}')
 
         if not kwargs.get('force'):
@@ -148,10 +150,40 @@ class NestedShareConvertCommand(Command):
             params.sync_data = True
             return
 
-        result_by_uid = {result['record_uid']: result for result in results}
+        requested_uids = set(record_uids)
+        result_by_uid = {}
+        duplicate_uids = set()
+        unexpected_result_count = 0
+        for result in results:
+            result_uid = result['record_uid']
+            if result_uid not in requested_uids:
+                unexpected_result_count += 1
+                continue
+            if result_uid in duplicate_uids:
+                continue
+            if result_uid in result_by_uid:
+                duplicate_uids.add(result_uid)
+                result_by_uid.pop(result_uid)
+                continue
+            result_by_uid[result_uid] = result
+
+        if duplicate_uids:
+            logging.warning(
+                'The conversion endpoint returned duplicate results for %d record(s).',
+                len(duplicate_uids))
+        if unexpected_result_count:
+            logging.warning(
+                'The conversion endpoint returned %d result(s) for unrequested records.',
+                unexpected_result_count)
+
         converted = 0
         missing_results = False
         for record_uid in record_uids:
+            if record_uid in duplicate_uids:
+                logging.warning(
+                    'The conversion result for Classic record "%s" is ambiguous.', record_uid)
+                missing_results = True
+                continue
             result = result_by_uid.get(record_uid)
             if result is None:
                 logging.warning(
@@ -169,7 +201,7 @@ class NestedShareConvertCommand(Command):
                     'Classic record "%s" was not converted: %s.', record_uid, message)
                 logging.debug('Conversion status for record %s: %s', record_uid, status)
 
-        if converted or missing_results:
+        if converted or missing_results or unexpected_result_count:
             params.sync_data = True
         logging.info('Conversion complete: %d of %d Classic record(s) converted.',
                      converted, len(record_uids))
