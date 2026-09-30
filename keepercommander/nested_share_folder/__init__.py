@@ -68,6 +68,10 @@ _SUBMODULE_MAP = {
         'folder_move_v3', 'move_folder_v3',
         'folder_record_move_v3', 'move_folder_record_v3',
     ],
+    'conversion_api': [
+        'MAX_CONVERT_RECORDS', 'build_convert_records_request',
+        'convert_records_v3',
+    ],
     'acl_cache': [
         'warm_for_tree', 'warm_nsf_folder_share_cache', 'warm_nsf_record_share_cache',
         'warm_classic_record_shares', 'clear_share_caches', 'ensure_share_caches',
