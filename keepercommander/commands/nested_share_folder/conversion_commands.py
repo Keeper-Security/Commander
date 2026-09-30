@@ -33,43 +33,45 @@ _STATUS_MESSAGES = {
 
 
 def _resolve_record_uid(params, identifier):
-    """Resolve a record UID/title/path, rejecting ambiguous title matches."""
+    """Resolve a UID or use Commander’s normal current-folder/path resolution."""
     if not identifier:
         return None
 
     record_cache = getattr(params, 'record_cache', {}) or {}
+    nested_share_records = getattr(params, 'nested_share_records', {}) or {}
+    if identifier in nested_share_records:
+        raise CommandError(
+            'nsf-convert',
+            f"'{identifier}' is already a Nested Share Record")
     if identifier in record_cache:
         return identifier
 
-    lower_identifier = identifier.casefold()
-    matches = []
-    for record_uid, record in record_cache.items():
-        raw_data = record.get('data_unencrypted')
-        if not raw_data:
-            continue
-        try:
-            if isinstance(raw_data, bytes):
-                raw_data = raw_data.decode('utf-8')
-            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-            title = data.get('title') if isinstance(data, dict) else None
-            if isinstance(title, str) and title.casefold() == lower_identifier:
-                matches.append(record_uid)
-        except (TypeError, ValueError):
-            continue
-
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
+    record = RecordMixin.resolve_single_record(params, identifier)
+    if not record:
+        return None
+    if record.record_uid in nested_share_records:
         raise CommandError(
             'nsf-convert',
-            f"More than one record is titled '{identifier}'. Use a record UID.")
+            f"'{identifier}' is already a Nested Share Record")
+    return record.record_uid
 
-    resolved = _nsf.resolve_nested_share_record_uid(params, identifier)
-    if resolved:
-        return resolved
 
-    record = RecordMixin.resolve_single_record(params, identifier)
-    return record.record_uid if record else None
+def _record_title(params, record_uid):
+    record = (getattr(params, 'record_cache', {}) or {}).get(record_uid) or {}
+    raw_data = record.get('data_unencrypted')
+    if not raw_data:
+        return None
+    try:
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode('utf-8')
+        data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+    except (TypeError, ValueError):
+        return None
+    title = data.get('title') if isinstance(data, dict) else None
+    if not isinstance(title, str) or not title:
+        return None
+    return ''.join(
+        char if char.isprintable() else f'\\u{ord(char):04x}' for char in title)
 
 
 def _resolve_target_folder(params, folder_input):
@@ -132,7 +134,9 @@ class NestedShareConvertCommand(Command):
             f'{bcolors.ENDC}')
         print(f'Records to convert ({len(record_uids)}):')
         for record_uid in record_uids:
-            print(f'  {record_uid}')
+            title = _record_title(params, record_uid)
+            label = f'{title!r} ({record_uid})' if title else record_uid
+            print(f'  {label}')
         print(f'Destination: {folder_description}')
 
         if not kwargs.get('force'):

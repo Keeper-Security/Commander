@@ -14,6 +14,7 @@ from keepercommander.nested_share_folder.conversion_api import (
 )
 from keepercommander.error import CommandError
 from keepercommander.proto import keeperdrive_convert_pb2
+from keepercommander.subfolder import RootFolderNode, UserFolderNode
 
 
 def _uid():
@@ -165,7 +166,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         output = StringIO()
         with redirect_stdout(output):
             results = command.execute(
-                self.params, records=['Legacy'], folder_uid=None, force=True)
+                self.params, records=[self.record_uid], folder_uid=None, force=True)
 
         mock_convert.assert_called_once_with(
             self.params, record_uids=[self.record_uid], folder_uid=None)
@@ -173,6 +174,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIsNone(results)
         self.assertIn('Warning:', output.getvalue())
         self.assertIn('Classic shared-folder membership', output.getvalue())
+        self.assertIn(f"'Legacy' ({self.record_uid})", output.getvalue())
         self.assertIn(self.record_uid, output.getvalue())
         self.assertIn('Destination: Vault (root)', output.getvalue())
         self.assertNotIn('server support', output.getvalue())
@@ -190,12 +192,29 @@ class TestClassicToNsfConversionCommand(TestCase):
         mock_convert.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands.RecordMixin.resolve_single_record',
-           return_value=None)
-    def test_command_rejects_unresolved_record(self, _mock_resolve_record, mock_convert):
+    def test_bare_title_does_not_match_outside_current_folder(self, mock_convert):
+        record_uid = self.record_uid
+        self.params.record_cache[record_uid]['data_unencrypted'] = '{"title":"Server Login"}'
+
+        prod_folder = UserFolderNode()
+        prod_folder.uid = 'prod'
+        prod_folder.name = 'Prod'
+        dev_folder = UserFolderNode()
+        dev_folder.uid = 'dev'
+        dev_folder.name = 'Dev'
+        root_folder = RootFolderNode()
+        root_folder.subfolders = ['prod', 'dev']
+        self.params.folder_cache = {'prod': prod_folder, 'dev': dev_folder}
+        self.params.root_folder = root_folder
+        self.params.current_folder = 'prod'
+        self.params.subfolder_record_cache = {
+            'prod': set(),
+            'dev': {record_uid},
+        }
+
         with self.assertRaisesRegex(CommandError, 'Record .* was not found'):
             NestedShareConvertCommand().execute(
-                self.params, records=['Missing'], folder_uid=None, force=True)
+                self.params, records=['Server Login'], folder_uid=None, force=True)
 
         mock_convert.assert_not_called()
 
@@ -210,14 +229,49 @@ class TestClassicToNsfConversionCommand(TestCase):
         mock_convert.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    def test_command_rejects_ambiguous_record_title(self, mock_convert):
+    def test_command_rejects_known_nested_share_record(self, mock_convert):
+        self.params.nested_share_records[self.record_uid] = {}
+
+        with self.assertRaisesRegex(CommandError, 'already a Nested Share Record'):
+            NestedShareConvertCommand().execute(
+                self.params, records=[self.record_uid], folder_uid=None, force=True)
+
+        mock_convert.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands.RecordMixin.resolve_single_record')
+    def test_bare_title_uses_standard_record_resolution(self, mock_resolve_record, mock_convert):
         other_uid = _uid()
         self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Legacy"}'}
+        mock_resolve_record.return_value = SimpleNamespace(record_uid=other_uid)
+        mock_convert.return_value = [{
+            'record_uid': other_uid, 'status': 'OK', 'success': True,
+        }]
 
-        with self.assertRaisesRegex(CommandError, 'More than one record is titled'):
+        with self.assertLogs(level='INFO'):
             NestedShareConvertCommand().execute(
                 self.params, records=['Legacy'], folder_uid=None, force=True)
 
+        mock_resolve_record.assert_called_once_with(self.params, 'Legacy')
+        mock_convert.assert_called_once_with(
+            self.params, record_uids=[other_uid], folder_uid=None)
+
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands.user_choice',
+           return_value='n')
+    def test_confirmation_escapes_control_characters_in_title(self, _mock_choice, mock_convert):
+        self.params.record_cache[self.record_uid]['data_unencrypted'] = (
+            '{"title":"Legacy\\n\\u001b[31mInjected"}')
+        output = StringIO()
+
+        with redirect_stdout(output):
+            NestedShareConvertCommand().execute(
+                self.params, records=[self.record_uid], folder_uid=None, force=False)
+
+        record_list = output.getvalue().split('Records to convert', 1)[1].split('Destination:', 1)[0]
+        self.assertNotIn('\x1b', record_list)
+        self.assertIn(r'\\u000a', record_list)
+        self.assertIn(r'\\u001b', record_list)
         mock_convert.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3',

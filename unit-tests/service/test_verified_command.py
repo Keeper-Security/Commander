@@ -59,6 +59,21 @@ class TestServiceModeCommandPolicy(TestCase):
                 err = Verifycommand.validate_service_mode_restrictions(_tokens(raw))
                 self.assertIsNotNone(err, msg=f'should block: {raw!r} -> {_tokens(raw)}')
 
+    def test_nsf_convert_requires_force_in_service_mode(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIn(
+            'requires -f/--force',
+            check(_tokens('nsf-convert RECORD_UID')),
+        )
+        self.assertIsNone(check(_tokens('nsf-convert RECORD_UID --force')))
+        self.assertIsNone(check(_tokens('nsf-convert RECORD_UID -f')))
+        self.assertIsNotNone(check(_tokens('nsf-convert -- RECORD_UID -f')))
+        self.assertIn(
+            'requires -f/--force',
+            Verifycommand.validate_nsf_convert_command(
+                _tokens('nsf-convert -- RECORD_UID -f')),
+        )
+
     def test_attachment_commands_blocked_for_remote_api(self):
         check = Verifycommand.validate_service_mode_restrictions
         self.assertIsNotNone(check(_tokens('download-attachment SOME_UID')))

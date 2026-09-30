@@ -129,5 +129,13 @@ def policy_check(fn):
                 'error': transform_folder_error
             }, 400
 
+        nsf_convert_error = Verifycommand.validate_nsf_convert_command(command)
+        if nsf_convert_error:
+            logger.debug(f"Command validation failed: {command[0]} - {nsf_convert_error}")
+            return {
+                'status': 'error',
+                'error': nsf_convert_error
+            }, 400
+
         return fn(*args, **kwargs)
     return wrapper
