@@ -40,20 +40,12 @@ def _resolve_record_uid(params, identifier):
     record_cache = getattr(params, 'record_cache', {}) or {}
     nested_share_records = getattr(params, 'nested_share_records', {}) or {}
     if identifier in nested_share_records:
-        raise CommandError(
-            'nsf-convert',
-            f"'{identifier}' is already a Nested Share Record")
+        return identifier
     if identifier in record_cache:
         return identifier
 
     record = RecordMixin.resolve_single_record(params, identifier)
-    if not record:
-        return None
-    if record.record_uid in nested_share_records:
-        raise CommandError(
-            'nsf-convert',
-            f"'{identifier}' is already a Nested Share Record")
-    return record.record_uid
+    return record.record_uid if record else None
 
 
 def _record_title(params, record_uid):
@@ -101,23 +93,37 @@ class NestedShareConvertCommand(Command):
             identifiers = [identifiers]
         if not identifiers:
             raise CommandError('nsf-convert', 'At least one record is required')
-        if len(identifiers) > _nsf.MAX_CONVERT_RECORDS:
-            raise CommandError(
-                'nsf-convert',
-                f"Maximum {_nsf.MAX_CONVERT_RECORDS} records per request")
 
         record_uids = []
+        already_nested_share_uids = []
+        nested_share_records = getattr(params, 'nested_share_records', {}) or {}
+        seen_record_uids = set()
         for identifier in identifiers:
             with command_error_handler('nsf-convert'):
                 record_uid = _resolve_record_uid(params, identifier)
             if not record_uid:
                 raise CommandError('nsf-convert', f"Record '{identifier}' was not found")
-            record_uids.append(record_uid)
+            if record_uid in seen_record_uids:
+                raise CommandError(
+                    'nsf-convert',
+                    'The same record was selected more than once; remove duplicate records')
+            seen_record_uids.add(record_uid)
+            if record_uid in nested_share_records:
+                already_nested_share_uids.append(record_uid)
+            else:
+                record_uids.append(record_uid)
 
-        if len(set(record_uids)) != len(record_uids):
+        if len(record_uids) > _nsf.MAX_CONVERT_RECORDS:
             raise CommandError(
                 'nsf-convert',
-                'The same record was selected more than once; remove duplicate records')
+                f"Maximum {_nsf.MAX_CONVERT_RECORDS} Classic records per request")
+
+        for record_uid in already_nested_share_uids:
+            logging.info(
+                'Record "%s" is already a Nested Share Record; skipped.', record_uid)
+        if not record_uids:
+            logging.info('No Classic records remain to convert.')
+            return
 
         with command_error_handler('nsf-convert'):
             folder_uid = _resolve_target_folder(params, kwargs.get('folder_uid'))
@@ -207,5 +213,7 @@ class NestedShareConvertCommand(Command):
 
         if converted or missing_results or unexpected_result_count:
             params.sync_data = True
-        logging.info('Conversion complete: %d of %d Classic record(s) converted.',
-                     converted, len(record_uids))
+        logging.info(
+            'Conversion complete: %d of %d Classic record(s) converted; '
+            '%d already Nested Share Record(s) skipped.',
+            converted, len(record_uids), len(already_nested_share_uids))
