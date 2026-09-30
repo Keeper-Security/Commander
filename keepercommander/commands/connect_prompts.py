@@ -89,10 +89,31 @@ def _bold_cyan(s: str) -> str:   return _c('1;36', s)
 
 
 def _sanitize(text: Optional[str]) -> str:
-    """Strip C0/C1 control characters (incl. ESC) from attacker-supplied text."""
+    """Escape C0/C1 control characters (incl. ESC) from attacker-supplied text.
+
+    Renders each control character as a visible escape sequence so that
+    (1) the prompt accurately represents what will execute and (2) a newline
+    cannot be hidden inside a comment, making two statements render identically.
+    """
     if not isinstance(text, str):
         return ''
-    return _CONTROL_CHAR_RE.sub('', text)
+
+    def escape_ctrl(m):
+        c = m.group(0)
+        code = ord(c)
+        if c == '\n':
+            return '\\n'
+        elif c == '\t':
+            return '\\t'
+        elif c == '\r':
+            return '\\r'
+        elif code < 0x20:
+            return f'\\x{code:02x}'
+        elif 0x7f <= code < 0xa0:
+            return f'\\x{code:02x}'
+        return c
+
+    return _CONTROL_CHAR_RE.sub(escape_ctrl, text)
 
 
 def _is_interpreter(prog: Optional[str]) -> bool:
@@ -143,7 +164,15 @@ def _looks_multi_statement(arg: str) -> bool:
 
 
 def split_shell_statements(script: Optional[str]) -> List[str]:
-    """Split a shell-script into top-level statements"""
+    """Split a shell-script into top-level statements.
+
+    Handles:
+    - Single/double quoted strings (quote escaping)
+    - Escaped characters (backslash)
+    - Shell statement separators (; \n && ||)
+    - Comments (#) — # only starts a comment when it begins a word
+      (at line start or preceded by whitespace)
+    """
     if not script:
         return []
 
@@ -158,6 +187,13 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
         if stmt:
             parts.append(stmt)
         buf.clear()
+
+    def is_word_boundary(pos: int) -> bool:
+        """True if position is at the start of a shell word (start of line or after whitespace)."""
+        if pos == 0:
+            return True
+        prev_char = script[pos - 1]
+        return prev_char in (' ', '\t', '\n', ';', '&', '|', '(', ')')
 
     while i < n:
         c = script[i]
@@ -174,6 +210,11 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
         elif c in ('"', "'"):
             quote = c
             buf.append(c)
+        elif c == '#' and quote is None and is_word_boundary(i):
+            # Comment: skip until newline (only if # starts a word)
+            while i < n and script[i] != '\n':
+                i += 1
+            continue
         elif c in ('\n', ';'):
             flush()
         elif c in ('&', '|') and i + 1 < n and script[i + 1] == c:
