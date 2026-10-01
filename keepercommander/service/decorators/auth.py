@@ -10,11 +10,13 @@
 #
 
 import hmac
+import html
 from functools import wraps
 from flask import request
 from datetime import datetime
 from ..util.str_util import split_to_list
 from ..util.config_reader import ConfigReader
+from ..util.parse_keeper_response import ensure_record_add_json_format
 from ..decorators.logging import debug_decorator, logger
 from ...service.util.verified_command import Verifycommand
 
@@ -85,7 +87,19 @@ def policy_check(fn):
                 'status': 'error',
                 'error': 'Command length exceeded'
             }, 400
-        command = command_content.split(" ")
+        normalized_command = ensure_record_add_json_format(html.unescape(command_content))
+        try:
+            command = Verifycommand.tokenize_service_command(normalized_command)
+        except ValueError:
+            return {
+                'status': 'error',
+                'error': 'Invalid command syntax'
+            }, 400
+        if not command:
+            return {
+                'status': 'error',
+                'error': 'Command must not be empty'
+            }, 400
         if not policy or not policy.strip():
             return {
                 'status': 'error',
@@ -127,6 +141,14 @@ def policy_check(fn):
             return {
                 'status': 'error',
                 'error': transform_folder_error
+            }, 400
+
+        nsf_convert_error = Verifycommand.validate_nsf_convert_command(command)
+        if nsf_convert_error:
+            logger.debug(f"Command validation failed: {command[0]} - {nsf_convert_error}")
+            return {
+                'status': 'error',
+                'error': nsf_convert_error
             }, 400
 
         return fn(*args, **kwargs)

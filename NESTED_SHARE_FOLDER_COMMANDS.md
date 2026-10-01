@@ -15,9 +15,11 @@ To get help on a particular command, run:
 | `[nsf-rndir]`             | Rename a folder or change its color                                 |
 | `[nsf-list]`              | List Nested Share Folders and Nested Share Records                                |
 | `[nsf-rmdir]`             | Remove one or more Nested Share Folders                              |
+| `[nsf-move]`              | Move a Nested Share Record or Nested Share Folder to a new location   |
 | `[nsf-share-folder]`      | Grant or remove a user's access to a folder                         |
 | `[nsf-record-add]`        | Create a new Nested Share Record                                     |
 | `[nsf-record-update]`     | Update an existing Nested Share Record                               |
+| `[nsf-convert]`           | Convert Classic record(s) to Nested Share Record(s)                  |
 | `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records            |
 | `[nsf-ln]`                | Link a record into a Nested Share Folder                             |
 | `[nsf-shortcut]`          | Manage records that appear in more than one folder                  |
@@ -291,6 +293,38 @@ nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 
 ---
 
+### nsf-convert command:
+
+**Command:** `nsf-convert`
+
+**Detail:** Permanently convert up to 100 Classic records per request to Nested Share Records. Results are reported per record. Records already known to be Nested Share Records are skipped.
+
+**Parameters:**
+
+One or more Classic record UIDs, titles, or paths
+
+**Switches:**
+
+`--folder <FOLDER>` Existing Nested Share Folder UID, name, or path. Omit to target `Vault (root)`.
+
+`-f`, `--force` Skip the confirmation prompt
+
+**Important:** Conversion cannot be rolled back. Direct user shares are retained. Classic shared-folder membership and additional Classic folder placements are not retained.
+
+**Examples:**
+
+```
+nsf-convert abc123recorduid
+nsf-convert abc123recorduid def456recorduid --folder "Projects/Archive"
+nsf-convert abc123recorduid --folder "Projects/Archive" --force
+```
+
+1. Convert one Classic record to `Vault (root)`; review the warning and confirm when prompted.
+2. Convert two Classic records to the `Projects/Archive` Nested Share Folder.
+3. Convert one Classic record to `Projects/Archive` without a confirmation prompt.
+
+---
+
 ### nsf-rm command:
 
 **Command:** `nsf-rm`
@@ -360,6 +394,32 @@ nsf-ln rec123abc abc123folder
 
 1. Link a record by title into a folder by name
 2. Link a record by UID into a folder by UID
+
+---
+
+### nsf-move command:
+
+**Command:** `nsf-move`
+
+**Detail:** Move a Nested Share Record or Nested Share Folder to another Nested Share Folder or to the Nested Share Folder root. Classic records and folders cannot be moved with this command.
+
+Folder moves are limited to five Nested Share Folder levels. Records can be moved into a folder at the maximum depth.
+
+**Parameters:**
+
+`src` Nested Share Record or Nested Share Folder UID, title/name, or path
+
+`dst` Destination Nested Share Folder UID, name, or path, or `root`
+
+**Examples:**
+
+```
+nsf-move "Client Portal" "Archive"
+nsf-move "Old Projects" root
+```
+
+1. Move a Nested Share Record to the `Archive` folder.
+2. Move a Nested Share Folder to the Nested Share Folder root.
 
 ---
 
@@ -616,6 +676,7 @@ nsf-get rec123abc --format json --verbose
 | `nsf-rndir`        | Rename / recolor a folder     |
 | `nsf-list`         | List folders and records      |
 | `nsf-rmdir`        | Remove folder(s)              |
+| `nsf-move`         | Move a Nested Share Record or folder |
 | `nsf-share-folder` | Grant or remove folder access |
 
 
@@ -626,6 +687,8 @@ nsf-get rec123abc --format json --verbose
 | ------------------ | ----------------------------------------------- |
 | `nsf-record-add`    | Create a record                                 |
 | `nsf-record-update` | Update a record                                 |
+| `nsf-convert`       | Convert Classic record(s) to Nested Share Record(s) |
+| `nsf-move`          | Move a Nested Share Record or folder            |
 | `nsf-rm`            | Remove / trash / unlink a record                |
 | `nsf-ln`            | Link a record into a folder                     |
 | `nsf-shortcut list` | List multi-folder records                       |
@@ -709,6 +772,28 @@ nsf-rmdir "Old Archive"
 nsf-rmdir "Old Archive" --operation delete-permanent --force
 ```
 
+### Move a Nested Share Record or folder
+
+```bash
+# Move a record into another folder
+nsf-move "Client Portal" "Archive"
+
+# Move a folder to the Nested Share Folder root
+nsf-move "Old Projects" root
+```
+
+### Convert Classic records
+
+```bash
+# Convert one record to Vault (root)
+nsf-convert abc123recorduid
+
+# Convert multiple records into an existing Nested Share Folder
+nsf-convert abc123recorduid def456recorduid --folder "Projects/Archive"
+```
+
+Review the permanent-conversion warning and record list, then confirm when prompted. Use `--force` to skip the prompt.
+
 ### Bulk-revoke permissions across a folder tree
 
 ```bash
@@ -740,4 +825,3 @@ Both `--expire-at` and `--expire-in` are accepted by `nsf-share-folder` and `nsf
 ---
 
 ---
-

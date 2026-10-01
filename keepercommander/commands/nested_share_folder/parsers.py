@@ -386,3 +386,23 @@ nested_share_move_parser.add_argument(
     'dst', type=str,
     help="Destination folder UID/title/path, or 'root' for the Nested "
          "Share Folder root")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Classic-to-Nested Share conversion parser
+# ══════════════════════════════════════════════════════════════════════════
+
+nested_share_convert_parser = _make_parser(
+    'nsf-convert',
+    'Convert Classic record(s) to Nested Share Record(s). Conversion is permanent.')
+nested_share_convert_parser.add_argument(
+    'records', nargs='+', metavar='RECORD',
+    help='Classic record UID(s), title(s), or path(s) to convert '
+         '(maximum 100 Classic records per request)')
+nested_share_convert_parser.add_argument(
+    '--folder', dest='folder_uid', metavar='FOLDER',
+    help='Existing Nested Share Folder UID/name/path. '
+         'Omit to target Vault (root).')
+nested_share_convert_parser.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='Skip the confirmation prompt')
