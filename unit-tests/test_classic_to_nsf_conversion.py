@@ -78,6 +78,49 @@ class TestClassicToNsfConversionApi(TestCase):
             build_convert_records_request(
                 self.params, [self.record_uid, self.record_uid])
 
+    def test_build_request_rejects_noncanonical_record_uid(self):
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+        last_value = alphabet.index(self.record_uid[-1])
+        alias_uid = self.record_uid[:-1] + alphabet[last_value | 1]
+
+        self.assertEqual(
+            utils.base64_url_decode(alias_uid),
+            utils.base64_url_decode(self.record_uid))
+        with self.assertRaisesRegex(ValueError, 'canonical Keeper UID encoding'):
+            build_convert_records_request(self.params, [alias_uid])
+
+    def test_build_request_rejects_nested_share_record(self):
+        self.params.nested_share_records = {
+            self.record_uid: {'record_key_unencrypted': self.record_key}
+        }
+
+        with self.assertRaisesRegex(ValueError, 'already a Nested Share Record'):
+            build_convert_records_request(self.params, [self.record_uid])
+
+    def test_build_request_rejects_cached_nested_share_record(self):
+        self.params.record_cache[self.record_uid]['source'] = 'nested_share_folder'
+
+        with self.assertRaisesRegex(ValueError, 'already a Nested Share Record'):
+            build_convert_records_request(self.params, [self.record_uid])
+
+    def test_build_request_rejects_record_missing_from_classic_cache(self):
+        self.params.record_cache.clear()
+
+        with self.assertRaisesRegex(ValueError, 'Classic record .* was not found'):
+            build_convert_records_request(self.params, [self.record_uid])
+
+    def test_build_request_rejects_known_non_owner(self):
+        self.params.record_owner_cache = {
+            self.record_uid: SimpleNamespace(owner=False)
+        }
+
+        with self.assertRaisesRegex(ValueError, 'not owned by the caller'):
+            build_convert_records_request(self.params, [self.record_uid])
+
+    def test_build_request_allows_unknown_owner_for_server_validation(self):
+        request = build_convert_records_request(self.params, [self.record_uid])
+        self.assertEqual(len(request.records), 1)
+
     def test_build_request_rejects_oversized_batch(self):
         with self.assertRaisesRegex(ValueError, 'at most 100'):
             build_convert_records_request(self.params, [_uid() for _ in range(101)])

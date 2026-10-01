@@ -30,6 +30,8 @@ def _decode_uid(uid: str, field_name: str) -> bytes:
     decoded = utils.base64_url_decode(uid)
     if len(decoded) != 16:
         raise ValueError(f"{field_name} must decode to 16 bytes")
+    if utils.base64_url_encode(decoded) != uid:
+        raise ValueError(f"{field_name} must use canonical Keeper UID encoding")
     return decoded
 
 
@@ -77,12 +79,27 @@ def build_convert_records_request(params, record_uids, folder_uid=None):
     _validate_aes_key(folder_key, "Destination folder key")
     rq = keeperdrive_convert_pb2.ConvertRecordRequest()
     seen = set()
+    nested_share_records = getattr(params, 'nested_share_records', {}) or {}
+    record_cache = getattr(params, 'record_cache', {}) or {}
+    record_owner_cache = getattr(params, 'record_owner_cache', {}) or {}
 
     for record_uid in record_uids:
-        if record_uid in seen:
-            raise ValueError(f"Duplicate record UID in conversion request: {record_uid}")
-        seen.add(record_uid)
         record_uid_bytes = _decode_uid(record_uid, "record_uid")
+        if record_uid_bytes in seen:
+            raise ValueError(f"Duplicate record UID in conversion request: {record_uid}")
+        seen.add(record_uid_bytes)
+
+        record = record_cache.get(record_uid)
+        if record_uid in nested_share_records or (
+                record is not None and record.get('source') == 'nested_share_folder'):
+            raise ValueError(f"Record {record_uid} is already a Nested Share Record")
+        if record_uid not in record_cache:
+            raise ValueError(f"Classic record {record_uid} was not found in the record cache")
+
+        owner_info = record_owner_cache.get(record_uid)
+        # Missing ownership metadata is inconclusive; the endpoint remains authoritative.
+        if owner_info is not None and owner_info.owner is False:
+            raise ValueError(f"Record {record_uid} is not owned by the caller")
 
         record_key = get_record_key(params, record_uid, raise_on_missing=True)
         _validate_aes_key(record_key, f"Record key for {record_uid}")
