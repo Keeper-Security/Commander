@@ -14,7 +14,7 @@ readonly KEEPER_DIR="/home/commander/.keeper"
 readonly CONFIG_FILE="${KEEPER_DIR}/config.json"
 readonly MONITOR_LOG="${KEEPER_DIR}/config_monitor.log"
 readonly MONITOR_PID_FILE="${KEEPER_DIR}/config_monitor.pid"
-readonly DEFAULT_SERVER="keepersecurity.com"
+readonly DEFAULT_SERVER="${KEEPER_SERVER:-keepersecurity.com}"
 readonly DEVICE_TIMEOUT="43200"  # 30 days in minutes
 readonly MONITOR_INTERVAL="30"   # Config monitoring interval in seconds
 
