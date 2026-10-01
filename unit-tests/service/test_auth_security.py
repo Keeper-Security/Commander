@@ -99,9 +99,39 @@ class TestAuthSecurity(TestCase):
             self.assertEqual(response[0]['status'], 'error')
             self.assertIn('Not permitted', response[0]['error'])
 
+    @mock.patch.object(ConfigReader, 'read_config', return_value='nsf-convert')
+    def test_policy_check_requires_force_for_nsf_conversion(self, _mock_read_config):
+        endpoint = lambda *args, **kwargs: ({'status': 'success'}, 200)
+        headers = {'api-key': 'test_key'}
+
+        with self.app.test_request_context(
+                '/test', method='POST', json={'command': 'nsf-convert RECORD_UID'},
+                headers=headers):
+            response = policy_check(endpoint)()
+            self.assertEqual(response[1], 400)
+            self.assertIn('-f/--force', response[0]['error'])
+
+        with self.app.test_request_context(
+                '/test', method='POST',
+                json={'command': 'nsf-convert RECORD_UID --force'}, headers=headers):
+            response = policy_check(endpoint)()
+            self.assertEqual(response[1], 200)
+            self.assertEqual(response[0]['status'], 'success')
+
+    @mock.patch.object(ConfigReader, 'read_config', return_value='nsf-convert')
+    def test_policy_check_does_not_treat_force_in_quoted_title_as_flag(self, _mock_read_config):
+        with self.app.test_request_context(
+                '/test', method='POST',
+                json={'command': 'nsf-convert "my --force record"'},
+                headers={'api-key': 'test_key'}):
+            response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
+
+        self.assertEqual(response[1], 400)
+        self.assertIn('-f/--force', response[0]['error'])
+
     @mock.patch.object(ConfigReader, 'read_config')
     def test_policy_check_allows_pam_tunnel_start_at_http_layer(self, mock_read_config):
-        """Tunnel ban is enforced in CommandExecutor, not policy_check split(' ')."""
+        """PAM tunnel restrictions are enforced by the command executor."""
         mock_read_config.return_value = "pam"
 
         with self.app.test_request_context(

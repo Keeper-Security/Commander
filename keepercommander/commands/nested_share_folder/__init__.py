@@ -60,6 +60,11 @@ from .display_commands import (                          # noqa: F401
     NestedShareGetCommand,
 )
 
+# Classic-to-Nested Share conversion
+from .conversion_commands import (                       # noqa: F401
+    NestedShareConvertCommand,
+)
+
 
 def register_commands(commands):
     """Register Nested Share Folder commands with the command framework."""
@@ -79,6 +84,7 @@ def register_commands(commands):
     commands['nsf-shortcut']                  = NestedShareRecordShortcutCommand()
     commands['nsf-get']                       = NestedShareGetCommand()
     commands['nsf-move']                      = NestedSharedMoveCommander()
+    commands['nsf-convert']                   = NestedShareConvertCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -99,3 +105,4 @@ def register_command_info(aliases, command_info):
     command_info['nsf-shortcut']                  = 'Manage Nested Share Record shortcuts'
     command_info['nsf-get']                       = 'Get details of a Nested Share Record or folder'
     command_info['nsf-move']                      = 'Move a Nested Share Record or folder to a new location'
+    command_info['nsf-convert']                   = 'Convert Classic records to Nested Share Records'

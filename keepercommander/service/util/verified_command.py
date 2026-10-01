@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import shlex
 
 
 class Verifycommand:
@@ -96,6 +97,7 @@ class Verifycommand:
             Verifycommand.validate_service_mode_double_dash,
             Verifycommand.validate_service_mode_env_var_expansion_command,
             Verifycommand.validate_service_mode_legacy_command,
+            Verifycommand.validate_nsf_convert_command,
             Verifycommand.validate_service_mode_pam_tunnel_command,
             Verifycommand.validate_service_mode_download_attachment_command,
             Verifycommand.validate_service_mode_upload_attachment_command,
@@ -108,6 +110,24 @@ class Verifycommand:
             if error:
                 return error
         return None
+
+    @staticmethod
+    def tokenize_service_command(command):
+        """Tokenize a command using the executor's backslash handling."""
+        return shlex.split(command.replace('\\', '\\\\'))
+
+    @staticmethod
+    def validate_nsf_convert_command(command_tokens, request_temp_dir=None):
+        """Require explicit force acknowledgement for permanent conversion in Service Mode."""
+        if not command_tokens or command_tokens[0].lower() != 'nsf-convert':
+            return None
+
+        for token in command_tokens[1:]:
+            if token == '--':
+                break
+            if token in ('-f', '--force'):
+                return None
+        return 'nsf-convert requires -f/--force through Service Mode'
 
     @staticmethod
     def _record_reference_candidates(tok):
