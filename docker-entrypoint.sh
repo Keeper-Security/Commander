@@ -296,6 +296,15 @@ start_config_monitor() {
 # Stop config.json monitoring
 stop_config_monitor() {
     if [[ -f "${MONITOR_PID_FILE}" ]]; then
+        # Flush the latest config.json back to the KSM record before killing
+        # the monitor: the monitor only uploads on its MONITOR_INTERVAL tick,
+        # so a shutdown between ticks would otherwise lose any change written
+        # since the last tick (notably the clone_code refreshed on each login).
+        if [[ -n "${KSM_CONFIG:-}" || -n "${KSM_TOKEN:-}" ]] \
+            && [[ -n "${RECORD:-}" ]] && [[ -f "${CONFIG_FILE}" ]]; then
+            upload_config_to_ksm "${KSM_CONFIG:-}" "${KSM_TOKEN:-}" "${RECORD}" || true
+        fi
+
         local monitor_pid
         monitor_pid=$(cat "${MONITOR_PID_FILE}")
         if kill -0 "${monitor_pid}" 2>/dev/null; then
