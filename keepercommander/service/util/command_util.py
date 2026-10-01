@@ -14,7 +14,6 @@ import os
 import sys
 import json
 import logging
-import shlex
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
@@ -171,9 +170,9 @@ class CommandExecutor:
             command = ensure_record_add_json_format(html.unescape(command))
 
             try:
-                command_tokens = shlex.split(command.replace('\\', '\\\\'))
+                command_tokens = Verifycommand.tokenize_service_command(command)
             except ValueError:
-                command_tokens = command.split()
+                return {"status": "error", "error": "Invalid command syntax"}, 400
 
             # This request's own FILEDATA directory - the only paths Service
             # Mode will treat as safe, not the whole shared OS temp root.

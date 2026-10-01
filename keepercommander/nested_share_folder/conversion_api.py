@@ -12,7 +12,6 @@ from .. import api, crypto, utils
 from ..proto import keeperdrive_convert_pb2
 
 from .common import get_folder_key, get_record_key, is_keeper_uid
-from .folder_api import resolve_folder_identifier
 
 MAX_CONVERT_RECORDS = 100
 AES_KEY_LENGTH = 32
@@ -35,30 +34,27 @@ def _decode_uid(uid: str, field_name: str) -> bytes:
     return decoded
 
 
-def _resolve_target_folder(params, folder_uid: Optional[str]):
+def _get_target_folder(params, folder_uid: Optional[str]):
     """Return (UID bytes, unencrypted key) for a Nested Share Folder or root."""
     if not folder_uid:
-        # Per the endpoint contract, an empty UID is the caller's root folder.
+        # The protocol requires both wraps at Vault(root); there the folder key
+        # is the caller's data key, so encrypt independently for each purpose.
         return b'', params.data_key
 
-    resolved_uid = resolve_folder_identifier(params, folder_uid)
-    if not resolved_uid:
-        raise ValueError(f"Nested Share Folder '{folder_uid}' was not found")
-
-    # resolve_folder_identifier also understands Classic folders. Conversion
-    # only accepts an existing Nested Share Folder as a non-root destination.
-    if resolved_uid not in (getattr(params, 'nested_share_folders', {}) or {}):
+    nested_share_folders = getattr(params, 'nested_share_folders', {}) or {}
+    if folder_uid not in nested_share_folders:
         raise ValueError(f"'{folder_uid}' is not a Nested Share Folder")
 
-    folder_key = get_folder_key(params, resolved_uid, raise_on_missing=True)
-    return _decode_uid(resolved_uid, "folder_uid"), folder_key
+    folder_key = get_folder_key(params, folder_uid, raise_on_missing=True)
+    return _decode_uid(folder_uid, "folder_uid"), folder_key
 
 
 def build_convert_records_request(params, record_uids, folder_uid=None):
     """Build and locally validate a Classic-to-Nested Share request.
 
     ``folder_uid`` may be omitted/empty to target the caller's root folder.
-    All records in this helper call share one destination folder.
+    Otherwise, it must be the UID of an existing Nested Share Folder. All
+    records in this helper call share one destination folder.
     """
     if isinstance(record_uids, str):
         record_uids = [record_uids]
@@ -75,7 +71,7 @@ def build_convert_records_request(params, record_uids, folder_uid=None):
         raise ValueError("User data key is not available; run sync-down and log in again")
     _validate_aes_key(data_key, "User data key")
 
-    folder_uid_bytes, folder_key = _resolve_target_folder(params, folder_uid)
+    folder_uid_bytes, folder_key = _get_target_folder(params, folder_uid)
     _validate_aes_key(folder_key, "Destination folder key")
     rq = keeperdrive_convert_pb2.ConvertRecordRequest()
     seen = set()

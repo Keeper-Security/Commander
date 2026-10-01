@@ -397,7 +397,8 @@ nested_share_convert_parser = _make_parser(
     'Convert Classic record(s) to Nested Share Record(s). Conversion is permanent.')
 nested_share_convert_parser.add_argument(
     'records', nargs='+', metavar='RECORD',
-    help='Classic record UID(s), title(s), or path(s) to convert (maximum 100)')
+    help='Classic record UID(s), title(s), or path(s) to convert '
+         '(maximum 100 Classic records per request)')
 nested_share_convert_parser.add_argument(
     '--folder', dest='folder_uid', metavar='FOLDER',
     help='Existing Nested Share Folder UID/name/path. '

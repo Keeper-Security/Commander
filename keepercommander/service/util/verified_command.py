@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import shlex
 
 
 class Verifycommand:
@@ -109,6 +110,11 @@ class Verifycommand:
             if error:
                 return error
         return None
+
+    @staticmethod
+    def tokenize_service_command(command):
+        """Tokenize a command using the executor's backslash handling."""
+        return shlex.split(command.replace('\\', '\\\\'))
 
     @staticmethod
     def validate_nsf_convert_command(command_tokens, request_temp_dir=None):

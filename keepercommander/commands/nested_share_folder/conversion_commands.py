@@ -23,7 +23,7 @@ _STATUS_MESSAGES = {
     'TARGET_NOT_DRIVE_FOLDER': 'The destination is not a Nested Share Folder',
     'RECORD_LINK_CHILD_NOT_OWNED': 'A linked child record is not owned by the caller',
     'RECORD_LINK_PARENT_NOT_OWNED': 'A linked parent record is not owned by the caller',
-    'RECORD_LINK_RECORD_IN_TRASH': 'A linked record is in the caller’s trash',
+    'RECORD_LINK_RECORD_IN_TRASH': "A linked record is in the caller's trash",
     'INTERNAL_ERROR': 'The server could not complete the conversion',
     'RECORD_LINK_CHILD_NOT_INCLUDED': 'A linked Classic record must also be included',
     'RECORD_LINK_FILE_PROMOTION_FAILED': 'A linked file attachment could not be promoted',
@@ -33,7 +33,7 @@ _STATUS_MESSAGES = {
 
 
 def _resolve_record_uid(params, identifier):
-    """Resolve a UID or use Commander’s normal current-folder/path resolution."""
+    """Resolve a UID or use Commander's normal current-folder/path resolution."""
     if not identifier:
         return None
 
@@ -62,8 +62,7 @@ def _record_title(params, record_uid):
     title = data.get('title') if isinstance(data, dict) else None
     if not isinstance(title, str) or not title:
         return None
-    return ''.join(
-        char if char.isprintable() else f'\\u{ord(char):04x}' for char in title)
+    return title
 
 
 def _resolve_target_folder(params, folder_input):
@@ -141,7 +140,14 @@ class NestedShareConvertCommand(Command):
         print(f'Records to convert ({len(record_uids)}):')
         for record_uid in record_uids:
             title = _record_title(params, record_uid)
-            label = f'{title!r} ({record_uid})' if title else record_uid
+            if title:
+                quoted_title = json.dumps(title, ensure_ascii=False)
+                quoted_title = ''.join(
+                    char if char.isprintable() else f'\\u{ord(char):04x}'
+                    for char in quoted_title)
+                label = f'{quoted_title} ({record_uid})'
+            else:
+                label = record_uid
             print(f'  {label}')
         print(f'Destination: {folder_description}')
 
@@ -212,7 +218,11 @@ class NestedShareConvertCommand(Command):
                 logging.debug('Conversion status for record %s: %s', record_uid, status)
 
         if converted or missing_results or unexpected_result_count:
-            params.sync_data = True
+            if getattr(params, 'service_mode', False):
+                from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
+            else:
+                params.sync_data = True
         logging.info(
             'Conversion complete: %d of %d Classic record(s) converted; '
             '%d already Nested Share Record(s) skipped.',

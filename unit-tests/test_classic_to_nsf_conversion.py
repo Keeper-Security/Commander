@@ -217,10 +217,26 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIsNone(results)
         self.assertIn('Warning:', output.getvalue())
         self.assertIn('Classic shared-folder membership', output.getvalue())
-        self.assertIn(f"'Legacy' ({self.record_uid})", output.getvalue())
+        self.assertIn(f'"Legacy" ({self.record_uid})', output.getvalue())
         self.assertIn(self.record_uid, output.getvalue())
         self.assertIn('Destination: Vault (root)', output.getvalue())
         self.assertNotIn('server support', output.getvalue())
+
+    @patch('keepercommander.commands.pam_import.nsf_helpers.sync_down_preserving_nsf_keys')
+    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    def test_service_mode_syncs_after_success(self, mock_convert, mock_sync):
+        mock_convert.return_value = [{
+            'record_uid': self.record_uid, 'status': 'OK', 'success': True,
+        }]
+        self.params.service_mode = True
+        output = StringIO()
+
+        with redirect_stdout(output):
+            NestedShareConvertCommand().execute(
+                self.params, records=[self.record_uid], folder_uid=None, force=True)
+
+        mock_sync.assert_called_once_with(self.params)
+        self.assertFalse(self.params.sync_data)
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
     def test_classic_folder_is_not_accepted_as_drive_destination(self, mock_convert):
@@ -330,7 +346,7 @@ class TestClassicToNsfConversionCommand(TestCase):
            return_value='n')
     def test_confirmation_escapes_control_characters_in_title(self, _mock_choice, mock_convert):
         self.params.record_cache[self.record_uid]['data_unencrypted'] = (
-            '{"title":"Legacy\\n\\u001b[31mInjected"}')
+            '{"title":"Legacy café\\n\\u001b[31mInjected"}')
         output = StringIO()
 
         with redirect_stdout(output):
@@ -339,8 +355,9 @@ class TestClassicToNsfConversionCommand(TestCase):
 
         record_list = output.getvalue().split('Records to convert', 1)[1].split('Destination:', 1)[0]
         self.assertNotIn('\x1b', record_list)
-        self.assertIn(r'\\u000a', record_list)
-        self.assertIn(r'\\u001b', record_list)
+        self.assertIn(r'"Legacy café\n\u001b[31mInjected"', record_list)
+        self.assertNotIn(r'\\u000a', record_list)
+        self.assertNotIn(r'\\u001b', record_list)
         mock_convert.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3',
