@@ -87,6 +87,9 @@ class KeeperResponseParser:
         for pattern, method_name in substring_patterns.items():
             if pattern in command:
                 return method_name
+
+        if command.split(maxsplit=1)[:1] == ['nsf-convert']:
+            return '_parse_nsf_convert_command'
         
         # Check for exact command start matches
         exact_patterns = {
@@ -137,6 +140,11 @@ class KeeperResponseParser:
         
         # Find the appropriate parser method (used for both log and non-log paths)
         parser_method_name = KeeperResponseParser._find_parser_method(command)
+
+        if parser_method_name == '_parse_nsf_convert_command':
+            return KeeperResponseParser._parse_nsf_convert_command(
+                command, response_str, None if is_from_log else log_output
+            )
 
         # If from log output, use command-specific parser if available, else generic logging parser
         if is_from_log:
@@ -1226,6 +1234,56 @@ class KeeperResponseParser:
         else:
             # No output after cleaning - use existing empty response handler
             return KeeperResponseParser._handle_empty_response(command)
+
+    @staticmethod
+    def _parse_nsf_convert_command(
+        command: str, response_str: str, log_output: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Treat the permanent-conversion notice as informational, not a command failure."""
+        combined_response = response_str
+        if log_output:
+            cleaned_logs = KeeperResponseParser._clean_ansi_codes(log_output.strip())
+            if cleaned_logs and cleaned_logs not in combined_response:
+                combined_response = '\n'.join(filter(None, (combined_response, cleaned_logs)))
+
+        classification_response = re.sub(
+            r'(?im)^([ \t]*)warning:([ \t]*conversion is permanent)',
+            r'\1Notice:\2',
+            combined_response,
+        )
+        lowered_response = classification_response.lower()
+        has_conversion_failure = any(
+            phrase in lowered_response
+            for phrase in (
+                'was not converted',
+                'no conversion result was returned',
+                'no conversion results were returned',
+                'conversion result for classic record',
+                'conversion endpoint returned',
+            )
+        )
+        has_conversion_success = 'converted to a nested share record' in lowered_response
+        if has_conversion_failure:
+            return {
+                'status': 'partial_success' if has_conversion_success else 'warning',
+                'status_code': 207 if has_conversion_success else 400,
+                'command': command.split()[0] if command.split() else command,
+                'message': KeeperResponseParser._format_multiline_message(combined_response),
+                'data': None,
+            }
+
+        result = KeeperResponseParser._parse_logging_based_command(
+            command, classification_response
+        )
+
+        if result.get('status') == 'success':
+            result['message'] = KeeperResponseParser._format_multiline_message(combined_response)
+        elif 'error' in result:
+            result['error'] = combined_response
+        elif 'message' in result:
+            result['message'] = KeeperResponseParser._format_multiline_message(combined_response)
+
+        return result
     
     @staticmethod
     def _filter_login_messages(response_str: str) -> str:
