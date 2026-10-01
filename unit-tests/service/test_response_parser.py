@@ -127,6 +127,101 @@ My Vault
         self.assertEqual(result['data']['tree']['kind'], 'folder')
         self.assertNotIn('level', result['data']['tree'])
 
+    def test_nsf_convert_permanent_notice_does_not_fail_successful_command(self):
+        command = 'nsf-convert record_uid --force'
+        output = (
+            'Warning: Conversion is permanent; Classic folder membership is not retained.\n'
+            'Record: Example Login (record_uid)\n'
+            'Destination: Vault (root)'
+        )
+
+        result = KeeperResponseParser.parse_response(command, output)
+        self.assertEqual(result['status'], 'success')
+        self.assertNotIn('status_code', result)
+        self.assertEqual(result['message'], output.splitlines())
+
+    def test_nsf_convert_permanent_notice_from_logs_does_not_fail(self):
+        output = (
+            'Warning: Conversion is permanent; Classic folder membership is not retained.\n'
+            'Destination: Vault (root)'
+        )
+
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force', '', log_output=output
+        )
+
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], output.splitlines())
+
+    def test_nsf_convert_does_not_ignore_errors_in_logs(self):
+        output = 'Warning: Conversion is permanent.'
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force',
+            output,
+            log_output='Conversion failed: Invalid owner key.',
+        )
+
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['status_code'], 400)
+
+    def test_nsf_convert_success_in_logs_is_http_success(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force',
+            'Warning: Conversion is permanent.\nDestination: Vault (root)',
+            log_output=(
+                'Classic record "record_uid" converted to a Nested Share Record.\n'
+                'Conversion complete: 1 of 1 Classic record(s) converted.'
+            ),
+        )
+
+        self.assertEqual(result['status'], 'success')
+        self.assertNotIn('status_code', result)
+
+    def test_nsf_convert_backend_failures_keep_failure_status(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force',
+            'Warning: Conversion is permanent.',
+            log_output=(
+                'Classic record "record_uid" was not converted: '
+                'The caller does not own this record.'
+            ),
+        )
+
+        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(result['status_code'], 400)
+
+    def test_nsf_convert_mixed_results_are_partial_success(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid_1 record_uid_2 --force',
+            'Warning: Conversion is permanent.',
+            log_output=(
+                'Classic record "record_uid_1" converted to a Nested Share Record.\n'
+                'Classic record "record_uid_2" was not converted: '
+                'The caller does not own this record.'
+            ),
+        )
+
+        self.assertEqual(result['status'], 'partial_success')
+        self.assertEqual(result['status_code'], 207)
+
+    def test_nsf_convert_other_warnings_remain_warnings(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force',
+            'Warning: Conversion is permanent.\nWarning: Server reported a partial result.',
+        )
+
+        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(result['status_code'], 400)
+
+    def test_nsf_convert_errors_are_not_hidden_by_permanent_notice(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert record_uid --force',
+            'Warning: Conversion is permanent. Conversion failed: Invalid owner key.',
+        )
+
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['status_code'], 400)
+
     def test_parse_mkdir_command(self):
         """Test parsing of 'mkdir' command output"""
 
