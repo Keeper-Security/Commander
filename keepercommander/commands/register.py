@@ -133,7 +133,7 @@ folder_access.add_argument(
 folder_access.add_argument(
     '--force-remove-share', dest='force_remove_share', action='store_true',
     help='when removing a user/team that has a device on a KSM application linked to this '
-         'shared folder, delete that device and proceed with the removal instead of failing '
+         'shared folder, lock that device and proceed with the removal instead of failing '
          'with KSM_CASCADE_REQUIRED. Requires -a remove.')
 
 record_access = share_folder_parser.add_argument_group(
@@ -898,7 +898,7 @@ class ShareFolderCommand(Command):
     @staticmethod
     def _confirm_ksm_cascade(params, chunk):
         # type: (KeeperParams, List[folder_pb2.SharedFolderUpdateV3Request]) -> bool
-        """Look up which KSM app devices would be cascade-deleted by the user/team removals in
+        """Look up which KSM app devices would be cascade-locked by the user/team removals in
         `chunk`, and prompt the user with the specifics before retrying with forceRemoveShare=True.
         Returns False (falls back to the generic error) if no removal is found in `chunk`, or if no
         matching device cascade could be resolved locally."""
@@ -957,7 +957,7 @@ class ShareFolderCommand(Command):
             f'  {username}: ' + ', '.join(f'{title} ({count})' for title, count in apps.items())
             for username, apps in cascade.items())
         prompt = (
-            f'Removing the following will delete {total_devices} device(s) across {len(total_apps)} '
+            f'Removing the following will lock {total_devices} device(s) across {len(total_apps)} '
             f'app(s):\n{detail}\nProceed?')
         answer = user_choice(prompt, 'yn', 'n')
         return answer.lower() in ('y', 'yes')
@@ -1060,7 +1060,7 @@ class ShareFolderCommand(Command):
                             raise CommandError(
                                 'share-folder',
                                 'One or more removed users or teams have a device on a KSM application linked to '
-                                'this shared folder. Removing them will delete those devices. Re-run this command '
+                                'this shared folder. Removing them will lock those devices. Re-run this command '
                                 'with --force-remove-share to confirm.')
                         if kae.result_code != 'bad_inputs_nothing_to_do':
                             raise kae
