@@ -619,6 +619,8 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
 class LoadRecordTypeCommand(EnterpriseCommand):
     def get_parser(self):
         return load_record_type_parser
+        
+    
 
     def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'record_types.json'
@@ -652,9 +654,9 @@ class LoadRecordTypeCommand(EnterpriseCommand):
             record_type_name = r_type.get('record_type_name')
             if not record_type_name:
                 continue
-            record_type_name = record_type_name[:30]
+            record_type_name = record_type_name[:32]
             if record_type_name.lower() in loaded_record_types:
-                logging.warning('Custom record type "%s" already exists. Skipping.', record_type_name)
+                logging.warning(_c('yellow',f'Custom record type "{record_type_name}" already exists. Skipping'))
                 continue
             fields = r_type.get('fields')
             if not isinstance(fields, list):
@@ -664,7 +666,7 @@ class LoadRecordTypeCommand(EnterpriseCommand):
             for field in fields:
                 field_type = field.get('$type')
                 if field_type not in record_types.RecordFields:
-                    logging.warning('Custom record type "%s": Invalid field \"%s\". Skipping.', record_type_name, field_type)
+                    logging.warning(_c('red',f'Custom record type "{record_type_name}": Invalid field "{field_type}". Skipping'))
                     is_valid = False
                     break
             if not is_valid:
@@ -688,14 +690,25 @@ class LoadRecordTypeCommand(EnterpriseCommand):
             rq = record_pb2.RecordType()
             rq.content = json.dumps(content)
             rq.scope = record_pb2.RT_ENTERPRISE
-            rs = api.communicate_rest(params, rq, 'vault/record_type_add')
-
-            counter += 1
+            try:
+                rs = api.communicate_rest(params, rq, 'vault/record_type_add')
+                logging.info(_c('green',f'Successfully imported record type "{record_type_name}"'))
+                counter += 1
+            except Exception as e:
+                logging.warning(_c('red',f'Failed to add record type "{record_type_name}" with error:\n   {e}'))
 
         if counter > 0:
             logging.info('Added %d custom record types', counter)
             api.sync_down(params, record_types=True)
 
+def _c(color,text):
+        if color == 'green':
+            return f'\033[92m{text}\033[0m'
+        if color == 'yellow':
+            return f'\033[1;93m{text}\033[0m'
+        if color == 'red':
+            return f'\033[1;91m{text}\033[0m'
+        return text
 
 def importer_for_format(input_format):
     full_name = 'keepercommander.importer.' + input_format
