@@ -1,6 +1,9 @@
+import asyncio
 import json
 import logging
 import os
+import ssl
+import threading
 from datetime import datetime
 
 import requests
@@ -15,7 +18,7 @@ from .pam_dto import GatewayAction
 from .. import base
 from ... import crypto, utils, rest_api
 from ...display import bcolors
-from ...error import KeeperApiError
+from ...error import CommandError, KeeperApiError
 from ...params import KeeperParams
 from ...proto import pam_pb2, router_pb2
 
@@ -709,5 +712,175 @@ def encrypt_pwd_complexity(rule_list_dict, record_key_unencrypted):
     rule_list_json = json.dumps(rule_list_dict)
     rule_list_json_bytes = rule_list_json.encode('UTF-8')
     rule_list_json_encrypted = crypto.encrypt_aes_v2(rule_list_json_bytes, record_key_unencrypted)
-
     return rule_list_json_encrypted
+
+
+def _parse_access_elevation_frame(raw):
+    """Unwrap a krouter-relayed gateway response frame off the user's WebSocket and return its
+    `data` dict, or None if `raw` isn't a terminal ACCESS_ELEVATION response."""
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+
+    candidates = [obj]
+    payload_field = obj.get('payload')
+    if isinstance(payload_field, str):
+        try:
+            candidates.append(json.loads(payload_field))
+        except Exception:
+            pass
+
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        data = cand.get('data', cand)
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                continue
+        if isinstance(data, dict) and ('success' in data or 'error' in data):
+            return data
+    return None
+
+
+class _AccessElevationSocket:
+    """Short-lived WebSocket to /api/user/client. Required because rm-grant-temporary-access-token
+    (currently the only ACCESS_ELEVATION action allowed through the generic dispatch endpoint)
+    relays its terminal response over the caller's own open socket instead of the HTTP response --
+    krouter rejects the request outright if streamResponse=true but no socket is open."""
+
+    def __init__(self, params, router_tokens, cookie_header):
+        from ..tunnel.port_forward.tunnel_helpers import WEBSOCKETS_VERSION, websockets_connect
+        if WEBSOCKETS_VERSION is None:
+            raise CommandError('', 'The websockets library is required for this action.')
+
+        encrypted_session_token, encrypted_transmission_key, _ = router_tokens
+        self._connect = websockets_connect
+        self._version = WEBSOCKETS_VERSION
+        self.url = get_router_ws_url(params) + '/api/user/client'
+        self.headers = {
+            'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+            'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
+        }
+        if cookie_header:
+            self.headers['Cookie'] = cookie_header
+        self._ssl_context = None
+        if self.url.startswith('wss://'):
+            self._ssl_context = ssl.create_default_context()
+            if params.ssl_verify is False:
+                self._ssl_context.check_hostname = False
+                self._ssl_context.verify_mode = ssl.CERT_NONE
+        self._data = None
+        self._ready = threading.Event()
+        self._done = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True, name='access-elevation-socket')
+
+    def _run(self):
+        try:
+            asyncio.run(self._listen())
+        except Exception as e:
+            logging.debug('Access elevation socket listener exited: %r', e)
+        finally:
+            self._ready.set()
+            self._done.set()
+
+    async def _listen(self):
+        # Mirrors tunnel_helpers.connect_websocket_with_fallback's version handling, trimmed to a
+        # plain message loop -- that function's own loop is wired to the WebRTC tube registry and
+        # isn't reusable for a one-off terminal-frame read.
+        header_kwarg = 'additional_headers' if self._version == 'asyncio' else 'extra_headers'
+        connect_kwargs = {header_kwarg: self.headers, 'ping_interval': 20, 'ping_timeout': 20}
+        async with self._connect(self.url, ssl=self._ssl_context, **connect_kwargs) as ws:
+            self._ready.set()
+            while not self._stop.is_set():
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                except Exception:
+                    break
+                data = _parse_access_elevation_frame(msg)
+                if data is not None:
+                    self._data = data
+                    self._done.set()
+                    break
+
+    def start(self, timeout=10):
+        self._thread.start()
+        if not self._ready.wait(timeout=timeout):
+            raise CommandError('', f'Timed out opening a WebSocket to {self.url}')
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def drain_terminal_response(self, timeout=90):
+        return self._data if self._done.wait(timeout=timeout) else None
+
+
+def dispatch_streamed_access_elevation_action(params, gateway_action, destination_gateway_uid_str=None, timeout=90):
+    """Dispatch an ACCESS_ELEVATION gateway action that requires streamResponse=true (currently
+    only rm-grant-temporary-access-token) and return the parsed terminal frame's `data` dict.
+
+    Opens a short-lived socket to /api/user/client first (see _AccessElevationSocket), binds the
+    HTTP dispatch to the same krouter worker for ALB stickiness, then sends the action with
+    is_streaming=True and waits for the result to arrive over the socket. Raises CommandError on
+    missing/ambiguous gateway, transport failure, or timeout.
+    """
+    from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+
+    if not destination_gateway_uid_str:
+        connected = router_get_connected_gateways(params)
+        controllers = list(connected.controllers) if connected else []
+        if not controllers:
+            raise CommandError('', 'No connected Gateways in your enterprise.')
+        if len(controllers) == 1:
+            destination_gateway_uid_str = utils.base64_url_encode(controllers[0].controllerUid)
+        elif gateway_action.gateway_destination:
+            destination_gateway_uid_str = utils.base64_url_encode(
+                gateway_helper.find_connected_gateways(
+                    [c.controllerUid for c in controllers], gateway_action.gateway_destination))
+        else:
+            raise CommandError('', 'More than one Gateway is connected; specify --gateway.')
+
+    router_tokens = get_keeper_tokens(params)
+    encrypted_session_token, encrypted_transmission_key, transmission_key = router_tokens
+
+    http_session = requests.Session()
+    try:
+        bind_url = get_router_url(params) + '/api/user/bind_to_controller/' + destination_gateway_uid_str
+        http_session.get(bind_url, verify=params.ssl_verify, timeout=10)
+    except Exception as e:
+        logging.debug('bind_to_controller GET failed (continuing): %s', e)
+    cookie_header = ('; '.join(f'{c.name}={c.value}' for c in http_session.cookies)
+                     if http_session.cookies else None)
+
+    socket = _AccessElevationSocket(params, router_tokens, cookie_header)
+    socket.start()
+    try:
+        response = router_send_action_to_gateway(
+            params=params,
+            gateway_action=gateway_action,
+            message_type=pam_pb2.CMT_WORKFLOW_ACCESS_ELEVATION,
+            is_streaming=True,
+            destination_gateway_uid_str=destination_gateway_uid_str,
+            gateway_timeout=timeout * 1000,
+            transmission_key=transmission_key,
+            encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token,
+            http_session=http_session,
+        )
+        if response is None:
+            raise CommandError('', 'The Gateway did not respond.')
+        data = socket.drain_terminal_response(timeout=timeout)
+    finally:
+        socket.stop()
+
+    if data is None:
+        raise CommandError('', 'Timed out waiting for the Gateway response.')
+    return data

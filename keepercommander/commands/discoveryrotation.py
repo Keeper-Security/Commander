@@ -86,6 +86,7 @@ from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam.cnapp_commands import PAMCnappCommand
 from .pam_import.commands import PAMProjectCommand
 from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
+from keepercommander.commands.pam_cloud.pam_cloud_credentials import PAMCloudCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .workflow import PAMWorkflowCommand
 from .pam_service.list import PAMActionServiceListCommand
@@ -325,6 +326,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
         self.register_command('cnapp', PAMCnappCommand(), 'Manage CNAPP integrations', 'cn')
         self.register_command('recording', PAMRecordingCommand(), 'Manage PAM Session Recordings', 'rec')
+        self.register_command('cloud', PAMCloudCommand(), 'Manage PAM cloud resource access', 'cl')
 
 
 class PAMGatewayCommand(GroupCommand):
