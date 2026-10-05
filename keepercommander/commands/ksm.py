@@ -1312,6 +1312,15 @@ class KSMCommand(Command):
         return rs.appInfo
 
     @staticmethod
+    def get_app_info_bulk(params, app_uids):   # type: (KeeperParams, List[str]) -> Sequence[APIRequest_pb2.AppInfo]
+        """Look up multiple apps in a single vault/get_app_info call instead of one call per app."""
+        rq = APIRequest_pb2.GetAppInfoRequest()
+        for app_uid in app_uids:
+            rq.appRecordUid.append(utils.base64_url_decode(app_uid))
+        rs = api.communicate_rest(params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
+        return rs.appInfo
+
+    @staticmethod
     def _auto_share_app_folders(params, app_uid, *, users=None, teams=None):
         # type: (KeeperParams, str, Optional[List[str]], Optional[List[str]]) -> None
         """Grant new app_user/app_team members read-only access to the app's linked
