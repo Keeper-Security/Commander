@@ -513,15 +513,6 @@ def _ensure_folder_direct_permissions(params, folder_uid):
     """
     if not _folder_inherits_parent_permissions(params, folder_uid):
         return False
-    result = update_folder_v3(params, folder_uid, inherit_permissions=False)
-    if not result.get('success'):
-        raise ValueError(
-            result.get('message')
-            or 'Failed to disable parent permission inheritance on folder')
-    nsf_folders = getattr(params, 'nested_share_folders', {})
-    if folder_uid in nsf_folders:
-        nsf_folders[folder_uid]['inherit_user_permissions'] = folder_pb2.BOOLEAN_FALSE
-    params.sync_data = True
     return True
 
 
