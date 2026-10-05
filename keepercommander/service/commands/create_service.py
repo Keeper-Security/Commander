@@ -111,6 +111,9 @@ class CreateService(Command):
                 get_existing_api_key(params, args.update_vault_record)
                 if args.update_vault_record else None
             )
+            if not existing_api_key:
+                from ..util.api_key import read_api_key_from_environment
+                existing_api_key = read_api_key_from_environment()
 
             config_data = self.service_config.create_default_config()
             self._handle_configuration(config_data, params, args)

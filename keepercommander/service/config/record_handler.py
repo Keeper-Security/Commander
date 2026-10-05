@@ -53,9 +53,11 @@ class RecordHandler:
             self._add_expiration_to_record(record)
 
         verb = 'Reusing' if existing_api_key else 'Generated'
+        redacted_key = f"****{api_key[-4:]}" if len(api_key) >= 4 else "****"
         if record_uid:
-            redacted_key = f"****{api_key[-4:]}" if len(api_key) >= 4 else "****"
             print(f'{verb} API key: {redacted_key} (stored in vault record: {record_uid})')
+        elif existing_api_key:
+            print(f'{verb} API key: {redacted_key} (from KEEPER_SERVICE_API_KEY_FILE)')
         else:
             print(f'{verb} API key: {api_key}')
         return record

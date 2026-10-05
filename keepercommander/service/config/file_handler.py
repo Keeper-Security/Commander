@@ -164,6 +164,13 @@ class ConfigFormatHandler:
         """
         config_json = config_dir / "config.json"
         if not config_json.exists():
+            # federated login has no config.json: use the data key of the KSM config instead
+            from ...federated_login import from_environment
+            federated_login = from_environment()
+            if federated_login:
+                data_key = federated_login.load_config().get('dataKey')
+                if data_key:
+                    return data_key
             raise FileNotFoundError(f"Config.json file not found: {config_json}")
 
         with open(config_json, 'r') as json_file:

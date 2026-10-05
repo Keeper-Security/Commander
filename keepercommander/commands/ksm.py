@@ -84,6 +84,15 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --count [NUM] : Number of tokens to generate (Default: 1)
       --config-init [json, b64 or k8s] : Initialize configuration string from a one-time token
 
+  {bcolors.BOLD}Add Federated Client Device (OIDC token authentication, e.g. Kubernetes service account):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--federated --oidc-issuer {bcolors.OKBLUE}[ISS] {bcolors.OKGREEN}--oidc-subject {bcolors.OKBLUE}[SUB]{bcolors.ENDC}
+    Options:
+      --name [CLIENT NAME] : Name of the client
+      --oidc-jwks-uri [URI] : Issuer JWKS URI (Default: resolved by OIDC discovery on the issuer)
+      --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
+      --config-init [json, b64 or k8s] : Configuration format (Default: json)
+      --include-data-key : Store the user data key in the config (full vault access)
+
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
     Options:
@@ -193,6 +202,15 @@ ksm_parser.add_argument('--purge', dest='purge', action='store_true',
 ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='store',
                         help='Initialize client config')    # json, b64, file
+# Federated (OAuth) client options
+ksm_parser.add_argument('--federated', dest='federated', action='store_true',
+                        help='Add a federated client authenticated by an OIDC token instead of a key pair')
+ksm_parser.add_argument('--oidc-issuer', dest='oidc_issuer', action='store', help='Token issuer (iss claim)')
+ksm_parser.add_argument('--oidc-subject', dest='oidc_subject', action='store', help='Token subject (sub claim)')
+ksm_parser.add_argument('--oidc-jwks-uri', dest='oidc_jwks_uri', action='store',
+                        help='Issuer JWKS URI. Default: resolved by OIDC discovery on the issuer')
+ksm_parser.add_argument('--include-data-key', dest='include_data_key', action='store_true',
+                        help='Store the user data key in the federated client config (full vault access)')
 # Application sharing options
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
 # Disable sharing apps w/ admin permissions for now
@@ -531,6 +549,14 @@ class KSMCommand(Command):
                 access_expire_in_min = kwargs.get('accessExpireInMin')
 
                 is_return_tokens = kwargs.get('returnTokens')
+
+                if kwargs.get('federated'):
+                    config_str = KSMCommand.add_federated_client(
+                        params, app_name_or_uid, kwargs.get('oidc_issuer'), kwargs.get('oidc_subject'),
+                        jwks_uri=kwargs.get('oidc_jwks_uri'),
+                        access_expire_in_min=access_expire_in_min, client_name=client_name,
+                        config_init=config_init or 'json', include_data_key=kwargs.get('include_data_key'))
+                    return config_str if is_return_tokens else None
 
                 tokens_and_device = KSMCommand.add_client(
                     params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
@@ -1278,8 +1304,13 @@ class KSMCommand(Command):
                             "first_access": first_access_ts,
                             "last_access": last_access_ts,
                             "ip_lock_enabled": c.lockIp,
-                            "ip_address": c.ipAddress if c.ipAddress else None
+                            "ip_address": c.ipAddress if c.ipAddress else None,
+                            "auth_type": "oauth" if c.authType == APIRequest_pb2.APP_CLIENT_AUTH_OAUTH else "signature"
                         }
+                        if c.authType == APIRequest_pb2.APP_CLIENT_AUTH_OAUTH:
+                            client_device_data["oauth_issuer"] = c.oauthBinding.issuer
+                            client_device_data["oauth_subject"] = c.oauthBinding.subject
+                            client_device_data["oauth_jwks_uri"] = c.oauthBinding.jwksUri or None
                         app_data["client_devices"].append(client_device_data)
                         
                         if format_type == 'table':
@@ -1304,7 +1335,12 @@ class KSMCommand(Command):
                                                 f'  First Access: {first_access}\n' \
                                                 f'  Last Access: {last_access}\n' \
                                                 f'  IP Lock: {lock_ip}\n' \
-                                                f'  IP Address: {client_device_data["ip_address"] or "--"}'
+                                                f'  IP Address: {client_device_data["ip_address"] or "--"}\n' \
+                                                f'  Auth Type: {client_device_data["auth_type"]}'
+                            if c.authType == APIRequest_pb2.APP_CLIENT_AUTH_OAUTH:
+                                client_devices_str += f'\n  OIDC Issuer: {c.oauthBinding.issuer}\n' \
+                                                      f'  OIDC Subject: {c.oauthBinding.subject}\n' \
+                                                      f'  OIDC JWKS URI: {c.oauthBinding.jwksUri or "(discovery)"}'
 
                             print(client_devices_str)
                         client_count += 1
@@ -2350,6 +2386,69 @@ class KSMCommand(Command):
             logging.warning('')
 
         return tokens
+
+    @staticmethod
+    def add_federated_client(params, app_name_or_uid, issuer, subject, jwks_uri=None,
+                             access_expire_in_min=None, client_name=None, config_init='json',
+                             include_data_key=False):
+        """Add a client authenticated by a federated OIDC token (e.g. Kubernetes service account token).
+
+        Unlike add_client, there is no one-time token and no client key pair: the server matches the
+        presented token against the issuer/subject binding, and the token audience must be the Keeper
+        host. The config only carries what federated login needs: the host, the client id and
+        optionally the user data key.
+        """
+        if not app_name_or_uid:
+            raise Exception("No app provided")
+        if not issuer or not subject:
+            raise Exception("Federated client requires --oidc-issuer and --oidc-subject")
+
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not rec_cache_val:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        client_id = os.urandom(64)
+
+        rq = APIRequest_pb2.AddAppClientRequest()
+        rq.appRecordUid = utils.base64_url_decode(rec_cache_val.get('record_uid'))
+        rq.clientId = client_id
+        rq.appClientType = enterprise_pb2.GENERAL
+        rq.authType = APIRequest_pb2.APP_CLIENT_AUTH_OAUTH
+        rq.oauthBinding.issuer = issuer
+        rq.oauthBinding.subject = subject
+        if jwks_uri:
+            rq.oauthBinding.jwksUri = jwks_uri
+        if access_expire_in_min:
+            rq.accessExpireOn = int(time.time() * 1000) + (int(access_expire_in_min) * 60 * 1000)
+        if client_name:
+            rq.id = client_name
+
+        api.communicate_rest(params, rq, 'vault/app_client_add', rs_type=APIRequest_pb2.Device)
+
+        server = params.server if params.server.startswith('http') else 'https://' + params.server
+        hostname = urllib.parse.urlparse(server).netloc.lower()
+        config_dict = {
+            'hostname': hostname,
+            'clientId': bytes_to_base64(client_id),
+            'authType': 'oauth',
+        }
+        if include_data_key:
+            config_dict['dataKey'] = bytes_to_base64(params.data_key)
+
+        config_str = KSMCommand.convert_config_dict(config_dict, config_init)
+
+        print(f'\nSuccessfully generated Federated Client Device\n'
+              f'==============================================\n'
+              f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
+              + (f'Name: {client_name}\n' if client_name else '')
+              + f'Issuer: {issuer}\n'
+                f'Subject: {subject}\n'
+                f'Token Audience: https://{hostname}\n')
+        if include_data_key:
+            print(bcolors.WARNING + "\tWarning: Configuration contains your data key and grants full vault access. "
+                                    "Store it as a secret." + bcolors.ENDC)
+
+        return config_str
 
     @staticmethod
     def init_ksm_config(params, one_time_token, config_init, include_config_dict=False):

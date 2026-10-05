@@ -426,6 +426,14 @@ def do_command(params, command_line):
 
                 if command.is_authorised():
                     if not params.session_token:
+                        # Service Mode: enable federated login before the auto-login below
+                        from .service.core.globals import FEDERATED_LOGIN_COMMANDS, init_federated_login
+                        if cmd in FEDERATED_LOGIN_COMMANDS:
+                            try:
+                                init_federated_login(params)
+                            except Exception as e:
+                                logging.error(e)
+                                return
                         try:
                             # Some commands (like logout) need auth but not sync
                             skip_sync = getattr(command, 'skip_sync_on_auth', False)

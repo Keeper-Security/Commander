@@ -874,7 +874,7 @@ def execute_router_json(params, endpoint,  request):
     return None
 
 
-def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None, timeout=None):
+def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None, timeout=None, _refreshed=False):
     api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
@@ -904,11 +904,14 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
 
         if kae.result_code == 'session_token_expired':
             params.session_token = None
+            if params.federated_login and not _refreshed and params.federated_login.refresh(params):
+                return communicate_rest(params, request, endpoint, rs_type=rs_type,
+                                        payload_version=payload_version, timeout=timeout, _refreshed=True)
         raise kae
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate(params, request, retry_on_throttle=True):
+def communicate(params, request, retry_on_throttle=True, _refreshed=False):
     # type: (KeeperParams, dict, Optional[bool]) -> dict
 
     request['client_time'] = current_milli_time()
@@ -930,6 +933,8 @@ def communicate(params, request, retry_on_throttle=True):
     except KeeperApiError as kae:
         if kae.result_code == 'session_token_expired':
             params.session_token = None
+            if params.federated_login and not _refreshed and params.federated_login.refresh(params):
+                return communicate(params, request, retry_on_throttle, _refreshed=True)
         raise kae
 
 

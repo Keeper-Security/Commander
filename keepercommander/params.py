@@ -246,6 +246,7 @@ class KeeperParams:
         self.breach_watch_security_data = {}
         self.security_score_data = {}
         self.sso_login_info = None
+        self.federated_login = None    # Service Mode only; survives clear_session
         # Nested Share Folder caches for atomic sync objects
         self.nested_share_folders = {}                  # folder_uid -> FolderData
         self.nested_share_folder_keys = {}              # folder_uid -> list of FolderKey
