@@ -309,13 +309,31 @@ class TestGetTailscaleFunnelStatus(unittest.TestCase):
     {"<path>": {"Proxy": "http://localhost:<port>"}}}}}."""
 
     def test_true_when_local_port_is_an_active_proxy_target(self):
-        payload = {"Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}}}
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}},
+            "AllowFunnel": {"example.ts.net:443": True},
+        }
         with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
                          return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
             self.assertTrue(tunneling.get_tailscale_funnel_status(8080))
 
     def test_false_when_no_matching_target(self):
-        payload = {"Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}}}
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}},
+            "AllowFunnel": {"example.ts.net:443": True},
+        }
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_proxy_matches_but_allow_funnel_is_false(self):
+        """A tailnet-only `tailscale serve` on the same target shows up under the same
+        "Web" entry as Funnel - AllowFunnel must also be true, or this isn't actually
+        publicly exposed via Funnel, just privately via Serve."""
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}},
+            "AllowFunnel": {"example.ts.net:443": False},
+        }
         with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
                          return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
             self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
@@ -342,11 +360,50 @@ class TestStopTailscaleFunnel(unittest.TestCase):
             self.assertTrue(tunneling.stop_tailscale_funnel(8080))
 
     def test_returns_false_on_nonzero_exit(self):
+        """Both the scoped command and the reset fallback failing, with the target
+        confirmed still active, is a genuine failure."""
         with tempfile.NamedTemporaryFile() as tmp, \
              mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
              mock.patch('keepercommander.service.util.tunneling.subprocess.run',
                          return_value=mock.Mock(returncode=1)):
             self.assertFalse(tunneling.stop_tailscale_funnel(8080))
+
+    def test_uses_scoped_teardown_first_not_broad_reset(self):
+        """Scoped `--https=<port> off` must be tried before the broad `reset`, which
+        would wipe any other Serve/Funnel config a user set up outside Commander."""
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            first_cmd = mock_run.call_args_list[0].args[0]
+            self.assertEqual(first_cmd, ["tailscale", "funnel", "--https=443", "off"])
+            self.assertEqual(mock_run.call_count, 1)
+
+    def test_falls_back_to_reset_when_scoped_teardown_fails(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         side_effect=[mock.Mock(returncode=1), mock.Mock(returncode=0)]) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            self.assertEqual(mock_run.call_count, 2)
+            self.assertEqual(mock_run.call_args_list[1].args[0], ["tailscale", "funnel", "reset"])
+
+    def test_already_inactive_target_does_not_escalate_to_destructive_reset(self):
+        """The scoped command exits non-zero for an already-removed target ("handler
+        does not exist"), which happens routinely on double teardown (service-stop
+        racing a foreground service's own exit handler). That must not escalate to
+        `funnel reset`, which would wipe unrelated Serve/Funnel config."""
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=False), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            commands = [call.args[0] for call in mock_run.call_args_list]
+            self.assertNotIn(["tailscale", "funnel", "reset"], commands)
 
 
 class TestTailscaleUp(unittest.TestCase):
@@ -381,6 +438,23 @@ class TestTailscaleUp(unittest.TestCase):
         with self.assertRaises(ValueError):
             tunneling.tailscale_up(None)
 
+    def test_no_identity_check_before_authenticating(self):
+        """No pre-flight warning/check - tailscale_up goes straight to `up`, same as
+        before; blocking or warning here would be noise on every normal dev/test run
+        against an already-authenticated host, and headless invocations can't prompt."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=0)) as mock_run, \
+                 mock.patch('builtins.print') as mock_print:
+                tunneling.tailscale_up('tskey-auth-xxx')
+                self.assertEqual(mock_print.call_count, 0)
+                self.assertEqual(mock_run.call_count, 1)
+        finally:
+            os.unlink(tmp_path)
+
 
 class TestSetTailscaleOperator(unittest.TestCase):
     def test_returns_false_when_username_unavailable(self):
@@ -388,7 +462,17 @@ class TestSetTailscaleOperator(unittest.TestCase):
             self.assertFalse(tunneling.set_tailscale_operator())
 
     def test_runs_sudo_tailscale_set_operator_with_current_user(self):
-        with mock.patch.dict(os.environ, {'USER': 'alice'}), \
+        with mock.patch.dict(os.environ, {'USER': 'alice'}, clear=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.set_tailscale_operator())
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd, ["sudo", "tailscale", "set", "--operator=alice"])
+
+    def test_prefers_sudo_user_over_user_when_run_under_sudo(self):
+        """Under `sudo keeper ...`, $USER/$LOGNAME resolve to root - SUDO_USER holds
+        the actual invoking user, who is who should actually get operator rights."""
+        with mock.patch.dict(os.environ, {'USER': 'root', 'SUDO_USER': 'alice'}, clear=True), \
              mock.patch('keepercommander.service.util.tunneling.subprocess.run',
                          return_value=mock.Mock(returncode=0)) as mock_run:
             self.assertTrue(tunneling.set_tailscale_operator())

@@ -125,11 +125,15 @@ class ServiceManager:
                 logger.error(f"\n{str(e)}")
                 return
 
+            # Set before the call, not after - needed even if configure_tailscale raises
+            # with Funnel already live (e.g. a timeout mid-verify), so rollback can still find it.
+            if config_data.get("tailscale") == 'y':
+                tailscale_enabled = True
+                tailscale_port = port
+
             try:
                 TailscaleConfigurator.configure_tailscale(config_data, service_config)
-                if config_data.get("tailscale") == 'y':
-                    tailscale_enabled = True
-                    tailscale_port = port
+                if tailscale_enabled:
                     # Tailscale's URL is only known post-Funnel-start; persist it now.
                     if config_data.get("tailscale_public_url"):
                         try:
@@ -165,6 +169,19 @@ class ServiceManager:
                 elif cloudflare_pid:
                     logger.warning("Cannot terminate cloudflare process: psutil not available")
 
+                if tailscale_enabled and tailscale_port:
+                    try:
+                        from ..util.tunneling import get_tailscale_funnel_status, stop_tailscale_funnel
+                        # Most failures here (bad key, daemon not running, etc.) happen before
+                        # Funnel is ever started - only tear down if it's actually live, so a
+                        # pre-start failure doesn't trigger a pointless (and if it ever falls
+                        # back to 'reset', potentially destructive) teardown attempt.
+                        if get_tailscale_funnel_status(tailscale_port):
+                            stop_tailscale_funnel(tailscale_port)
+                            logger.debug("Stopped Tailscale Funnel after startup failure")
+                    except Exception as ts_error:
+                        logger.debug(f"Error stopping Tailscale Funnel: {type(ts_error).__name__}")
+
                 ProcessInfo.clear()
 
                 if isinstance(e, KeyboardInterrupt):
@@ -173,23 +190,6 @@ class ServiceManager:
 
                 logger.info(f"\n{str(e)}")
                 return
-
-            # Write vault metadata (URL + API key) now the real URL is known. Consumed
-            # from a transient, same-process global (set by CreateService for
-            # -ur/--update-vault-record) so it fires once per creation, not on restarts.
-            from ..core.globals import pop_pending_vault_metadata
-            pending_metadata = pop_pending_vault_metadata()
-            if pending_metadata:
-                try:
-                    from ..core.globals import ensure_params_loaded
-                    from ..commands.integrations.vault_metadata import write_service_metadata, get_service_url
-                    metadata_params = ensure_params_loaded()
-                    actual_service_url = get_service_url(config_data)
-                    write_service_metadata(
-                        metadata_params, pending_metadata['record_uid'], actual_service_url, pending_metadata['api_key']
-                    )
-                except Exception as metadata_error:
-                    logger.error(f"Failed to write vault metadata: {metadata_error}")
 
             # Custom logging filter to replace SSL handshake errors with user-friendly message
             class SSLHandshakeFilter(logging.Filter):
@@ -369,15 +369,15 @@ class ServiceManager:
         except Exception as e:
             logger.error(f"Error: Failed to start Commander Service")
             logger.error(f"Reason: {e}")
-            # Tailscale Funnel may already be live at this point (configured earlier
-            # in this same call) even though the service subprocess/Flask app itself
-            # failed to start -- stop it so a failed startup doesn't leave a public
-            # endpoint pointing at a service that never actually came up.
+            # Funnel may already be live even though the service itself failed to start -
+            # stop it so a failed startup doesn't leave a public endpoint with nothing behind it.
+            # Only if it's actually live though (most failures happen before Funnel ever starts).
             if tailscale_enabled and tailscale_port:
                 try:
-                    from ..util.tunneling import stop_tailscale_funnel
-                    stop_tailscale_funnel(tailscale_port)
-                    logger.debug("Stopped Tailscale Funnel after service startup failure")
+                    from ..util.tunneling import get_tailscale_funnel_status, stop_tailscale_funnel
+                    if get_tailscale_funnel_status(tailscale_port):
+                        stop_tailscale_funnel(tailscale_port)
+                        logger.debug("Stopped Tailscale Funnel after service startup failure")
                 except Exception as cleanup_error:
                     logger.debug(f"Failed to stop Tailscale Funnel during startup-failure rollback: {cleanup_error}")
             cls._handle_shutdown()
@@ -579,23 +579,32 @@ class ServiceManager:
             except psutil.NoSuchProcess:
                 # Funnel is managed by tailscaled, not tied to the Commander process --
                 # an unexpected crash/SIGKILL of the service can leave it publicly
-                # exposed with nothing behind it. Reconcile it here rather than only
-                # on an explicit service-stop.
+                # exposed with nothing behind it. A read-only status check shouldn't
+                # mutate system network config though, so just report it here (not
+                # tear it down) -- run 'service-stop' to actually clean it up.
+                dangling_funnel_note = ""
                 if process_info.tailscale_enabled and process_info.tailscale_port:
                     try:
-                        from ..util.tunneling import stop_tailscale_funnel
-                        stop_tailscale_funnel(process_info.tailscale_port)
-                        logger.debug("Reconciled dangling Tailscale Funnel after detecting Commander process was no longer running")
-                    except Exception as cleanup_error:
-                        logger.debug(f"Failed to reconcile Tailscale Funnel: {cleanup_error}")
-                ProcessInfo.clear()
-                pass
+                        from ..util.tunneling import get_tailscale_funnel_status
+                        if get_tailscale_funnel_status(process_info.tailscale_port):
+                            dangling_funnel_note = (
+                                f"\nTailscale Funnel is still active on port {process_info.tailscale_port} "
+                                "after the Commander process stopped unexpectedly. Run 'service-stop' to clean it up."
+                            )
+                    except Exception as check_error:
+                        logger.debug(f"Failed to check dangling Tailscale Funnel: {check_error}")
+
+                # Keep the record when a Funnel is still live -- clearing it would drop the
+                # tailscale_port that service-stop needs to tear it down, leaving a public
+                # endpoint nothing can clean up (the note above would be unactionable).
+                if not dangling_funnel_note:
+                    ProcessInfo.clear()
+                status = "Commander Service is Stopped" + dangling_funnel_note
+                logger.debug(f"Service status check: {status}")
+                return status
         else:
             status = "No Commander Service is running currently"
             return status
-        status = "Commander Service is Stopped"
-        logger.debug(f"Service status check: {status}")
-        return status
     
     @staticmethod
     def kill_process_by_pid(pid: int):

@@ -123,9 +123,12 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
             self._handle_configuration(config_data, params, args)
-            self._create_and_save_record(config_data, params, args, existing_api_key=existing_api_key)
+            api_key = self._create_and_save_record(config_data, params, args, existing_api_key=existing_api_key)
 
-            # Vault metadata is written from start_service() instead, once the real URL is known.
+            if args.update_vault_record and api_key:
+                actual_service_url = self._get_service_url(config_data)
+                write_service_metadata(params, args.update_vault_record, actual_service_url, api_key)
+
             self._upload_and_start_service(params)
 
         except ValidationError as e:
@@ -156,13 +159,6 @@ class CreateService(Command):
             existing_api_key=existing_api_key,
         )
         config_data["records"] = [record]
-
-        if args.update_vault_record:
-            api_key_value = record.get('api-key')
-            if api_key_value:
-                from ..core.globals import set_pending_vault_metadata
-                set_pending_vault_metadata(args.update_vault_record, api_key_value)
-
         if config_data.get("fileformat"):
             format_type = config_data["fileformat"]
         else:
@@ -182,5 +178,22 @@ class CreateService(Command):
     
     def _get_service_url(self, config_data: Dict[str, Any]) -> str:
         """Determine the actual service URL (ngrok, cloudflare, tailscale, or localhost) with API version path"""
-        from .integrations.vault_metadata import get_service_url
-        return get_service_url(config_data)
+        # Determine API version based on queue_enabled
+        queue_enabled = config_data.get("queue_enabled", "y")
+        api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
+
+        # Priority: ngrok > cloudflare > tailscale > localhost
+        base_url = ""
+        if config_data.get("ngrok_public_url"):
+            base_url = config_data["ngrok_public_url"]
+        elif config_data.get("cloudflare_public_url"):
+            base_url = config_data["cloudflare_public_url"]
+        elif config_data.get("tailscale_public_url"):
+            base_url = config_data["tailscale_public_url"]
+        else:
+            # Fallback to localhost with correct protocol
+            port = config_data.get("port", 8080)
+            protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
+            base_url = f"{protocol}://localhost:{port}"
+
+        return f"{base_url}{api_path}"

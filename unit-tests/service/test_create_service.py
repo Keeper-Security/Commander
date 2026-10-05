@@ -488,5 +488,95 @@ class TestCreateService(unittest.TestCase):
         self.assertEqual(config_data['tailscale'], 'n')
         self.assertEqual(config_data['tailscale_auth_key'], '')
 
+
+class TestGetServiceUrl(unittest.TestCase):
+    """_get_service_url (restored, release-branch-matching, plus one additive
+    tailscale branch): ngrok > cloudflare > tailscale > localhost."""
+
+    def setUp(self):
+        self.command = CreateService()
+
+    def test_tailscale_url_used_when_no_ngrok_or_cloudflare(self):
+        config_data = {'tailscale_public_url': 'https://node.example.ts.net', 'queue_enabled': 'y'}
+        self.assertEqual(self.command._get_service_url(config_data), 'https://node.example.ts.net/api/v2')
+
+    def test_ngrok_still_takes_priority_over_tailscale(self):
+        config_data = {
+            'ngrok_public_url': 'https://abc.ngrok.io',
+            'tailscale_public_url': 'https://node.example.ts.net',
+            'queue_enabled': 'y',
+        }
+        self.assertEqual(self.command._get_service_url(config_data), 'https://abc.ngrok.io/api/v2')
+
+    def test_falls_back_to_localhost_when_nothing_set(self):
+        config_data = {'port': 8080, 'queue_enabled': 'y'}
+        self.assertEqual(self.command._get_service_url(config_data), 'http://localhost:8080/api/v2')
+
+
+class TestVaultMetadataWriteTiming(unittest.TestCase):
+    """Matches the release branch exactly (confirmed via `git show release:...`):
+    vault metadata is written synchronously, unconditionally, for every tunnel
+    type right after record creation - no deferred/pending-metadata mechanism."""
+
+    def setUp(self):
+        self.params = Mock(spec=KeeperParams)
+        self.command = CreateService()
+
+    _FULL_EXECUTE_KWARGS = dict(
+        port=8080, allowedip=None, deniedip=None, commands='record-list', ngrok=None,
+        ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None,
+        tailscale=None, tailscale_advertise_tags=None, certfile=None, certpassword=None,
+        fileformat='json', run_mode='foreground', queue_enabled='y', update_vault_record=None,
+        ratelimit=None, encryption_key=None, token_expiration=None,
+    )
+
+    def test_execute_writes_ngrok_metadata_synchronously(self):
+        with patch('keepercommander.service.core.service_manager.ServiceManager') as mock_sm, \
+             patch.object(self.command, '_handle_configuration'), \
+             patch.object(self.command, '_create_and_save_record', return_value='test-key'), \
+             patch.object(self.command, '_get_service_url', return_value='https://abc.ngrok.io/api/v2'), \
+             patch('keepercommander.service.commands.integrations.vault_metadata.write_service_metadata') as mock_write, \
+             patch.object(self.command, '_upload_and_start_service'), \
+             patch.object(self.command.service_config, 'create_default_config') as mock_config:
+            mock_sm.get_status.return_value = "No Commander Service is running currently"
+            mock_config.return_value = {'tailscale': 'n'}
+            kwargs = dict(self._FULL_EXECUTE_KWARGS, ngrok='tok', update_vault_record='record-uid-1')
+            self.command.execute(self.params, **kwargs)
+            mock_write.assert_called_once_with(self.params, 'record-uid-1', 'https://abc.ngrok.io/api/v2', 'test-key')
+
+    def test_execute_writes_tailscale_metadata_synchronously_too(self):
+        """Unconditional, matching release - no tailscale-specific gating."""
+        with patch('keepercommander.service.core.service_manager.ServiceManager') as mock_sm, \
+             patch.object(self.command, '_handle_configuration'), \
+             patch.object(self.command, '_create_and_save_record', return_value='test-key'), \
+             patch.object(self.command, '_get_service_url', return_value='http://localhost:8080/api/v2'), \
+             patch('keepercommander.service.commands.integrations.vault_metadata.write_service_metadata') as mock_write, \
+             patch.object(self.command, '_upload_and_start_service'), \
+             patch.object(self.command.service_config, 'create_default_config') as mock_config:
+            mock_sm.get_status.return_value = "No Commander Service is running currently"
+            mock_config.return_value = {'tailscale': 'y'}
+            kwargs = dict(self._FULL_EXECUTE_KWARGS, tailscale='tskey-auth-xxx', update_vault_record='record-uid-1')
+            self.command.execute(self.params, **kwargs)
+            mock_write.assert_called_once_with(self.params, 'record-uid-1', 'http://localhost:8080/api/v2', 'test-key')
+
+    def test_create_and_save_record_has_no_metadata_side_effects(self):
+        """No set_pending_vault_metadata or any other global state - record
+        creation/saving only, matching release exactly."""
+        config_data = self.command.service_config.create_default_config()
+        args = StreamlineArgs(
+            port=8080, commands='record-list', ngrok=None, allowedip='0.0.0.0', deniedip='',
+            ngrok_custom_domain=None, cloudflare=None, cloudflare_custom_domain=None,
+            tailscale='tskey-auth-xxx', tailscale_advertise_tags=None, certfile='', certpassword='',
+            fileformat='json', run_mode='foreground', queue_enabled='y',
+            update_vault_record='record-uid-1', ratelimit=None, encryption_key=None,
+            token_expiration=None,
+        )
+        with patch.object(self.command.service_config, 'create_record') as mock_create_record, \
+             patch.object(self.command.service_config, 'save_config'):
+            mock_create_record.return_value = {'api-key': 'test-key'}
+            result = self.command._create_and_save_record(config_data, self.params, args)
+            self.assertEqual(result, 'test-key')
+
+
 if __name__ == '__main__':
     unittest.main()

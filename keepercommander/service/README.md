@@ -432,6 +432,7 @@ The Docker container provides a streamlined way to deploy Keeper Commander Servi
 ### Prerequisites
 
 1. Install [Docker](https://www.docker.com/)
+2. If enabling Tailscale Funnel in a Docker deployment: Docker Compose **v2.30 or later** is required. The Tailscale sidecar's Funnel-enable step relies on the `post_start` hook, which older Compose versions reject during schema validation (the whole file fails to load, not just that service). Check your version with `docker compose version`.
 
 ### Pull Docker Image
 

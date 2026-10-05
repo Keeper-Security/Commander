@@ -10,6 +10,7 @@
 #
 
 from pyngrok import ngrok, conf
+import contextlib
 import os
 import logging
 import subprocess
@@ -429,7 +430,10 @@ def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
         tunnel_token=tunnel_token,
         custom_domain=custom_domain
     )
-    return public_url, tunnel_pid# Tailscale Funnel Functions
+    return public_url, tunnel_pid
+
+
+# Tailscale Funnel Functions
 
 TAILSCALE_INSTALL_URL = "https://tailscale.com/download"
 
@@ -455,10 +459,7 @@ TAILSCALE_INSTALL_TIMEOUT = 180
 
 
 def _run_privileged_tailscale_command(cmd, timeout, action_label):
-    """
-    Run a Tailscale management command (install/daemon-start, may need sudo)
-    with standard timeout/error handling. Returns True on success, False otherwise.
-    """
+    """Run an install/daemon-start command with standard timeout/error handling."""
     print(f"Running: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, timeout=timeout, env=os.environ.copy())
@@ -483,20 +484,17 @@ def _install_tailscale_macos():
     return _run_privileged_tailscale_command(['brew', 'install', 'tailscale'], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
 
 
-def _install_tailscale_linux():
-    """Download and run the official install script. May prompt for sudo interactively."""
+@contextlib.contextmanager
+def _downloaded_to_tempfile(url, suffix):
+    """Download url to a temp file, yield its path, and always delete it after."""
     import urllib.request
-    import tempfile
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.sh') as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
             tmp_path = tmp_file.name
-        urllib.request.urlretrieve(TAILSCALE_INSTALL_SCRIPT_URL, tmp_path)
-        return _run_privileged_tailscale_command(['sh', tmp_path], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
-    except Exception as e:
-        logging.error(f"Error downloading Tailscale install script: {type(e).__name__}")
-        return False
+        urllib.request.urlretrieve(url, tmp_path)
+        yield tmp_path
     finally:
         if tmp_path:
             try:
@@ -505,6 +503,16 @@ def _install_tailscale_linux():
                 pass
 
 
+def _install_tailscale_linux():
+    """Download and run the official install script. May prompt for sudo interactively."""
+    try:
+        with _downloaded_to_tempfile(TAILSCALE_INSTALL_SCRIPT_URL, '.sh') as tmp_path:
+            return _run_privileged_tailscale_command(['sh', tmp_path], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
+    except Exception as e:
+        logging.error(f"Error downloading Tailscale install script: {type(e).__name__}")
+        return False
+
+
 def _is_windows_process_elevated():
     """Check whether this process has Administrator privileges."""
     try:
@@ -517,7 +525,9 @@ def _is_windows_process_elevated():
 
 def _run_msiexec_elevated_windows(msi_path, timeout):
     """Run msiexec via a UAC prompt (Start-Process -Verb RunAs). Returns exit code, or None if declined/failed."""
-    msi_args = f'/i "{msi_path}" /quiet TS_NOLAUNCH=1'
+    # Escape embedded quotes - msi_path sits in a single-quoted PS literal (e.g. O'Brien via %TEMP%).
+    escaped_msi_path = msi_path.replace("'", "''")
+    msi_args = f'/i "{escaped_msi_path}" /quiet TS_NOLAUNCH=1'
     ps_command = (
         "try { "
         f"$p = Start-Process -FilePath msiexec.exe -ArgumentList '{msi_args}' -Verb RunAs -Wait -PassThru; "
@@ -539,77 +549,57 @@ def _run_msiexec_elevated_windows(msi_path, timeout):
         return None
 
 
-def _is_windows_process_elevated():
-    """Check whether this process has Administrator privileges."""
-    try:
-        import ctypes
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception as e:
-        logging.debug(f"Could not determine Windows elevation state: {type(e).__name__}")
-        return False
-
-
-def _run_msiexec_elevated_windows(msi_path, timeout):
-    """Run msiexec via a UAC prompt (Start-Process -Verb RunAs). Returns exit code, or None if declined/failed."""
-    msi_args = f'/i "{msi_path}" /quiet TS_NOLAUNCH=1'
+def _verify_windows_msi_signer(msi_path, timeout):
+    """Verify the MSI is Tailscale-signed before elevating - UAC shows msiexec.exe as the
+    elevating process, not the payload's publisher, so this check has to stand in for the user."""
+    # Same single-quoted-PS-literal escaping as _run_msiexec_elevated_windows above.
+    escaped_msi_path = msi_path.replace("'", "''")
+    # Match the O= component specifically, not a bare substring of the whole subject --
+    # any validly-chained cert merely containing "Tailscale" would otherwise pass here.
     ps_command = (
-        "try { "
-        f"$p = Start-Process -FilePath msiexec.exe -ArgumentList '{msi_args}' -Verb RunAs -Wait -PassThru; "
-        "Write-Output $p.ExitCode "
-        "} catch { Write-Output 'ELEVATION_FAILED' }"
+        f"$sig = Get-AuthenticodeSignature -FilePath '{escaped_msi_path}'; "
+        "if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'O=Tailscale Inc') "
+        "{ Write-Output 'VALID' } else { Write-Output 'INVALID' }"
     )
-    cmd = ["powershell", "-NoProfile", "-Command", ps_command]
-    print("Requesting Administrator approval (UAC prompt) to install Tailscale...")
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    output = (result.stdout or '').strip()
-    if 'ELEVATION_FAILED' in output:
-        logging.error("Elevation request failed or was declined")
-        return None
     try:
-        return int(output.splitlines()[-1].strip())
-    except (ValueError, IndexError):
-        logging.error(f"Could not parse msiexec exit code: {output!r}")
-        return None
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_command],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return (result.stdout or '').strip() == 'VALID'
+    except Exception as e:
+        logging.error(f"Could not verify MSI signature: {type(e).__name__}")
+        return False
 
 
 def _install_tailscale_windows():
     """Download the official MSI and install silently (no verified winget package exists). Elevates via UAC if needed."""
-    import urllib.request
-    import tempfile
-
-    tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.msi') as tmp_file:
-            tmp_path = tmp_file.name
-        urllib.request.urlretrieve(TAILSCALE_MSI_INSTALLER_URL, tmp_path)
+        with _downloaded_to_tempfile(TAILSCALE_MSI_INSTALLER_URL, '.msi') as tmp_path:
+            if not _verify_windows_msi_signer(tmp_path, TAILSCALE_INSTALL_TIMEOUT):
+                logging.error("Downloaded Tailscale MSI is not validly signed by Tailscale Inc. -- aborting install")
+                return False
 
-        if _is_windows_process_elevated():
-            cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
-            print(f"Running: {' '.join(cmd)}")
-            result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
-            returncode = result.returncode
-        else:
-            returncode = _run_msiexec_elevated_windows(tmp_path, TAILSCALE_INSTALL_TIMEOUT)
+            if _is_windows_process_elevated():
+                cmd = ['msiexec', '/i', tmp_path, '/quiet', 'TS_NOLAUNCH=1']
+                print(f"Running: {' '.join(cmd)}")
+                result = subprocess.run(cmd, timeout=TAILSCALE_INSTALL_TIMEOUT, env=os.environ.copy())
+                returncode = result.returncode
+            else:
+                returncode = _run_msiexec_elevated_windows(tmp_path, TAILSCALE_INSTALL_TIMEOUT)
 
-        if returncode is None or returncode != 0:
-            logging.error(f"Tailscale install failed, exit code {returncode}")
-            return False
+            if returncode is None or returncode != 0:
+                logging.error(f"Tailscale install failed, exit code {returncode}")
+                return False
 
-        _add_windows_tailscale_to_process_path()
-        return True
+            _add_windows_tailscale_to_process_path()
+            return True
     except subprocess.TimeoutExpired:
         logging.error(f"Tailscale install timed out after {TAILSCALE_INSTALL_TIMEOUT}s")
         return False
     except Exception as e:
         logging.error(f"Error installing Tailscale via MSI: {type(e).__name__}")
         return False
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _add_windows_tailscale_to_process_path():
@@ -709,14 +699,8 @@ def _get_tailscale_log_path():
 
 
 def reset_tailscale_log():
-    """
-    Truncate the Tailscale subprocess log at the start of a service lifecycle,
-    matching Ngrok/Cloudflare's per-session log convention. Without this, the
-    log grows unbounded across every start/stop cycle -- unlike the other
-    tunnel providers' 'w'-mode logs, Tailscale's is always opened in append
-    mode since multiple one-shot commands (up/funnel) share it within a
-    single lifecycle.
-    """
+    """Truncate the log at lifecycle start - it's opened in append mode elsewhere
+    (several one-shot commands share it), so this is what keeps it from growing unbounded."""
     try:
         open(_get_tailscale_log_path(), 'w').close()
     except OSError as e:
@@ -732,7 +716,8 @@ _TAILSCALE_ACCESS_DENIED_HINT = "checkprefs access denied"
 
 def set_tailscale_operator():
     """One-time Linux fix: grants operator rights via `sudo tailscale set --operator=$USER`."""
-    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    # SUDO_USER first - under `sudo keeper ...`, $USER/$LOGNAME resolve to root instead.
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     if not user:
         logging.error("Could not determine current username for Tailscale operator setup")
         return False
@@ -744,23 +729,14 @@ def set_tailscale_operator():
 def tailscale_up(auth_key, advertise_tags=None):
     """
     Authenticate via `tailscale up --auth-key=... --advertise-tags=... --force-reauth`.
-    advertise_tags is required for OAuth-client-issued auth keys. --advertise-tags
-    is always passed explicitly (empty if unused) -- `tailscale up` requires every
-    non-default setting to be re-specified on each call, or it errors out; omitting
-    the flag entirely fails if a previous run (e.g. a prior OAuth key) left tags set.
 
-    --force-reauth is required too: without it, `tailscale up` returns exit code 0
-    for an invalid auth key as long as the node is already authenticated under any
-    identity -- there's nothing to re-authenticate, so the key is silently ignored
-    rather than validated. --force-reauth makes Tailscale genuinely re-validate the
-    key every time, so the exit code can be trusted. Per Tailscale's own docs, this
-    may briefly disrupt an active connection if this same Tailscale link is being
-    used for something else (e.g. an SSH session) at the moment of the call.
-
-    The auth key is written to a short-lived, owner-only-readable temp file
-    and passed as `--auth-key=file:<path>` rather than a raw argv value --
-    Tailscale supports this directly, avoiding exposing the key via `ps`/
-    `/proc` to other local users for the life of the subprocess. Never logged.
+    --advertise-tags is always explicit, even empty: omitting it doesn't clear tags
+    a prior run left set, and OAuth-issued keys require it outright.
+    --force-reauth is required so a bad key can't be silently ignored by an already-
+    authenticated node (exit 0, nothing re-validated) - may briefly disrupt another
+    active use of this Tailscale link (e.g. SSH), per Tailscale's own docs.
+    The key goes through a short-lived, owner-only temp file (`--auth-key=file:<path>`)
+    instead of argv, so it isn't visible via `ps`/`/proc`. Never logged.
     """
     if not auth_key:
         raise ValueError("Tailscale auth key must be provided for 'tailscale up'.")
@@ -823,9 +799,7 @@ def tailscale_up(auth_key, advertise_tags=None):
                 pass
 
 
-# Tailscale Funnel only accepts one of these as the external-facing port;
-# the local target port (the Commander service port) is unrestricted and
-# separate. 443 is the default so the public URL needs no port suffix.
+# Funnel only accepts one of these as the external-facing port (local target port is unrestricted).
 TAILSCALE_FUNNEL_ALLOWED_PORTS = (443, 8443, 10000)
 TAILSCALE_FUNNEL_DEFAULT_PORT = 443
 
@@ -896,29 +870,51 @@ def get_tailscale_funnel_url(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PO
     return None
 
 
+def _run_tailscale_funnel_teardown(cmd, log_file, local_port):
+    with open(log_file, 'a') as log_f:
+        result = subprocess.run(
+            cmd,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            env=os.environ.copy(),
+            timeout=30,
+        )
+    if result.returncode == 0:
+        logging.info(f"Tailscale Funnel disabled for localhost:{local_port}")
+        return True
+    return False
+
+
 def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT):
     """
-    Disable Funnel via `tailscale funnel reset` (no per-target `off` exists
-    in this CLI version). Resets all funnel config on this node; acceptable
-    since Commander manages a single target. local_port/funnel_port kept
-    for signature symmetry with start_tailscale_funnel.
+    Disable Funnel for just this target via `tailscale funnel --https=<port> off`
+    (undocumented in --help, but confirmed working - it's what Tailscale's own CLI
+    suggests after `funnel --bg`). Falls back to the broader `funnel reset` only if
+    the target is genuinely still up afterwards, since reset wipes any other
+    Serve/Funnel config on the node too.
     """
-    cmd = ["tailscale", "funnel", "reset"]
     log_file = _get_tailscale_log_path()
 
     try:
-        with open(log_file, 'a') as log_f:
-            result = subprocess.run(
-                cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                env=os.environ.copy(),
-                timeout=30,
-            )
-        if result.returncode == 0:
-            logging.info(f"Tailscale Funnel disabled for localhost:{local_port}")
+        scoped_cmd = ["tailscale", "funnel", f"--https={funnel_port}", "off"]
+        if _run_tailscale_funnel_teardown(scoped_cmd, log_file, local_port):
             return True
-        logging.warning(f"Failed to stop Tailscale Funnel, exit code {result.returncode}")
+
+        # The scoped command also exits non-zero for an already-removed target
+        # ("handler does not exist"), which happens routinely on double teardown --
+        # e.g. service-stop and a foreground service's own exit handler racing.
+        # Treat an already-gone target as success; escalating to the destructive
+        # `reset` here would wipe unrelated Serve/Funnel config for no reason.
+        if not get_tailscale_funnel_status(local_port):
+            logging.debug(f"Tailscale Funnel for localhost:{local_port} was already inactive")
+            return True
+
+        logging.warning("Scoped Tailscale Funnel teardown failed, falling back to 'funnel reset'")
+        reset_cmd = ["tailscale", "funnel", "reset"]
+        if _run_tailscale_funnel_teardown(reset_cmd, log_file, local_port):
+            return True
+
+        logging.warning("Failed to stop Tailscale Funnel")
         return False
     except Exception as e:
         logging.error(f"Error stopping Tailscale Funnel: {type(e).__name__}")
@@ -927,9 +923,10 @@ def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT)
 
 def get_tailscale_funnel_status(local_port):
     """
-    Check live Funnel status via `tailscale funnel status --json`. Verified
-    schema: active targets appear as data["Web"]["<host>:<port>"]["Handlers"]
-    ["<path>"]["Proxy"] == "http://localhost:<local_port>".
+    Check live Funnel status via `tailscale funnel status --json`: a target is active
+    when Web[host:port].Handlers[path].Proxy matches AND AllowFunnel[host:port] is
+    true - the same Web entry is also used for a tailnet-only `serve`, so Proxy alone
+    can't distinguish Funnel (public) from Serve (private).
     """
     try:
         result = subprocess.run(
@@ -941,7 +938,10 @@ def get_tailscale_funnel_status(local_port):
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
             target = f"http://localhost:{local_port}"
-            for web_config in (data.get("Web") or {}).values():
+            allow_funnel = data.get("AllowFunnel") or {}
+            for host_port, web_config in (data.get("Web") or {}).items():
+                if not allow_funnel.get(host_port):
+                    continue
                 for handler in (web_config.get("Handlers") or {}).values():
                     if handler.get("Proxy") == target:
                         return True

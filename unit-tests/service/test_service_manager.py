@@ -14,6 +14,7 @@ from keepercommander.service.commands.handle_service import StartService, StopSe
 _PROCESS_INFO_ENV_KEYS = (
     'KEEPER_SERVICE_PID', 'KEEPER_SERVICE_TERMINAL', 'KEEPER_SERVICE_IS_RUNNING',
     'KEEPER_SERVICE_NGROK_PID', 'KEEPER_SERVICE_CLOUDFLARE_PID',
+    'KEEPER_SERVICE_TAILSCALE_ENABLED', 'KEEPER_SERVICE_TAILSCALE_PORT',
 )
 
 
@@ -326,3 +327,111 @@ class TestServiceManagement(unittest.TestCase):
             mock_configure_ngrok.assert_called_once()
             mock_spawn.assert_not_called()
             self.assertFalse(ProcessInfo._env_file.exists())
+
+    def test_start_service_tailscale_configure_failure_stops_already_live_funnel(self):
+        """Funnel may already be live before configure_tailscale raises (e.g. a
+        start-verification timeout) - tailscale_enabled/tailscale_port are now set
+        before the call specifically so this rollback can still happen, instead of
+        leaving a publicly-exposed Funnel target with nothing behind it."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.tailscale_config.TailscaleConfigurator.configure_tailscale',
+                       side_effect=RuntimeError("Tailscale Funnel did not become active")) as mock_configure_tailscale, \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+            mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel') as mock_stop_funnel, \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process') as mock_spawn:
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "tailscale": "y"
+            }
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)  # must not raise
+
+            mock_configure_tailscale.assert_called_once()
+            mock_stop_funnel.assert_called_once_with(8000)
+            mock_spawn.assert_not_called()
+
+    def test_start_service_tailscale_auth_failure_before_funnel_starts_skips_teardown(self):
+        """A bad-key/auth failure happens before Funnel is ever started - must not
+        call stop_tailscale_funnel (and risk its 'reset' fallback) when there's
+        nothing actually live to tear down."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.tailscale_config.TailscaleConfigurator.configure_tailscale',
+                       side_effect=RuntimeError("Tailscale authentication failed")), \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=False), \
+            mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel') as mock_stop_funnel, \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process') as mock_spawn:
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "tailscale": "y"
+            }
+
+            start_cmd = StartService()
+            start_cmd.execute(self.params)  # must not raise
+
+            mock_stop_funnel.assert_not_called()
+            mock_spawn.assert_not_called()
+            self.assertFalse(ProcessInfo._env_file.exists())
+
+    def test_service_status_reports_dangling_tailscale_funnel_without_stopping_it(self):
+        """A crashed/SIGKILLed Commander process can leave Funnel still live - a
+        read-only status check must report that, not tear it down itself; cleanup
+        is left to an explicit 'service-stop'."""
+        import psutil as psutil_module
+        ProcessInfo.save(pid=12345, is_running=True, tailscale_enabled=True, tailscale_port=8000)
+
+        with mock.patch('psutil.Process', side_effect=psutil_module.NoSuchProcess(12345)), \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+            mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel') as mock_stop_funnel:
+            status = ServiceManager.get_status()
+
+            mock_stop_funnel.assert_not_called()
+            self.assertIn("Tailscale Funnel is still active", status)
+            self.assertIn("service-stop", status)
+
+    def test_service_status_keeps_process_info_when_funnel_still_dangling(self):
+        """The status message tells the user to run 'service-stop' - that's only
+        actionable if the tailscale_port record survives, so ProcessInfo must NOT
+        be cleared while a Funnel is still live."""
+        import psutil as psutil_module
+        ProcessInfo.save(pid=12345, is_running=True, tailscale_enabled=True, tailscale_port=8000)
+
+        with mock.patch('psutil.Process', side_effect=psutil_module.NoSuchProcess(12345)), \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+            mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel'):
+            ServiceManager.get_status()
+
+        retained = ProcessInfo.load()
+        self.assertTrue(retained.tailscale_enabled)
+        self.assertEqual(retained.tailscale_port, 8000)
+
+    def test_service_status_clears_process_info_when_no_funnel_dangling(self):
+        """Without a live Funnel there's nothing left to clean up, so the stale
+        record should still be cleared as before."""
+        import psutil as psutil_module
+        ProcessInfo.save(pid=12345, is_running=True, tailscale_enabled=True, tailscale_port=8000)
+
+        with mock.patch('psutil.Process', side_effect=psutil_module.NoSuchProcess(12345)), \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=False):
+            status = ServiceManager.get_status()
+
+        self.assertNotIn("still active", status)
+        self.assertIsNone(ProcessInfo.load().pid)
+
+    def test_stop_service_tears_down_dangling_funnel_after_status_saw_dead_process(self):
+        """End-to-end of the finding-1 fix: get_status() on a crashed service must leave
+        the record intact (stale pid and all) so the follow-up service-stop it advises
+        can still reach Tailscale teardown."""
+        import psutil as psutil_module
+        ProcessInfo.save(pid=12345, is_running=True, tailscale_enabled=True, tailscale_port=8000)
+
+        with mock.patch('psutil.Process', side_effect=psutil_module.NoSuchProcess(12345)), \
+            mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+            mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel') as mock_status_stop:
+            status = ServiceManager.get_status()
+            self.assertIn("service-stop", status)
+            mock_status_stop.assert_not_called()
+
+        with mock.patch('keepercommander.service.util.tunneling.stop_tailscale_funnel',
+                        return_value=True) as mock_stop_funnel, \
+            mock.patch.object(ServiceManager, 'kill_process_by_pid', return_value=False):
+            ServiceManager.stop_service()
+            mock_stop_funnel.assert_called_once_with(8000)

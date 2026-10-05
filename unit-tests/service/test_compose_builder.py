@@ -101,7 +101,10 @@ class TestTailscaleSidecar(TestCase):
         self.assertEqual(services['tailscale']['hostname'], 'commander-slack')
         self.assertEqual(services['tailscale']['environment']['TS_AUTHKEY'], 'tskey-auth-xxx')
         self.assertIn('--advertise-tags=tag:commander-service', services['tailscale']['environment']['TS_EXTRA_ARGS'])
-        self.assertIn('--force-reauth', services['tailscale']['environment']['TS_EXTRA_ARGS'])
+        # No --force-reauth here: combined with the persisted state volume and
+        # restart: unless-stopped, it would force re-auth against TS_AUTHKEY on every
+        # restart, which fails for single-use/expired keys and loops forever.
+        self.assertNotIn('--force-reauth', services['tailscale']['environment']['TS_EXTRA_ARGS'])
 
         # Funnel is enabled via a post_start hook inside the sidecar's own
         # container -- a separate container sharing only the network namespace
@@ -134,7 +137,7 @@ class TestTailscaleSidecar(TestCase):
         extra_args = result['services']['tailscale']['environment']['TS_EXTRA_ARGS']
         self.assertIn('--advertise-tags=', extra_args)
         self.assertNotIn('--advertise-tags=tag', extra_args)
-        self.assertIn('--force-reauth', extra_args)
+        self.assertNotIn('--force-reauth', extra_args)
 
     def test_tailscale_enabled_reconfigures_commander_service_networking(self):
         result = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))
@@ -163,6 +166,52 @@ class TestTailscaleSidecar(TestCase):
     def test_no_tailscale_produces_no_volumes_key(self):
         result = _build(_base_config())
         self.assertNotIn('volumes', result)
+
+    def test_sidecar_gets_network_alias_for_commander_service_name(self):
+        """network_mode: service:tailscale means commander isn't a named member of
+        the compose network on its own - hostname: on the sidecar doesn't register
+        a DNS alias either, so a sibling integration container resolving e.g.
+        commander-slack:<port> would fail without this."""
+        result = _build(
+            _base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'),
+            commander_service_name='commander-slack',
+        )
+        aliases = result['services']['tailscale']['networks']['default']['aliases']
+        self.assertIn('commander-slack', aliases)
+
+    def test_sidecar_publishes_the_host_port_commander_lost(self):
+        """commander's own 127.0.0.1:<port>:<port> binding is popped when Tailscale
+        is enabled (it no longer has its own network identity) - printer.py's
+        unconditional 'curl http://localhost:<port>/health' guidance only keeps
+        working if something still publishes that port, so the sidecar does."""
+        result = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))
+        self.assertIn('127.0.0.1:8900:8900', result['services']['tailscale']['ports'])
+
+    def test_integration_service_combined_with_tailscale(self):
+        """No existing test combined an integration service with Tailscale enabled -
+        this is the exact scenario Blocker 2 was found in: the sidecar's network
+        alias must be present so a sibling integration container can still resolve
+        the commander service by its original name."""
+        setup_result = mock.Mock(record_uid='rec-uid-123', b64_config='b64==')
+        builder = DockerComposeBuilder(
+            setup_result,
+            _base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'),
+            commander_service_name='commander-slack',
+            commander_container_name='keeper-service-slack',
+        )
+        builder.add_integration_service(
+            'slack-app', 'keeper-slack-app', 'keeper/slack-app:latest', 'rec-uid-123', 'SLACK_RECORD_UID',
+        )
+        result = builder.build_dict()
+
+        self.assertIn('tailscale', result['services'])
+        self.assertIn('slack-app', result['services'])
+        aliases = result['services']['tailscale']['networks']['default']['aliases']
+        self.assertIn('commander-slack', aliases)
+        # The integration service's own depends_on/networking is untouched by Tailscale.
+        self.assertEqual(
+            result['services']['slack-app']['depends_on'], {'commander-slack': {'condition': 'service_healthy'}}
+        )
 
 
 if __name__ == '__main__':

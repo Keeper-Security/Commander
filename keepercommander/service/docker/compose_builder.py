@@ -167,21 +167,15 @@ class DockerComposeBuilder:
 
     def _add_tailscale_sidecar_if_enabled(self) -> None:
         """
-        Add Tailscale as a sidecar (official tailscale/tailscale image) rather than
-        a service-create flag. Docker deployments are headless -- Commander's own
-        install/daemon-start prompts (tailscale_config.py) can't be answered inside
-        a detached container. The sidecar authenticates via TS_AUTHKEY with no
-        prompts. Ngrok/Cloudflare are unaffected -- they stay as service-create flags.
+        Add Tailscale as a sidecar (official image) instead of a service-create flag -
+        Docker is headless, so Commander's own install/daemon-start prompts can't be
+        answered inside it. Ngrok/Cloudflare are unaffected.
 
-        Enabling Funnel must run *inside* the sidecar's own container, not a
-        separate one -- verified empirically: `network_mode: service:X` only
-        shares the network namespace, not the filesystem, so a second container
-        can't reach tailscaled's control socket ("failed to connect to local
-        tailscaled"). A `post_start` hook on the sidecar itself runs in its
-        namespace and does work, but fires immediately on container start
-        (not gated by healthcheck), so the hook command waits for `tailscale
-        status` to succeed before calling `funnel` -- confirmed against a real
-        `tailscale status --> then funnel --bg` run with a fresh state volume.
+        Funnel is enabled via a post_start hook on the sidecar itself, not a separate
+        container: network_mode: service:X only shares the network namespace, not the
+        filesystem, so a second container can't reach tailscaled's control socket. The
+        hook waits for `tailscale status` to succeed first, since post_start fires
+        immediately on container start, not gated by the healthcheck.
         """
         if self._tailscale_sidecar_added:
             return
@@ -191,11 +185,12 @@ class DockerComposeBuilder:
 
         port = self.config['port']
         tags = self.config.get('tailscale_advertise_tags')
-        # --advertise-tags must always be stated explicitly (empty if unused), never
-        # omitted -- `tailscale up` requires every non-default setting to be re-specified
-        # on each call or it errors out; omitting the flag doesn't clear a tag left by a
-        # prior run (e.g. switching from an OAuth key to a plain key on the same node/volume).
-        extra_args = f"--advertise-tags={tags or ''} --force-reauth"
+        # --advertise-tags always explicit (empty if unused) - omitting it doesn't clear
+        # a tag a prior run left set. No --force-reauth (unlike tunneling.py's tailscale_up,
+        # used by the non-Docker flow): with the persisted state volume + restart:
+        # unless-stopped, it would force re-auth on every restart and loop forever on a
+        # single-use/expired key.
+        extra_args = f"--advertise-tags={tags or ''}"
 
         funnel_cmd = (
             f"until tailscale status >/dev/null 2>&1; do sleep 1; done; "
@@ -210,6 +205,18 @@ class DockerComposeBuilder:
             'container_name': tailscale_container_name,
             'image': 'tailscale/tailscale:latest',
             'hostname': self.commander_service_name,
+            # commander's network_mode: service:tailscale means this container (not
+            # commander) owns the compose-network identity, so sibling integration
+            # containers need this alias to still resolve commander by name.
+            'networks': {
+                'default': {
+                    'aliases': [self.commander_service_name],
+                },
+            },
+            # Published here since commander's own `ports` is popped below (no longer
+            # has its own network identity) - keeps printer.py's localhost:<port> health
+            # check working the same as without Tailscale.
+            'ports': [f"127.0.0.1:{port}:{port}"],
             'environment': {
                 'TS_AUTHKEY': self.config['tailscale_auth_key'],
                 'TS_EXTRA_ARGS': extra_args,
