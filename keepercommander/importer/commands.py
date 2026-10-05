@@ -21,7 +21,7 @@ from . import imp_exp
 from .. import api, record_types
 from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
-from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
+from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
 from ..params import KeeperParams
 from ..proto import record_pb2
@@ -82,6 +82,14 @@ import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
 import_parser.add_argument('--nsf', dest='use_nsf', action='store_true',
                            help='import folders and records into Nested Share Folders '
                                 '(json, csv, keepass, cyberark, cyberark_portal, …)')
+import_parser.add_argument('--folder-depth', dest='folder_depth', action='store', type=int,
+                           help='NSF only: maximum resulting folder depth (default 5); folders beyond this depth '
+                                'are attached directly at the deepest allowed level, keeping their own name and '
+                                'records - names are never merged or renamed')
+import_parser.add_argument('--output', dest='output', action='store',
+                           help='NSF only: write a report of the resulting Keeper folder structure (original path '
+                                '-> new path -> folder UID) to this file (CSV); prints a table if omitted. Useful '
+                                'for mapping team/user permissions to the new structure afterward (e.g. run-batch)')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
@@ -325,8 +333,17 @@ class RecordImportCommand(ImporterCommand):
             kwargs['skip'] = ''
 
         logging.info('Processing... please wait.')
-        imp_exp._import(params, import_format, import_name, manage_users=manage_users, manage_records=manage_records,
-                        can_edit=can_edit, can_share=can_share, **kwargs)
+        folder_mapping = imp_exp._import(params, import_format, import_name, manage_users=manage_users,
+                                         manage_records=manage_records, can_edit=can_edit, can_share=can_share,
+                                         **kwargs)
+        if kwargs.get('use_nsf') and folder_mapping:
+            output = kwargs.get('output')
+            dump_report_data(
+                [[orig, new, uid] for orig, new, uid in folder_mapping],
+                ['Original Path', 'New Path', 'Folder UID'],
+                fmt='csv' if output else 'table',
+                filename=output,
+            )
 
 
 class RecordExportCommand(ImporterCommand):

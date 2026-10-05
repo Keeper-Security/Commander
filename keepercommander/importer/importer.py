@@ -93,6 +93,22 @@ def path_components(path, delimiter=PathDelimiter):    # type: (str, str) -> Ite
                 p = ''
 
 
+def flatten_path_components(comps, max_len):
+    # type: (List[str], Optional[int]) -> List[str]
+    """Collapse *comps* to at most *max_len* entries.
+
+    Levels 1..(max_len-1) are kept as a normal chain; the path's own final
+    component is then attached directly under that chain, skipping any
+    intermediate levels in between. Folder names are never merged or
+    renamed - distinct branches that overflow under the same kept ancestor
+    simply become separate sibling folders under it.
+    """
+    if not max_len or len(comps) <= max_len:
+        return comps
+    max_len = max(max_len, 1)
+    return comps[:max_len - 1] + comps[-1:]
+
+
 def check_if_bool(value):
     return value is None or type(value) == bool
 

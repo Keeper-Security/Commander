@@ -91,8 +91,10 @@ class TestNsfImport(TestCase):
             'child1': {'name': 'Apps', 'parent_uid': 'root1'},
         })
         rec, fol = _record('Migration\\Apps')
-        self.assertEqual(nsf_import.prepare_nsf_folders(params, [], [rec]), 0)
+        created, mapping = nsf_import.prepare_nsf_folders(params, [], [rec])
+        self.assertEqual(created, 0)
         self.assertEqual(fol.uid, 'child1')
+        self.assertEqual(mapping, [('Migration\\Apps', 'Migration\\Apps', 'child1')])
 
         rec, fol = _record('Migration\\New')
         with mock.patch(CREATE, return_value=['new1']) as m:
@@ -107,6 +109,119 @@ class TestNsfImport(TestCase):
                                           [sf], [], 'base')
             m.assert_called_once_with(mock.ANY, [('ProjectA', 'base')])
             self.assertEqual(sf.uid, 'proj1')
+
+    def test_prepare_nsf_folders_default_depth_flattens(self):
+        rec, fol = _record('L1\\L2\\L3\\L4\\L5\\L6\\L7')
+        params = _params({})
+        uids = iter(['uid1', 'uid2', 'uid3', 'uid4', 'uidL7', 'uidL5', 'uidL6'])
+        with mock.patch(CREATE, side_effect=lambda p, batch: [next(uids) for _ in batch]) as m:
+            created, mapping = nsf_import.prepare_nsf_folders(params, [], [rec])
+            # Default depth is 5: L1-L4 stay a normal chain; the path's own leaf
+            # (L7) attaches directly under L4. L5 and L6 - the levels skipped to
+            # get there - each still get their own sibling folder under L4, with
+            # no name ever merged or renamed.
+            calls = [c.args[1] for c in m.call_args_list]
+            self.assertEqual(calls, [
+                [('L1', '')],
+                [('L2', 'uid1')],
+                [('L3', 'uid2')],
+                [('L4', 'uid3')],
+                [('L7', 'uid4'), ('L5', 'uid4'), ('L6', 'uid4')],
+            ])
+            # `created` counts new entries in params.nested_share_folders, which the
+            # mocked create_nsf_folders_batch (via seed_nsf_folder_cache) never populates here.
+            self.assertEqual(created, 0)
+            self.assertEqual(mapping, [
+                ('L1\\L2\\L3\\L4\\L5\\L6\\L7', 'L1\\L2\\L3\\L4\\L7', 'uidL7'),
+                ('L1\\L2\\L3\\L4\\L5', 'L1\\L2\\L3\\L4\\L5', 'uidL5'),
+                ('L1\\L2\\L3\\L4\\L5\\L6', 'L1\\L2\\L3\\L4\\L6', 'uidL6'),
+            ])
+            self.assertEqual(fol.uid, 'uidL7')
+
+    def test_prepare_nsf_folders_siblings_under_same_parent(self):
+        """Two paths overflowing under the same kept ancestor become sibling folders."""
+        rec_a, fol_a = _record('Dept\\Team-Infra\\App-Billing')
+        rec_b, fol_b = _record('Dept\\Team-Infra\\App-Billing\\Env-Prod')
+        params = _params({})
+        uids = iter(['uidDept', 'uidAppBilling', 'uidTeamInfra', 'uidEnvProd'])
+        with mock.patch(CREATE, side_effect=lambda p, batch: [next(uids) for _ in batch]) as m:
+            created, mapping = nsf_import.prepare_nsf_folders(params, [], [rec_a, rec_b], folder_depth=2)
+            calls = [c.args[1] for c in m.call_args_list]
+            self.assertEqual(calls, [
+                [('Dept', '')],
+                [('App-Billing', 'uidDept'), ('Team-Infra', 'uidDept'), ('Env-Prod', 'uidDept')],
+            ])
+            self.assertEqual(fol_a.uid, 'uidAppBilling')
+            self.assertEqual(fol_b.uid, 'uidEnvProd')
+            # Team-Infra is skipped by both paths and is reported once (deduped),
+            # keeping its own true original ancestor path.
+            self.assertEqual(mapping, [
+                ('Dept\\Team-Infra\\App-Billing', 'Dept\\App-Billing', 'uidAppBilling'),
+                ('Dept\\Team-Infra', 'Dept\\Team-Infra', 'uidTeamInfra'),
+                ('Dept\\Team-Infra\\App-Billing\\Env-Prod', 'Dept\\Env-Prod', 'uidEnvProd'),
+            ])
+
+    def test_depth_flattening_is_generic_across_import_formats(self):
+        """--folder-depth flattening is applied centrally in prepare_nsf_folders,
+        independent of which --format produced the records - verify with CSV
+        (a non-JSON format) that the same sibling-folder result occurs."""
+        deep_path = 'Migration\\Region-East\\Site-NYC\\Dept-IT\\Team-Infra\\App-Billing\\Env-Prod'
+        with tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False, encoding='utf-8') as tf:
+            tf.write(f'{deep_path},Billing DB - Prod,billing_svc,Prod!Pass123,https://billing-prod.internal,\n')
+            path = tf.name
+        try:
+            items = list(KeeperCsvImporter().do_import(path))
+        finally:
+            os.unlink(path)
+
+        records = [x for x in items if isinstance(x, Record)]
+        self.assertEqual(len(records), 1)
+
+        params = _params({})
+        uids = iter(['uidMigration', 'uidRegionEast', 'uidSiteNYC', 'uidDeptIT',
+                     'uidEnvProd', 'uidTeamInfra', 'uidAppBilling'])
+        with mock.patch(CREATE, side_effect=lambda p, batch: [next(uids) for _ in batch]) as m:
+            created, mapping = nsf_import.prepare_nsf_folders(params, [], records)
+            calls = [c.args[1] for c in m.call_args_list]
+            self.assertEqual(calls, [
+                [('Migration', '')],
+                [('Region-East', 'uidMigration')],
+                [('Site-NYC', 'uidRegionEast')],
+                [('Dept-IT', 'uidSiteNYC')],
+                [('Env-Prod', 'uidDeptIT'), ('Team-Infra', 'uidDeptIT'), ('App-Billing', 'uidDeptIT')],
+            ])
+            self.assertEqual(records[0].folders[0].uid, 'uidEnvProd')
+            self.assertEqual(mapping, [
+                ('Migration\\Region-East\\Site-NYC\\Dept-IT\\Team-Infra\\App-Billing\\Env-Prod',
+                 'Migration\\Region-East\\Site-NYC\\Dept-IT\\Env-Prod', 'uidEnvProd'),
+                ('Migration\\Region-East\\Site-NYC\\Dept-IT\\Team-Infra',
+                 'Migration\\Region-East\\Site-NYC\\Dept-IT\\Team-Infra', 'uidTeamInfra'),
+                ('Migration\\Region-East\\Site-NYC\\Dept-IT\\Team-Infra\\App-Billing',
+                 'Migration\\Region-East\\Site-NYC\\Dept-IT\\App-Billing', 'uidAppBilling'),
+            ])
+
+    def test_prepare_nsf_folders_explicit_depth_override(self):
+        rec, fol = _record('A\\B\\C\\D\\E')
+        params = _params({})
+        uids = iter(['uidA', 'uidE', 'uidB', 'uidC', 'uidD'])
+        with mock.patch(CREATE, side_effect=lambda p, batch: [next(uids) for _ in batch]) as m:
+            created, mapping = nsf_import.prepare_nsf_folders(params, [], [rec], folder_depth=2)
+            # Depth 2: only room for 1 chained level (A); the leaf (E) attaches
+            # directly under it. B, C, D - the skipped levels - each still get
+            # their own sibling folder under A.
+            calls = [c.args[1] for c in m.call_args_list]
+            self.assertEqual(calls, [
+                [('A', '')],
+                [('E', 'uidA'), ('B', 'uidA'), ('C', 'uidA'), ('D', 'uidA')],
+            ])
+            self.assertEqual(created, 0)
+            self.assertEqual(mapping, [
+                ('A\\B\\C\\D\\E', 'A\\E', 'uidE'),
+                ('A\\B', 'A\\B', 'uidB'),
+                ('A\\B\\C', 'A\\C', 'uidC'),
+                ('A\\B\\C\\D', 'A\\D', 'uidD'),
+            ])
+            self.assertEqual(fol.uid, 'uidE')
 
     def test_prepare_nsf_folders_batches_same_depth(self):
         params = _params({'root': {'name': 'Root', 'parent_uid': ''}})
@@ -210,8 +325,27 @@ class TestNsfImport(TestCase):
             self.assertTrue(all(imp.call_args.kwargs.get(k)
                                 for k in ('manage_users', 'manage_records', 'can_edit', 'can_share')))
 
+    def test_cli_folder_mapping_report_emitted_only_for_nsf(self):
+        cmd = RecordImportCommand()
+        mapping = [('Old\\Path', 'New\\Path', 'uid1')]
+        with mock.patch('keepercommander.importer.commands.imp_exp._import', return_value=mapping), \
+             mock.patch('keepercommander.importer.commands.dump_report_data') as dump:
+            cmd.execute(_params(), format='json', name='sample_data/import_nsf.txt',
+                        use_nsf=True, output='/tmp/out.csv')
+            dump.assert_called_once()
+            args, kwargs = dump.call_args
+            self.assertEqual(args[0], [['Old\\Path', 'New\\Path', 'uid1']])
+            self.assertEqual(kwargs.get('fmt'), 'csv')
+            self.assertEqual(kwargs.get('filename'), '/tmp/out.csv')
+
+            dump.reset_mock()
+            # Without --nsf, no report should be produced even if _import returns a mapping.
+            cmd.execute(_params(), format='json', name='sample_data/import_nsf.txt')
+            dump.assert_not_called()
+
     def test_parser_and_path_resolve(self):
         self.assertTrue(any('--nsf' in (a.option_strings or []) for a in import_parser._actions))
+        self.assertTrue(any('--folder-depth' in (a.option_strings or []) for a in import_parser._actions))
 
         nsf_txt = os.path.join(SAMPLE, 'import_nsf.txt')
         if not os.path.isfile(nsf_txt):

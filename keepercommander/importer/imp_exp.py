@@ -752,6 +752,7 @@ def _import(params, file_format, filename, **kwargs):
     show_skipped = kwargs.get('show_skipped') is True
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
+    folder_depth = kwargs.get('folder_depth')
     cyberark_skip = {
         x.strip().lower()
         for x in str(kwargs.get('skip') or '').split(',')
@@ -866,7 +867,7 @@ def _import(params, file_format, filename, **kwargs):
         if use_nsf:
             from .nsf_import import apply_nsf_folder_permissions, prepare_nsf_folders
             sync_down.sync_down(params)
-            prepare_nsf_folders(params, folders, [], '')
+            prepare_nsf_folders(params, folders, [], '', folder_depth=folder_depth)
             apply_nsf_folder_permissions(
                 params, folders, manage_users, manage_records, can_edit, can_share)
         else:
@@ -1049,10 +1050,12 @@ def _import(params, file_format, filename, **kwargs):
                     p,
                 )
 
+    folder_mapping = []  # type: List[Tuple[str, str, str]]
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
-            prepare_nsf_folders(params, folders, records, nsf_base_parent)
+            _created, folder_mapping = prepare_nsf_folders(params, folders, records, nsf_base_parent,
+                                                            folder_depth=folder_depth)
     else:
         folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
         if folder_add:
@@ -1071,7 +1074,7 @@ def _import(params, file_format, filename, **kwargs):
         nsf_records_to_add = []     # NSF vault/records/v3/add payloads
         import_uids = {}
 
-        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format)
         skipped_existing_count = len(record_exists)
         if show_skipped and record_exists:
             for existing_record in record_exists:
@@ -1468,6 +1471,8 @@ def _import(params, file_format, filename, **kwargs):
             logging.info('Import finished: %d record(s) imported successfully.', successful_import_count)
         else:
             logging.info('Import finished: no records were imported.')
+
+    return folder_mapping
 
 
 def report_statuses(status_type, status_iter):
@@ -2349,8 +2354,8 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
-    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
+def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format=None):
+    # type: (bool, bool, KeeperParams, Iterable[ImportRecord], Optional[str]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -2359,16 +2364,25 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
         Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
        if a unique field match (on title, login, url, and folder) is found, then request a change in password only.
+
+    For CyberArk imports (file_format in ('cyberark', 'cyberark_portal')), matching also takes the
+    destination folder into account so re-importing the same CyberArk source doesn't create duplicates
+    per folder. For every other format, matching is folder-agnostic (the pre-#2342 behavior): any
+    existing record whose content matches is treated as a duplicate and a shortcut is created instead.
     """
+    match_folder = file_format in ('cyberark', 'cyberark_portal')
     preexisting_entire_record_hash = {}
     preexisting_partial_record_hash = {}
     for record_uid in params.record_cache:
         import_record = convert_keeper_record(params.record_cache[record_uid])
         if import_record:
-            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
-            folders = [x for x in folders if x]
-            if len(folders) == 0:
-                folders.append('')
+            if match_folder:
+                folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+                folders = [x for x in folders if x]
+                if len(folders) == 0:
+                    folders.append('')
+            else:
+                folders = [None]
             for folder in folders:
                 record_hash = build_record_hash(tokenize_full_import_record(import_record, folder))
                 preexisting_entire_record_hash[record_hash] = record_uid
@@ -2412,11 +2426,12 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
                     f.value = LARGE_FIELD_MSG.format(atta.name)
 
         if no_shortcuts is False:
+            folders_to_match = get_import_record_folder_paths(params, import_record) if match_folder else [None]
             record_uid = next((
                 preexisting_entire_record_hash[record_hash]
                 for record_hash in (
                     build_record_hash(tokenize_full_import_record(import_record, folder))
-                    for folder in get_import_record_folder_paths(params, import_record)
+                    for folder in folders_to_match
                 )
                 if record_hash in preexisting_entire_record_hash
             ), None)
