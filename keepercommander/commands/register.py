@@ -928,25 +928,27 @@ class ShareFolderCommand(Command):
 
         affected_usernames = removed_usernames_lower | team_member_usernames
 
+        app_uids = [app_uid for app_uid, rec in params.record_cache.items() if rec.get('version') == 5]
+        if not app_uids:
+            return False
+        try:
+            app_info_list = KSMCommand.get_app_info_bulk(params, app_uids)
+        except Exception:
+            return False
+
         cascade = {}   # username -> {app_title: device_count}
-        for app_uid, rec in params.record_cache.items():
-            if rec.get('version') != 5:
+        for ai in app_info_list:
+            app_uid = utils.base64_url_encode(ai.appRecordUid)
+            share_sf_uids = {utils.base64_url_encode(s.secretUid) for s in ai.shares
+                             if s.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER}
+            if not share_sf_uids & sf_uids:
                 continue
-            try:
-                app_info_list = KSMCommand.get_app_info(params, app_uid)
-            except Exception:
-                continue
-            for ai in app_info_list:
-                share_sf_uids = {utils.base64_url_encode(s.secretUid) for s in ai.shares
-                                 if s.shareType == APIRequest_pb2.SHARE_TYPE_FOLDER}
-                if not share_sf_uids & sf_uids:
-                    continue
-                app_title = KSMCommand.get_app_title(params, app_uid) or app_uid
-                for client in ai.clients:
-                    username = KSMCommand.resolve_username_by_user_id(params, client.userId)
-                    if username and username.lower() in affected_usernames:
-                        cascade.setdefault(username, {}).setdefault(app_title, 0)
-                        cascade[username][app_title] += 1
+            app_title = KSMCommand.get_app_title(params, app_uid) or app_uid
+            for client in ai.clients:
+                username = KSMCommand.resolve_username_by_user_id(params, client.userId)
+                if username and username.lower() in affected_usernames:
+                    cascade.setdefault(username, {}).setdefault(app_title, 0)
+                    cascade[username][app_title] += 1
 
         if not cascade:
             return False
