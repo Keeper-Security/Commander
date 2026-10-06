@@ -16,7 +16,6 @@ This module provides the reusable base class for setting up
 Commander Service Mode with Docker and KSM.
 """
 
-import getpass
 import io
 import json
 import logging
@@ -597,8 +596,9 @@ class DockerSetupBase:
 
         if use_tailscale:
             while True:
-                print(f"{bcolors.OKBLUE}Tailscale auth key:{bcolors.ENDC} ", end='', flush=True)
-                key = getpass.getpass(prompt='').strip()
+                # Echoed on purpose: these keys are long and pasted, and a silent
+                # prompt made paste errors impossible to spot.
+                key = input(f"{bcolors.OKBLUE}Tailscale auth key:{bcolors.ENDC} ").strip()
                 try:
                     config['tailscale_auth_key'] = ConfigValidator.validate_tailscale_auth_key(key)
                     break
