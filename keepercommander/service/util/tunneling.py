@@ -900,11 +900,9 @@ def stop_tailscale_funnel(local_port, funnel_port=TAILSCALE_FUNNEL_DEFAULT_PORT)
         if _run_tailscale_funnel_teardown(scoped_cmd, log_file, local_port):
             return True
 
-        # The scoped command also exits non-zero for an already-removed target
-        # ("handler does not exist"), which happens routinely on double teardown --
-        # e.g. service-stop and a foreground service's own exit handler racing.
-        # Treat an already-gone target as success; escalating to the destructive
-        # `reset` here would wipe unrelated Serve/Funnel config for no reason.
+        # Scoped teardown also exits non-zero when the target is already gone (routine on
+        # double teardown), so treat that as success - escalating to `reset` would wipe
+        # unrelated Serve/Funnel config for nothing.
         if not get_tailscale_funnel_status(local_port):
             logging.debug(f"Tailscale Funnel for localhost:{local_port} was already inactive")
             return True

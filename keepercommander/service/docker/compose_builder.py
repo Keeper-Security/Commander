@@ -10,7 +10,14 @@
 #
 
 """docker-compose.yml generation."""
+import json
 from typing import Dict, Any, List
+
+# containerboot swaps ${TS_CERT_DOMAIN} for the node's cert domain and re-applies on
+# change. `$$` so Compose emits a literal `$` instead of interpolating it away.
+TAILSCALE_CERT_DOMAIN_PLACEHOLDER = '$${TS_CERT_DOMAIN}'
+TAILSCALE_SERVE_CONFIG_NAME = 'tailscale-serve-config'
+TAILSCALE_SERVE_CONFIG_PATH = '/etc/tailscale/serve.json'
 
 
 class DockerComposeBuilder:
@@ -28,6 +35,7 @@ class DockerComposeBuilder:
         self._volumes: List[str] = []
         self._services: Dict[str, Dict[str, Any]] = {}
         self._top_level_volumes: Dict[str, Any] = {}
+        self._top_level_configs: Dict[str, Any] = {}
         self._tailscale_sidecar_added = False
 
     def build(self) -> str:
@@ -42,6 +50,8 @@ class DockerComposeBuilder:
         result: Dict[str, Any] = {'services': self._services}
         if self._top_level_volumes:
             result['volumes'] = self._top_level_volumes
+        if self._top_level_configs:
+            result['configs'] = self._top_level_configs
         return result
     
     def add_integration_service(self, service_name: str, container_name: str,
@@ -167,15 +177,9 @@ class DockerComposeBuilder:
 
     def _add_tailscale_sidecar_if_enabled(self) -> None:
         """
-        Add Tailscale as a sidecar (official image) instead of a service-create flag -
-        Docker is headless, so Commander's own install/daemon-start prompts can't be
-        answered inside it. Ngrok/Cloudflare are unaffected.
-
-        Funnel is enabled via a post_start hook on the sidecar itself, not a separate
-        container: network_mode: service:X only shares the network namespace, not the
-        filesystem, so a second container can't reach tailscaled's control socket. The
-        hook waits for `tailscale status` to succeed first, since post_start fires
-        immediately on container start, not gated by the healthcheck.
+        Tailscale runs as a sidecar, not a service-create flag: Docker is headless, so
+        Commander's own install/daemon prompts can't be answered. Ngrok/Cloudflare
+        unaffected. Funnel is declared via TS_SERVE_CONFIG so containerboot applies it.
         """
         if self._tailscale_sidecar_added:
             return
@@ -185,16 +189,35 @@ class DockerComposeBuilder:
 
         port = self.config['port']
         tags = self.config.get('tailscale_advertise_tags')
-        # --advertise-tags always explicit (empty if unused) - omitting it doesn't clear
-        # a tag a prior run left set. No --force-reauth (unlike tunneling.py's tailscale_up,
-        # used by the non-Docker flow): with the persisted state volume + restart:
-        # unless-stopped, it would force re-auth on every restart and loop forever on a
-        # single-use/expired key.
+        # --advertise-tags always explicit: omitting it won't clear a prior run's tag.
+        # No --force-reauth: containerboot logs in every start anyway, and re-validating
+        # the key each boot breaks single-use keys from boot 2 and expired ones for good.
         extra_args = f"--advertise-tags={tags or ''}"
 
-        funnel_cmd = (
-            f"until tailscale status >/dev/null 2>&1; do sleep 1; done; "
-            f"tailscale funnel --bg --https=443 localhost:{port}"
+        # Declared, not scripted: containerboot re-applies on cert-domain change. A hook
+        # couldn't - the hostname can land after `tailscale up` returns, stranding Funnel.
+        host_port = f"{TAILSCALE_CERT_DOMAIN_PLACEHOLDER}:443"
+        serve_config = json.dumps({
+            'TCP': {'443': {'HTTPS': True}},
+            'Web': {host_port: {'Handlers': {'/': {'Proxy': f'http://localhost:{port}'}}}},
+            'AllowFunnel': {host_port: True},
+        }, indent=2)
+        self._top_level_configs[TAILSCALE_SERVE_CONFIG_NAME] = {'content': serve_config}
+
+        # Surface the URL in `docker logs` (hook stdout is otherwise discarded, hence
+        # /proc/1/fd/1). Print-only: Funnel is TS_SERVE_CONFIG's job, so losing this
+        # costs only the log line. Must finish well inside `compose up` - Compose SIGKILLs
+        # a hook still running when up completes and tears the project down, so the wait
+        # is capped at ~8s (hostname normally lands ~2s in). A slower login just logs
+        # nothing; `tailscale funnel status` is the fallback.
+        sed_dns_name = r"""sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p'"""
+        url_hook = (
+            f"i=0; while [ \"$$i\" -lt 8 ]; do "
+            f"h=$$(tailscale status --json --peers=false 2>/dev/null | {sed_dns_name} | head -n1); "
+            f"if [ -n \"$$h\" ]; then "
+            f"echo \"Tailscale Funnel URL: https://$$h\" > /proc/1/fd/1; break; fi; "
+            f"i=$$((i+1)); sleep 1; "
+            f"done; exit 0"
         )
 
         # Matches the keeper-service[-<integration>] convention already used for the
@@ -205,32 +228,38 @@ class DockerComposeBuilder:
             'container_name': tailscale_container_name,
             'image': 'tailscale/tailscale:latest',
             'hostname': self.commander_service_name,
-            # commander's network_mode: service:tailscale means this container (not
-            # commander) owns the compose-network identity, so sibling integration
-            # containers need this alias to still resolve commander by name.
+            # This container, not commander, owns the compose-network identity, so the
+            # alias is what lets integration containers still resolve commander by name.
             'networks': {
                 'default': {
                     'aliases': [self.commander_service_name],
                 },
             },
-            # Published here since commander's own `ports` is popped below (no longer
-            # has its own network identity) - keeps printer.py's localhost:<port> health
-            # check working the same as without Tailscale.
+            # Published here since commander's own `ports` is popped below - keeps
+            # printer.py's localhost:<port> health check working.
             'ports': [f"127.0.0.1:{port}:{port}"],
             'environment': {
                 'TS_AUTHKEY': self.config['tailscale_auth_key'],
                 'TS_EXTRA_ARGS': extra_args,
                 'TS_STATE_DIR': '/var/lib/tailscale',
+                'TS_SERVE_CONFIG': TAILSCALE_SERVE_CONFIG_PATH,
             },
             'volumes': ['tailscale-state:/var/lib/tailscale'],
+            # Single-file mount: edits to the JSON aren't watched, but it's generated.
+            'configs': [
+                {'source': TAILSCALE_SERVE_CONFIG_NAME, 'target': TAILSCALE_SERVE_CONFIG_PATH},
+            ],
+            # start_period absorbs a slow first login: a key-type switch burns `tailscale
+            # up`'s 60s timeout plus a restart, which must not mark the sidecar unhealthy.
             'healthcheck': {
                 'test': ['CMD', 'tailscale', 'status'],
                 'interval': '10s',
                 'timeout': '5s',
                 'retries': 12,
+                'start_period': '120s',
             },
             'post_start': [
-                {'command': ['sh', '-c', funnel_cmd]},
+                {'command': ['sh', '-c', url_hook]},
             ],
             'restart': 'unless-stopped',
         }

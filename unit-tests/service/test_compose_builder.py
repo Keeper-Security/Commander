@@ -9,6 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
+import json
 from unittest import TestCase, mock
 
 from keepercommander.service.docker.compose_builder import DockerComposeBuilder
@@ -101,17 +102,15 @@ class TestTailscaleSidecar(TestCase):
         self.assertEqual(services['tailscale']['hostname'], 'commander-slack')
         self.assertEqual(services['tailscale']['environment']['TS_AUTHKEY'], 'tskey-auth-xxx')
         self.assertIn('--advertise-tags=tag:commander-service', services['tailscale']['environment']['TS_EXTRA_ARGS'])
-        # No --force-reauth here: combined with the persisted state volume and
-        # restart: unless-stopped, it would force re-auth against TS_AUTHKEY on every
-        # restart, which fails for single-use/expired keys and loops forever.
+        # No --force-reauth: it would re-validate the key every boot, breaking
+        # single-use keys from boot 2 and expired ones permanently.
         self.assertNotIn('--force-reauth', services['tailscale']['environment']['TS_EXTRA_ARGS'])
 
-        # Funnel is enabled via a post_start hook inside the sidecar's own
-        # container -- a separate container sharing only the network namespace
-        # can't reach tailscaled's control socket (verified empirically).
-        post_start_cmd = services['tailscale']['post_start'][0]['command']
-        self.assertEqual(post_start_cmd[:2], ['sh', '-c'])
-        self.assertIn('tailscale funnel --bg --https=443 localhost:8900', post_start_cmd[2])
+        # Declared, not executed: containerboot applies TS_SERVE_CONFIG itself. The only
+        # hook is print-only (logs the URL) and never touches Funnel config.
+        self.assertEqual(services['tailscale']['environment']['TS_SERVE_CONFIG'],
+                         '/etc/tailscale/serve.json')
+        self.assertNotIn('tailscale funnel', services['tailscale']['post_start'][0]['command'][2])
 
     def test_tailscale_container_name_matches_commander_naming_convention(self):
         """Without an explicit container_name, Compose falls back to
@@ -163,9 +162,76 @@ class TestTailscaleSidecar(TestCase):
         self.assertNotIn('volumes', result)
         self.assertIn('ports', result['services']['commander'])
 
-    def test_no_tailscale_produces_no_volumes_key(self):
+    def test_no_tailscale_produces_no_volumes_or_configs_key(self):
         result = _build(_base_config())
         self.assertNotIn('volumes', result)
+        self.assertNotIn('configs', result)
+
+    def _serve_config(self):
+        """Serve config as the container reads it - Compose turns `$$` into `$`."""
+        result = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))
+        raw = result['configs']['tailscale-serve-config']['content']
+        return json.loads(raw.replace('$$', '$'))
+
+    def test_funnel_declared_via_serve_config_not_by_the_hook(self):
+        """Funnel config must come from TS_SERVE_CONFIG, never the hook: the hostname can
+        land after `tailscale up` returns, which once stranded Funnel on a dead name."""
+        sidecar = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'services']['tailscale']
+        self.assertEqual(sidecar['environment']['TS_SERVE_CONFIG'], '/etc/tailscale/serve.json')
+        self.assertEqual(sidecar['configs'],
+                         [{'source': 'tailscale-serve-config', 'target': '/etc/tailscale/serve.json'}])
+
+    def test_url_hook_is_print_only_and_cannot_configure_funnel(self):
+        hook = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'services']['tailscale']['post_start'][0]['command'][2]
+        self.assertIn('Tailscale Funnel URL: https://', hook)
+        self.assertIn('/proc/1/fd/1', hook)      # else the line never reaches docker logs
+        self.assertNotIn('tailscale funnel', hook)
+        self.assertNotIn('funnel reset', hook)
+
+    def test_url_hook_finishes_well_inside_compose_up(self):
+        """Compose SIGKILLs a hook still running when `up` completes and tears the
+        project down (reproduced in Docker), so the wait must stay short - verified that
+        an ~8s cap prints on a normal start and exits cleanly when the hostname never
+        appears, leaving both containers running either way."""
+        hook = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'services']['tailscale']['post_start'][0]['command'][2]
+        self.assertIn('-lt 8', hook)
+        self.assertIn('sleep 1;', hook)
+        self.assertTrue(hook.rstrip().endswith('exit 0'))
+        self.assertIn('h=$$(', hook)              # Compose-escaped
+        self.assertNotIn('h=$(', hook)
+
+    def test_serve_config_uses_cert_domain_placeholder_escaped_for_compose(self):
+        """Bare ${TS_CERT_DOMAIN} would be interpolated away by Compose, handing
+        containerboot an empty hostname."""
+        raw = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'configs']['tailscale-serve-config']['content']
+        self.assertIn('$${TS_CERT_DOMAIN}:443', raw)
+        self.assertNotIn('${TS_CERT_DOMAIN}', raw.replace('$${TS_CERT_DOMAIN}', ''))
+
+    def test_serve_config_declares_funnel_for_the_commander_port(self):
+        cfg = self._serve_config()
+        host_port = '${TS_CERT_DOMAIN}:443'
+        self.assertEqual(cfg['TCP'], {'443': {'HTTPS': True}})
+        self.assertEqual(cfg['Web'][host_port]['Handlers']['/']['Proxy'], 'http://localhost:8900')
+        # AllowFunnel is what makes this public Funnel, not tailnet-only Serve
+        self.assertTrue(cfg['AllowFunnel'][host_port])
+
+    def test_sidecar_healthcheck_stays_a_plain_liveness_probe(self):
+        """Gating it on extra state once wedged the sidecar permanently unhealthy."""
+        sidecar = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'services']['tailscale']
+        self.assertEqual(sidecar['healthcheck']['test'], ['CMD', 'tailscale', 'status'])
+
+    def test_sidecar_healthcheck_tolerates_a_slow_first_login(self):
+        """A key-type switch burns `tailscale up`'s 60s timeout plus a tailscaled
+        restart; without start_period those failures could mark the sidecar unhealthy
+        and abort commander's depends_on wait."""
+        hc = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+            'services']['tailscale']['healthcheck']
+        self.assertEqual(hc['start_period'], '120s')
 
     def test_sidecar_gets_network_alias_for_commander_service_name(self):
         """network_mode: service:tailscale means commander isn't a named member of
