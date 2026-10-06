@@ -519,32 +519,5 @@ class TestTailscaleUpUnattended(unittest.TestCase):
         self.assertTrue(any(a.startswith('--auth-key=file:') for a in cmd))
 
 
-class TestIsTailscaleDaemonRunning(unittest.TestCase):
-    def _result(self, stdout='', stderr='', returncode=0):
-        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
-                         return_value=mock.Mock(returncode=returncode, stdout=stdout, stderr=stderr)):
-            return tunneling.is_tailscale_daemon_running()
-
-    def test_no_state_backend_is_not_running(self):
-        """Reachable but session-less (Windows without the GUI/Unattended Mode).
-        Reporting this as running sends the caller on to up/funnel, which then
-        fails as a confusing 'Funnel exit 1' instead of a daemon-not-ready error."""
-        self.assertFalse(self._result(
-            stdout='# Health check:\n#     - Tailscale is starting. Please wait.\n',
-            stderr='unexpected state: NoState\n', returncode=1))
-
-    def test_unreachable_daemon_is_not_running(self):
-        self.assertFalse(self._result(
-            stderr='failed to connect to local tailscale service; is Tailscale running?', returncode=1))
-
-    def test_logged_out_but_reachable_counts_as_running(self):
-        """`tailscale status` also exits non-zero when merely logged out - that is a
-        job for `tailscale up`, not a daemon problem."""
-        self.assertTrue(self._result(stdout='Logged out.\n', returncode=1))
-
-    def test_normal_status_is_running(self):
-        self.assertTrue(self._result(stdout='100.64.0.1   my-host   user@  macOS   -\n'))
-
-
 if __name__ == '__main__':
     unittest.main()

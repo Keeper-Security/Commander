@@ -631,7 +631,6 @@ TAILSCALE_DAEMON_START_TIMEOUT = 60
 
 
 _TAILSCALE_DAEMON_UNREACHABLE_HINT = "failed to connect to local tailscale service"
-_TAILSCALE_DAEMON_NO_STATE_HINT = "unexpected state: nostate"
 
 
 def is_tailscale_daemon_running():
@@ -643,10 +642,6 @@ def is_tailscale_daemon_running():
     try:
         result = subprocess.run(['tailscale', 'status'], capture_output=True, text=True, timeout=10)
         combined_output = f"{result.stdout or ''}{result.stderr or ''}".lower()
-        # Reachable but with no session (Windows without the GUI or Unattended Mode):
-        # up/funnel can't work yet, so don't report this as running.
-        if _TAILSCALE_DAEMON_NO_STATE_HINT in combined_output:
-            return False
         return _TAILSCALE_DAEMON_UNREACHABLE_HINT not in combined_output
     except Exception as e:
         logging.debug(f"Error checking Tailscale daemon status: {type(e).__name__}")
