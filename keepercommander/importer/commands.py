@@ -88,8 +88,7 @@ import_parser.add_argument('--folder-depth', dest='folder_depth', action='store'
                                 'records - names are never merged or renamed')
 import_parser.add_argument('--output', dest='output', action='store',
                            help='NSF only: write a report of the resulting Keeper folder structure (original path '
-                                '-> new path -> folder UID) to this file (CSV); prints a table if omitted. Useful '
-                                'for mapping team/user permissions to the new structure afterward (e.g. run-batch)')
+                                '-> new path -> folder UID) to CSV file; prints a table if omitted. ex.: import --format=<platform/type> --output=test.csv --nsf')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
@@ -254,6 +253,27 @@ class RecordImportCommand(ImporterCommand):
     def get_parser(self):
         return import_parser
 
+    @staticmethod
+    def source_path_header(import_format):
+        # type: (str) -> str
+        labels = {
+            '1password': '1Password',
+            'bitwarden': 'Bitwarden',
+            'cyberark': 'CyberArk',
+            'cyberark_portal': 'CyberArk Portal',
+            'dashlane': 'Dashlane',
+            'json': 'JSON',
+            'keepass': 'KeePass',
+            'lastpass': 'LastPass',
+            'manageengine': 'ManageEngine',
+            'proton': 'Proton',
+            'thycotic': 'Thycotic',
+        }
+        label = labels.get(import_format or '')
+        if not label:
+            label = str(import_format or 'Source').replace('_', ' ').title()
+        return f'{label} Path'
+
     def execute(self, params, **kwargs):
         if params.enforcements and 'booleans' in params.enforcements:
             restricted = next((x['value'] for x in params.enforcements['booleans'] if x['key'] == 'restrict_import'), False)
@@ -340,7 +360,7 @@ class RecordImportCommand(ImporterCommand):
             output = kwargs.get('output')
             dump_report_data(
                 [[orig, new, uid] for orig, new, uid in folder_mapping],
-                ['Original Path', 'New Path', 'Folder UID'],
+                [self.source_path_header(import_format), 'New Path', 'Folder UID'],
                 fmt='csv' if output else 'table',
                 filename=output,
             )

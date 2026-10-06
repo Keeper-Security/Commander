@@ -32,6 +32,7 @@ from ..subfolder import BaseFolderNode
 
 
 NSF_RECORD_BATCH = 1000
+NSF_FOLDER_RECORD_BATCH = 500
 NSF_FOLDER_BATCH = 100
 NSF_DEFAULT_FOLDER_DEPTH = 5
 _THROTTLE_BASE_WAIT = 10.0
@@ -446,6 +447,37 @@ def execute_nsf_records_add(params, record_adds):
                 uid = utils.base64_url_encode(ra.recordUid)
                 logging.warning('Failed to create NSF record %s', uid)
     return results
+
+
+def execute_nsf_record_links(params, folder_record_links):
+    # type: (KeeperParams, Dict[str, List[str]]) -> None
+    """Link existing records into NSF folders using the NSF folder-record API."""
+    from ..nested_share_folder.folder_record_api import manage_folder_records_batch_v3
+
+    linked = 0
+    for folder_uid, record_uids in folder_record_links.items():
+        for start in range(0, len(record_uids), NSF_FOLDER_RECORD_BATCH):
+            chunk = record_uids[start:start + NSF_FOLDER_RECORD_BATCH]
+            try:
+                results = _call_with_throttle_retry(
+                    'NSF record link',
+                    manage_folder_records_batch_v3,
+                    params,
+                    folder_uid,
+                    records_to_add=chunk,
+                )
+                linked += sum(1 for result in results if result.get('success'))
+                for result in results:
+                    if not result.get('success'):
+                        logging.warning(
+                            'Failed to link NSF record "%s" into folder "%s": %s',
+                            result.get('record_uid'), folder_uid, result.get('message'))
+            except Exception as exc:
+                logging.warning(
+                    'Failed to link %d record(s) into NSF folder "%s": %s',
+                    len(chunk), folder_uid, exc)
+    if linked:
+        logging.info('Linked %d existing record(s) into Nested Share Folder(s)', linked)
 
 
 def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_records=False,

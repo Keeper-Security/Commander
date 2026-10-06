@@ -243,6 +243,36 @@ def convert_keeper_record(record, has_attachments=False):
     return rec
 
 
+def load_existing_nsf_record_for_match(params, record_uid):
+    # type: (KeeperParams, str) -> Optional[ImportRecord]
+    """Normalize an existing NSF cache entry for duplicate matching only.
+    """
+    record = (getattr(params, 'nested_share_records', None) or {}).get(record_uid)
+    if not record:
+        return None
+    data = (getattr(params, 'nested_share_record_data', None) or {}).get(record_uid) or {}
+    data_json = data.get('data_json')
+    if data_json is None:
+        cached = params.record_cache.get(record_uid) if hasattr(params, 'record_cache') else None
+        if cached and cached.get('source') == 'nested_share_folder':
+            return convert_keeper_record(cached)
+        return None
+    if isinstance(data_json, dict):
+        data_unencrypted = json.dumps(data_json)
+    elif isinstance(data_json, bytes):
+        data_unencrypted = data_json
+    elif isinstance(data_json, str):
+        data_unencrypted = data_json
+    else:
+        return None
+    return convert_keeper_record({
+        'record_uid': record_uid,
+        'version': record.get('version') or 3,
+        'client_modified_time': record.get('client_modified_time') or 0,
+        'data_unencrypted': data_unencrypted,
+    })
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
@@ -1074,7 +1104,8 @@ def _import(params, file_format, filename, **kwargs):
         nsf_records_to_add = []     # NSF vault/records/v3/add payloads
         import_uids = {}
 
-        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(
+            update_flag, no_shortcuts, params, records, file_format, use_nsf=use_nsf)
         skipped_existing_count = len(record_exists)
         if show_skipped and record_exists:
             for existing_record in record_exists:
@@ -1349,6 +1380,13 @@ def _import(params, file_format, filename, **kwargs):
         if record_links:
             api.execute_batch(params, record_links)
             sync_down.sync_down(params)
+        if use_nsf:
+            nsf_record_links = prepare_nsf_record_link(params, records)
+            if nsf_record_links:
+                from .nsf_import import execute_nsf_record_links
+                execute_nsf_record_links(params, nsf_record_links)
+                from ..commands.pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
 
         # adjust shared folder permissions
         shared_update = prepare_record_permission(params, records)
@@ -2354,8 +2392,8 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format=None):
-    # type: (bool, bool, KeeperParams, Iterable[ImportRecord], Optional[str]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
+def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format=None, use_nsf=False):
+    # type: (bool, bool, KeeperParams, Iterable[ImportRecord], Optional[str], bool) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -2370,11 +2408,23 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, fil
     per folder. For every other format, matching is folder-agnostic (the pre-#2342 behavior): any
     existing record whose content matches is treated as a duplicate and a shortcut is created instead.
     """
-    match_folder = file_format in ('cyberark', 'cyberark_portal')
+    no_shortcuts = no_shortcuts or file_format in ('cyberark', 'cyberark_portal')
+    match_folder = False
     preexisting_entire_record_hash = {}
     preexisting_partial_record_hash = {}
-    for record_uid in params.record_cache:
-        import_record = convert_keeper_record(params.record_cache[record_uid])
+
+    if use_nsf:
+        existing_records = (
+            (record_uid, load_existing_nsf_record_for_match(params, record_uid))
+            for record_uid in (getattr(params, 'nested_share_records', None) or {})
+        )
+    else:
+        existing_records = (
+            (record_uid, convert_keeper_record(keeper_record))
+            for record_uid, keeper_record in params.record_cache.items()
+        )
+
+    for record_uid, import_record in existing_records:
         if import_record:
             if match_folder:
                 folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
@@ -2599,6 +2649,28 @@ def prepare_record_link(params, records):
                             })
                         record_links.append(req)
     return record_links
+
+
+def prepare_nsf_record_link(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> Dict[str, List[str]]
+    """Prepare existing-record links into Nested Share Folders."""
+    from .nsf_import import is_nsf_folder
+
+    nsf_links = {}  # type: Dict[str, Set[str]]
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', None) or {}
+    for rec in records:
+        if not rec.uid:
+            continue
+        if rec.uid not in params.record_cache and rec.uid not in (getattr(params, 'nested_share_records', None) or {}):
+            continue
+        for fol in rec.folders or []:
+            folder_uid = fol.uid or ''
+            if not folder_uid or not is_nsf_folder(params, folder_uid):
+                continue
+            if rec.uid in (nsf_folder_records.get(folder_uid) or set()):
+                continue
+            nsf_links.setdefault(folder_uid, set()).add(rec.uid)
+    return {folder_uid: sorted(record_uids) for folder_uid, record_uids in nsf_links.items()}
 
 
 def prepare_folder_permission(params, folders, full_sync, unsafe=False):

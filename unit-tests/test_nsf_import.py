@@ -43,6 +43,34 @@ def _perm(name=None, uid=None, role=None, manage_records=False, manage_users=Fal
     return p
 
 
+def _login_record():
+    rec = Record()
+    rec.type = 'login'
+    rec.title = 'Database Account'
+    rec.login = 'svc_db'
+    rec.password = 'secret'
+    return rec
+
+
+def _login_data():
+    return {
+        'type': 'login',
+        'title': 'Database Account',
+        'fields': [
+            {'type': 'login', 'value': ['svc_db']},
+            {'type': 'password', 'value': ['secret']},
+        ],
+    }
+
+
+def _cached_login_record(uid):
+    return {
+        'record_uid': uid,
+        'version': 3,
+        'data_unencrypted': json.dumps(_login_data()),
+    }
+
+
 class TestNsfImport(TestCase):
     def test_classic_perms_to_nsf_role(self):
         cases = [
@@ -330,11 +358,12 @@ class TestNsfImport(TestCase):
         mapping = [('Old\\Path', 'New\\Path', 'uid1')]
         with mock.patch('keepercommander.importer.commands.imp_exp._import', return_value=mapping), \
              mock.patch('keepercommander.importer.commands.dump_report_data') as dump:
-            cmd.execute(_params(), format='json', name='sample_data/import_nsf.txt',
+            cmd.execute(_params(), format='thycotic', name='https://example.secretservercloud.com',
                         use_nsf=True, output='/tmp/out.csv')
             dump.assert_called_once()
             args, kwargs = dump.call_args
             self.assertEqual(args[0], [['Old\\Path', 'New\\Path', 'uid1']])
+            self.assertEqual(args[1], ['Thycotic Path', 'New Path', 'Folder UID'])
             self.assertEqual(kwargs.get('fmt'), 'csv')
             self.assertEqual(kwargs.get('filename'), '/tmp/out.csv')
 
@@ -455,3 +484,43 @@ class TestNsfImport(TestCase):
         params.folder_cache = {}
         params.root_folder = mock.MagicMock(type='/', uid='')
         self.assertEqual(prepare_record_link(params, [rec]), [])
+
+    def test_nsf_duplicate_matching_uses_only_existing_nsf_records(self):
+        from keepercommander.importer.imp_exp import prepare_record_add_or_update
+
+        existing_uid = 'classic_rec'
+        params = _params()
+        params.record_type_cache = {}
+        params.record_cache = {existing_uid: _cached_login_record(existing_uid)}
+        params.nested_share_records = {}
+
+        nsf_import, nsf_exists, _ = prepare_record_add_or_update(
+            False, False, params, [_login_record()], 'json', use_nsf=True)
+        self.assertEqual(len(nsf_import), 1)
+        self.assertEqual(nsf_exists, [])
+
+        params = _params()
+        params.record_type_cache = {}
+        params.record_cache = {}
+        params.nested_share_records = {
+            'nsf_rec': {'record_uid': 'nsf_rec', 'version': 3},
+        }
+        params.nested_share_record_data = {'nsf_rec': {'data_json': _login_data()}}
+
+        records_to_import, record_exists, _ = prepare_record_add_or_update(
+            False, False, params, [_login_record()], 'json', use_nsf=True)
+        self.assertEqual(records_to_import, [])
+        self.assertEqual(len(record_exists), 1)
+
+    def test_cyberark_import_creates_duplicate_instead_of_shortcut(self):
+        from keepercommander.importer.imp_exp import prepare_record_add_or_update
+
+        existing_uid = 'classic_rec'
+        params = _params()
+        params.record_type_cache = {}
+        params.record_cache = {existing_uid: _cached_login_record(existing_uid)}
+
+        records_to_import, record_exists, _ = prepare_record_add_or_update(
+            False, False, params, [_login_record()], 'cyberark')
+        self.assertEqual(len(records_to_import), 1)
+        self.assertEqual(record_exists, [])
