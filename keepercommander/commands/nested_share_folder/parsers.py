@@ -371,6 +371,12 @@ nested_share_get_parser.add_argument(
 nested_share_get_parser.add_argument(
     '--include-dag', dest='include_dag', action='store_true', default=False,
     help='Include DAG/GraphSync information in json output (PAM record types only)')
+nested_share_get_parser.add_argument(
+    '--show-inherited', dest='show_inherited', action='store_true', default=False,
+    help='Include inherited (folder-level) permission entries in the accessor list (hidden by default)')
+nested_share_get_parser.add_argument(
+    '--show-denied', dest='show_denied', action='store_true', default=False,
+    help='Include denied-access permission entries in the accessor list (hidden by default)')
 
 
 # ══════════════════════════════════════════════════════════════════════════
