@@ -96,11 +96,13 @@ class NestedShareGetCommand(Command):
         return nested_share_get_parser
 
     def execute(self, params, **kwargs):
-        uid         = (kwargs.get('uid') or '').strip()
-        fmt         = kwargs.get('format') or 'detail'
-        verbose     = kwargs.get('verbose', False)
-        unmask      = kwargs.get('unmask', False)
-        include_dag = kwargs.get('include_dag', False)
+        uid            = (kwargs.get('uid') or '').strip()
+        fmt            = kwargs.get('format') or 'detail'
+        verbose        = kwargs.get('verbose', False)
+        unmask         = kwargs.get('unmask', False)
+        include_dag    = kwargs.get('include_dag', False)
+        show_inherited = kwargs.get('show_inherited', False)
+        show_denied    = kwargs.get('show_denied', False)
 
         if not uid:
             raise CommandError('nsf-get', 'UID parameter is required')
@@ -122,9 +124,11 @@ class NestedShareGetCommand(Command):
                     resolved,
                 )
             if fmt == 'json':
-                self._record_json(params, resolved, verbose, unmask, include_dag=include_dag)
+                self._record_json(params, resolved, verbose, unmask, include_dag=include_dag,
+                                   show_inherited=show_inherited, show_denied=show_denied)
             else:
-                self._record_detail(params, resolved, verbose, unmask)
+                self._record_detail(params, resolved, verbose, unmask,
+                                     show_inherited=show_inherited, show_denied=show_denied)
             return
 
         raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
@@ -172,7 +176,8 @@ class NestedShareGetCommand(Command):
 
     # ── Record display ────────────────────────────────────────────────
 
-    def _record_detail(self, params, record_uid, verbose, unmask):
+    def _record_detail(self, params, record_uid, verbose, unmask,
+                        show_inherited=False, show_denied=False):
         # SECURITY: this method MUST only emit field values through ``print``
         # (stdout). Never pass unmasked record content to ``logging.*`` —
         # operators frequently configure file/syslog handlers that would
@@ -206,7 +211,8 @@ class NestedShareGetCommand(Command):
             for i, line in enumerate(meta['notes'].split('\n')):
                 print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', line.strip()))
 
-        self._print_record_permissions(params, record_uid, verbose)
+        self._print_record_permissions(params, record_uid, verbose,
+                                        show_inherited=show_inherited, show_denied=show_denied)
 
     def _print_typed_fields(self, fields, unmask, skip_types=()):
         for f in fields or []:
@@ -242,7 +248,8 @@ class NestedShareGetCommand(Command):
                             ', '.join(f'{k}: {v}' for k, v in val.items() if v)
         return ''
 
-    def _record_json(self, params, record_uid, verbose, _unmask=False, include_dag=False):
+    def _record_json(self, params, record_uid, verbose, _unmask=False, include_dag=False,
+                      show_inherited=False, show_denied=False):
         meta = load_record_metadata(params, record_uid)
         ro = {
             'record_uid': record_uid, 'title': meta['title'],
@@ -261,6 +268,8 @@ class NestedShareGetCommand(Command):
         try:
             accesses = _nsf.get_record_accesses_v3(
                 params, [record_uid]).get('record_accesses', [])
+            accesses = _nsf.filter_record_accesses(
+                accesses, show_inherited=show_inherited, show_denied=show_denied)
             if accesses:
                 user_perms = []
                 for a in accesses:
@@ -301,11 +310,14 @@ class NestedShareGetCommand(Command):
         print(json.dumps(ro, indent=2))
 
     @staticmethod
-    def _print_record_permissions(params, record_uid, verbose):
+    def _print_record_permissions(params, record_uid, verbose,
+                                   show_inherited=False, show_denied=False):
         """Display record permissions in a format similar to the legacy get command."""
         try:
             accesses = _nsf.get_record_accesses_v3(
                 params, [record_uid]).get('record_accesses', [])
+            accesses = _nsf.filter_record_accesses(
+                accesses, show_inherited=show_inherited, show_denied=show_denied)
             if not accesses:
                 return
 

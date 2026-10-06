@@ -46,7 +46,7 @@ class TestSetFilePermissionsWindows(TestCase):
     @mock.patch('os.path.islink', return_value=False)
     def test_grant_uses_qualified_principal_when_names_collide(self, _islink, _system, mock_run):
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            path = tmp.name
+            path = os.path.realpath(tmp.name)
         try:
             with mock.patch.dict(os.environ, {'USERNAME': 'ivan', 'USERDOMAIN': 'IVAN'}, clear=False):
                 utils.set_file_permissions(path)
@@ -59,7 +59,7 @@ class TestSetFilePermissionsWindows(TestCase):
     @mock.patch('os.path.islink', return_value=False)
     def test_grant_uses_domain_principal(self, _islink, _system, mock_run):
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            path = tmp.name
+            path = os.path.realpath(tmp.name)
         try:
             with mock.patch.dict(os.environ, {'USERNAME': 'jdoe', 'USERDOMAIN': 'CORP'}, clear=False):
                 utils.set_file_permissions(path)

@@ -430,6 +430,7 @@ def _parse_record_access_response(rs, result):
             'access_type_uid': utils.base64_url_encode(d.accessTypeUid),
             'owner': getattr(d, 'owner', False),
             'inherited': bool(getattr(d, 'inherited', False)),
+            'denied_access': bool(getattr(d, 'deniedAccess', False)),
             'access_role_type': int(getattr(d, 'accessRoleType', 0) or 0),
         }
         for flag in ('can_view_title', 'can_edit', 'can_view', 'can_list_access',
@@ -446,6 +447,19 @@ def _parse_record_access_response(rs, result):
         fuid = utils.base64_url_encode(fu)
         if fuid not in result['forbidden_records']:
             result['forbidden_records'].append(fuid)
+
+
+def filter_record_accesses(accesses, show_inherited=False, show_denied=False):
+    """Filter record access rows for display.
+
+    Inherited (folder-level) and denied-access rows are omitted by default;
+    pass ``show_inherited=True`` / ``show_denied=True`` to include them.
+    """
+    return [
+        a for a in accesses
+        if (show_inherited or not a.get('inherited'))
+        and (show_denied or not a.get('denied_access'))
+    ]
 
 
 def get_record_accesses_v3(params, record_uids):
