@@ -132,6 +132,12 @@ get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
                              help='json output: display typed records as legacy')
 get_info_parser.add_argument('--include-dag', dest='include_dag', action='store_true',
                              help='include DAG/GraphSync information in json output')
+get_info_parser.add_argument('--show-inherited', dest='show_inherited', action='store_true',
+                             help='include inherited (folder-level) permission entries for Nested '
+                                  'Share Records (hidden by default)')
+get_info_parser.add_argument('--show-denied', dest='show_denied', action='store_true',
+                             help='include denied-access permission entries for Nested Share Records '
+                                  '(hidden by default)')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
@@ -578,6 +584,10 @@ class RecordGetUidCommand(Command):
                             from .nested_share_folder.helpers import get_access_role_label
                             nsf_accesses = (_nsf.get_record_accesses_v3(params, [uid])
                                            .get('record_accesses', []))
+                            nsf_accesses = _nsf.filter_record_accesses(
+                                nsf_accesses,
+                                show_inherited=kwargs.get('show_inherited', False),
+                                show_denied=kwargs.get('show_denied', False))
                             if nsf_accesses:
                                 nsf_perms = []
                                 for a in nsf_accesses:
@@ -734,6 +744,10 @@ class RecordGetUidCommand(Command):
                             from .. import nested_share_folder as _nsf
                             accesses = (_nsf.get_record_accesses_v3(params, [uid])
                                         .get('record_accesses', []))
+                            accesses = _nsf.filter_record_accesses(
+                                accesses,
+                                show_inherited=kwargs.get('show_inherited', False),
+                                show_denied=kwargs.get('show_denied', False))
                             if accesses:
                                 from .nested_share_folder.helpers import (
                                     get_access_role_label,

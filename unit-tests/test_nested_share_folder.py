@@ -1725,8 +1725,7 @@ class TestNestedShareFolderFolderApi(TestCase):
 
         self.assertTrue(result['success'])
         self.assertTrue(params.sync_data)
-        mock_update_folder.assert_called_once_with(
-            params, child_uid, inherit_permissions=False)
+        mock_update_folder.assert_not_called()
         mock_access_update.assert_called_once()
         remove_call = mock_access_update.call_args
         ad = remove_call.kwargs['folder_access_removes'][0]
@@ -1781,12 +1780,11 @@ class TestNestedShareFolderFolderApi(TestCase):
             params, child_uid, team_uid, as_team=True)
 
         self.assertTrue(result['success'])
-        mock_update_folder.assert_called_once_with(
-            params, child_uid, inherit_permissions=False)
+        mock_update_folder.assert_not_called()
         mock_access_update.assert_called_once()
         self.assertEqual(
             params.nested_share_folders[child_uid]['inherit_user_permissions'],
-            folder_pb2.BOOLEAN_FALSE)
+            folder_pb2.BOOLEAN_TRUE)
 
     @patch('keepercommander.nested_share_folder.folder_api.revoke_folder_access_v3')
     @patch('keepercommander.api.get_share_objects')
