@@ -486,5 +486,65 @@ class TestSetTailscaleOperator(unittest.TestCase):
             self.assertFalse(tunneling.set_tailscale_operator())
 
 
+class TestTailscaleUpUnattended(unittest.TestCase):
+    """Windows keeps a node up only while the GUI client runs, and Commander installs
+    the MSI with TS_NOLAUNCH=1 (no GUI). Without --unattended the backend sits at
+    NoState after a successful login, so Funnel has nothing to bind to."""
+
+    def _cmd_for_platform(self, system):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('platform.system', return_value=system), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=0)) as mock_run:
+                tunneling.tailscale_up('tskey-auth-xxx')
+                return mock_run.call_args[0][0]
+        finally:
+            os.unlink(tmp_path)
+
+    def test_windows_gets_unattended_flag(self):
+        self.assertIn('--unattended', self._cmd_for_platform('Windows'))
+
+    def test_macos_and_linux_do_not_get_unattended_flag(self):
+        for system in ('Darwin', 'Linux'):
+            self.assertNotIn('--unattended', self._cmd_for_platform(system),
+                             f'--unattended is Windows-only, leaked into {system}')
+
+    def test_unattended_does_not_displace_the_existing_flags(self):
+        cmd = self._cmd_for_platform('Windows')
+        self.assertIn('--force-reauth', cmd)
+        self.assertIn('--advertise-tags=', cmd)
+        self.assertTrue(any(a.startswith('--auth-key=file:') for a in cmd))
+
+
+class TestIsTailscaleDaemonRunning(unittest.TestCase):
+    def _result(self, stdout='', stderr='', returncode=0):
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=returncode, stdout=stdout, stderr=stderr)):
+            return tunneling.is_tailscale_daemon_running()
+
+    def test_no_state_backend_is_not_running(self):
+        """Reachable but session-less (Windows without the GUI/Unattended Mode).
+        Reporting this as running sends the caller on to up/funnel, which then
+        fails as a confusing 'Funnel exit 1' instead of a daemon-not-ready error."""
+        self.assertFalse(self._result(
+            stdout='# Health check:\n#     - Tailscale is starting. Please wait.\n',
+            stderr='unexpected state: NoState\n', returncode=1))
+
+    def test_unreachable_daemon_is_not_running(self):
+        self.assertFalse(self._result(
+            stderr='failed to connect to local tailscale service; is Tailscale running?', returncode=1))
+
+    def test_logged_out_but_reachable_counts_as_running(self):
+        """`tailscale status` also exits non-zero when merely logged out - that is a
+        job for `tailscale up`, not a daemon problem."""
+        self.assertTrue(self._result(stdout='Logged out.\n', returncode=1))
+
+    def test_normal_status_is_running(self):
+        self.assertTrue(self._result(stdout='100.64.0.1   my-host   user@  macOS   -\n'))
+
+
 if __name__ == '__main__':
     unittest.main()

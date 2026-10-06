@@ -631,6 +631,7 @@ TAILSCALE_DAEMON_START_TIMEOUT = 60
 
 
 _TAILSCALE_DAEMON_UNREACHABLE_HINT = "failed to connect to local tailscale service"
+_TAILSCALE_DAEMON_NO_STATE_HINT = "unexpected state: nostate"
 
 
 def is_tailscale_daemon_running():
@@ -642,6 +643,10 @@ def is_tailscale_daemon_running():
     try:
         result = subprocess.run(['tailscale', 'status'], capture_output=True, text=True, timeout=10)
         combined_output = f"{result.stdout or ''}{result.stderr or ''}".lower()
+        # Reachable but with no session (Windows without the GUI or Unattended Mode):
+        # up/funnel can't work yet, so don't report this as running.
+        if _TAILSCALE_DAEMON_NO_STATE_HINT in combined_output:
+            return False
         return _TAILSCALE_DAEMON_UNREACHABLE_HINT not in combined_output
     except Exception as e:
         logging.debug(f"Error checking Tailscale daemon status: {type(e).__name__}")
@@ -737,10 +742,12 @@ def tailscale_up(auth_key, advertise_tags=None):
     active use of this Tailscale link (e.g. SSH), per Tailscale's own docs.
     The key goes through a short-lived, owner-only temp file (`--auth-key=file:<path>`)
     instead of argv, so it isn't visible via `ps`/`/proc`. Never logged.
+    --unattended is Windows-only: see the comment at the call site below.
     """
     if not auth_key:
         raise ValueError("Tailscale auth key must be provided for 'tailscale up'.")
 
+    import platform
     import tempfile
     log_file = _get_tailscale_log_path()
     key_file_path = None
@@ -753,6 +760,11 @@ def tailscale_up(auth_key, advertise_tags=None):
 
         cmd = ["tailscale", "up", f"--auth-key=file:{key_file_path}",
                f"--advertise-tags={advertise_tags or ''}", "--force-reauth"]
+        # Windows keeps the node up only while the GUI client runs, and the MSI is
+        # installed with TS_NOLAUNCH=1 (no GUI). Without this the backend sits at
+        # NoState after a successful login and Funnel has nothing to bind to.
+        if platform.system() == "Windows":
+            cmd.append("--unattended")
 
         with open(log_file, 'a') as log_f:
             result = subprocess.run(
