@@ -170,6 +170,8 @@ class ConfigFormatHandler:
             if federated_login:
                 data_key = federated_login.load_config().get('dataKey')
                 if data_key:
+                    from ...federated_login import demo_log
+                    demo_log('Service config encrypted with the KSM config data key')
                     return data_key
             raise FileNotFoundError(f"Config.json file not found: {config_json}")
 

@@ -91,7 +91,8 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --oidc-jwks-uri [URI] : Issuer JWKS URI (Default: resolved by OIDC discovery on the issuer)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --config-init [json, b64 or k8s] : Configuration format (Default: json)
-      --include-data-key : Store the user data key in the config (full vault access)
+      --include-data-key : Store the user data key in the config (decrypts all records and folders)
+      --config-file [PATH] : Where to save the config (Default: ksm-config.json, .b64 or .yaml by format)
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
@@ -210,7 +211,9 @@ ksm_parser.add_argument('--oidc-subject', dest='oidc_subject', action='store', h
 ksm_parser.add_argument('--oidc-jwks-uri', dest='oidc_jwks_uri', action='store',
                         help='Issuer JWKS URI. Default: resolved by OIDC discovery on the issuer')
 ksm_parser.add_argument('--include-data-key', dest='include_data_key', action='store_true',
-                        help='Store the user data key in the federated client config (full vault access)')
+                        help='Store the user data key in the federated client config')
+ksm_parser.add_argument('--config-file', dest='config_file', action='store',
+                        help='File to save the federated client config to')
 # Application sharing options
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
 # Disable sharing apps w/ admin permissions for now
@@ -555,7 +558,8 @@ class KSMCommand(Command):
                         params, app_name_or_uid, kwargs.get('oidc_issuer'), kwargs.get('oidc_subject'),
                         jwks_uri=kwargs.get('oidc_jwks_uri'),
                         access_expire_in_min=access_expire_in_min, client_name=client_name,
-                        config_init=config_init or 'json', include_data_key=kwargs.get('include_data_key'))
+                        config_init=config_init or 'json', include_data_key=kwargs.get('include_data_key'),
+                        config_file=kwargs.get('config_file'), force=kwargs.get('force'))
                     return config_str if is_return_tokens else None
 
                 tokens_and_device = KSMCommand.add_client(
@@ -2390,13 +2394,13 @@ class KSMCommand(Command):
     @staticmethod
     def add_federated_client(params, app_name_or_uid, issuer, subject, jwks_uri=None,
                              access_expire_in_min=None, client_name=None, config_init='json',
-                             include_data_key=False):
+                             include_data_key=False, config_file=None, force=False):
         """Add a client authenticated by a federated OIDC token (e.g. Kubernetes service account token).
 
         Unlike add_client, there is no one-time token and no client key pair: the server matches the
         presented token against the issuer/subject binding, and the token audience must be the Keeper
         host. The config only carries what federated login needs: the host, the client id and
-        optionally the user data key.
+        optionally the user data key. It is saved to a file, never printed.
         """
         if not app_name_or_uid:
             raise Exception("No app provided")
@@ -2406,6 +2410,13 @@ class KSMCommand(Command):
         rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
         if not rec_cache_val:
             raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        if not config_file:
+            config_file = 'ksm-config.' + {'b64': 'b64', 'k8s': 'yaml'}.get(config_init, 'json')
+        config_file = os.path.abspath(os.path.expanduser(config_file))
+        # checked before the client is created, so an existing file does not leave an orphan client
+        if os.path.exists(config_file) and not force:
+            raise Exception(f'{config_file} already exists. Use --force to overwrite it')
 
         client_id = os.urandom(64)
 
@@ -2436,17 +2447,21 @@ class KSMCommand(Command):
             config_dict['dataKey'] = bytes_to_base64(params.data_key)
 
         config_str = KSMCommand.convert_config_dict(config_dict, config_init)
+        fd = os.open(config_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(config_str)
+        os.chmod(config_file, 0o600)   # O_CREAT mode does not apply to an overwritten file
 
         print(f'\nSuccessfully generated Federated Client Device\n'
               f'==============================================\n'
-              f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
+              f'\nConfig saved to: {bcolors.OKGREEN}{config_file}{bcolors.ENDC}\n'
               + (f'Name: {client_name}\n' if client_name else '')
               + f'Issuer: {issuer}\n'
                 f'Subject: {subject}\n'
                 f'Token Audience: https://{hostname}\n')
         if include_data_key:
-            print(bcolors.WARNING + "\tWarning: Configuration contains your data key and grants full vault access. "
-                                    "Store it as a secret." + bcolors.ENDC)
+            print(bcolors.WARNING + "\tWarning: Configuration contains your data key, which can decrypt all "
+                                    "records and folders in your vault. Store it as a secret." + bcolors.ENDC)
 
         return config_str
 

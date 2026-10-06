@@ -42,6 +42,10 @@ class ServiceStatus(Command):
 
     skip_sync_on_auth = True
 
+    def is_authorised(self):
+        # reads the local process state only; docker-entrypoint.sh runs it before service-create
+        return False
+
     @debug_decorator
     def get_parser(self):
         parser = argparse.ArgumentParser(prog='service-status', parents=[report_output_parser], description='Displays if the Commander API service is running or stopped')

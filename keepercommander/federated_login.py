@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Optional
 
 import requests
@@ -32,6 +33,23 @@ from .error import KeeperApiError, Error
 from .params import KeeperParams
 
 EXCHANGE_ENDPOINT = 'get_session_token_for_app_client'
+CONFIG_WAIT_INTERVAL = 5
+CONFIG_WAIT_LOG_EVERY = 60
+
+
+# DEMO ONLY: step by step logging of the federated login, including tokens. Remove before release:
+# delete this function and every demo_log(...) call (grep -rn demo_log keepercommander)
+def demo_log(message, *args):
+    print(f'[DEMO {datetime.now():%H:%M:%S}] ' + (message % args if args else message), flush=True)
+
+
+def demo_token_claims(token):   # type: (str) -> dict
+    """DEMO ONLY: the unverified JWT claims, for logging"""
+    try:
+        payload = token.split('.')[1]
+        return json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+    except Exception:
+        return {}
 
 
 class FederatedLogin:
@@ -40,11 +58,29 @@ class FederatedLogin:
         self.token_file = token_file
         self.expires_on = 0
 
+    def config_path(self):   # type: () -> Optional[str]
+        """The config file path, or None when KEEPER_KSM_CONFIG holds the config itself"""
+        value = self.ksm_config.strip()
+        if value.startswith(('/', '~', '.')) or os.path.isfile(value):
+            return os.path.expanduser(value)
+        return None
+
+    def wait_for_config(self):   # type: () -> None
+        """Waits for the config file to appear, so the service can start before its Secret is created"""
+        path = self.config_path()
+        waited = 0
+        while path and not (os.path.isfile(path) and os.path.getsize(path) > 0):
+            if waited % CONFIG_WAIT_LOG_EVERY == 0:
+                logging.warning('Waiting for the KSM config at %s', path)
+            time.sleep(CONFIG_WAIT_INTERVAL)
+            waited += CONFIG_WAIT_INTERVAL
+
     def load_config(self):   # type: () -> dict
         """Accepts a path to a JSON config file, a JSON string, or a base64-encoded JSON string."""
         value = self.ksm_config.strip()
-        if os.path.isfile(os.path.expanduser(value)):
-            with open(os.path.expanduser(value), 'r') as f:
+        path = self.config_path()
+        if path:
+            with open(path, 'r') as f:
                 value = f.read().strip()
         if not value.startswith('{'):
             value = base64.b64decode(value).decode()
@@ -54,6 +90,8 @@ class FederatedLogin:
         for key in ('hostname', 'clientId'):
             if not config.get(key):
                 raise Error(f'KSM config is missing "{key}"')
+        demo_log('Read KSM config from %s: hostname=%s, clientId=%s, dataKey %s', path or 'KEEPER_KSM_CONFIG',
+                 config['hostname'], config['clientId'], 'present' if config.get('dataKey') else 'MISSING')
         return config
 
     def read_token(self):   # type: () -> str
@@ -63,6 +101,10 @@ class FederatedLogin:
             token = f.read().strip()
         if not token:
             raise Error(f'OIDC token file "{path}" is empty')
+        claims = demo_token_claims(token)
+        demo_log('Read K8s service account token from %s: iss=%s, sub=%s, aud=%s, expires %s\n  token: %s',
+                 path, claims.get('iss'), claims.get('sub'), claims.get('aud'),
+                 datetime.fromtimestamp(claims['exp']) if claims.get('exp') else '?', token)
         return token
 
     def exchange(self, params, config):   # type: (KeeperParams, dict) -> str
@@ -82,6 +124,7 @@ class FederatedLogin:
         }).encode()
 
         for _ in range(3):
+            demo_log('Exchanging the K8s token at %s (server key id %s)', url, context.server_key_id)
             transmission_key = utils.generate_aes_key()
             encrypted_transmission_key = rest_api.encrypt_with_keeper_key(context, transmission_key)
             rs = requests.post(url, data=crypto.encrypt_aes_v2(payload, transmission_key), headers={
@@ -95,6 +138,9 @@ class FederatedLogin:
             if rs.status_code == 200:
                 response = json.loads(crypto.decrypt_aes_v2(rs.content, transmission_key))
                 self.expires_on = response.get('expiresOn') or 0
+                demo_log('KA returned a session token, expires %s\n  session token: %s',
+                         datetime.fromtimestamp(self.expires_on / 1000) if self.expires_on else '?',
+                         response['sessionToken'])
                 return response['sessionToken']
 
             try:
@@ -104,14 +150,19 @@ class FederatedLogin:
             error = failure.get('result_code') or failure.get('error')
             if error == 'key' and failure.get('key_id'):
                 logging.debug('Server requested public key %s', failure['key_id'])
+                demo_log('KA asked for server key id %s, retrying', failure['key_id'])
                 context.server_key_id = int(failure['key_id'])
                 continue
+            demo_log('KA rejected the exchange: %s %s', error, failure.get('message') or '')
             raise KeeperApiError(error, failure.get('message') or failure.get('additional_info') or '')
         raise Error('Unable to negotiate the server public key')
 
     def login(self, params):   # type: (KeeperParams) -> None
         from .loginv3 import LoginV3Flow
 
+        demo_log('Federated login started: KEEPER_KSM_CONFIG=%s, KEEPER_OIDC_TOKEN_FILE=%s',
+                 self.ksm_config, self.token_file)
+        self.wait_for_config()
         config = self.load_config()
         data_key = config.get('dataKey')
         if not data_key:
@@ -122,6 +173,7 @@ class FederatedLogin:
         params.session_token = self.exchange(params, config)
         params.data_key = base64.b64decode(data_key)
         params.password = None
+        demo_log('Data key loaded from the KSM config (%d bytes)', len(params.data_key))
 
         LoginV3Flow.populateAccountSummary(params)
         if params.license:
@@ -129,14 +181,17 @@ class FederatedLogin:
             account_uid = params.license.get('account_uid')
             if account_uid:
                 params.account_uid_bytes = base64.b64decode(account_uid)
+        demo_log('Account summary loaded: logged in as %s', params.user)
 
         expires_in = max(0, int(self.expires_on / 1000 - time.time()))
         logging.info('Federated login as %s (session expires in %d min)', params.user, expires_in // 60)
 
     def refresh(self, params):   # type: (KeeperParams) -> bool
         """Re-exchanges a fresh JWT after the vault session token expired."""
+        demo_log('Session token expired, exchanging a fresh K8s token')
         try:
             params.session_token = self.exchange(params, self.load_config())
+            demo_log('Session refreshed')
             return True
         except Exception as e:
             logging.warning('Federated session refresh failed: %s', e)

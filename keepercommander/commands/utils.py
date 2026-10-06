@@ -1708,6 +1708,7 @@ class LoginCommand(Command):
             msp.mc_params_dict.clear()
 
         if params.federated_login:
+            from ..federated_login import demo_log
             try:
                 params.federated_login.login(params)
             except Exception as exc:
@@ -1718,6 +1719,8 @@ class LoginCommand(Command):
                 params.enterprise = None
                 params._pedm_plugin = None
                 SyncDownCommand().execute(params, force=True)
+                demo_log('Vault synced: %d records, %d shared folders',
+                         len(params.record_cache), len(params.shared_folder_cache))
                 if params.is_enterprise_admin:
                     api.query_enterprise(params, True)
             return

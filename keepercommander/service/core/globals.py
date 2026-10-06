@@ -14,7 +14,7 @@ from ...params import KeeperParams
 from ... import utils
 
 # commands that start Service Mode and may log in with a federated KSM client
-FEDERATED_LOGIN_COMMANDS = ('service-create', 'service-start', 'service-status')
+FEDERATED_LOGIN_COMMANDS = ('service-create', 'service-start')
 
 _current_params: Optional[KeeperParams] = None
 
