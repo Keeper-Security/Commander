@@ -1541,7 +1541,7 @@ class PAMProjectExtendCommand(Command):
                         prc.execute(params, silent=True, **args)
             launch_uid = get_launch_credential(mach, True)
             if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
+                tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))
 
         if new_resources:
             print(f"{len(new_resources)}/{len(new_resources)}\n")
