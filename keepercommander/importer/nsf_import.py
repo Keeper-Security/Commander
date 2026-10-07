@@ -22,6 +22,7 @@ from .importer import (
     Permission as ImportPermission,
     Record as ImportRecord,
     SharedFolder as ImportSharedFolder,
+    flatten_path_components,
     path_components,
 )
 from .. import utils
@@ -31,7 +32,9 @@ from ..subfolder import BaseFolderNode
 
 
 NSF_RECORD_BATCH = 1000
+NSF_FOLDER_RECORD_BATCH = 500
 NSF_FOLDER_BATCH = 100
+NSF_DEFAULT_FOLDER_DEPTH = 5
 _THROTTLE_BASE_WAIT = 10.0
 _THROTTLE_MULTIPLIER = 1.5
 _THROTTLE_MAX_RETRIES = 5
@@ -147,6 +150,20 @@ def find_nsf_child(params, folder_name, parent_uid):
     return None
 
 
+def _nsf_folder_ancestor_depth(params, folder_uid):
+    # type: (KeeperParams, str) -> int
+    """Return how many levels deep *folder_uid* already sits in the NSF tree (itself included)."""
+    nsf_folders = getattr(params, 'nested_share_folders', None) or {}
+    depth = 0
+    current = folder_uid
+    seen = set()
+    while current and current in nsf_folders and current not in seen:
+        seen.add(current)
+        depth += 1
+        current = nsf_folders[current].get('parent_uid') or ''
+    return depth
+
+
 def _is_throttle_error(exc):  # type: (BaseException) -> bool
     if isinstance(exc, KeeperApiError) and str(getattr(exc, 'result_code', '')).lower() in (
             'throttled', '429', 'too_many_requests'):
@@ -248,14 +265,45 @@ def ensure_nsf_path(params, comps, parent_uid=''):
     return current
 
 
-def _folder_comp_lists(folders, records):
-    # type: (List[ImportSharedFolder], List[ImportRecord]) -> List[Tuple[object, List[str]]]
-    """Return ``(target, component_list)`` pairs for every folder to resolve."""
-    targets = []  # type: List[Tuple[object, List[str]]]
+class _PhantomFolder:
+    """Placeholder for an intermediate folder level that has no import data of its own.
+
+    When a path overflows *folder_depth*, every level between the flatten
+    cutoff and the actual leaf still needs its own sibling folder created
+    (matching the original names one-for-one) - it just has nothing to place
+    inside it beyond a nested child folder.
+    """
+    __slots__ = ('uid',)
+
+    def __init__(self):
+        self.uid = None
+
+
+def _folder_comp_lists(folders, records, folder_depth=None):
+    # type: (List[ImportSharedFolder], List[ImportRecord], Optional[int]) -> List[Tuple[object, List[str], List[str]]]
+    """Return ``(target, original_components, flattened_components)`` triples for every folder to resolve.
+
+    A path longer than *folder_depth* contributes one real target (its own
+    leaf, attached directly under the kept chain) plus one phantom target per
+    skipped intermediate level, so every original folder name still gets its
+    own sibling folder under that same kept chain.
+    """
+    targets = []  # type: List[Tuple[object, List[str], List[str]]]
+
+    def add(target, comps):
+        if not comps:
+            return
+        flat = flatten_path_components(comps, folder_depth)
+        targets.append((target, comps, flat))
+        if folder_depth and len(comps) > folder_depth:
+            head_len = max(folder_depth, 1) - 1
+            for i in range(head_len, len(comps) - 1):
+                orig_prefix = comps[:i + 1]
+                phantom_comps = comps[:head_len] + [comps[i]]
+                targets.append((_PhantomFolder(), orig_prefix, phantom_comps))
+
     for fol in folders or []:
-        comps = [c for c in path_components(fol.path or '') if c]
-        if comps:
-            targets.append((fol, comps))
+        add(fol, [c for c in path_components(fol.path or '') if c])
     for rec in records or []:
         if not rec.folders:
             continue
@@ -265,22 +313,35 @@ def _folder_comp_lists(folders, records):
                 comps.extend(path_components(fol.domain))
             if fol.path:
                 comps.extend(path_components(fol.path))
-            comps = [c for c in comps if c]
-            targets.append((fol, comps))
+            add(fol, [c for c in comps if c])
     return targets
 
 
-def prepare_nsf_folders(params, folders, records, base_parent_uid=''):
-    # type: (KeeperParams, List[ImportSharedFolder], List[ImportRecord], str) -> int
+def prepare_nsf_folders(params, folders, records, base_parent_uid='', folder_depth=None):
+    # type: (KeeperParams, List[ImportSharedFolder], List[ImportRecord], str, Optional[int]) -> Tuple[int, List[Tuple[str, str, str]]]
     """Create NSF folder trees for import shared folders and record folders.
 
     Builds the full tree first, then creates missing folders **by depth** in
     batches of up to 100 (``vault/folders/v3/add``), with throttle retries.
     Sets ``uid`` on each resolved ``ImportSharedFolder`` / ``ImportFolder``.
-    Returns the number of folders created.
+
+    Paths deeper than *folder_depth* (default ``NSF_DEFAULT_FOLDER_DEPTH``,
+    counting any existing depth of *base_parent_uid*) are flattened: levels
+    beyond the cutoff become sibling folders directly under the deepest
+    allowed folder, each keeping its own original name and data - never
+    merged or renamed.
+
+    Returns ``(created_count, folder_mapping)`` where *folder_mapping* is a
+    list of ``(original_path, new_path, folder_uid)`` tuples, one per
+    resolved folder target.
     """
     before = set((getattr(params, 'nested_share_folders', None) or {}).keys())
-    targets = _folder_comp_lists(folders, records)
+
+    effective_depth = folder_depth if folder_depth is not None else NSF_DEFAULT_FOLDER_DEPTH
+    if base_parent_uid:
+        effective_depth = max(effective_depth - _nsf_folder_ancestor_depth(params, base_parent_uid), 1)
+
+    targets = _folder_comp_lists(folders, records, effective_depth)
 
     # path_tuple -> folder_uid
     uid_by_path = {}  # type: Dict[Tuple[str, ...], str]
@@ -288,11 +349,11 @@ def prepare_nsf_folders(params, folders, records, base_parent_uid=''):
         uid_by_path[()] = base_parent_uid
 
     # Resolve / create level by level so parent keys exist for children.
-    max_depth = max((len(comps) for _, comps in targets), default=0)
+    max_depth = max((len(comps) for _, _orig, comps in targets), default=0)
     for depth in range(1, max_depth + 1):
         pending = []  # type: List[Tuple[Tuple[str, ...], str, str]]
         seen = set()  # type: set
-        for _, comps in targets:
+        for _, _orig, comps in targets:
             if len(comps) < depth:
                 continue
             path_tuple = tuple(comps[:depth])
@@ -319,22 +380,25 @@ def prepare_nsf_folders(params, folders, records, base_parent_uid=''):
         for (path_tuple, _name, _parent_uid), folder_uid in zip(pending, created_uids):
             uid_by_path[path_tuple] = folder_uid
 
-    # Assign leaf UIDs back onto import objects.
-    for target, comps in targets:
+    # Assign leaf UIDs back onto import objects and record the mapping.
+    folder_mapping = []  # type: List[Tuple[str, str, str]]
+    seen_mapping = set()  # type: set
+    for target, orig_comps, comps in targets:
         if not comps:
-            if base_parent_uid:
-                target.uid = base_parent_uid
-            else:
-                target.uid = ''
-            continue
-        path_tuple = tuple(comps)
-        target.uid = uid_by_path.get(path_tuple, '')
+            target.uid = base_parent_uid or ''
+        else:
+            path_tuple = tuple(comps)
+            target.uid = uid_by_path.get(path_tuple, '')
+        row = (PathDelimiter.join(orig_comps), PathDelimiter.join(comps), target.uid)
+        if row[:2] not in seen_mapping:
+            seen_mapping.add(row[:2])
+            folder_mapping.append(row)
 
     after = set((getattr(params, 'nested_share_folders', None) or {}).keys())
     created = len(after - before)
     if created:
         logging.info('Created %d Nested Share Folder(s)', created)
-    return created
+    return created, folder_mapping
 
 
 def build_nsf_record_add(params, import_record, record_key, data):
@@ -383,6 +447,37 @@ def execute_nsf_records_add(params, record_adds):
                 uid = utils.base64_url_encode(ra.recordUid)
                 logging.warning('Failed to create NSF record %s', uid)
     return results
+
+
+def execute_nsf_record_links(params, folder_record_links):
+    # type: (KeeperParams, Dict[str, List[str]]) -> None
+    """Link existing records into NSF folders using the NSF folder-record API."""
+    from ..nested_share_folder.folder_record_api import manage_folder_records_batch_v3
+
+    linked = 0
+    for folder_uid, record_uids in folder_record_links.items():
+        for start in range(0, len(record_uids), NSF_FOLDER_RECORD_BATCH):
+            chunk = record_uids[start:start + NSF_FOLDER_RECORD_BATCH]
+            try:
+                results = _call_with_throttle_retry(
+                    'NSF record link',
+                    manage_folder_records_batch_v3,
+                    params,
+                    folder_uid,
+                    records_to_add=chunk,
+                )
+                linked += sum(1 for result in results if result.get('success'))
+                for result in results:
+                    if not result.get('success'):
+                        logging.warning(
+                            'Failed to link NSF record "%s" into folder "%s": %s',
+                            result.get('record_uid'), folder_uid, result.get('message'))
+            except Exception as exc:
+                logging.warning(
+                    'Failed to link %d record(s) into NSF folder "%s": %s',
+                    len(chunk), folder_uid, exc)
+    if linked:
+        logging.info('Linked %d existing record(s) into Nested Share Folder(s)', linked)
 
 
 def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_records=False,
