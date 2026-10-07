@@ -243,6 +243,36 @@ def convert_keeper_record(record, has_attachments=False):
     return rec
 
 
+def load_existing_nsf_record_for_match(params, record_uid):
+    # type: (KeeperParams, str) -> Optional[ImportRecord]
+    """Normalize an existing NSF cache entry for duplicate matching only.
+    """
+    record = (getattr(params, 'nested_share_records', None) or {}).get(record_uid)
+    if not record:
+        return None
+    data = (getattr(params, 'nested_share_record_data', None) or {}).get(record_uid) or {}
+    data_json = data.get('data_json')
+    if data_json is None:
+        cached = params.record_cache.get(record_uid) if hasattr(params, 'record_cache') else None
+        if cached and cached.get('source') == 'nested_share_folder':
+            return convert_keeper_record(cached)
+        return None
+    if isinstance(data_json, dict):
+        data_unencrypted = json.dumps(data_json)
+    elif isinstance(data_json, bytes):
+        data_unencrypted = data_json
+    elif isinstance(data_json, str):
+        data_unencrypted = data_json
+    else:
+        return None
+    return convert_keeper_record({
+        'record_uid': record_uid,
+        'version': record.get('version') or 3,
+        'client_modified_time': record.get('client_modified_time') or 0,
+        'data_unencrypted': data_unencrypted,
+    })
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
@@ -752,6 +782,7 @@ def _import(params, file_format, filename, **kwargs):
     show_skipped = kwargs.get('show_skipped') is True
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
+    folder_depth = kwargs.get('folder_depth')
     cyberark_skip = {
         x.strip().lower()
         for x in str(kwargs.get('skip') or '').split(',')
@@ -866,7 +897,7 @@ def _import(params, file_format, filename, **kwargs):
         if use_nsf:
             from .nsf_import import apply_nsf_folder_permissions, prepare_nsf_folders
             sync_down.sync_down(params)
-            prepare_nsf_folders(params, folders, [], '')
+            prepare_nsf_folders(params, folders, [], '', folder_depth=folder_depth)
             apply_nsf_folder_permissions(
                 params, folders, manage_users, manage_records, can_edit, can_share)
         else:
@@ -1049,10 +1080,12 @@ def _import(params, file_format, filename, **kwargs):
                     p,
                 )
 
+    folder_mapping = []  # type: List[Tuple[str, str, str]]
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
-            prepare_nsf_folders(params, folders, records, nsf_base_parent)
+            _created, folder_mapping = prepare_nsf_folders(params, folders, records, nsf_base_parent,
+                                                            folder_depth=folder_depth)
     else:
         folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
         if folder_add:
@@ -1071,7 +1104,8 @@ def _import(params, file_format, filename, **kwargs):
         nsf_records_to_add = []     # NSF vault/records/v3/add payloads
         import_uids = {}
 
-        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, no_shortcuts, params, records)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(
+            update_flag, no_shortcuts, params, records, file_format, use_nsf=use_nsf)
         skipped_existing_count = len(record_exists)
         if show_skipped and record_exists:
             for existing_record in record_exists:
@@ -1346,6 +1380,13 @@ def _import(params, file_format, filename, **kwargs):
         if record_links:
             api.execute_batch(params, record_links)
             sync_down.sync_down(params)
+        if use_nsf:
+            nsf_record_links = prepare_nsf_record_link(params, records)
+            if nsf_record_links:
+                from .nsf_import import execute_nsf_record_links
+                execute_nsf_record_links(params, nsf_record_links)
+                from ..commands.pam_import.nsf_helpers import sync_down_preserving_nsf_keys
+                sync_down_preserving_nsf_keys(params)
 
         # adjust shared folder permissions
         shared_update = prepare_record_permission(params, records)
@@ -1468,6 +1509,8 @@ def _import(params, file_format, filename, **kwargs):
             logging.info('Import finished: %d record(s) imported successfully.', successful_import_count)
         else:
             logging.info('Import finished: no records were imported.')
+
+    return folder_mapping
 
 
 def report_statuses(status_type, status_iter):
@@ -1861,6 +1904,8 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
     folder_hash = {}
     for f_uid in params.folder_cache:
         fol = params.folder_cache[f_uid]
+        if fol.type == BaseFolderNode.NestedShareFolderType:
+            continue
         h = hashlib.md5()
         hs = '{0}|{1}'.format((fol.name or '').lower(), fol.parent_uid or '')
         h.update(hs.encode())
@@ -2349,8 +2394,8 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
-    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
+def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, file_format=None, use_nsf=False):
+    # type: (bool, bool, KeeperParams, Iterable[ImportRecord], Optional[str], bool) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -2359,16 +2404,39 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
         Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
        if a unique field match (on title, login, url, and folder) is found, then request a change in password only.
+
+    For CyberArk imports (file_format in ('cyberark', 'cyberark_portal')), matching also takes the
+    destination folder into account so re-importing the same CyberArk source doesn't create duplicates
+    per folder. For every other format, matching is folder-agnostic (the pre-#2342 behavior): any
+    existing record whose content matches is treated as a duplicate and a shortcut is created instead.
     """
+    no_shortcuts = no_shortcuts or file_format in ('cyberark', 'cyberark_portal')
+    match_folder = False
     preexisting_entire_record_hash = {}
     preexisting_partial_record_hash = {}
-    for record_uid in params.record_cache:
-        import_record = convert_keeper_record(params.record_cache[record_uid])
+
+    if use_nsf:
+        existing_records = (
+            (record_uid, load_existing_nsf_record_for_match(params, record_uid))
+            for record_uid in (getattr(params, 'nested_share_records', None) or {})
+        )
+    else:
+        nsf_record_uids = set((getattr(params, 'nested_share_records', None) or {}).keys())
+        existing_records = (
+            (record_uid, convert_keeper_record(keeper_record))
+            for record_uid, keeper_record in params.record_cache.items()
+            if record_uid not in nsf_record_uids
+        )
+
+    for record_uid, import_record in existing_records:
         if import_record:
-            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
-            folders = [x for x in folders if x]
-            if len(folders) == 0:
-                folders.append('')
+            if match_folder:
+                folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+                folders = [x for x in folders if x]
+                if len(folders) == 0:
+                    folders.append('')
+            else:
+                folders = [None]
             for folder in folders:
                 record_hash = build_record_hash(tokenize_full_import_record(import_record, folder))
                 preexisting_entire_record_hash[record_hash] = record_uid
@@ -2412,11 +2480,12 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records):
                     f.value = LARGE_FIELD_MSG.format(atta.name)
 
         if no_shortcuts is False:
+            folders_to_match = get_import_record_folder_paths(params, import_record) if match_folder else [None]
             record_uid = next((
                 preexisting_entire_record_hash[record_hash]
                 for record_hash in (
                     build_record_hash(tokenize_full_import_record(import_record, folder))
-                    for folder in get_import_record_folder_paths(params, import_record)
+                    for folder in folders_to_match
                 )
                 if record_hash in preexisting_entire_record_hash
             ), None)
@@ -2584,6 +2653,28 @@ def prepare_record_link(params, records):
                             })
                         record_links.append(req)
     return record_links
+
+
+def prepare_nsf_record_link(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> Dict[str, List[str]]
+    """Prepare existing-record links into Nested Share Folders."""
+    from .nsf_import import is_nsf_folder
+
+    nsf_links = {}  # type: Dict[str, Set[str]]
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', None) or {}
+    for rec in records:
+        if not rec.uid:
+            continue
+        if rec.uid not in params.record_cache and rec.uid not in (getattr(params, 'nested_share_records', None) or {}):
+            continue
+        for fol in rec.folders or []:
+            folder_uid = fol.uid or ''
+            if not folder_uid or not is_nsf_folder(params, folder_uid):
+                continue
+            if rec.uid in (nsf_folder_records.get(folder_uid) or set()):
+                continue
+            nsf_links.setdefault(folder_uid, set()).add(rec.uid)
+    return {folder_uid: sorted(record_uids) for folder_uid, record_uids in nsf_links.items()}
 
 
 def prepare_folder_permission(params, folders, full_sync, unsafe=False):
