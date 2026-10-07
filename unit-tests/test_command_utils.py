@@ -22,6 +22,12 @@ class TestSkipScanCLI(TestCase):
                 self.assertTrue(opts.skip_scan)
                 self.assertEqual(remaining, [])
 
+    def test_login_command_flag_is_parsed(self):
+        opts = utils.LoginCommand().get_parser().parse_args([
+            '--skip-scan', 'user@example.com'
+        ])
+        self.assertTrue(opts.skip_scan)
+
 
 class TestRegister(TestCase):
     enterpriseInviteCode = '987654321'
@@ -101,7 +107,32 @@ class TestRegister(TestCase):
         # Normal vault sync leaves the command-dispatch post-sync hook idle.
         self.assertFalse(params.sync_data)
 
-    def test_login_without_skip_scan_keeps_post_login_work(self):
+    def test_login_command_skip_scan_flag_uses_kwargs(self):
+        params = get_user_params()
+        params.config['config_storage'] = 'file'
+
+        def sync_down_effect(p, **kwargs):
+            p.sync_data = False
+
+        with mock.patch('keepercommander.api.login', side_effect=lambda p, **kwargs: setattr(p, 'session_token', 'token')), \
+                mock.patch.object(utils.SyncDownCommand, 'execute', side_effect=sync_down_effect) as sync_down, \
+                mock.patch.object(utils.BreachWatchScanCommand, 'execute') as breachwatch_scan, \
+                mock.patch.object(utils.SyncSecurityDataCommand, 'execute') as sync_security_data, \
+                mock.patch('keepercommander.loginv3.LoginV3API.register_encrypted_data_key_for_device') as register_device:
+            params.breach_watch = True
+            params.enterprise_ec_key = b'enterprise-key'
+            utils.LoginCommand().execute_args(
+                params,
+                f'--skip-scan {params.user}',
+                show_help=False
+            )
+
+        sync_down.assert_called_once_with(params, force=True)
+        breachwatch_scan.assert_not_called()
+        sync_security_data.assert_not_called()
+        register_device.assert_not_called()
+
+    def test_login_without_skip_scan_and_registration_keeps_post_login_work(self):
         params = get_user_params()
         params.config['config_storage'] = 'file'
         params.is_enterprise_admin = True
