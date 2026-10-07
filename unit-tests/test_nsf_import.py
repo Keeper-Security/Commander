@@ -3,8 +3,9 @@ import os
 import tempfile
 from unittest import TestCase, mock
 
+from keepercommander.commands.base import ParseError
 from keepercommander.error import KeeperApiError
-from keepercommander.importer import nsf_import
+from keepercommander.importer import imp_exp, nsf_import
 from keepercommander.importer.commands import RecordImportCommand, import_parser
 from keepercommander.importer.csv.csv import KeeperCsvImporter
 from keepercommander.importer.importer import Folder, Record, SharedFolder, Permission
@@ -353,28 +354,40 @@ class TestNsfImport(TestCase):
             self.assertTrue(all(imp.call_args.kwargs.get(k)
                                 for k in ('manage_users', 'manage_records', 'can_edit', 'can_share')))
 
-    def test_cli_folder_mapping_report_emitted_only_for_nsf(self):
+    def test_cli_folder_mapping_report_output_modes(self):
         cmd = RecordImportCommand()
         mapping = [('Old\\Path', 'New\\Path', 'uid1')]
         with mock.patch('keepercommander.importer.commands.imp_exp._import', return_value=mapping), \
              mock.patch('keepercommander.importer.commands.dump_report_data') as dump:
-            cmd.execute(_params(), format='thycotic', name='https://example.secretservercloud.com',
-                        use_nsf=True, output='/tmp/out.csv')
-            dump.assert_called_once()
-            args, kwargs = dump.call_args
-            self.assertEqual(args[0], [['Old\\Path', 'New\\Path', 'uid1']])
-            self.assertEqual(args[1], ['Thycotic Path', 'New Path', 'Folder UID'])
-            self.assertEqual(kwargs.get('fmt'), 'csv')
-            self.assertEqual(kwargs.get('filename'), '/tmp/out.csv')
+            cases = [
+                ({'use_nsf': True, 'output': '/tmp/out.csv'}, 'csv', '/tmp/out.csv'),
+                ({'use_nsf': True, 'output': 'table'}, 'table', None),
+                ({'use_nsf': True}, None, None),
+                ({}, None, None),
+            ]
+            for extra_kwargs, expected_fmt, expected_filename in cases:
+                dump.reset_mock()
+                cmd.execute(_params(), format='json', name='sample_data/import_nsf.txt', **extra_kwargs)
+                if expected_fmt:
+                    dump.assert_called_once_with(
+                        [['Old\\Path', 'New\\Path', 'uid1']],
+                        ['JSON Path', 'New Path', 'Folder UID'],
+                        fmt=expected_fmt,
+                        filename=expected_filename,
+                    )
+                else:
+                    dump.assert_not_called()
 
-            dump.reset_mock()
-            # Without --nsf, no report should be produced even if _import returns a mapping.
-            cmd.execute(_params(), format='json', name='sample_data/import_nsf.txt')
-            dump.assert_not_called()
 
     def test_parser_and_path_resolve(self):
         self.assertTrue(any('--nsf' in (a.option_strings or []) for a in import_parser._actions))
         self.assertTrue(any('--folder-depth' in (a.option_strings or []) for a in import_parser._actions))
+        self.assertEqual(
+            import_parser.parse_args(['--format=json', '--folder-depth=1', 'sample.json']).folder_depth,
+            1)
+        with self.assertRaises(ParseError) as cm:
+            import_parser.parse_args(['--format=json', '--folder-depth=0', 'sample.json'])
+        self.assertIn('--folder-depth must be >= 1', str(cm.exception))
 
         nsf_txt = os.path.join(SAMPLE, 'import_nsf.txt')
         if not os.path.isfile(nsf_txt):
@@ -394,6 +407,51 @@ class TestNsfImport(TestCase):
             self.assertEqual(
                 os.path.abspath(KeeperCsvImporter().resolve_file_path(csv_path)),
                 os.path.abspath(csv_path))
+
+    def test_import_users_only_passes_folder_depth_to_nsf_preparation(self):
+        sf = SharedFolder()
+        sf.path = 'Root\\Team\\Leaf'
+
+        class FakeImporter:
+            verbose_import_summary = False
+
+            def execute(self, *args, **kwargs):
+                yield sf
+
+        with mock.patch('keepercommander.importer.imp_exp.importer_for_format', return_value=FakeImporter), \
+             mock.patch('keepercommander.importer.imp_exp.sync_down.sync_down'), \
+             mock.patch('keepercommander.importer.nsf_import.prepare_nsf_folders') as prepare, \
+             mock.patch('keepercommander.importer.nsf_import.apply_nsf_folder_permissions'):
+            imp_exp._import(_params(), 'json', 'sample.json', use_nsf=True, users_only=True, folder_depth=2)
+
+        prepare.assert_called_once_with(mock.ANY, [sf], [], '', folder_depth=2)
+
+    def test_classic_import_ignores_existing_nsf_folders_when_building_paths(self):
+        params = _params()
+        params.data_key = b'1' * 32
+
+        root = NestedShareFolderNode()
+        root.uid = 'nsf_root'
+        root.name = 'Root'
+        root.parent_uid = ''
+        team = NestedShareFolderNode()
+        team.uid = 'nsf_team'
+        team.name = 'Team'
+        team.parent_uid = root.uid
+        params.folder_cache = {
+            root.uid: root,
+            team.uid: team,
+        }
+        params.shared_folder_cache = {}
+
+        rec, fol = _record('Root\\Team\\Leaf')
+        with mock.patch(
+                'keepercommander.importer.imp_exp.api.generate_record_uid',
+                side_effect=['AAAAAAAAAAAAAAAAAAAAAA', 'BBBBBBBBBBBBBBBBBBBBBB', 'CCCCCCCCCCCCCCCCCCCCCC']):
+            folder_add = imp_exp.prepare_folder_add(params, [], [rec], False, False, False, False)
+
+        self.assertEqual([x.folderType for x in folder_add], [1, 1, 1])
+        self.assertEqual(fol.uid, 'CCCCCCCCCCCCCCCCCCCCCC')
 
     def test_cyberark_style_nsf_folder_paths(self):
         """CyberArk --nsf places safes as NSF paths (not classic shared domains)."""
@@ -511,6 +569,22 @@ class TestNsfImport(TestCase):
             False, False, params, [_login_record()], 'json', use_nsf=True)
         self.assertEqual(records_to_import, [])
         self.assertEqual(len(record_exists), 1)
+
+    def test_classic_duplicate_matching_ignores_existing_nsf_records(self):
+        from keepercommander.importer.imp_exp import prepare_record_add_or_update
+
+        existing_uid = 'nsf_rec'
+        params = _params()
+        params.record_type_cache = {}
+        params.record_cache = {existing_uid: _cached_login_record(existing_uid)}
+        params.nested_share_records = {
+            existing_uid: {'record_uid': existing_uid, 'version': 3},
+        }
+
+        records_to_import, record_exists, _ = prepare_record_add_or_update(
+            False, False, params, [_login_record()], 'thycotic', use_nsf=False)
+        self.assertEqual(len(records_to_import), 1)
+        self.assertEqual(record_exists, [])
 
     def test_cyberark_import_creates_duplicate_instead_of_shortcut(self):
         from keepercommander.importer.imp_exp import prepare_record_add_or_update

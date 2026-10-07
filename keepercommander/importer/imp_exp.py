@@ -1904,6 +1904,8 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
     folder_hash = {}
     for f_uid in params.folder_cache:
         fol = params.folder_cache[f_uid]
+        if fol.type == BaseFolderNode.NestedShareFolderType:
+            continue
         h = hashlib.md5()
         hs = '{0}|{1}'.format((fol.name or '').lower(), fol.parent_uid or '')
         h.update(hs.encode())
@@ -2419,9 +2421,11 @@ def prepare_record_add_or_update(update_flag, no_shortcuts, params, records, fil
             for record_uid in (getattr(params, 'nested_share_records', None) or {})
         )
     else:
+        nsf_record_uids = set((getattr(params, 'nested_share_records', None) or {}).keys())
         existing_records = (
             (record_uid, convert_keeper_record(keeper_record))
             for record_uid, keeper_record in params.record_cache.items()
+            if record_uid not in nsf_record_uids
         )
 
     for record_uid, import_record in existing_records:

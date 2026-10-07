@@ -62,6 +62,16 @@ def _cyberark_skip_arg(value):
     return ",".join(skip_targets)
 
 
+def _positive_int_arg(value):
+    try:
+        depth = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('must be an integer')
+    if depth < 1:
+        raise argparse.ArgumentTypeError('--folder-depth must be >= 1')
+    return depth
+
+
 import_parser = argparse.ArgumentParser(prog='import', description='Import vault data from a local file into Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',
                            help='display Keeper CSV import instructions')
@@ -82,13 +92,14 @@ import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
 import_parser.add_argument('--nsf', dest='use_nsf', action='store_true',
                            help='import folders and records into Nested Share Folders '
                                 '(json, csv, keepass, cyberark, cyberark_portal, …)')
-import_parser.add_argument('--folder-depth', dest='folder_depth', action='store', type=int,
+import_parser.add_argument('--folder-depth', dest='folder_depth', action='store', type=_positive_int_arg,
                            help='NSF only: maximum resulting folder depth (default 5); folders beyond this depth '
                                 'are attached directly at the deepest allowed level, keeping their own name and '
                                 'records - names are never merged or renamed')
 import_parser.add_argument('--output', dest='output', action='store',
                            help='NSF only: write a report of the resulting Keeper folder structure (original path '
-                                '-> new path -> folder UID) to CSV file; prints a table if omitted. ex.: import --format=<platform/type> --output=test.csv --nsf')
+                                '-> new path -> folder UID) to CSV file; use --output=table to print a table. '
+                                'ex.: import --format=<platform/type> --output=test.csv --nsf')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
@@ -358,12 +369,14 @@ class RecordImportCommand(ImporterCommand):
                                          **kwargs)
         if kwargs.get('use_nsf') and folder_mapping:
             output = kwargs.get('output')
-            dump_report_data(
-                [[orig, new, uid] for orig, new, uid in folder_mapping],
-                [self.source_path_header(import_format), 'New Path', 'Folder UID'],
-                fmt='csv' if output else 'table',
-                filename=output,
-            )
+            if output:
+                fmt = 'table' if str(output).lower() == 'table' else 'csv'
+                dump_report_data(
+                    [[orig, new, uid] for orig, new, uid in folder_mapping],
+                    [self.source_path_header(import_format), 'New Path', 'Folder UID'],
+                    fmt=fmt,
+                    filename=None if fmt == 'table' else output,
+                )
 
 
 class RecordExportCommand(ImporterCommand):
