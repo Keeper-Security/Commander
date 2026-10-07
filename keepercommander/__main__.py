@@ -118,6 +118,8 @@ def show_brief_help():
     print('  --debug                  Turn on debug mode')
     print('  --silent                 Turn off all logging statements')    
     print('  --batch-mode             Run in batch/non-interactive mode')
+    print('  --skip-scan              Skip login-time BreachWatch/security scans and device registration')
+    print('                           Vault and enterprise sync still run')
     print('  --proxy PROXY            Proxy server')
     print('  --new-login              Force full login (bypass persistent login)')
     print('  --version                Display version')
@@ -152,6 +154,9 @@ parser.add_argument('--config', dest='config', action='store', help='Config file
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
 parser.add_argument('--silent', dest='silent', action='store_true', help='Turn off all logging statements')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
+parser.add_argument('--skip-scan', dest='skip_scan', action='store_true',
+                    help='Skip login-time BreachWatch/security scans and device registration; '
+                         'vault/enterprise sync still runs.')
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
                          'Windows Start Menu.')
@@ -235,7 +240,7 @@ def main(from_package=False):
                                           '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
                 bool_main_parser_args = ['--version', '--debug', '--silent', '--batch-mode',
                                          '--unmask-all', '--fail-on-throttle',
-                                         '--new-login', '--config-file']
+                                         '--new-login', '--config-file', '--skip-scan']
                 main_parser_args = value_main_parser_args + bool_main_parser_args
 
                 is_main_parser_arg = False
@@ -267,6 +272,7 @@ def main(from_package=False):
 
     if opts.batch_mode:
         params.batch_mode = True
+    params.skip_scan = opts.skip_scan
 
     if opts.debug:
         params.debug = opts.debug
