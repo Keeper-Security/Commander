@@ -40,7 +40,6 @@ from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_al
 from ..team import Team
 from ..nested_share_folder.common import get_folder_key
 from .. import nested_share_folder as _nsf
-from .nested_share_folder.helpers import ensure_nested_share_folder
 
 def handle_empty_result(fmt, message, filename=None):
     """
@@ -2836,6 +2835,10 @@ class TrashRestoreCommand(Command, TrashMixin):
 
         target_folder_name = kwargs.get('folder')
         if target_folder_name:
+            try:
+                from .nested_share_folder.helpers import ensure_nested_share_folder
+            except ImportError:
+                raise base.CommmandError('trash restore', 'Module not found for NSF folder resolution')
             target_folder_uid = _nsf.resolve_nested_share_folder_uid(params, target_folder_name)
             ensure_nested_share_folder(params, target_folder_uid, 'trash restore', target_folder_name)
             if has_classic:
