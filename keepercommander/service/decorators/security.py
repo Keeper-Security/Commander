@@ -10,6 +10,7 @@
 #
 
 import ipaddress
+import os
 from functools import wraps
 from flask import request, jsonify
 from ..util.config_reader import ConfigReader
@@ -69,8 +70,35 @@ def _ip_matches(parsed_ip, pattern):
         return False
     
 def get_rate_limit():
-    """Get configured rate limit"""
-    return ConfigReader.read_config("rate_limiting") or "60/minute"
+    """Get configured rate limit from environment variable or config file.
+
+    Priority order:
+    1. KEEPER_RATE_LIMIT environment variable (for streamlined mode deployments)
+    2. rate_limiting from config file
+    3. Default: 60/minute
+
+    Logs a warning if config read fails to help detect propagation issues.
+    """
+    # Check environment variable first (highest priority for streamlined mode)
+    env_limit = os.environ.get('KEEPER_RATE_LIMIT')
+    if env_limit:
+        logger.debug(f"Using rate limit from KEEPER_RATE_LIMIT env var: {env_limit}")
+        return env_limit
+
+    # Try reading from config file
+    try:
+        config_limit = ConfigReader.read_config("rate_limiting")
+        if config_limit:
+            logger.debug(f"Using rate limit from config: {config_limit}")
+            return config_limit
+        else:
+            logger.warning("Rate limiting config value is empty. Using default 60/minute. "
+                          "Set KEEPER_RATE_LIMIT environment variable or configure via service-create -rl.")
+            return "60/minute"
+    except Exception as e:
+        logger.warning(f"Failed to read rate_limiting config: {e}. Using default 60/minute. "
+                      "Set KEEPER_RATE_LIMIT environment variable or check config file encryption.")
+        return "60/minute"
 
 def get_rate_limit_key():
     """Generate rate limit key per IP + endpoint for separate limits per endpoint"""
