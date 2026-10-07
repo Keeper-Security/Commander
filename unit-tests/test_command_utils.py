@@ -6,6 +6,7 @@ from data_enterprise import EnterpriseEnvironment
 from data_vault import get_synced_params, get_user_params, get_connected_params, VaultEnvironment
 from helper import KeeperApiHelper
 from keepercommander.commands import utils
+from keepercommander import __main__ as keeper_main
 from keepercommander.__main__ import parser as keeper_parser
 
 
@@ -27,6 +28,28 @@ class TestSkipScanCLI(TestCase):
             '--skip-scan', 'user@example.com'
         ])
         self.assertTrue(opts.skip_scan)
+
+    def test_global_flag_survives_login_command_reconstruction(self):
+        command_lines = (
+            (['keeper', '--skip-scan', 'login', 'user@example.com'],
+             ['login user@example.com', 'q']),
+            (['keeper', '--skip-scan', 'shell', 'login', 'user@example.com'],
+             ['login user@example.com']),
+            (['keeper', 'shell', '--skip-scan', 'login', 'user@example.com'],
+             ['login user@example.com']),
+        )
+        for argv, expected_commands in command_lines:
+            with self.subTest(argv=argv):
+                params = get_user_params()
+                with mock.patch('sys.argv', argv), \
+                        mock.patch.object(keeper_main, 'get_params_from_config', return_value=params), \
+                        mock.patch.object(keeper_main.cli, 'loop', return_value=0) as loop, \
+                        mock.patch('sys.exit'):
+                    keeper_main.main()
+
+                self.assertTrue(params.skip_scan)
+                loop.assert_called_once()
+                self.assertEqual(loop.call_args.args[0].commands, expected_commands)
 
 
 class TestRegister(TestCase):
