@@ -33,11 +33,14 @@ from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams
-from ..proto import record_pb2, folder_pb2, enterprise_pb2
+from ..proto import record_pb2, folder_pb2, enterprise_pb2, remove_pb2, trashcan_sync_pb2
 from ..record import get_totp_code
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, \
     get_folder_uids
 from ..team import Team
+from ..nested_share_folder.common import get_folder_key
+from .. import nested_share_folder as _nsf
+from .nested_share_folder.helpers import ensure_nested_share_folder
 
 def handle_empty_result(fmt, message, filename=None):
     """
@@ -2019,6 +2022,8 @@ trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_t
                                   help='do not prompt for confirmation')
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern')
+trash_restore_parser.add_argument('-t', '--folder', dest='folder', action='store', default=None,
+                                  help='Restore into this folder (NSF only) instead of the original location (folder UID or path)')
 
 trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records')
 trash_unshare_parser.add_argument('-f', '--force', dest='force', action='store_true',
@@ -2037,6 +2042,120 @@ class TrashMixin:
     deleted_record_cache = {}
     orphaned_record_cache = {}
     deleted_shared_folder_cache = {}
+    nsf_trashcan_sync_point = 0
+    nsf_trashcan_record_cache = {}
+    nsf_trashcan_folder_cache = {}
+
+    @staticmethod
+    def _decrypt_by_key_type(key_type, encrypted_key, params, wrapping_key=None):
+        try:
+            if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                return crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+            elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
+                return crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+            elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                return crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+            elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                return crypto.decrypt_ec(encrypted_key, params.ecc_key)
+            elif key_type in (record_pb2.ENCRYPTED_BY_ROOT_KEY_CBC, record_pb2.ENCRYPTED_BY_ROOT_KEY_GCM):
+                if wrapping_key:
+                    if key_type == record_pb2.ENCRYPTED_BY_ROOT_KEY_CBC:
+                        return crypto.decrypt_aes_v1(encrypted_key, wrapping_key)
+                    return crypto.decrypt_aes_v2(encrypted_key, wrapping_key)
+        except Exception as e:
+            logging.debug('Trashcan key decryption: %s', e)
+        return None
+
+    @staticmethod
+    def _ensure_nsf_trashcan_synced(params, reload=False):    # type: (KeeperParams, bool) -> None
+        if reload:
+            TrashMixin.nsf_trashcan_sync_point = 0
+            TrashMixin.nsf_trashcan_record_cache.clear()
+            TrashMixin.nsf_trashcan_folder_cache.clear()
+
+        sync_point = TrashMixin.nsf_trashcan_sync_point
+        has_more = True
+        while has_more:
+            rq = trashcan_sync_pb2.TrashcanSyncRequest()
+            rq.sync_point = sync_point
+            rq.max_count = 999
+            rs = api.communicate_rest(params, rq, 'vault/folders/v3/trashcan/sync',
+                                      rs_type=trashcan_sync_pb2.TrashcanSyncResponse)
+            data = rs.trashcan_data
+
+            for tf in data.removed_trashcan_folders:
+                folder_uid = utils.base64_url_encode(tf.folder_uid)
+                TrashMixin.nsf_trashcan_folder_cache.pop(folder_uid, None)
+            for tr in data.removed_trashcan_records:
+                record_uid = utils.base64_url_encode(tr.record_uid)
+                TrashMixin.nsf_trashcan_record_cache.pop(record_uid, None)
+
+            for tf in data.trashcan_folders:
+                folder_uid = utils.base64_url_encode(tf.folder_uid)
+                folder_key = None
+                if tf.folder_key:
+                    folder_key = TrashMixin._decrypt_by_key_type(tf.folder_key_type, tf.folder_key, params)
+                TrashMixin.nsf_trashcan_folder_cache[folder_uid] = {
+                    'folder_uid': folder_uid,
+                    'trashcan_uid': utils.base64_url_encode(tf.trashcan_uid) if tf.trashcan_uid else None,
+                    'parent_uid': utils.base64_url_encode(tf.parent_uid) if tf.parent_uid else None,
+                    'date_deleted': tf.date_deleted,
+                    'folder_key_unencrypted': folder_key,
+                }
+
+            for tr in data.trashcan_records:
+                record_uid = utils.base64_url_encode(tr.record_uid)
+                frk = tr.folder_record_key
+                record_key = None
+                if frk.record_key:
+                    record_key = TrashMixin._decrypt_by_key_type(frk.record_key_type, frk.record_key, params)
+                TrashMixin.nsf_trashcan_record_cache[record_uid] = {
+                    'record_uid': record_uid,
+                    'trashcan_uid': utils.base64_url_encode(tr.trashcan_uid) if tr.trashcan_uid else None,
+                    'folder_uid': utils.base64_url_encode(frk.folder_uid) if frk.folder_uid else None,
+                    'date_deleted': tr.date_deleted,
+                    'record_key_unencrypted': record_key,
+                }
+
+            sync_point = rs.sync_point
+            has_more = rs.has_more
+
+        TrashMixin.nsf_trashcan_sync_point = sync_point
+
+    @staticmethod
+    def get_nsf_trashcan_records(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+        TrashMixin._ensure_nsf_trashcan_synced(params, reload)
+        return TrashMixin.nsf_trashcan_record_cache
+
+    @staticmethod
+    def get_nsf_trashcan_folders(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+        TrashMixin._ensure_nsf_trashcan_synced(params, reload)
+        return TrashMixin.nsf_trashcan_folder_cache
+    
+    def find_nsf_trashcan_records_by_title(self, params, title_pattern, nsf_records, exclude=None):
+        # type: (KeeperParams, Any, Dict[str, Any], Optional[Set[str]]) -> Set[str]
+        """Match trashed Drive records by title.
+
+        nsf_trashcan_record_cache carries only record_uid/folder_uid/key material
+        (no title), so each candidate record is fetched (or read from cache) via
+        load_nsf_trashcan_record before its title can be compared.
+        """
+        matched = set()   # type: Set[str]
+        
+        nsf_trashcan_records = self.get_nsf_trashcan_records(params)
+
+        nsf_record_uid_list = [rec.get('record_uid') for rec in nsf_trashcan_records.values() if rec.get('record_uid')]
+
+        nsf_record_details = _nsf.get_record_details_v3(params, nsf_record_uid_list).get('data', []) if nsf_record_uid_list else []
+
+        for record_uid, rec in nsf_records.items():
+            if exclude and record_uid in exclude:
+                continue
+            record = next((x for x in nsf_record_details if x.get('record_uid') == rec.get('record_uid')), None)
+            if record and title_pattern.match(record.get('title', '')):
+                matched.add(record_uid)
+        return matched
+
 
     @staticmethod
     def _ensure_deleted_records_loaded(params, reload=False):   # type: (KeeperParams, bool) -> None
@@ -2229,12 +2348,16 @@ class TrashListCommand(Command, TrashMixin):
         return trash_list_parser
 
     def execute(self, params, **kwargs):
-        deleted_records = self.get_deleted_records(params, kwargs.get('reload', False))
+        reload = kwargs.get('reload', False)
+        deleted_records = self.get_deleted_records(params, reload)
         orphaned_records = self.get_orphaned_records(params)
         shared_folders = self.get_shared_folders(params)
+        nsf_trashcan_records = self.get_nsf_trashcan_records(params, reload)
+        nsf_trashcan_folders = self.get_nsf_trashcan_folders(params)
         verbose = kwargs.get('verbose') is True
 
-        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0:
+        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0 \
+                and len(nsf_trashcan_records) == 0 and len(nsf_trashcan_folders) == 0:
             fmt = kwargs.get('format', 'table')
             return handle_empty_result(fmt, 'Trash is empty', kwargs.get('output'))
 
@@ -2271,6 +2394,32 @@ class TrashListCommand(Command, TrashMixin):
                     if dd:
                         date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
                 record_table.append(['', record.record_uid, record.title, record.record_type, date_deleted, status])
+
+        nsf_record_uid_list = [rec.get('record_uid') for rec in nsf_trashcan_records.values() if rec.get('record_uid')]
+
+        nsf_record_details = _nsf.get_record_details_v3(params, nsf_record_uid_list).get('data', []) if nsf_record_uid_list else []
+
+        for rec in nsf_trashcan_records.values():
+            
+            if not rec:
+                continue
+
+            nsf_record = next((x for x in nsf_record_details if x.get('record_uid') == rec.get('record_uid')), None)
+
+            if pattern:
+                if pattern == rec.get('record_uid' or ''):
+                    pass
+                elif title_pattern and title_pattern.match(nsf_record.get('title', '') if nsf_record else ''):
+                    pass
+                else:
+                    continue
+
+            date_deleted = None
+            dd = rec.get('date_deleted', 0)
+            if dd:
+                date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
+            record_table.append([rec.get('folder_uid') or '', rec.get('record_uid') or '', nsf_record.get('title', '') if nsf_record else '', nsf_record.get('type', '') if nsf_record else '',
+                                 date_deleted, 'Drive'])
 
         record_table.sort(key=lambda x: x[2].casefold())
         folder_table = []
@@ -2317,6 +2466,26 @@ class TrashListCommand(Command, TrashMixin):
                         folder_name = folder_uid
                     folder_table.append([folder_uid, rc, folder_name, '', date_deleted, 'Folder'])
 
+        if nsf_trashcan_folders:
+            rec_in_fol = {}    # type: Dict[str, int]
+            for rec in nsf_trashcan_records.values():
+                folder_uid = rec.get('folder_uid')
+                if not folder_uid:
+                    continue
+                rec_in_fol[folder_uid] = rec_in_fol.get(folder_uid, 0) + 1
+
+            for fol in nsf_trashcan_folders.values():
+                folder_uid = fol.get('folder_uid')
+                date_deleted = None
+                dd = fol.get('date_deleted', 0)
+                if dd:
+                    date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
+                rec_count = rec_in_fol.get(folder_uid)
+                rc = f'{rec_count} record(s)' if isinstance(rec_count, int) and rec_count > 0 else None
+                folder_node = params.folder_cache.get(folder_uid)
+                folder_name = folder_node.name if folder_node is not None else folder_uid
+                folder_table.append([folder_uid, rc, folder_name, '', date_deleted, 'Drive Folder'])
+
         folder_table.sort(key=lambda x: x[2].casefold())
 
         return base.dump_report_data(record_table + folder_table, headers, fmt=kwargs.get('format'),
@@ -2330,8 +2499,9 @@ class TrashGetCommand(Command, TrashMixin):
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
         orphaned_records = self.get_orphaned_records(params)
+        nsf_trashcan_records = self.get_nsf_trashcan_records(params)
         fmt = kwargs.get('format') or 'detail'
-        if len(deleted_records) == 0 and len(orphaned_records) == 0:
+        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(nsf_trashcan_records) == 0:
             if fmt == 'json':
                 print(json.dumps({'message': 'Trash is empty'}, indent=2))
             else:
@@ -2347,10 +2517,15 @@ class TrashGetCommand(Command, TrashMixin):
             return
 
         is_shared = False
+        is_drive = False
         rec = deleted_records.get(record_uid)
         if not rec:
             rec = orphaned_records.get(record_uid)
             is_shared = True
+        if not rec:
+            rec = nsf_trashcan_records.get(record_uid)
+            is_shared = False
+            is_drive = True
         if not rec:
             message = f'{record_uid} is not a valid deleted record UID'
             if fmt == 'json':
@@ -2359,8 +2534,9 @@ class TrashGetCommand(Command, TrashMixin):
                 logging.info('%s is not a valid deleted record UID', record_uid)
             return
 
-        record = vault.KeeperRecord.load(params, rec)
-        if not record:
+        record = vault.KeeperRecord.load(params, rec) if not is_drive else None
+        nsf_record = _nsf.get_record_details_v3(params, record_uid).get('data', [{}])[0] if is_drive else None
+        if not record and not nsf_record:
             message = f'Cannot restore record {record_uid}'
             if fmt == 'json':
                 print(json.dumps({'message': message}, indent=2))
@@ -2370,9 +2546,9 @@ class TrashGetCommand(Command, TrashMixin):
 
         if fmt == 'json':
             payload = {
-                'record_uid': record.record_uid,
-                'title': record.title,
-                'record_type': record.record_type,
+                'record_uid': record.record_uid if record else nsf_record.get('record_uid'),
+                'title': record.title if record else nsf_record.get('title'),
+                'record_type': record.record_type if record else nsf_record.get('type'),
                 'status': 'Share' if is_shared else 'Record',
                 'fields': {},
             }
@@ -2464,13 +2640,114 @@ class TrashRestoreCommand(Command, TrashMixin):
     def get_parser(self):
         return trash_restore_parser
 
+    @staticmethod
+    def get_nsf_target_key(params, folder_uid):
+        if not folder_uid:
+            return params.data_key
+        folder_key = get_folder_key(params, folder_uid, raise_on_missing=False)
+        return folder_key if folder_key else params.data_key
+
+    def restore_nsf(self, params, record_uids, folder_uids, nsf_records, nsf_folders, target_folder_uid=None):
+        if not record_uids and not folder_uids:
+            return
+
+        # Group by destination folder: the chosen target folder, or (when no
+        # target is given) each item's own original folder, since different
+        # items may have been trashed from different Drive folders.
+        groups = {}    # type: Dict[Optional[str], Dict[str, list]]
+        for record_uid in record_uids:
+            tr = nsf_records[record_uid]
+            dest_uid = target_folder_uid if target_folder_uid is not None else tr.get('folder_uid')
+            groups.setdefault(dest_uid, {'records': [], 'folders': []})['records'].append(record_uid)
+        for folder_uid in folder_uids:
+            tf = nsf_folders[folder_uid]
+            dest_uid = target_folder_uid if target_folder_uid is not None else tf.get('parent_uid')
+            groups.setdefault(dest_uid, {'records': [], 'folders': []})['folders'].append(folder_uid)
+
+        status_names = {
+            remove_pb2.RS_NOT_IN_TRASHCAN: 'not in trashcan',
+            remove_pb2.RS_ACCESS_DENIED: 'access denied',
+            remove_pb2.RS_TARGET_FOLDER_NOT_FOUND: 'target folder not found',
+            remove_pb2.RS_ALREADY_EXISTS_IN_TARGET: 'already exists in target',
+            remove_pb2.RS_FAIL: 'failed',
+        }
+
+        restored_record_uids = set()
+        for dest_uid, items in groups.items():
+            target_key = self.get_nsf_target_key(params, dest_uid)
+            target_folder_uid_bytes = utils.base64_url_decode(dest_uid) if dest_uid else b''
+
+            restore_records = []    # type: List[remove_pb2.RestoreRecord]
+            for record_uid in items['records']:
+                tr = nsf_records[record_uid]
+                rr = remove_pb2.RestoreRecord()
+                rr.record_uid = utils.base64_url_decode(record_uid)
+                rr.encrypted_record_key = crypto.encrypt_aes_v2(tr['record_key_unencrypted'], target_key)
+                source_folder_uid = tr.get('folder_uid')
+                if source_folder_uid:
+                    rr.source_folder_uid = utils.base64_url_decode(source_folder_uid)
+                restore_records.append(rr)
+
+            restore_folders = []    # type: List[remove_pb2.RestoreFolder]
+            for folder_uid in items['folders']:
+                tf = nsf_folders[folder_uid]
+                rf = remove_pb2.RestoreFolder()
+                rf.folder_uid = utils.base64_url_decode(folder_uid)
+                rf.encrypted_folder_key = crypto.encrypt_aes_v2(tf['folder_key_unencrypted'], target_key)
+                restore_folders.append(rf)
+
+            while restore_records or restore_folders:
+                rq = remove_pb2.TrashcanRestoreRequest()
+                rq.target_folder_uid = target_folder_uid_bytes
+                left = 999
+                if restore_records:
+                    chunk = restore_records[:left]
+                    restore_records = restore_records[len(chunk):]
+                    left -= len(chunk)
+                    rq.records.extend(chunk)
+                if restore_folders and left > 0:
+                    chunk = restore_folders[:left]
+                    restore_folders = restore_folders[len(chunk):]
+                    rq.folders.extend(chunk)
+
+                rs = api.communicate_rest(params, rq, 'vault/folders/v3/trashcan/restore',
+                                          rs_type=remove_pb2.TrashcanRestoreResponse)
+                if rs.error_message:
+                    logging.warning('Restore failed: %s', rs.error_message)
+                    continue
+                for result in rs.results:
+                    item_uid = utils.base64_url_encode(result.item_uid)
+                    if result.status == remove_pb2.RS_SUCCESS:
+                        if result.item_type == remove_pb2.RESTORE_ITEM_RECORD:
+                            restored_record_uids.add(item_uid)
+                    else:
+                        reason = status_names.get(result.status, 'unknown error')
+                        if result.error_message:
+                            reason = f'{reason}: {result.error_message}'
+                        logging.warning('Failed to restore "%s": %s', item_uid, reason)
+
+        TrashMixin.nsf_trashcan_sync_point = 0
+        TrashMixin.nsf_trashcan_record_cache.clear()
+        TrashMixin.nsf_trashcan_folder_cache.clear()
+        api.sync_down(params)
+        for record_uid in restored_record_uids:
+            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch,
+                                                      force_update=False, set_reused_pws=False)
+            params.queue_audit_event('record_restored', record_uid=record_uid)
+
+        params.sync_data = True
+        BreachWatch.save_reused_pw_count(params)
+
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
         orphaned_records = self.get_orphaned_records(params)
         shared_folders = self.get_shared_folders(params)
         deleted_shared_records = shared_folders.get('records') or {}
         deleted_shared_folders = shared_folders.get('folders') or {}
-        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(deleted_shared_records) == 0 and len(deleted_shared_folders) == 0:
+        nsf_records = self.get_nsf_trashcan_records(params)
+        nsf_folders = self.get_nsf_trashcan_folders(params)
+        if (len(deleted_records) == 0 and len(orphaned_records) == 0 and len(deleted_shared_records) == 0
+                and len(deleted_shared_folders) == 0 and len(nsf_records) == 0 and len(nsf_folders) == 0):
             logging.info('Trash is empty')
             return
 
@@ -2484,6 +2761,8 @@ class TrashRestoreCommand(Command, TrashMixin):
         records_to_restore = set()   # type: Set[str]
         folders_to_restore = set()   # type: Set[str]
         folder_records_to_restore = {}  # type: Dict[str, List[str]]
+        nsf_records_to_restore = set()   # type: Set[str]
+        nsf_folders_to_restore = set()   # type: Set[str]
         for rec in records:
             if rec in deleted_records:
                 records_to_restore.add(rec)
@@ -2499,6 +2778,10 @@ class TrashRestoreCommand(Command, TrashMixin):
                     folder_records_to_restore[folder_uid].append(record_uid)
             elif rec in deleted_shared_folders:
                 folders_to_restore.add(rec)
+            elif rec in nsf_records:
+                nsf_records_to_restore.add(rec)
+            elif rec in nsf_folders:
+                nsf_folders_to_restore.add(rec)
             else:
                 title_pattern = re.compile(fnmatch.translate(rec), re.IGNORECASE)
                 for record_uid, del_rec in itertools.chain(deleted_records.items(), orphaned_records.items()):
@@ -2526,18 +2809,41 @@ class TrashRestoreCommand(Command, TrashMixin):
                             folders_to_restore.add(folder_uid)
                     except Exception:
                         pass
+                nsf_records_to_restore |= self.find_nsf_trashcan_records_by_title(
+                    params, title_pattern, nsf_records, exclude=nsf_records_to_restore)
+                for folder_uid in nsf_folders:
+                    if folder_uid in nsf_folders_to_restore:
+                        continue
+                    folder_node = params.folder_cache.get(folder_uid)
+                    folder_name = folder_node.name if folder_node is not None else folder_uid
+                    if title_pattern.match(folder_name):
+                        nsf_folders_to_restore.add(folder_uid)
 
         for folder_uid in folders_to_restore:
             if folder_uid in folder_records_to_restore:
                 del folder_records_to_restore[folder_uid]
 
-        record_count = len(records_to_restore)
+        record_count = len(records_to_restore) + len(nsf_records_to_restore)
         for drf in folder_records_to_restore.values():
             record_count += len(drf)
-        folder_count = len(folders_to_restore)
+        folder_count = len(folders_to_restore) + len(nsf_folders_to_restore)
         if record_count == 0 and folder_count == 0:
             logging.info('There are no records to restore')
             return
+
+        has_classic = bool(records_to_restore or folder_records_to_restore or folders_to_restore)
+        has_nsf = bool(nsf_records_to_restore or nsf_folders_to_restore)
+
+        target_folder_name = kwargs.get('folder')
+        if target_folder_name:
+            target_folder_uid = _nsf.resolve_nested_share_folder_uid(params, target_folder_name)
+            ensure_nested_share_folder(params, target_folder_uid, 'trash restore', target_folder_name)
+            if has_classic:
+                raise CommandError(
+                    'trash restore',
+                    'Restoring into a specific target folder is only supported for Drive (NSF) record(s)/folder(s). '
+                    'Restore the selected classic record(s)/folder(s) to their original location (omit --folder), '
+                    'then use the "mv" command to move them.')
 
         if not kwargs.get('force'):
             to_do = []
@@ -2545,12 +2851,24 @@ class TrashRestoreCommand(Command, TrashMixin):
                 to_do.append(f'{record_count} record(s)')
             if folder_count > 0:
                 to_do.append(f'{folder_count} folder(s)')
-            question = f'Do you want to restore {" and ".join(to_do)}?'
+            destination = f' into "{target_folder_name}"' if target_folder_uid is not None else ''
+            question = f'Do you want to restore {" and ".join(to_do)}{destination}?'
             answer = base.user_choice(question, 'yn', default='n')
             if answer.lower() == 'y':
                 answer = 'yes'
             if answer.lower() != 'yes':
                 return
+
+        if target_folder_uid is not None:
+            self.restore_nsf(params, nsf_records_to_restore, nsf_folders_to_restore, nsf_records, nsf_folders,
+                             target_folder_uid)
+            return
+
+        if has_nsf:
+            self.restore_nsf(params, nsf_records_to_restore, nsf_folders_to_restore, nsf_records, nsf_folders)
+
+        if not has_classic:
+            return
 
         batch = []
         for record_uid in records_to_restore:
