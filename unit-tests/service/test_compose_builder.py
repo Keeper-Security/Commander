@@ -9,7 +9,16 @@
 # Contact: commander@keepersecurity.com
 #
 
+import copy
 import json
+import os
+import shutil
+import stat
+import subprocess
+import tempfile
+import time
+import unittest
+import uuid
 from unittest import TestCase, mock
 
 from keepercommander.service.docker.compose_builder import DockerComposeBuilder
@@ -107,10 +116,13 @@ class TestTailscaleSidecar(TestCase):
         self.assertNotIn('--force-reauth', services['tailscale']['environment']['TS_EXTRA_ARGS'])
 
         # Declared, not executed: containerboot applies TS_SERVE_CONFIG itself. The only
-        # hook is print-only (logs the URL) and never touches Funnel config.
+        # hook is print-only (logs the URL, and reads - never mutates - Funnel status).
         self.assertEqual(services['tailscale']['environment']['TS_SERVE_CONFIG'],
                          '/etc/tailscale/serve.json')
-        self.assertNotIn('tailscale funnel', services['tailscale']['post_start'][0]['command'][2])
+        hook_cmd = services['tailscale']['post_start'][0]['command'][2]
+        self.assertNotIn('funnel --bg', hook_cmd)
+        self.assertNotIn('funnel reset', hook_cmd)
+        self.assertNotIn('--https=', hook_cmd)
 
     def test_tailscale_container_name_matches_commander_naming_convention(self):
         """Without an explicit container_name, Compose falls back to
@@ -182,26 +194,114 @@ class TestTailscaleSidecar(TestCase):
         self.assertEqual(sidecar['configs'],
                          [{'source': 'tailscale-serve-config', 'target': '/etc/tailscale/serve.json'}])
 
-    def test_url_hook_is_print_only_and_cannot_configure_funnel(self):
-        hook = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
+    def _hook(self):
+        return _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
             'services']['tailscale']['post_start'][0]['command'][2]
+
+    def _run_hook(self, allow_funnel_json_body, dns_name='commander-sailpoint-5.taildb15b0.ts.net'):
+        """Runs the real generated hook under a stub `tailscale`. `allow_funnel_json_body`
+        is either one JSON string (every poll returns it) or a list consumed one-per-poll,
+        repeating the last entry once exhausted - lets a test simulate AllowFunnel turning
+        true only after a few retries. Returns stdout written to /proc/1/fd/1's stand-in."""
+        import os
+        import stat
+        import subprocess
+        import tempfile
+
+        bodies = allow_funnel_json_body if isinstance(allow_funnel_json_body, list) \
+            else [allow_funnel_json_body]
+
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as work_dir:
+            sink = os.path.join(work_dir, 'sink.txt')
+            counter = os.path.join(work_dir, 'n')
+            stub_path = os.path.join(bin_dir, 'tailscale')
+            bodies_sh = ' '.join(f"'{b}'" for b in bodies)
+            with open(stub_path, 'w') as f:
+                f.write(
+                    "#!/bin/sh\n"
+                    "if [ \"$1\" = status ] && [ \"$2\" = \"--json\" ]; then\n"
+                    f"  echo '{{\"Self\":{{\"DNSName\":\"{dns_name}.\"}}}}'; exit 0\n"
+                    "fi\n"
+                    "if [ \"$1\" = funnel ] && [ \"$2\" = status ] && [ \"$3\" = \"--json\" ]; then\n"
+                    f"  N=$(cat '{counter}' 2>/dev/null || echo 0); echo $((N+1)) > '{counter}'\n"
+                    f"  i=0; for b in {bodies_sh}; do [ \"$i\" -ge \"$N\" ] && break; i=$((i+1)); done\n"
+                    "  echo \"$b\"; exit 0\n"
+                    "fi\n"
+                    "exit 0\n"
+                )
+            os.chmod(stub_path, os.stat(stub_path).st_mode | stat.S_IEXEC)
+
+            script = self._hook().replace('$$', '$').replace('/proc/1/fd/1', sink)
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ.get('PATH', '')}")
+            subprocess.run(['sh', '-c', script], env=env, timeout=15)
+
+            if not os.path.exists(sink):
+                return ''
+            with open(sink) as f:
+                return f.read()
+
+    def test_url_hook_is_print_only_and_cannot_mutate_funnel(self):
+        """Only a read is allowed - TS_SERVE_CONFIG stays the sole source of truth."""
+        hook = self._hook()
         self.assertIn('Tailscale Funnel URL: https://', hook)
         self.assertIn('/proc/1/fd/1', hook)      # else the line never reaches docker logs
-        self.assertNotIn('tailscale funnel', hook)
+        self.assertIn('tailscale funnel status', hook)
+        self.assertNotIn('funnel --bg', hook)
         self.assertNotIn('funnel reset', hook)
+        self.assertNotIn('--https=', hook)
 
     def test_url_hook_finishes_well_inside_compose_up(self):
-        """Compose SIGKILLs a hook still running when `up` completes and tears the
-        project down (reproduced in Docker), so the wait must stay short - verified that
-        an ~8s cap prints on a normal start and exits cleanly when the hostname never
-        appears, leaving both containers running either way."""
-        hook = _build(_base_config(tailscale_enabled=True, tailscale_auth_key='tskey-auth-xxx'))[
-            'services']['tailscale']['post_start'][0]['command'][2]
+        """A hook still running when `up` completes gets SIGKILLed and tears the
+        project down - the ~8s cap and clean exit avoid that."""
+        hook = self._hook()
         self.assertIn('-lt 8', hook)
         self.assertIn('sleep 1;', hook)
         self.assertTrue(hook.rstrip().endswith('exit 0'))
         self.assertIn('h=$$(', hook)              # Compose-escaped
         self.assertNotIn('h=$(', hook)
+
+    def test_url_hook_prints_url_only_when_funnel_is_actually_live(self):
+        """A hostname alone isn't enough - must match tunneling.py's AllowFunnel check."""
+        out = self._run_hook(
+            '{"AllowFunnel":{"commander-sailpoint-5.taildb15b0.ts.net:443": true}}')
+        self.assertIn('Tailscale Funnel URL: https://commander-sailpoint-5.taildb15b0.ts.net', out)
+
+    def test_url_hook_tolerates_compact_json_with_no_space_after_colon(self):
+        """Go's JSON encoders don't always add a space after ':' - match must not depend on it."""
+        out = self._run_hook(
+            '{"AllowFunnel":{"commander-sailpoint-5.taildb15b0.ts.net:443":true}}')
+        self.assertIn('Tailscale Funnel URL: https://', out)
+
+    def test_url_hook_falls_back_to_diagnostic_when_allow_funnel_missing(self):
+        out = self._run_hook('{"AllowFunnel":{}}')
+        self.assertNotIn('Tailscale Funnel URL:', out)
+        self.assertIn('Funnel is not active', out)
+        self.assertIn('tailscale funnel status', out)
+
+    def test_url_hook_falls_back_to_diagnostic_when_allow_funnel_is_false(self):
+        """AllowFunnel must be true, not just present - a plain `serve` has a Proxy entry too."""
+        out = self._run_hook(
+            '{"AllowFunnel":{"commander-sailpoint-5.taildb15b0.ts.net:443": false}}')
+        self.assertNotIn('Tailscale Funnel URL:', out)
+        self.assertIn('Funnel is not active', out)
+
+    def test_url_hook_does_not_match_a_different_hosts_allow_funnel_entry(self):
+        out = self._run_hook(
+            '{"AllowFunnel":{"some-other-host.taildb15b0.ts.net:443": true}}')
+        self.assertNotIn('Tailscale Funnel URL:', out)
+        self.assertIn('Funnel is not active', out)
+
+    def test_url_hook_retries_allow_funnel_check_before_falling_back(self):
+        """Regression: TS_SERVE_CONFIG + the ACME fetch behind it can take 30s+ even
+        though the hostname lands in ~2s. The hook used to check AllowFunnel once and
+        give up; it must keep polling instead."""
+        out = self._run_hook([
+            '{"AllowFunnel":{}}',
+            '{"AllowFunnel":{}}',
+            '{"AllowFunnel":{"commander-sailpoint-5.taildb15b0.ts.net:443": true}}',
+        ])
+        self.assertIn('Tailscale Funnel URL: https://', out)
+        self.assertNotIn('Funnel is not active', out)
 
     def test_serve_config_uses_cert_domain_placeholder_escaped_for_compose(self):
         """Bare ${TS_CERT_DOMAIN} would be interpolated away by Compose, handing
@@ -280,6 +380,158 @@ class TestTailscaleSidecar(TestCase):
         )
 
 
+DOCKER_SIGNIN_REQUIRED_MARKER = "Sign in to continue using Docker Desktop"
+
+
+def _docker_compose_available():
+    """True only if containers can actually run, not just that the `docker` binary
+    or `docker info`/`compose version` succeed - confirmed experimentally that a
+    Docker Desktop instance requiring org sign-in still returns exit 0 for those two,
+    while `docker ps` (and any real container operation) fails identically to `up`."""
+    if shutil.which('docker') is None:
+        return False
+    try:
+        result = subprocess.run(['docker', 'ps'], capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(
+    _docker_compose_available(),
+    "requires a running Docker Engine with the Compose v2 plugin")
+class TestTailscaleSidecarDockerSmoke(TestCase):
+    """A real `docker compose up`, not mocks - covers the PR review's concern that the
+    sidecar path (TS_SERVE_CONFIG, Compose lifecycle, hostname timing) could break on
+    a slow first login. Only `tailscale`/`commander` images are swapped for a stub
+    (busybox + fake `tailscale` CLI); post_start/healthcheck/networks/configs are
+    exactly what production generates."""
+
+    def _write_stub_tailscale(self, bin_dir, dns_delay_s):
+        """`tailscale status` only exits 0 once dns_delay_s has elapsed, matching real
+        containerboot - a stub that always exits 0 would hide a real slow-login case."""
+        script = f"""#!/bin/sh
+STATE_FILE=/tmp/.smoke_start_time
+[ -f "$STATE_FILE" ] || date +%s > "$STATE_FILE"
+ELAPSED=$(($(date +%s) - $(cat "$STATE_FILE")))
+
+if [ "$1" = "status" ] && [ "$2" = "--json" ]; then
+    if [ "$ELAPSED" -ge {dns_delay_s} ]; then
+        echo '{{"Self":{{"DNSName":"smoketest-host.ts.net."}}}}'
+    else
+        echo '{{"Self":{{}}}}'
+    fi
+    exit 0
+fi
+
+if [ "$1" = "funnel" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+    if [ "$ELAPSED" -ge {dns_delay_s} ]; then
+        echo '{{"AllowFunnel":{{"smoketest-host.ts.net:443": true}}}}'
+    else
+        echo '{{"AllowFunnel":{{}}}}'
+    fi
+    exit 0
+fi
+
+if [ "$1" = "status" ]; then
+    [ "$ELAPSED" -ge {dns_delay_s} ] && exit 0 || exit 1
+fi
+exit 0
+"""
+        stub_path = os.path.join(bin_dir, 'tailscale')
+        with open(stub_path, 'w') as f:
+            f.write(script)
+        os.chmod(stub_path, os.stat(stub_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    def _patched_compose_dict(self, bin_dir):
+        """Real DockerComposeBuilder output, Tailscale enabled - only image/entrypoint
+        swapped for the tailscale/commander services. post_start, healthcheck,
+        networks, and configs are untouched, since those are what's under test."""
+        config = {
+            'port': 18900,
+            'commands': 'ls',
+            'tailscale_enabled': True,
+            'tailscale_auth_key': 'tskey-auth-smoketest-not-real',
+        }
+
+        class _FakeSetupResult:
+            b64_config = 'ZmFrZS1rc20tY29uZmln'
+            record_uid = 'smoke-test-record-uid'
+
+        compose = DockerComposeBuilder(_FakeSetupResult(), config).build_dict()
+        compose = copy.deepcopy(compose)
+
+        ts = compose['services']['tailscale']
+        ts['image'] = 'busybox:stable'
+        ts['healthcheck']['interval'] = '2s'
+        ts['healthcheck']['retries'] = 90
+        ts.setdefault('volumes', []).append(f'{bin_dir}:/usr/local/bin:ro')
+        ts['entrypoint'] = ['sh', '-c']
+        ts['command'] = ['tail -f /dev/null']
+
+        cmd = compose['services']['commander']
+        cmd['image'] = 'busybox:stable'
+        cmd.pop('healthcheck', None)
+        cmd.pop('command', None)
+        cmd['entrypoint'] = ['sh', '-c']
+        cmd['command'] = ['tail -f /dev/null']
+
+        return compose
+
+    def test_sidecar_survives_a_slow_first_login_without_tearing_down(self):
+        """A slow login (e.g. a key-type switch burning `tailscale up`'s 60s timeout)
+        must not SIGKILL the hook and tear the project down. Login forced to land at
+        15s, past the hook's own ~8s bound, to test Compose's lifecycle, not the hook."""
+        import yaml
+
+        DNS_DELAY_S = 15
+        project = f"ts-smoke-{uuid.uuid4().hex[:8]}"
+        work_dir = tempfile.mkdtemp(prefix='tailscale_smoke_')
+        bin_dir = os.path.join(work_dir, 'bin')
+        os.makedirs(bin_dir)
+        compose_path = os.path.join(work_dir, 'docker-compose.yml')
+
+        try:
+            self._write_stub_tailscale(bin_dir, DNS_DELAY_S)
+            with open(compose_path, 'w') as f:
+                yaml.dump(self._patched_compose_dict(bin_dir), f,
+                          default_flow_style=False, sort_keys=False)
+
+            up = subprocess.run(
+                ['docker', 'compose', '-p', project, '-f', compose_path, 'up', '-d'],
+                capture_output=True, text=True, timeout=60)
+            if DOCKER_SIGNIN_REQUIRED_MARKER in up.stderr:
+                self.skipTest("Docker Desktop requires sign-in in this environment "
+                              "(flipped after the module-level availability check)")
+            self.assertEqual(up.returncode, 0, f"`compose up` failed: {up.stderr}")
+
+            # Past the hook's ~8s bound and the forced 15s login, before asserting.
+            time.sleep(DNS_DELAY_S + 10)
+
+            logs = subprocess.run(
+                ['docker', 'compose', '-p', project, '-f', compose_path,
+                 'logs', '--no-log-prefix', 'tailscale'],
+                capture_output=True, text=True, timeout=30).stdout
+
+            ps = subprocess.run(
+                ['docker', 'compose', '-p', project, '-f', compose_path,
+                 'ps', '-a', '--format', '{{.Service}}:{{.State}}'],
+                capture_output=True, text=True, timeout=30).stdout
+
+            self.assertNotIn('137', logs, f"hook was SIGKILLed - logs:\n{logs}")
+            self.assertIn('tailscale', ps, f"project was torn down - `ps`: {ps}")
+            self.assertIn('commander', ps, f"project was torn down - `ps`: {ps}")
+            self.assertNotIn('exited', ps.lower(), f"a service exited unexpectedly:\n{ps}")
+            # DNS_DELAY_S (15s) exceeds the hook's ~8s bound, so it exhausts and prints
+            # nothing - expected. Retry behavior itself is covered faster by
+            # test_url_hook_retries_allow_funnel_check_before_falling_back above.
+            self.assertNotIn('Tailscale Funnel URL: https://', logs,
+                             f"hook should not have had time to see the hostname at all:\n{logs}")
+        finally:
+            subprocess.run(['docker', 'compose', '-p', project, '-f', compose_path, 'down', '-v'],
+                          capture_output=True, timeout=30)
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+
 if __name__ == '__main__':
-    import unittest
     unittest.main()
