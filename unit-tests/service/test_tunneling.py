@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -270,6 +271,252 @@ class TestTunnelLogFiles(unittest.TestCase):
         with mock.patch('keepercommander.utils.get_default_path', return_value=overridden_dir):
             log_file = tunneling.get_tunnel_log_file('ngrok_subprocess.log')
             self.assertTrue(log_file.startswith(os.path.join(overridden_dir, 'service_logs')))
+
+
+class TestStartTailscaleFunnel(unittest.TestCase):
+    def test_rejects_port_not_in_allowed_set(self):
+        """Tailscale Funnel only accepts 443/8443/10000 as the external-facing port -
+        catch an invalid value before it ever reaches the CLI."""
+        with self.assertRaises(ValueError):
+            tunneling.start_tailscale_funnel(local_port=8080, funnel_port=9999)
+
+    def test_accepts_each_allowed_port(self):
+        with tempfile.NamedTemporaryFile() as tmp:
+            for allowed_port in tunneling.TAILSCALE_FUNNEL_ALLOWED_PORTS:
+                with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+                     mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                                 return_value=mock.Mock(returncode=0)) as mock_run:
+                    tunneling.start_tailscale_funnel(local_port=8080, funnel_port=allowed_port)
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn(f"--https={allowed_port}", cmd)
+
+    def test_missing_local_port_raises(self):
+        with self.assertRaises(ValueError):
+            tunneling.start_tailscale_funnel(local_port=None)
+
+    def test_raises_with_guidance_when_cli_exits_nonzero(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            with self.assertRaisesRegex(Exception, "Failed to start Tailscale Funnel"):
+                tunneling.start_tailscale_funnel(local_port=8080)
+
+
+class TestGetTailscaleFunnelStatus(unittest.TestCase):
+    """Schema verified live against a real `tailscale funnel status --json` while a
+    Funnel target was actually running: {"Web": {"<host>:<port>": {"Handlers":
+    {"<path>": {"Proxy": "http://localhost:<port>"}}}}}."""
+
+    def test_true_when_local_port_is_an_active_proxy_target(self):
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}},
+            "AllowFunnel": {"example.ts.net:443": True},
+        }
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertTrue(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_no_matching_target(self):
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}},
+            "AllowFunnel": {"example.ts.net:443": True},
+        }
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_proxy_matches_but_allow_funnel_is_false(self):
+        """A tailnet-only `tailscale serve` on the same target shows up under the same
+        "Web" entry as Funnel - AllowFunnel must also be true, or this isn't actually
+        publicly exposed via Funnel, just privately via Serve."""
+        payload = {
+            "Web": {"example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://localhost:8080"}}}},
+            "AllowFunnel": {"example.ts.net:443": False},
+        }
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout=json.dumps(payload))):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_when_no_funnel_configured_at_all(self):
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0, stdout='{}')):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+    def test_false_on_cli_failure_not_raised(self):
+        """A status check is diagnostic, not authoritative - a CLI/parsing error must
+        report 'not active' rather than bubbling up and crashing the caller."""
+        with mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         side_effect=Exception("boom")):
+            self.assertFalse(tunneling.get_tailscale_funnel_status(8080))
+
+
+class TestStopTailscaleFunnel(unittest.TestCase):
+    def test_returns_true_on_success(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)):
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+
+    def test_returns_false_on_nonzero_exit(self):
+        """Both the scoped command and the reset fallback failing, with the target
+        confirmed still active, is a genuine failure."""
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            self.assertFalse(tunneling.stop_tailscale_funnel(8080))
+
+    def test_uses_scoped_teardown_first_not_broad_reset(self):
+        """Scoped `--https=<port> off` must be tried before the broad `reset`, which
+        would wipe any other Serve/Funnel config a user set up outside Commander."""
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            first_cmd = mock_run.call_args_list[0].args[0]
+            self.assertEqual(first_cmd, ["tailscale", "funnel", "--https=443", "off"])
+            self.assertEqual(mock_run.call_count, 1)
+
+    def test_falls_back_to_reset_when_scoped_teardown_fails(self):
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         side_effect=[mock.Mock(returncode=1), mock.Mock(returncode=0)]) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            self.assertEqual(mock_run.call_count, 2)
+            self.assertEqual(mock_run.call_args_list[1].args[0], ["tailscale", "funnel", "reset"])
+
+    def test_already_inactive_target_does_not_escalate_to_destructive_reset(self):
+        """The scoped command exits non-zero for an already-removed target ("handler
+        does not exist"), which happens routinely on double teardown (service-stop
+        racing a foreground service's own exit handler). That must not escalate to
+        `funnel reset`, which would wipe unrelated Serve/Funnel config."""
+        with tempfile.NamedTemporaryFile() as tmp, \
+             mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp.name), \
+             mock.patch('keepercommander.service.util.tunneling.get_tailscale_funnel_status', return_value=False), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)) as mock_run:
+            self.assertTrue(tunneling.stop_tailscale_funnel(8080))
+            commands = [call.args[0] for call in mock_run.call_args_list]
+            self.assertNotIn(["tailscale", "funnel", "reset"], commands)
+
+
+class TestTailscaleUp(unittest.TestCase):
+    """A fresh Linux install leaves the tailscaled control socket root-owned by
+    default, so `tailscale up` fails there with a specific "checkprefs access
+    denied" message rather than a bad-key error - this must be distinguished
+    so callers can offer the one-time operator-grant fix instead of treating
+    it as an invalid auth key."""
+
+    def _run_with_log_content(self, log_content, returncode=1, advertise_tags=None):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp.write(log_content)
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=returncode)):
+                tunneling.tailscale_up('tskey-auth-xxx', advertise_tags)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_raises_access_denied_error_when_not_operator(self):
+        with self.assertRaises(tunneling.TailscaleAccessDeniedError):
+            self._run_with_log_content("Access denied: checkprefs access denied\n")
+
+    def test_raises_generic_exception_for_other_failures(self):
+        with self.assertRaises(Exception) as ctx:
+            self._run_with_log_content("backend error: invalid key\n")
+        self.assertNotIsInstance(ctx.exception, tunneling.TailscaleAccessDeniedError)
+
+    def test_missing_auth_key_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            tunneling.tailscale_up(None)
+
+    def test_no_identity_check_before_authenticating(self):
+        """No pre-flight warning/check - tailscale_up goes straight to `up`, same as
+        before; blocking or warning here would be noise on every normal dev/test run
+        against an already-authenticated host, and headless invocations can't prompt."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=0)) as mock_run, \
+                 mock.patch('builtins.print') as mock_print:
+                tunneling.tailscale_up('tskey-auth-xxx')
+                self.assertEqual(mock_print.call_count, 0)
+                self.assertEqual(mock_run.call_count, 1)
+        finally:
+            os.unlink(tmp_path)
+
+
+class TestSetTailscaleOperator(unittest.TestCase):
+    def test_returns_false_when_username_unavailable(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(tunneling.set_tailscale_operator())
+
+    def test_runs_sudo_tailscale_set_operator_with_current_user(self):
+        with mock.patch.dict(os.environ, {'USER': 'alice'}, clear=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.set_tailscale_operator())
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd, ["sudo", "tailscale", "set", "--operator=alice"])
+
+    def test_prefers_sudo_user_over_user_when_run_under_sudo(self):
+        """Under `sudo keeper ...`, $USER/$LOGNAME resolve to root - SUDO_USER holds
+        the actual invoking user, who is who should actually get operator rights."""
+        with mock.patch.dict(os.environ, {'USER': 'root', 'SUDO_USER': 'alice'}, clear=True), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=0)) as mock_run:
+            self.assertTrue(tunneling.set_tailscale_operator())
+            cmd = mock_run.call_args[0][0]
+            self.assertEqual(cmd, ["sudo", "tailscale", "set", "--operator=alice"])
+
+    def test_returns_false_when_command_fails(self):
+        with mock.patch.dict(os.environ, {'USER': 'alice'}), \
+             mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                         return_value=mock.Mock(returncode=1)):
+            self.assertFalse(tunneling.set_tailscale_operator())
+
+
+class TestTailscaleUpUnattended(unittest.TestCase):
+    """Windows keeps a node up only while the GUI client runs, and Commander installs
+    the MSI with TS_NOLAUNCH=1 (no GUI). Without --unattended the backend sits at
+    NoState after a successful login, so Funnel has nothing to bind to."""
+
+    def _cmd_for_platform(self, system):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._get_tailscale_log_path', return_value=tmp_path), \
+                 mock.patch('platform.system', return_value=system), \
+                 mock.patch('keepercommander.service.util.tunneling.subprocess.run',
+                             return_value=mock.Mock(returncode=0)) as mock_run:
+                tunneling.tailscale_up('tskey-auth-xxx')
+                return mock_run.call_args[0][0]
+        finally:
+            os.unlink(tmp_path)
+
+    def test_windows_gets_unattended_flag(self):
+        self.assertIn('--unattended', self._cmd_for_platform('Windows'))
+
+    def test_macos_and_linux_do_not_get_unattended_flag(self):
+        for system in ('Darwin', 'Linux'):
+            self.assertNotIn('--unattended', self._cmd_for_platform(system),
+                             f'--unattended is Windows-only, leaked into {system}')
+
+    def test_unattended_does_not_displace_the_existing_flags(self):
+        cmd = self._cmd_for_platform('Windows')
+        self.assertIn('--force-reauth', cmd)
+        self.assertIn('--advertise-tags=', cmd)
+        self.assertTrue(any(a.startswith('--auth-key=file:') for a in cmd))
 
 
 if __name__ == '__main__':

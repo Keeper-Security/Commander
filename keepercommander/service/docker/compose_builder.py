@@ -10,7 +10,14 @@
 #
 
 """docker-compose.yml generation."""
+import json
 from typing import Dict, Any, List
+
+# containerboot swaps ${TS_CERT_DOMAIN} for the node's cert domain and re-applies on
+# change. `$$` so Compose emits a literal `$` instead of interpolating it away.
+TAILSCALE_CERT_DOMAIN_PLACEHOLDER = '$${TS_CERT_DOMAIN}'
+TAILSCALE_SERVE_CONFIG_NAME = 'tailscale-serve-config'
+TAILSCALE_SERVE_CONFIG_PATH = '/etc/tailscale/serve.json'
 
 
 class DockerComposeBuilder:
@@ -27,6 +34,9 @@ class DockerComposeBuilder:
         self._service_cmd_parts: List[str] = []
         self._volumes: List[str] = []
         self._services: Dict[str, Dict[str, Any]] = {}
+        self._top_level_volumes: Dict[str, Any] = {}
+        self._top_level_configs: Dict[str, Any] = {}
+        self._tailscale_sidecar_added = False
 
     def build(self) -> str:
         if self.commander_service_name not in self._services:
@@ -36,7 +46,13 @@ class DockerComposeBuilder:
     def build_dict(self) -> Dict[str, Any]:
         if self.commander_service_name not in self._services:
             self._services[self.commander_service_name] = self._build_commander_service()
-        return {'services': self._services}
+        self._add_tailscale_sidecar_if_enabled()
+        result: Dict[str, Any] = {'services': self._services}
+        if self._top_level_volumes:
+            result['volumes'] = self._top_level_volumes
+        if self._top_level_configs:
+            result['configs'] = self._top_level_configs
+        return result
     
     def add_integration_service(self, service_name: str, container_name: str,
                                 image: str, record_uid: str,
@@ -147,14 +163,122 @@ class DockerComposeBuilder:
             self._service_cmd_parts.append(f"-cf {self.config['cloudflare_tunnel_token']}")
             if self.config.get('cloudflare_custom_domain'):
                 self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
-    
+
+        # Tailscale is handled via a sidecar container (see _add_tailscale_sidecar_if_enabled),
+        # not a service-create flag -- Docker deployments are headless and can't answer the
+        # install/daemon-start prompts that -ts would otherwise trigger inside the container.
+
     def _add_docker_options(self) -> None:
         self._service_cmd_parts.extend([
             f"-ur {self.setup_result.record_uid}",
             f"--ksm-config {self.setup_result.b64_config}",
             f"--record {self.setup_result.record_uid}"
         ])
-    
+
+    def _add_tailscale_sidecar_if_enabled(self) -> None:
+        """
+        Tailscale runs as a sidecar, not a service-create flag: Docker is headless, so
+        Commander's own install/daemon prompts can't be answered. Ngrok/Cloudflare
+        unaffected. Funnel is declared via TS_SERVE_CONFIG so containerboot applies it.
+        """
+        if self._tailscale_sidecar_added:
+            return
+        if not (self.config.get('tailscale_enabled') and self.config.get('tailscale_auth_key')):
+            return
+        self._tailscale_sidecar_added = True
+
+        port = self.config['port']
+        tags = self.config.get('tailscale_advertise_tags')
+        # --advertise-tags always explicit: omitting it won't clear a prior run's tag.
+        # No --force-reauth: containerboot logs in every start anyway, and re-validating
+        # the key each boot breaks single-use keys from boot 2 and expired ones for good.
+        extra_args = f"--advertise-tags={tags or ''}"
+
+        # Declared, not scripted: containerboot re-applies on cert-domain change. A hook
+        # couldn't - the hostname can land after `tailscale up` returns, stranding Funnel.
+        host_port = f"{TAILSCALE_CERT_DOMAIN_PLACEHOLDER}:443"
+        serve_config = json.dumps({
+            'TCP': {'443': {'HTTPS': True}},
+            'Web': {host_port: {'Handlers': {'/': {'Proxy': f'http://localhost:{port}'}}}},
+            'AllowFunnel': {host_port: True},
+        }, indent=2)
+        self._top_level_configs[TAILSCALE_SERVE_CONFIG_NAME] = {'content': serve_config}
+
+        # Print-only: Funnel itself is TS_SERVE_CONFIG's job, so losing this hook
+        # only costs the log line. /proc/1/fd/1 gets stdout into `docker logs`.
+        # Bounded at ~8s - a hook still running when `compose up` finishes gets
+        # SIGKILLed and tears the project down. Retries the AllowFunnel check (not
+        # just the hostname) across the budget: the hostname lands in ~2s, but
+        # TS_SERVE_CONFIG application + the ACME cert fetch behind it can take 30s+.
+        # No jq in this image - matched via sed/case text instead.
+        sed_dns_name = r"""sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p'"""
+        allow_funnel_glob = r"""*'"'"$$h"':443":'*'true'*"""  # tolerates "true" and ": true" (Go JSON spacing varies)
+        url_hook = (
+            f"i=0; while [ \"$$i\" -lt 8 ]; do "
+            f"h=$$(tailscale status --json --peers=false 2>/dev/null | {sed_dns_name} | head -n1); "
+            f"if [ -n \"$$h\" ]; then "
+            f"case \"$$(tailscale funnel status --json 2>/dev/null)\" in "
+            f"{allow_funnel_glob}) "
+            f"echo \"Tailscale Funnel URL: https://$$h\" > /proc/1/fd/1; exit 0 ;; "
+            f"esac; fi; "
+            f"i=$$((i+1)); sleep 1; "
+            f"done; "
+            f"if [ -n \"$$h\" ]; then "
+            f"echo \"Tailscale hostname is $$h but Funnel is not active - check 'tailscale funnel status' (tailnet HTTPS Certificates or the Funnel ACL grant may be missing)\" > /proc/1/fd/1; "
+            f"fi; exit 0"
+        )
+
+        # Matches the keeper-service[-<integration>] convention already used for the
+        # commander container name (e.g. keeper-service-slack -> keeper-tailscale-slack).
+        tailscale_container_name = self.commander_container_name.replace('service', 'tailscale', 1)
+
+        self._services['tailscale'] = {
+            'container_name': tailscale_container_name,
+            'image': 'tailscale/tailscale:latest',
+            'hostname': self.commander_service_name,
+            # This container, not commander, owns the compose-network identity, so the
+            # alias is what lets integration containers still resolve commander by name.
+            'networks': {
+                'default': {
+                    'aliases': [self.commander_service_name],
+                },
+            },
+            # Published here since commander's own `ports` is popped below - keeps
+            # printer.py's localhost:<port> health check working.
+            'ports': [f"127.0.0.1:{port}:{port}"],
+            'environment': {
+                'TS_AUTHKEY': self.config['tailscale_auth_key'],
+                'TS_EXTRA_ARGS': extra_args,
+                'TS_STATE_DIR': '/var/lib/tailscale',
+                'TS_SERVE_CONFIG': TAILSCALE_SERVE_CONFIG_PATH,
+            },
+            'volumes': ['tailscale-state:/var/lib/tailscale'],
+            # Single-file mount: edits to the JSON aren't watched, but it's generated.
+            'configs': [
+                {'source': TAILSCALE_SERVE_CONFIG_NAME, 'target': TAILSCALE_SERVE_CONFIG_PATH},
+            ],
+            # start_period absorbs a slow first login: a key-type switch burns `tailscale
+            # up`'s 60s timeout plus a restart, which must not mark the sidecar unhealthy.
+            'healthcheck': {
+                'test': ['CMD', 'tailscale', 'status'],
+                'interval': '10s',
+                'timeout': '5s',
+                'retries': 12,
+                'start_period': '120s',
+            },
+            'post_start': [
+                {'command': ['sh', '-c', url_hook]},
+            ],
+            'restart': 'unless-stopped',
+        }
+        self._top_level_volumes['tailscale-state'] = None
+
+        commander = self._services[self.commander_service_name]
+        commander.pop('ports', None)
+        commander['network_mode'] = 'service:tailscale'
+        commander.setdefault('depends_on', {})['tailscale'] = {'condition': 'service_healthy'}
+
+
     def _build_healthcheck(self) -> Dict[str, Any]:
         port = self.config['port']
         

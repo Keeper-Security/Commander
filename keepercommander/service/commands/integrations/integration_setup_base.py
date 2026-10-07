@@ -295,13 +295,24 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
         ngrok_config = self._get_ngrok_config()
 
-        if not ngrok_config['ngrok_enabled']:
-            cloudflare_config = self._get_cloudflare_config()
-        else:
+        if ngrok_config['ngrok_enabled']:
             cloudflare_config = {
                 'cloudflare_enabled': False, 'cloudflare_tunnel_token': '',
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
+            tailscale_config = {
+                'tailscale_enabled': False, 'tailscale_auth_key': '',
+                'tailscale_advertise_tags': '', 'tailscale_public_url': ''
+            }
+        else:
+            cloudflare_config = self._get_cloudflare_config()
+            if cloudflare_config['cloudflare_enabled']:
+                tailscale_config = {
+                    'tailscale_enabled': False, 'tailscale_auth_key': '',
+                    'tailscale_advertise_tags': '', 'tailscale_public_url': ''
+                }
+            else:
+                tailscale_config = self._get_tailscale_config()
 
         return ServiceConfig(
             port=port,
@@ -314,7 +325,11 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             cloudflare_enabled=cloudflare_config['cloudflare_enabled'],
             cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
             cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
-            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', '')
+            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', ''),
+            tailscale_enabled=tailscale_config['tailscale_enabled'],
+            tailscale_auth_key=tailscale_config['tailscale_auth_key'],
+            tailscale_advertise_tags=tailscale_config['tailscale_advertise_tags'],
+            tailscale_public_url=tailscale_config.get('tailscale_public_url', '')
         )
 
     # -- Phase 2 (integration-specific) --------------------------------

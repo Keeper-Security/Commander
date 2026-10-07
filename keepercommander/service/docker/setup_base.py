@@ -585,6 +585,33 @@ class DockerSetupBase:
         
         return config
 
+    def _get_tailscale_config(self) -> Dict[str, Any]:
+        """Get Tailscale Funnel configuration"""
+        print(f"\n{bcolors.BOLD}Tailscale Funnel (optional):{bcolors.ENDC}")
+        print(f"  Generate a public URL for your service using Tailscale Funnel")
+        use_tailscale = input(f"{bcolors.OKBLUE}Enable Tailscale? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+
+        config = {'tailscale_enabled': use_tailscale, 'tailscale_auth_key': '',
+                  'tailscale_advertise_tags': '', 'tailscale_public_url': ''}
+
+        if use_tailscale:
+            while True:
+                # Echoed on purpose: these keys are long and pasted, and a silent
+                # prompt made paste errors impossible to spot.
+                key = input(f"{bcolors.OKBLUE}Tailscale auth key:{bcolors.ENDC} ").strip()
+                try:
+                    config['tailscale_auth_key'] = ConfigValidator.validate_tailscale_auth_key(key)
+                    break
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+
+            config['tailscale_advertise_tags'] = input(
+                f"{bcolors.OKBLUE}Tailscale ACL tags to advertise, comma-separated "
+                f"[Press Enter to skip; required for OAuth-derived keys]:{bcolors.ENDC} "
+            ).strip()
+
+        return config
+
     def _get_advanced_security_config(self) -> Dict[str, Any]:
         """Get advanced security configuration (IP filter, rate limit, encryption, token expiry)."""
         print(f"\n{bcolors.BOLD}Advanced Security (optional):{bcolors.ENDC}")

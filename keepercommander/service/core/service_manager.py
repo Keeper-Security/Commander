@@ -67,6 +67,11 @@ class ServiceManager:
             
         SignalHandler.setup_signal_handlers(cls._handle_shutdown)
             
+        # Initialized before any operation that could raise, so the outer except
+        # below can always safely check them to roll back a partially-started Funnel.
+        tailscale_enabled = False
+        tailscale_port = None
+
         try:
             service_config = ServiceConfig()
             config_data = service_config.load_config()
@@ -77,6 +82,7 @@ class ServiceManager:
             
             from ..config.ngrok_config import NgrokConfigurator
             from ..config.cloudflare_config import CloudflareConfigurator
+            from ..config.tailscale_config import TailscaleConfigurator
             
             is_running = True
             queue_enabled = config_data.get("queue_enabled", "y")
@@ -117,6 +123,72 @@ class ServiceManager:
                 ProcessInfo.clear()
 
                 logger.error(f"\n{str(e)}")
+                return
+
+            # Set before the call, not after - needed even if configure_tailscale raises
+            # with Funnel already live (e.g. a timeout mid-verify), so rollback can still find it.
+            if config_data.get("tailscale") == 'y':
+                tailscale_enabled = True
+                tailscale_port = port
+
+            try:
+                TailscaleConfigurator.configure_tailscale(config_data, service_config)
+                if tailscale_enabled:
+                    # Tailscale's URL is only known post-Funnel-start; persist it now.
+                    if config_data.get("tailscale_public_url"):
+                        try:
+                            # save_config() writes plaintext; must re-encrypt or later
+                            # load_config() calls (auth checks, routes) fail to decrypt.
+                            service_config.save_config(config_data, config_data.get("fileformat"))
+                            service_config.format_handler.encrypt_config_file(
+                                service_config.format_handler.config_path, service_config.format_handler.config_dir
+                            )
+                        except Exception as save_error:
+                            logger.debug(f"Could not persist tailscale_public_url: {save_error}")
+            except (KeyboardInterrupt, Exception) as e:
+                # KeyboardInterrupt (e.g. Ctrl+C during a Tailscale install/daemon-start
+                # prompt) is not an Exception subclass -- must be caught explicitly here
+                # too, or this rollback (and the ones below) never runs on interrupt.
+                if ngrok_pid and psutil:
+                    try:
+                        process = psutil.Process(ngrok_pid)
+                        process.terminate()
+                        logger.debug(f"Terminated ngrok process {ngrok_pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as ngrok_error:
+                        logger.debug(f"Error terminating ngrok process: {type(ngrok_error).__name__}")
+                elif ngrok_pid:
+                    logger.warning("Cannot terminate ngrok process: psutil not available")
+
+                if cloudflare_pid and psutil:
+                    try:
+                        process = psutil.Process(cloudflare_pid)
+                        process.terminate()
+                        logger.debug(f"Terminated cloudflare process {cloudflare_pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as cf_error:
+                        logger.debug(f"Error terminating cloudflare process: {type(cf_error).__name__}")
+                elif cloudflare_pid:
+                    logger.warning("Cannot terminate cloudflare process: psutil not available")
+
+                if tailscale_enabled and tailscale_port:
+                    try:
+                        from ..util.tunneling import get_tailscale_funnel_status, stop_tailscale_funnel
+                        # Most failures here (bad key, daemon not running, etc.) happen before
+                        # Funnel is ever started - only tear down if it's actually live, so a
+                        # pre-start failure doesn't trigger a pointless (and if it ever falls
+                        # back to 'reset', potentially destructive) teardown attempt.
+                        if get_tailscale_funnel_status(tailscale_port):
+                            stop_tailscale_funnel(tailscale_port)
+                            logger.debug("Stopped Tailscale Funnel after startup failure")
+                    except Exception as ts_error:
+                        logger.debug(f"Error stopping Tailscale Funnel: {type(ts_error).__name__}")
+
+                ProcessInfo.clear()
+
+                if isinstance(e, KeyboardInterrupt):
+                    logger.info("Service startup interrupted by user")
+                    raise
+
+                logger.info(f"\n{str(e)}")
                 return
 
             # Custom logging filter to replace SSL handshake errors with user-friendly message
@@ -170,7 +242,7 @@ class ServiceManager:
 
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {process.pid}")
-                    ProcessInfo.save(process.pid, is_running, ngrok_pid, cloudflare_pid)
+                    ProcessInfo.save(process.pid, is_running, ngrok_pid, cloudflare_pid, tailscale_enabled=tailscale_enabled, tailscale_port=tailscale_port)
 
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -178,6 +250,7 @@ class ServiceManager:
 
             else:
                 cleanup_done = False
+                tailscale_cleanup_done = False
 
                 def cleanup_cloudflare_on_foreground_exit():
                     """Clean up Cloudflare tunnel when foreground service exits."""
@@ -247,9 +320,25 @@ class ServiceManager:
                         print(f"Unexpected error during Cloudflare cleanup: {e}")
                         logger.error(f"Unexpected error during Cloudflare cleanup: {e}")
 
+                def cleanup_tailscale_on_foreground_exit():
+                    """Stop Funnel when foreground service exits. Leaves tailnet auth/daemon untouched."""
+                    nonlocal tailscale_cleanup_done
+                    if not tailscale_enabled or tailscale_cleanup_done:
+                        return
+                    tailscale_cleanup_done = True
+                    try:
+                        from ..util.tunneling import stop_tailscale_funnel
+                        if stop_tailscale_funnel(tailscale_port):
+                            print("Tailscale Funnel stopped")
+                    except (KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception as e:
+                        logger.debug(f"Tailscale funnel cleanup failed: {e}")
+
                 def foreground_signal_handler(signum, frame):
                     """Handle interrupt signals in foreground mode."""
                     cleanup_cloudflare_on_foreground_exit()
+                    cleanup_tailscale_on_foreground_exit()
                     sys.exit(0)
 
                 # Set up signal handlers for foreground mode
@@ -261,9 +350,9 @@ class ServiceManager:
                 cls._flask_app = create_app()
                 cls._is_running = True
 
-                ProcessInfo.save(os.getpid(), is_running, ngrok_pid, cloudflare_pid)
+                ProcessInfo.save(os.getpid(), is_running, ngrok_pid, cloudflare_pid, tailscale_enabled=tailscale_enabled, tailscale_port=tailscale_port)
                 ssl_context = ServiceManager.get_ssl_context(config_data)
-                
+
                 try:
                     cls._flask_app.run(
                         host='0.0.0.0',
@@ -272,13 +361,25 @@ class ServiceManager:
                     )
                 finally:
                     cleanup_cloudflare_on_foreground_exit()
-            
+                    cleanup_tailscale_on_foreground_exit()
+
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
             return
         except Exception as e:
             logger.error(f"Error: Failed to start Commander Service")
             logger.error(f"Reason: {e}")
+            # Funnel may already be live even though the service itself failed to start -
+            # stop it so a failed startup doesn't leave a public endpoint with nothing behind it.
+            # Only if it's actually live though (most failures happen before Funnel ever starts).
+            if tailscale_enabled and tailscale_port:
+                try:
+                    from ..util.tunneling import get_tailscale_funnel_status, stop_tailscale_funnel
+                    if get_tailscale_funnel_status(tailscale_port):
+                        stop_tailscale_funnel(tailscale_port)
+                        logger.debug("Stopped Tailscale Funnel after service startup failure")
+                except Exception as cleanup_error:
+                    logger.debug(f"Failed to stop Tailscale Funnel during startup-failure rollback: {cleanup_error}")
             cls._handle_shutdown()
 
     @classmethod
@@ -389,6 +490,21 @@ class ServiceManager:
             if not cloudflare_stopped:
                 logger.debug("No Cloudflare tunnel processes found to stop")
 
+            # Stop Tailscale Funnel if it was enabled. Leaves tailnet auth/daemon untouched
+            # (tailscaled is system-wide; stopping it would affect other uses of this machine's Tailscale connection).
+            if process_info.tailscale_enabled and process_info.tailscale_port:
+                try:
+                    logger.debug(f"Attempting to stop Tailscale Funnel on port {process_info.tailscale_port}")
+                    from ..util.tunneling import stop_tailscale_funnel
+                    if stop_tailscale_funnel(process_info.tailscale_port):
+                        print("Tailscale Funnel stopped")
+                    else:
+                        logger.warning(f"Failed to stop Tailscale Funnel on port {process_info.tailscale_port}")
+                except Exception as e:
+                    logger.warning(f"Error stopping Tailscale: {str(e)}")
+            else:
+                logger.debug("No Tailscale Funnel to stop")
+
             # Stop the main service process
             if ServiceManager.kill_process_by_pid(process_info.pid):
                 logger.debug(f"Commander Service stopped (PID: {process_info.pid})")
@@ -441,17 +557,54 @@ class ServiceManager:
                     except psutil.NoSuchProcess:
                         status += f"\nCloudflare tunnel is Stopped (was PID: {process_info.cloudflare_pid})"
 
+                # Check Tailscale Funnel status if enabled
+                if process_info.tailscale_enabled and process_info.tailscale_port:
+                    try:
+                        from ..util.tunneling import get_tailscale_funnel_status, get_tailscale_funnel_url
+                        funnel_on = get_tailscale_funnel_status(process_info.tailscale_port)
+                        if funnel_on:
+                            current_url = get_tailscale_funnel_url(process_info.tailscale_port, max_retries=1, retry_delay=0.5)
+                            if current_url:
+                                status += f"\nTailscale Funnel is Running (Port: {process_info.tailscale_port}, URL: {current_url})"
+                            else:
+                                status += f"\nTailscale Funnel is Running (Port: {process_info.tailscale_port})"
+                        else:
+                            status += f"\nTailscale Funnel is Stopped (was Port: {process_info.tailscale_port})"
+                    except Exception as e:
+                        logger.debug(f"Error checking Tailscale funnel status: {e}")
+                        status += f"\nTailscale Funnel status could not be determined (Port: {process_info.tailscale_port})"
+
                 logger.debug(f"Service status check: {status}")
                 return status
             except psutil.NoSuchProcess:
-                ProcessInfo.clear()
-                pass
+                # Funnel is managed by tailscaled, not tied to the Commander process --
+                # an unexpected crash/SIGKILL of the service can leave it publicly
+                # exposed with nothing behind it. A read-only status check shouldn't
+                # mutate system network config though, so just report it here (not
+                # tear it down) -- run 'service-stop' to actually clean it up.
+                dangling_funnel_note = ""
+                if process_info.tailscale_enabled and process_info.tailscale_port:
+                    try:
+                        from ..util.tunneling import get_tailscale_funnel_status
+                        if get_tailscale_funnel_status(process_info.tailscale_port):
+                            dangling_funnel_note = (
+                                f"\nTailscale Funnel is still active on port {process_info.tailscale_port} "
+                                "after the Commander process stopped unexpectedly. Run 'service-stop' to clean it up."
+                            )
+                    except Exception as check_error:
+                        logger.debug(f"Failed to check dangling Tailscale Funnel: {check_error}")
+
+                # Keep the record when a Funnel is still live -- clearing it would drop the
+                # tailscale_port that service-stop needs to tear it down, leaving a public
+                # endpoint nothing can clean up (the note above would be unactionable).
+                if not dangling_funnel_note:
+                    ProcessInfo.clear()
+                status = "Commander Service is Stopped" + dangling_funnel_note
+                logger.debug(f"Service status check: {status}")
+                return status
         else:
             status = "No Commander Service is running currently"
             return status
-        status = "Commander Service is Stopped"
-        logger.debug(f"Service status check: {status}")
-        return status
     
     @staticmethod
     def kill_process_by_pid(pid: int):
