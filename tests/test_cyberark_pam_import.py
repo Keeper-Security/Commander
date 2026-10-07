@@ -3170,7 +3170,7 @@ class TestImportDuplicateDetection:
         from keepercommander.importer.imp_exp import prepare_record_add_or_update
 
         records_to_import, record_exists, _ = prepare_record_add_or_update(
-            False, False, self._params("other"), [self._record()],
+            False, False, self._params("other"), [self._record()], "cyberark",
         )
 
         assert len(records_to_import) == 1
@@ -3181,7 +3181,7 @@ class TestImportDuplicateDetection:
         from keepercommander.importer.imp_exp import prepare_record_add_or_update
 
         records_to_import, record_exists, _ = prepare_record_add_or_update(
-            False, False, self._params("target"), [self._record()],
+            False, False, self._params("target"), [self._record()], "cyberark",
         )
 
         assert records_to_import == []
