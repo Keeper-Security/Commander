@@ -583,9 +583,12 @@ class AuditLogSyslogBaseExport(AuditLogBaseExport, abc.ABC):
     def convert_event(self, props, event):
         pri = 13 * 8 + 6
         dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
-        ip = "-"
-        if 'ip_address' in event:
-            ip = event['ip_address']
+        # RFC 5424 section 6: HOSTNAME = NILVALUE / 1*255PRINTUSASCII (codes 33-126).
+        # Fall back to NILVALUE "-" for missing, null, empty, whitespace or non-printable values.
+        ip = str(event.get('ip_address') or '').strip()
+        if not ip or not all(33 <= ord(ch) <= 126 for ch in ip):
+            ip = '-'
+        ip = ip[:255]
 
         message = '<{0}>1 {1} {2} {3} - {4}'.format(pri, dt.strftime('%Y-%m-%dT%H:%M:%SZ'), ip, 'Keeper', event['id'])
 
