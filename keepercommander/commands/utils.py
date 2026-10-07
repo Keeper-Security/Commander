@@ -302,6 +302,9 @@ login_parser.add_argument('--config-file', dest='config_file', action='store_tru
                           help='Store config in config.json instead of the OS-native keychain '
                                '(use for headless servers, Docker, or CI/CD environments). '
                                'Equivalent to setting KEEPER_CONFIG_STORAGE=file.')
+login_parser.add_argument('--skip-scan', dest='skip_scan', action='store_true',
+                          help='Skip login-time BreachWatch/security scans and device registration; '
+                               'vault/enterprise sync still runs.')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -1751,6 +1754,7 @@ class LoginCommand(Command):
         params.password = password
         new_login = kwargs.get('new_login') is True
         skip_sync = kwargs.get('skip_sync') is True
+        skip_scan = kwargs.get('skip_scan') is True or params.skip_scan is True
 
         # Apply storage backend choice before login so that store_config_properties
         # (called inside api.login) honours the user's explicit preference.
@@ -1809,20 +1813,21 @@ class LoginCommand(Command):
             SyncDownCommand().execute(params, force=True)
             if params.is_enterprise_admin:
                 api.query_enterprise(params, True)
-            try:
-                if params.breach_watch:
-                    BreachWatchScanCommand().execute(params, suppress_no_op=True)
-                if params.enterprise_ec_key:
-                    SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
-            except Exception as e:
-                logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
-                logging.debug(e, exc_info=True)
+            if not skip_scan:
+                try:
+                    if params.breach_watch:
+                        BreachWatchScanCommand().execute(params, suppress_no_op=True)
+                    if params.enterprise_ec_key:
+                        SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
+                except Exception as e:
+                    logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
+                    logging.debug(e, exc_info=True)
 
-            # Auto-register device for persistent login (stores encrypted data key on server)
-            try:
-                loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
-            except Exception as e:
-                logging.debug(f'Device registration: {e}')
+                # Auto-register device for persistent login (stores encrypted data key on server)
+                try:
+                    loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
+                except Exception as e:
+                    logging.debug(f'Device registration: {e}')
 
             # Print config storage confirmation, mirroring KSM CLI's post-init messages.
             stored_backend = (params.config or {}).get(CONFIG_STORAGE_URL, '')

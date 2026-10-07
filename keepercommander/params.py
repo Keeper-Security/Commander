@@ -238,6 +238,7 @@ class KeeperParams:
         self.clone_code = None
         self.device_token = None
         self.device_private_key = None
+        self.skip_scan = False          # Skip login-time BreachWatch/security scans and device registration only.
         self.account_uid_bytes = None
         self.session_token_bytes = None
         self.record_type_cache = {}  # RT definitions only

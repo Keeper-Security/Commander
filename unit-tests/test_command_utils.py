@@ -6,10 +6,21 @@ from data_enterprise import EnterpriseEnvironment
 from data_vault import get_synced_params, get_user_params, get_connected_params, VaultEnvironment
 from helper import KeeperApiHelper
 from keepercommander.commands import utils
+from keepercommander.__main__ import parser as keeper_parser
 
 
 vault_env = VaultEnvironment()
 ent_env = EnterpriseEnvironment()
+
+
+class TestSkipScanCLI(TestCase):
+    def test_skip_scan_flag_before_or_after_command(self):
+        for argv in (['--skip-scan', 'list'], ['list', '--skip-scan']):
+            with self.subTest(argv=argv):
+                opts, remaining = keeper_parser.parse_known_args(argv)
+                self.assertEqual(opts.command, 'list')
+                self.assertTrue(opts.skip_scan)
+                self.assertEqual(remaining, [])
 
 
 class TestRegister(TestCase):
@@ -57,6 +68,64 @@ class TestRegister(TestCase):
             mock_getpass.return_value = ''
             cmd.execute(params)
             mock_login.assert_not_called()
+
+    def test_login_skip_scan_keeps_vault_and_enterprise_sync(self):
+        params = get_user_params()
+        params.config['config_storage'] = 'file'
+        params.skip_scan = True
+
+        def sync_down_effect(p, **kwargs):
+            p.sync_data = False
+
+        with mock.patch('keepercommander.api.login', side_effect=lambda p, **kwargs: setattr(p, 'session_token', 'token')), \
+                mock.patch.object(utils.SyncDownCommand, 'execute', side_effect=sync_down_effect) as sync_down, \
+                mock.patch('keepercommander.api.query_enterprise') as query_enterprise, \
+                mock.patch.object(utils.BreachWatchScanCommand, 'execute') as breachwatch_scan, \
+                mock.patch.object(utils.SyncSecurityDataCommand, 'execute') as sync_security_data, \
+                mock.patch('keepercommander.loginv3.LoginV3API.register_encrypted_data_key_for_device') as register_device:
+            params.is_enterprise_admin = True
+            params.breach_watch = True
+            params.enterprise_ec_key = b'enterprise-key'
+            utils.LoginCommand().execute(
+                params,
+                email=params.user,
+                password=params.password,
+                show_help=False
+            )
+
+        sync_down.assert_called_once_with(params, force=True)
+        query_enterprise.assert_called_once_with(params, True)
+        breachwatch_scan.assert_not_called()
+        sync_security_data.assert_not_called()
+        register_device.assert_not_called()
+        # Normal vault sync leaves the command-dispatch post-sync hook idle.
+        self.assertFalse(params.sync_data)
+
+    def test_login_without_skip_scan_keeps_post_login_work(self):
+        params = get_user_params()
+        params.config['config_storage'] = 'file'
+        params.is_enterprise_admin = True
+        params.breach_watch = True
+        params.enterprise_ec_key = b'enterprise-key'
+
+        with mock.patch('keepercommander.api.login', side_effect=lambda p, **kwargs: setattr(p, 'session_token', 'token')), \
+                mock.patch.object(utils.SyncDownCommand, 'execute') as sync_down, \
+                mock.patch('keepercommander.api.query_enterprise') as query_enterprise, \
+                mock.patch.object(utils.BreachWatchScanCommand, 'execute') as breachwatch_scan, \
+                mock.patch.object(utils.SyncSecurityDataCommand, 'execute') as sync_security_data, \
+                mock.patch('keepercommander.loginv3.LoginV3API.register_encrypted_data_key_for_device') as register_device:
+            utils.LoginCommand().execute(
+                params,
+                email=params.user,
+                password=params.password,
+                show_help=False
+            )
+
+        sync_down.assert_called_once_with(params, force=True)
+        query_enterprise.assert_called_once_with(params, True)
+        breachwatch_scan.assert_called_once_with(params, suppress_no_op=True)
+        sync_security_data.assert_called_once_with(params, record='@all', suppress_no_op=True)
+        register_device.assert_called_once_with(params)
 
     def test_logout(self):
         params = get_synced_params()
