@@ -915,7 +915,11 @@ class RecordAddCommand(Command, RecordEditMixin):
             is_self_destruct_link = False  # Time-based only, can be used multiple times
             logging.info('--send-email used without --self-destruct, creating 24 hour time-based share link')
 
-        folder_uid = FolderMixin.resolve_folder(params, kwargs.get('folder'))
+        folder_name = kwargs.get('folder')
+        folder_uid = FolderMixin.resolve_folder(params, folder_name)
+        if folder_name and not folder_uid:
+            raise CommandError('record-add', f'Folder "{folder_name}" cannot be found')
+        FolderMixin.assert_can_add_record(params, folder_uid, 'record-add')
 
         self.warnings.clear()
         title = kwargs.get('title')

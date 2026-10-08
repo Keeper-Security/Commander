@@ -29,7 +29,7 @@ from tabulate import tabulate
 
 from .. import api, crypto, utils, vault, resources, error
 from ..params import KeeperParams
-from ..subfolder import try_resolve_path, BaseFolderNode
+from ..subfolder import try_resolve_path, BaseFolderNode, SharedFolderNode, SharedFolderFolderNode
 
 aliases = {}                 # type: Dict[str, str]
 commands = {}                # type: Dict[str, Command]
@@ -1066,3 +1066,34 @@ class FolderMixin:
                 if folder and not record_name:
                     if folder.uid:
                         return folder.uid
+
+    @staticmethod
+    def assert_can_add_record(params, folder_uid, command=''):
+        # type: (KeeperParams, Optional[str], str) -> None
+        """Raise CommandError if the logged-in user lacks permission to add records to folder_uid."""
+        if not folder_uid:
+            return
+        folder = params.folder_cache.get(folder_uid)
+        if not isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
+            return
+        shared_folder_uid = folder.shared_folder_uid
+        shared_folder = params.shared_folder_cache.get(shared_folder_uid)
+        if not shared_folder:
+            return
+
+        account_uid = utils.base64_url_encode(params.account_uid_bytes) if params.account_uid_bytes else None
+        has_permission = account_uid is not None and shared_folder.get('owner_account_uid') == account_uid
+
+        if not has_permission:
+            user = next((u for u in shared_folder.get('users', []) if u.get('username') == params.user), None)
+            if user is not None:
+                has_permission = user.get('manage_records') is True
+
+        if not has_permission:
+            for team in shared_folder.get('teams', []):
+                if team.get('manage_records') and team.get('team_uid') in params.team_cache:
+                    has_permission = True
+                    break
+
+        if not has_permission:
+            raise error.CommandError(command, 'You do not have the required privilege to perform this operation.')
