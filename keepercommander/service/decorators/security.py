@@ -68,7 +68,33 @@ def _ip_matches(parsed_ip, pattern):
         return parsed_ip == ipaddress.ip_address(pattern)
     except ValueError:
         return False
-    
+
+
+def _is_valid_rate_limit(rate_limit_str):
+    """Validate rate limit string format.
+
+    Valid formats: "60/minute", "10/hour", "1000/day", or just "60"
+    """
+    if not rate_limit_str or not isinstance(rate_limit_str, str):
+        return False
+
+    rate_limit_str = rate_limit_str.strip()
+
+    # Check if it's just a number (shorthand for /minute)
+    if rate_limit_str.isdigit():
+        return True
+
+    # Check if it has the format "number/unit"
+    if '/' in rate_limit_str:
+        parts = rate_limit_str.split('/')
+        if len(parts) == 2:
+            number_part, unit_part = parts
+            if number_part.strip().isdigit() and unit_part.strip() in ('minute', 'hour', 'day'):
+                return True
+
+    return False
+
+
 def get_rate_limit():
     """Get configured rate limit from environment variable or config file.
 
@@ -77,13 +103,19 @@ def get_rate_limit():
     2. rate_limiting from config file
     3. Default: 60/minute
 
-    Logs a warning if config read fails to help detect propagation issues.
+    Logs a warning if config read fails or invalid values are detected.
     """
     # Check environment variable first (highest priority for streamlined mode)
     env_limit = os.environ.get('KEEPER_RATE_LIMIT')
     if env_limit:
-        logger.debug(f"Using rate limit from KEEPER_RATE_LIMIT env var: {env_limit}")
-        return env_limit
+        if _is_valid_rate_limit(env_limit):
+            logger.debug(f"Using rate limit from KEEPER_RATE_LIMIT env var: {env_limit}")
+            return env_limit
+        else:
+            logger.warning(f"Invalid KEEPER_RATE_LIMIT format: {env_limit}. "
+                          "Expected format: '60/minute', '10/hour', '1000/day', or '60'. "
+                          "Using default 60/minute.")
+            return "60/minute"
 
     # Try reading from config file
     try:
