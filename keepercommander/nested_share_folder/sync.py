@@ -20,6 +20,10 @@ def _ensure_nested_share_folder_attrs(params):
     if not hasattr(params, 'nested_share_folder_accesses'):
         params.nested_share_folder_accesses = {}
     if not hasattr(params, 'nested_share_folder_denied_accesses'):
+        # {folder_uid: {actor_uid: {...}}} - accessors whose inherited access
+        # was denied on this folder. Denied rows are hidden from the participant
+        # list, but the share command needs to know they exist so that a re-add
+        # becomes folderAccessRemoves (denial) followed by folderAccessAdds.
         params.nested_share_folder_denied_accesses = {}
     if not hasattr(params, 'nested_share_records'):
         params.nested_share_records = {}
@@ -335,18 +339,36 @@ def _process_folder_accesses(params, folder_accesses):
             _remember_denied_folder_access(params, folder_uid, access_uid, fa.accessType)
             continue
         # A live (non-denied) row supersedes any previously cached denial.
-        denied = params.nested_share_folder_denied_accesses.get(folder_uid)
-        if denied:
-            denied.pop(access_uid, None)
+        _forget_denied_folder_access(params, folder_uid, access_uid)
         params.nested_share_folder_accesses[folder_uid].append(fa_obj)
 
 
 def _remember_denied_folder_access(params, folder_uid, actor_uid, access_type=None):
+    # Deliberately not shaped like a folder access row (no 'access_type_uid'),
+    # so it can't be mistaken for a real grant.
     params.nested_share_folder_denied_accesses.setdefault(folder_uid, {})[actor_uid] = {
-        'folder_uid': folder_uid,
-        'access_type_uid': actor_uid,
+        'denied': True,
+        'actor_uid': actor_uid,
         'access_type': access_type,
     }
+
+
+def _forget_denied_folder_access(params, folder_uid, actor_uid):
+    """Drop a cached denial and, if none remain, clear the folder-level flag.
+
+    The folder key popped by _process_denied_folder_accesses() is not restored
+    here: _decrypt_nested_share_folder_keys() runs at the end of every sync and
+    re-derives the key for any folder missing 'folder_key_unencrypted'.
+    """
+    denied = params.nested_share_folder_denied_accesses.get(folder_uid)
+    if denied:
+        denied.pop(actor_uid, None)
+        if not denied:
+            params.nested_share_folder_denied_accesses.pop(folder_uid, None)
+    if not params.nested_share_folder_denied_accesses.get(folder_uid):
+        folder_obj = params.nested_share_folders.get(folder_uid)
+        if folder_obj is not None:
+            folder_obj.pop('denied', None)
 
 
 def _process_folder_sharing_states(params, folder_sharing_states):
@@ -380,9 +402,7 @@ def _process_revoked_folder_accesses(params, revoked_folder_accesses):
                 if fa['access_type_uid'] != actor_uid
             ]
         # Revoking the access row also removes a denial row for that actor.
-        denied = params.nested_share_folder_denied_accesses.get(folder_uid)
-        if denied:
-            denied.pop(actor_uid, None)
+        _forget_denied_folder_access(params, folder_uid, actor_uid)
 
 
 def _process_denied_folder_accesses(params, denied_folder_accesses):
