@@ -27,3 +27,4 @@ tests/*_results/
 tests/*.log
 tests/compliance_test.env
 docker-compose.yml
+uv.lock
