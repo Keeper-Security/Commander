@@ -276,3 +276,16 @@ URL: https://example.com"""
         self.assertEqual(result['data']['username'], 'testuser')
         self.assertEqual(result['data']['password'], 'testpass')
         self.assertEqual(result['data']['url'], 'https://example.com')
+
+    def test_parse_pam_project_export_returns_json_data(self):
+        """'pam project export' output is parsed into structured data, including aliases"""
+        payload = {"pam_configuration": {"title": "cfg"}, "pam_data": {"resources": [{"host": "db"}]}}
+        for command in ('pam project export -p UID', 'pam p export --project-uid UID'):
+            result = KeeperResponseParser.parse_response(command, json.dumps(payload, indent=2))
+            self.assertEqual(result['status'], 'success')
+            self.assertEqual(result['command'], 'pam project export')
+            self.assertEqual(result['data'], payload)
+
+    def test_parse_pam_project_export_non_json(self):
+        result = KeeperResponseParser.parse_response('pam project export -p UID', 'not json')
+        self.assertEqual(result['status'], 'error')

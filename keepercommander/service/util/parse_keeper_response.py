@@ -71,6 +71,9 @@ class KeeperResponseParser:
         Returns:
             str: Method name to call for parsing
         """
+        if KeeperResponseParser._is_pam_project_export(command):
+            return '_parse_pam_project_export_command'
+
         # Check for JSON format first (highest priority)
         if '--format=json' in command or '--format json' in command:
             return '_parse_json_format_command'
@@ -154,9 +157,9 @@ class KeeperResponseParser:
         parser_method = getattr(KeeperResponseParser, parser_method_name)
         
         # Call the parser method with appropriate arguments
-        if parser_method_name in ['_parse_generate_command', '_parse_json_format_command', 
-                                '_parse_pam_project_import_command', '_parse_enterprise_push_command',
-                                '_parse_epm_policy_add_command']:
+        if parser_method_name in ['_parse_generate_command', '_parse_json_format_command',
+                                '_parse_pam_project_import_command', '_parse_pam_project_export_command',
+                                '_parse_enterprise_push_command', '_parse_epm_policy_add_command']:
             return parser_method(command, response_str)
         else:
             return parser_method(response_str) if parser_method_name != '_parse_logging_based_command' else parser_method(command, response_str)
@@ -820,6 +823,31 @@ class KeeperResponseParser:
         
         return result
     
+    @staticmethod
+    def _is_pam_project_export(command: str) -> bool:
+        """Whether command is 'pam project export' (alias-aware)."""
+        from .verified_command import Verifycommand
+        try:
+            tokens = Verifycommand.tokenize_service_command(command)
+        except ValueError:
+            return False
+        return Verifycommand._is_pam_project_export(tokens)
+
+    @staticmethod
+    def _parse_pam_project_export_command(command: str, response: str) -> Dict[str, Any]:
+        """Parse 'pam project export' output; the project JSON is returned in 'data'."""
+        result = {
+            "status": "success",
+            "command": "pam project export",
+            "data": None,
+        }
+        try:
+            result["data"] = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            result["status"] = "error"
+            result["error"] = response.strip() or "Invalid JSON response"
+        return result
+
     @staticmethod
     def _parse_json_format_command(command: str, response: str) -> Dict[str, Any]:
         """
