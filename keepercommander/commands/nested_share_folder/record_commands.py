@@ -272,6 +272,12 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     self.errors.clear()
                     record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
                     if not record_uid:
+                        # Check if it's a classic record that user is trying to update
+                        record_cache = getattr(params, 'record_cache', {})
+                        if identifier in record_cache:
+                            raise CommandError('nsf-record-update',
+                                               f"Record '{identifier}' is a classic vault record. "
+                                               "Use 'record-update' to update classic records.")
                         raise CommandError('nsf-record-update',
                                            f"Record '{identifier}' not found")
                     ensure_nested_share_record(params, record_uid, 'nsf-record-update',
