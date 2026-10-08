@@ -19,6 +19,12 @@ def _ensure_nested_share_folder_attrs(params):
         params.nested_share_folder_keys = {}
     if not hasattr(params, 'nested_share_folder_accesses'):
         params.nested_share_folder_accesses = {}
+    if not hasattr(params, 'nested_share_folder_denied_accesses'):
+        # {folder_uid: {actor_uid: {...}}} - accessors whose inherited access
+        # was denied on this folder. Denied rows are hidden from the participant
+        # list, but the share command needs to know they exist so that a re-add
+        # becomes folderAccessRemoves (denial) followed by folderAccessAdds.
+        params.nested_share_folder_denied_accesses = {}
     if not hasattr(params, 'nested_share_records'):
         params.nested_share_records = {}
     if not hasattr(params, 'nested_share_record_data'):
@@ -73,6 +79,7 @@ def clear_caches(params):
     params.nested_share_folders.clear()
     params.nested_share_folder_keys.clear()
     params.nested_share_folder_accesses.clear()
+    params.nested_share_folder_denied_accesses.clear()
     params.nested_share_records.clear()
     params.nested_share_record_data.clear()
     params.nested_share_record_keys.clear()
@@ -296,6 +303,7 @@ def _process_folder_accesses(params, folder_accesses):
             'access_role_type': fa.accessRoleType if fa.accessRoleType else 0,
             'inherited': fa.inherited if fa.inherited else False,
             'hidden': fa.hidden if fa.hidden else False,
+            'denied_access': bool(getattr(fa, 'deniedAccess', False)),
             'date_created': fa.dateCreated if fa.dateCreated else 0,
             'last_modified': fa.lastModified if fa.lastModified else 0,
         }
@@ -327,7 +335,40 @@ def _process_folder_accesses(params, folder_accesses):
                 'can_list_records':     p.canListRecords,
                 'can_list_folders':     p.canListFolders,
             }
+        if fa_obj['denied_access']:
+            _remember_denied_folder_access(params, folder_uid, access_uid, fa.accessType)
+            continue
+        # A live (non-denied) row supersedes any previously cached denial.
+        _forget_denied_folder_access(params, folder_uid, access_uid)
         params.nested_share_folder_accesses[folder_uid].append(fa_obj)
+
+
+def _remember_denied_folder_access(params, folder_uid, actor_uid, access_type=None):
+    # Deliberately not shaped like a folder access row (no 'access_type_uid'),
+    # so it can't be mistaken for a real grant.
+    params.nested_share_folder_denied_accesses.setdefault(folder_uid, {})[actor_uid] = {
+        'denied': True,
+        'actor_uid': actor_uid,
+        'access_type': access_type,
+    }
+
+
+def _forget_denied_folder_access(params, folder_uid, actor_uid):
+    """Drop a cached denial and, if none remain, clear the folder-level flag.
+
+    The folder key popped by _process_denied_folder_accesses() is not restored
+    here: _decrypt_nested_share_folder_keys() runs at the end of every sync and
+    re-derives the key for any folder missing 'folder_key_unencrypted'.
+    """
+    denied = params.nested_share_folder_denied_accesses.get(folder_uid)
+    if denied:
+        denied.pop(actor_uid, None)
+        if not denied:
+            params.nested_share_folder_denied_accesses.pop(folder_uid, None)
+    if not params.nested_share_folder_denied_accesses.get(folder_uid):
+        folder_obj = params.nested_share_folders.get(folder_uid)
+        if folder_obj is not None:
+            folder_obj.pop('denied', None)
 
 
 def _process_folder_sharing_states(params, folder_sharing_states):
@@ -360,6 +401,8 @@ def _process_revoked_folder_accesses(params, revoked_folder_accesses):
                 fa for fa in params.nested_share_folder_accesses[folder_uid]
                 if fa['access_type_uid'] != actor_uid
             ]
+        # Revoking the access row also removes a denial row for that actor.
+        _forget_denied_folder_access(params, folder_uid, actor_uid)
 
 
 def _process_denied_folder_accesses(params, denied_folder_accesses):
@@ -373,6 +416,8 @@ def _process_denied_folder_accesses(params, denied_folder_accesses):
                     fa for fa in params.nested_share_folder_accesses[folder_uid]
                     if fa['access_type_uid'] != actor_uid
                 ]
+            _remember_denied_folder_access(
+                params, folder_uid, actor_uid, getattr(dfa, 'accessType', None))
             if folder_uid in params.nested_share_folders:
                 folder_obj = params.nested_share_folders[folder_uid]
                 folder_obj.pop('folder_key_unencrypted', None)
@@ -603,6 +648,7 @@ def _process_removed_folders(params, removed_folders):
         params.nested_share_folders.pop(folder_uid, None)
         params.nested_share_folder_keys.pop(folder_uid, None)
         params.nested_share_folder_accesses.pop(folder_uid, None)
+        params.nested_share_folder_denied_accesses.pop(folder_uid, None)
         params.nested_share_folder_sharing_states.pop(folder_uid, None)
         params.nested_share_folder_records.pop(folder_uid, None)
         params.subfolder_cache.pop(folder_uid, None)
@@ -1207,3 +1253,109 @@ def _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj):
                 is_owner,
                 rd_obj['user_account_uid']
             )
+
+
+# ---------------------------------------------------------------------------
+# Folder access state helpers (used by the nested-share folder share command)
+# ---------------------------------------------------------------------------
+
+FOLDER_ACCESS_NONE = 'none'
+FOLDER_ACCESS_INHERITED = 'inherited'
+FOLDER_ACCESS_DIRECT = 'direct'
+FOLDER_ACCESS_DENIED = 'denied'
+
+# Request plan steps. Each step maps to one folder access request list.
+FOLDER_ACCESS_ADD = 'folderAccessAdds'
+FOLDER_ACCESS_UPDATE = 'folderAccessUpdates'
+FOLDER_ACCESS_REMOVE = 'folderAccessRemoves'
+
+
+def get_folder_access_state(params, folder_uid, actor_uid):
+    """Classify an accessor's relationship to a nested-share folder.
+
+    Returns one of FOLDER_ACCESS_DENIED / DIRECT / INHERITED / NONE.
+    A denial wins over any inherited row for the same actor.
+    """
+    _ensure_nested_share_folder_attrs(params)
+    if actor_uid in (params.nested_share_folder_denied_accesses.get(folder_uid) or {}):
+        return FOLDER_ACCESS_DENIED
+    rows = [fa for fa in (params.nested_share_folder_accesses.get(folder_uid) or [])
+            if fa.get('access_type_uid') == actor_uid]
+    if any(not fa.get('inherited') for fa in rows):
+        return FOLDER_ACCESS_DIRECT
+    if rows:
+        return FOLDER_ACCESS_INHERITED
+    return FOLDER_ACCESS_NONE
+
+
+def folder_access_state_from_accessors(accessors):
+    """Classify server accessor rows (``get_folder_access_v3`` shape) for one actor.
+
+    ``accessors`` is every row returned for the same actor on one folder (the
+    server may report an inherited row alongside a direct or denied one).
+    A denial wins, then any direct (non-inherited) row, then inherited.
+    """
+    rows = [a for a in (accessors or []) if a]
+    if not rows:
+        return FOLDER_ACCESS_NONE
+    if any(a.get('denied_access') for a in rows):
+        return FOLDER_ACCESS_DENIED
+    if any(not a.get('inherited') for a in rows):
+        return FOLDER_ACCESS_DIRECT
+    return FOLDER_ACCESS_INHERITED
+
+
+def plan_folder_access_change(params, folder_uid, actor_uid, action, state=None):
+    """Return the ordered request steps for a share change on a child folder.
+
+    ``action`` is one of ``'grant'`` (set/change a role), ``'deny'`` or
+    ``'remove'``. Each step is a dict ``{'request': <list name>,
+    'include_folder_key': bool, 'denied_access': bool}``. Steps must be sent
+    sequentially; a later step is sent only if the previous one succeeded.
+
+    ``state`` should be supplied by callers that looked the accessor up on the
+    server (``folder_access_state_from_accessors``). The sync cache only holds
+    the caller's own access row, so for other accessors the cache-based
+    ``get_folder_access_state`` is only a fallback.
+
+    Rules:
+      * inherited -> grant : folderAccessAdds + recipient-encrypted folderKey
+        (an update on an inherited row cannot carry a folder key for another
+        user, so the child would be orphaned when the parent is revoked).
+      * denied    -> grant : folderAccessRemoves (denial), then
+        folderAccessAdds + folderKey.
+      * none      -> grant : folderAccessAdds + folderKey.
+      * direct    -> grant : folderAccessUpdates, no folderKey.
+      * inherited -> deny  : folderAccessUpdates with deniedAccess=True, no folderKey.
+      * denied    -> deny / remove : nothing to send.
+      * direct    -> remove: folderAccessRemoves.
+      * none      -> remove: folderAccessRemoves (let the server report it).
+    Raises ValueError for transitions that are not allowed.
+    """
+    if state is None:
+        state = get_folder_access_state(params, folder_uid, actor_uid)
+    add_with_key = {'request': FOLDER_ACCESS_ADD, 'include_folder_key': True, 'denied_access': False}
+    remove = {'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False}
+
+    if action == 'grant':
+        if state == FOLDER_ACCESS_DIRECT:
+            return [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False, 'denied_access': False}]
+        if state == FOLDER_ACCESS_DENIED:
+            return [remove, add_with_key]
+        return [add_with_key]  # inherited or none
+
+    if action == 'deny':
+        if state == FOLDER_ACCESS_INHERITED:
+            return [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False, 'denied_access': True}]
+        if state == FOLDER_ACCESS_DENIED:
+            return []
+        raise ValueError('Only inherited access can be denied (current state: %s)' % state)
+
+    if action == 'remove':
+        if state in (FOLDER_ACCESS_DIRECT, FOLDER_ACCESS_NONE):
+            return [remove]
+        if state == FOLDER_ACCESS_DENIED:
+            return []
+        raise ValueError('Inherited access cannot be removed directly; it comes from a parent folder')
+
+    raise ValueError('Unknown folder access action: %s' % action)
