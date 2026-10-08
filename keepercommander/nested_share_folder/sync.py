@@ -19,6 +19,8 @@ def _ensure_nested_share_folder_attrs(params):
         params.nested_share_folder_keys = {}
     if not hasattr(params, 'nested_share_folder_accesses'):
         params.nested_share_folder_accesses = {}
+    if not hasattr(params, 'nested_share_folder_denied_accesses'):
+        params.nested_share_folder_denied_accesses = {}
     if not hasattr(params, 'nested_share_records'):
         params.nested_share_records = {}
     if not hasattr(params, 'nested_share_record_data'):
@@ -73,6 +75,7 @@ def clear_caches(params):
     params.nested_share_folders.clear()
     params.nested_share_folder_keys.clear()
     params.nested_share_folder_accesses.clear()
+    params.nested_share_folder_denied_accesses.clear()
     params.nested_share_records.clear()
     params.nested_share_record_data.clear()
     params.nested_share_record_keys.clear()
@@ -296,6 +299,7 @@ def _process_folder_accesses(params, folder_accesses):
             'access_role_type': fa.accessRoleType if fa.accessRoleType else 0,
             'inherited': fa.inherited if fa.inherited else False,
             'hidden': fa.hidden if fa.hidden else False,
+            'denied_access': bool(getattr(fa, 'deniedAccess', False)),
             'date_created': fa.dateCreated if fa.dateCreated else 0,
             'last_modified': fa.lastModified if fa.lastModified else 0,
         }
@@ -327,7 +331,22 @@ def _process_folder_accesses(params, folder_accesses):
                 'can_list_records':     p.canListRecords,
                 'can_list_folders':     p.canListFolders,
             }
+        if fa_obj['denied_access']:
+            _remember_denied_folder_access(params, folder_uid, access_uid, fa.accessType)
+            continue
+        # A live (non-denied) row supersedes any previously cached denial.
+        denied = params.nested_share_folder_denied_accesses.get(folder_uid)
+        if denied:
+            denied.pop(access_uid, None)
         params.nested_share_folder_accesses[folder_uid].append(fa_obj)
+
+
+def _remember_denied_folder_access(params, folder_uid, actor_uid, access_type=None):
+    params.nested_share_folder_denied_accesses.setdefault(folder_uid, {})[actor_uid] = {
+        'folder_uid': folder_uid,
+        'access_type_uid': actor_uid,
+        'access_type': access_type,
+    }
 
 
 def _process_folder_sharing_states(params, folder_sharing_states):
@@ -360,6 +379,10 @@ def _process_revoked_folder_accesses(params, revoked_folder_accesses):
                 fa for fa in params.nested_share_folder_accesses[folder_uid]
                 if fa['access_type_uid'] != actor_uid
             ]
+        # Revoking the access row also removes a denial row for that actor.
+        denied = params.nested_share_folder_denied_accesses.get(folder_uid)
+        if denied:
+            denied.pop(actor_uid, None)
 
 
 def _process_denied_folder_accesses(params, denied_folder_accesses):
@@ -373,6 +396,8 @@ def _process_denied_folder_accesses(params, denied_folder_accesses):
                     fa for fa in params.nested_share_folder_accesses[folder_uid]
                     if fa['access_type_uid'] != actor_uid
                 ]
+            _remember_denied_folder_access(
+                params, folder_uid, actor_uid, getattr(dfa, 'accessType', None))
             if folder_uid in params.nested_share_folders:
                 folder_obj = params.nested_share_folders[folder_uid]
                 folder_obj.pop('folder_key_unencrypted', None)
@@ -603,6 +628,7 @@ def _process_removed_folders(params, removed_folders):
         params.nested_share_folders.pop(folder_uid, None)
         params.nested_share_folder_keys.pop(folder_uid, None)
         params.nested_share_folder_accesses.pop(folder_uid, None)
+        params.nested_share_folder_denied_accesses.pop(folder_uid, None)
         params.nested_share_folder_sharing_states.pop(folder_uid, None)
         params.nested_share_folder_records.pop(folder_uid, None)
         params.subfolder_cache.pop(folder_uid, None)
@@ -1207,3 +1233,84 @@ def _backfill_nsf_record_access_caches(params, record_uid, record_obj, rd_obj):
                 is_owner,
                 rd_obj['user_account_uid']
             )
+
+
+# ---------------------------------------------------------------------------
+# Folder access state helpers (used by the nested-share folder share command)
+# ---------------------------------------------------------------------------
+
+FOLDER_ACCESS_NONE = 'none'
+FOLDER_ACCESS_INHERITED = 'inherited'
+FOLDER_ACCESS_DIRECT = 'direct'
+FOLDER_ACCESS_DENIED = 'denied'
+
+# Request plan steps. Each step maps to one folder access request list.
+FOLDER_ACCESS_ADD = 'folderAccessAdds'
+FOLDER_ACCESS_UPDATE = 'folderAccessUpdates'
+FOLDER_ACCESS_REMOVE = 'folderAccessRemoves'
+
+
+def get_folder_access_state(params, folder_uid, actor_uid):
+    """Classify an accessor's relationship to a nested-share folder.
+
+    Returns one of FOLDER_ACCESS_DENIED / DIRECT / INHERITED / NONE.
+    A denial wins over any inherited row for the same actor.
+    """
+    _ensure_nested_share_folder_attrs(params)
+    if actor_uid in (params.nested_share_folder_denied_accesses.get(folder_uid) or {}):
+        return FOLDER_ACCESS_DENIED
+    rows = [fa for fa in (params.nested_share_folder_accesses.get(folder_uid) or [])
+            if fa.get('access_type_uid') == actor_uid]
+    if any(not fa.get('inherited') for fa in rows):
+        return FOLDER_ACCESS_DIRECT
+    if rows:
+        return FOLDER_ACCESS_INHERITED
+    return FOLDER_ACCESS_NONE
+
+
+def plan_folder_access_change(params, folder_uid, actor_uid, action):
+    """Return the ordered request steps for a share change on a child folder.
+
+    ``action`` is one of ``'grant'`` (set/change a role), ``'deny'`` or
+    ``'remove'``. Each step is a dict ``{'request': <list name>,
+    'include_folder_key': bool, 'denied_access': bool}``. Steps must be sent
+    sequentially; a later step is sent only if the previous one succeeded.
+
+    Rules:
+      * inherited -> grant : folderAccessAdds + recipient-encrypted folderKey
+        (an update on an inherited row cannot carry a folder key for another
+        user, so the child would be orphaned when the parent is revoked).
+      * denied    -> grant : folderAccessRemoves (denial), then
+        folderAccessAdds + folderKey.
+      * none      -> grant : folderAccessAdds + folderKey.
+      * direct    -> grant : folderAccessUpdates, no folderKey.
+      * inherited -> deny  : folderAccessUpdates with deniedAccess=True, no folderKey.
+      * direct    -> remove: folderAccessRemoves.
+    Raises ValueError for transitions that are not allowed.
+    """
+    state = get_folder_access_state(params, folder_uid, actor_uid)
+    add_with_key = {'request': FOLDER_ACCESS_ADD, 'include_folder_key': True, 'denied_access': False}
+
+    if action == 'grant':
+        if state == FOLDER_ACCESS_DIRECT:
+            return [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False, 'denied_access': False}]
+        if state == FOLDER_ACCESS_DENIED:
+            return [{'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False},
+                    add_with_key]
+        return [add_with_key]  # inherited or none
+
+    if action == 'deny':
+        if state == FOLDER_ACCESS_INHERITED:
+            return [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False, 'denied_access': True}]
+        if state == FOLDER_ACCESS_DENIED:
+            return []
+        raise ValueError('Only inherited access can be denied (current state: %s)' % state)
+
+    if action == 'remove':
+        if state == FOLDER_ACCESS_DIRECT:
+            return [{'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False}]
+        if state == FOLDER_ACCESS_INHERITED:
+            raise ValueError('Inherited access cannot be removed directly; it comes from a parent folder')
+        raise ValueError('Nothing to remove (current state: %s)' % state)
+
+    raise ValueError('Unknown folder access action: %s' % action)
