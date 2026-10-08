@@ -820,7 +820,7 @@ class CyberArkImporter(BaseImporter):
             )
         return result
 
-    def fetch_all_safes(self, pvwa_host, authorization_token, safes_filter=None, api_page_size_limit=API_PAGE_SIZE_LIMIT, timeout=TIMEOUT):
+    def fetch_all_safes(self, pvwa_host, authorization_token, timeout, safes_filter=None, api_page_size_limit=API_PAGE_SIZE_LIMIT):
         """Return full safe objects from PVWA (not just names).
 
         ``safes_filter`` is an optional set of safe names to restrict the result.
@@ -865,7 +865,7 @@ class CyberArkImporter(BaseImporter):
             ]
         return safes
 
-    def fetch_safe_members(self, pvwa_host, authorization_token, safe_url_id, timeout=TIMEOUT, api_page_size_limit=API_PAGE_SIZE_LIMIT):
+    def fetch_safe_members(self, pvwa_host, authorization_token, timeout, safe_url_id, api_page_size_limit=API_PAGE_SIZE_LIMIT):
         """Fetch all members of a CyberArk safe (excluding predefined system members)."""
         if not safe_url_id:
             return []
