@@ -92,15 +92,18 @@ class KeeperResponseParser:
         exact_patterns = {
             'generate': '_parse_generate_command',
             'ls': '_parse_ls_command',
-            'tree': '_parse_tree_command', 
+            'tree': '_parse_tree_command',
             'whoami': '_parse_whoami_command',
             'this-device': '_parse_this_device_command',
             'mkdir': '_parse_mkdir_command',
             'record-add': '_parse_record_add_command',
             'get': '_parse_get_command',
             'download': '_parse_get_command',
+            'nsf-mkdir': '_parse_nsf_mkdir_command',
+            'nsf-rmdir': '_parse_nsf_rmdir_command',
+            'nsf-rndir': '_parse_nsf_rndir_command',
         }
-        
+
         for pattern, method_name in exact_patterns.items():
             if command.startswith(pattern):
                 return method_name
@@ -112,12 +115,12 @@ class KeeperResponseParser:
     def parse_response(command: str, response: Any, log_output: str = None) -> Dict[str, Any]:
         """
         Main parser that routes to specific command parsers based on the command type.
-        
+
         Args:
             command (str): The executed command
             response (Any): Response from the keeper commander
             log_output (str, optional): Captured log output from command execution
-            
+
         Returns:
             Dict[str, Any]: Structured JSON response
         """
@@ -130,26 +133,23 @@ class KeeperResponseParser:
             }
         # Preprocess response once
         response_str, is_from_log = KeeperResponseParser._preprocess_response(response, log_output)
-        
+
         # Handle completely empty responses
         if not response_str:
             return KeeperResponseParser._handle_empty_response(command)
-        
+
         # Find the appropriate parser method (used for both log and non-log paths)
         parser_method_name = KeeperResponseParser._find_parser_method(command)
 
-        # If from log output, use command-specific parser if available, else generic logging parser
-        if is_from_log:
-            return KeeperResponseParser._parse_logging_based_command(command, response_str)
-        
-        parser_method_name = KeeperResponseParser._find_parser_method(command)
         parser_method = getattr(KeeperResponseParser, parser_method_name)
-        
+
         # Call the parser method with appropriate arguments
-        if parser_method_name in ['_parse_generate_command', '_parse_json_format_command', 
+        if parser_method_name in ['_parse_generate_command', '_parse_json_format_command',
                                 '_parse_pam_project_import_command', '_parse_enterprise_push_command',
                                 '_parse_epm_policy_add_command']:
             return parser_method(command, response_str)
+        elif parser_method_name in ['_parse_nsf_mkdir_command', '_parse_nsf_rmdir_command', '_parse_nsf_rndir_command']:
+            return parser_method(response_str, parser_method_name.replace('_parse_', '').replace('_command', ''))
         else:
             return parser_method(response_str) if parser_method_name != '_parse_logging_based_command' else parser_method(command, response_str)
 
@@ -564,6 +564,69 @@ class KeeperResponseParser:
         return result
 
     @staticmethod
+    def _parse_nsf_mkdir_command(response: str, command_name: str) -> Dict[str, Any]:
+        """Parse nsf-mkdir command output."""
+        return KeeperResponseParser._parse_nsf_folder_command(response, 'nsf-mkdir')
+
+    @staticmethod
+    def _parse_nsf_rmdir_command(response: str, command_name: str) -> Dict[str, Any]:
+        """Parse nsf-rmdir command output."""
+        return KeeperResponseParser._parse_nsf_folder_command(response, 'nsf-rmdir')
+
+    @staticmethod
+    def _parse_nsf_rndir_command(response: str, command_name: str) -> Dict[str, Any]:
+        """Parse nsf-rndir command output."""
+        return KeeperResponseParser._parse_nsf_folder_command(response, 'nsf-rndir')
+
+    @staticmethod
+    def _parse_nsf_folder_command(response: str, command_name: str) -> Dict[str, Any]:
+        """Parse NSF folder commands (nsf-mkdir, nsf-rmdir, nsf-rndir) to extract folder UID.
+
+        NSF commands return the folder UID directly from the API result, immune to concurrent log noise.
+        Extract UID directly and populate both data.folder_uid and top-level message field.
+        """
+        response_str = response.strip()
+        lines = [ln.strip() for ln in response_str.split('\n') if ln.strip()]
+
+        result = {
+            "status": "success",
+            "command": command_name,
+            "data": None
+        }
+
+        for line in lines:
+            try:
+                data = json.loads(line)
+                if isinstance(data, dict) and 'folder_uid' in data:
+                    folder_uid = data["folder_uid"]
+                    result["data"] = {
+                        "folder_uid": folder_uid,
+                        "path": data.get("path"),
+                        "name": data.get("name")
+                    }
+                    result["message"] = folder_uid
+                    return result
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        last_line = lines[-1] if lines else response_str
+        if re.match(r'^[a-zA-Z0-9_+/=-]+$', last_line):
+            result["data"] = {
+                "folder_uid": last_line
+            }
+            result["message"] = last_line
+        else:
+            uid_match = re.search(r'folder_uid=([a-zA-Z0-9_+/=-]+)', last_line)
+            if uid_match:
+                folder_uid = uid_match.group(1)
+                result["data"] = {
+                    "folder_uid": folder_uid
+                }
+                result["message"] = folder_uid
+
+        return result
+
+    @staticmethod
     def _parse_mkdir_command(response: str) -> Dict[str, Any]:
         """Parse 'mkdir' command output to extract folder UID, path, and name."""
         response_str = response.strip()
@@ -579,26 +642,31 @@ class KeeperResponseParser:
             try:
                 data = json.loads(line)
                 if isinstance(data, dict) and 'folder_uid' in data:
+                    folder_uid = data["folder_uid"]
                     result["data"] = {
-                        "folder_uid": data["folder_uid"],
+                        "folder_uid": folder_uid,
                         "path": data.get("path"),
                         "name": data.get("name")
                     }
+                    result["message"] = folder_uid
                     return result
             except (json.JSONDecodeError, TypeError):
                 pass
 
         last_line = lines[-1] if lines else response_str
-        if re.match(r'^[a-zA-Z0-9_-]+$', last_line):
+        if re.match(r'^[a-zA-Z0-9_+/=-]+$', last_line):
             result["data"] = {
                 "folder_uid": last_line
             }
+            result["message"] = last_line
         else:
-            uid_match = re.search(r'folder_uid=([a-zA-Z0-9_-]+)', last_line)
+            uid_match = re.search(r'folder_uid=([a-zA-Z0-9_+/=-]+)', last_line)
             if uid_match:
+                folder_uid = uid_match.group(1)
                 result["data"] = {
-                    "folder_uid": uid_match.group(1)
+                    "folder_uid": folder_uid
                 }
+                result["message"] = folder_uid
 
         return result
 
