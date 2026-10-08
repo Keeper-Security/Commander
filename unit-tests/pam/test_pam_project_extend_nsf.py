@@ -3,7 +3,11 @@ from unittest.mock import patch
 
 import keepercommander.commands.record  # noqa: F401
 
-from keepercommander.commands.pam_import.extend import PAMProjectExtendCommand
+from keepercommander.commands.pam_import.extend import (
+    PAMProjectExtendCommand,
+    _drop_folder_paths,
+    _resolve_folder_option,
+)
 from keepercommander.subfolder import BaseFolderNode, NestedShareFolderNode, RootFolderNode
 
 
@@ -260,3 +264,202 @@ def test_nsf_paths_to_be_created_classifies_nested_new_paths():
 
     # A new child of a new NSF folder is still NSF even though its UID does not exist yet.
     assert paths == ['NSF Project - Users/Admins', 'NSF Project - Users/Admins/Tier2']
+
+
+# --- autodetect_folders (KC-1491) ---
+
+def _shf(uid, name, folder_tree=None):
+    return {'uid': uid, 'name': name, 'folder_tree': folder_tree or {}}
+
+
+def _new_project(shared_folders, resources=1, users=1, folders=None):
+    mapped_resources = [SimpleNamespace(type='pamDatabase', title=f'DB{i}', folder_path='',
+                                        _extend_tag='new', users=[]) for i in range(resources)]
+    mapped_users = [SimpleNamespace(type='pamUser', title=f'U{i}', folder_path='',
+                                    _extend_tag='new') for i in range(users)]
+    return {
+        'ksm_shared_folders': shared_folders,
+        'mapped_resources': mapped_resources,
+        'mapped_users': mapped_users,
+        'folders': folders if folders is not None else {},
+        'error_count': 0,
+    }
+
+
+def _autodetect(project, types_by_folder):
+    """Run autodetect_folders with records faked as (uid, title, type, login) 4-tuples per folder uid."""
+    def fake_records(_params, folder_uid):
+        return [(f'{folder_uid}-{i}', 'title', rtype, '') for i, rtype in enumerate(types_by_folder.get(folder_uid, []))]
+
+    with patch('keepercommander.commands.pam_import.extend._get_records_in_folder', side_effect=fake_records):
+        return PAMProjectExtendCommand().autodetect_folders(SimpleNamespace(), project)
+
+
+def test_autodetect_uses_resources_and_users_folder_names():
+    project = _new_project([_shf('u', 'Proj - Users'), _shf('r', 'Proj - Resources')])
+
+    assert _autodetect(project, {}) == []
+    assert project['folders'] == {'resources_folder_uid': 'r', 'users_folder_uid': 'u'}
+
+
+def test_autodetect_finds_folders_from_existing_records():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta')])
+
+    assert _autodetect(project, {'a': ['pamMachine'], 'b': ['pamUser']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'b'}
+
+
+def test_autodetect_looks_into_subfolders_of_shared_folder():
+    tree = {'Prod': {'uid': 'a_prod', 'name': 'Prod', 'subfolders': {}}}
+    project = _new_project([_shf('a', 'Alpha', tree), _shf('b', 'Beta')])
+
+    assert _autodetect(project, {'a_prod': ['pamDirectory'], 'b': ['login']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'b'}
+
+
+def test_autodetect_does_not_put_resources_into_the_only_non_empty_users_folder(capsys):
+    # KC-1491: Resources folder is empty, Users folder holds the admin pamUser.
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta')], users=0)
+
+    errors = _autodetect(project, {'b': ['pamUser']})
+
+    assert len(errors) == 1
+    assert 'resources folder' in errors[0] and '--resources-folder' in errors[0]
+    assert project['folders'] == {}
+    assert project['error_count'] == 1
+    assert 'Total: 1 errors' in capsys.readouterr().out
+
+
+def test_autodetect_errors_on_single_shared_folder_without_resource_records():
+    project = _new_project([_shf('u', 'Only Users')], users=0)
+
+    assert len(_autodetect(project, {'u': ['pamUser']})) == 1
+    assert project['folders'] == {}
+
+
+def test_autodetect_errors_when_resources_live_in_several_folders():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')], users=0)
+
+    errors = _autodetect(project, {'a': ['pamMachine'], 'b': ['pamDatabase']})
+
+    assert len(errors) == 1
+    assert 'multiple folders' in errors[0] and '"Alpha"' in errors[0] and '"Beta"' in errors[0]
+    assert project['folders'] == {}
+
+
+def test_autodetect_reports_both_roles_when_both_are_unknown():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')])
+
+    assert len(_autodetect(project, {})) == 2
+    assert project['error_count'] == 2
+
+
+def test_autodetect_keeps_roles_already_set_by_command_line():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')],
+                           folders={'resources_folder_uid': 'a', 'users_folder_uid': 'b'})
+
+    assert _autodetect(project, {}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'b'}
+
+
+def test_autodetect_only_detects_the_missing_role():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')],
+                           folders={'resources_folder_uid': 'a'})
+
+    assert _autodetect(project, {'c': ['pamUser']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'c'}
+
+
+def test_autodetect_ignores_roles_with_no_new_records():
+    # Only resources are new, so an undetectable users folder is not an error.
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')], users=0)
+
+    assert _autodetect(project, {'a': ['pamMachine']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a'}
+
+
+def test_autodetect_skips_records_with_folder_path_and_existing_records():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')])
+    for o in project['mapped_resources']:
+        o.folder_path = 'Alpha/Sub'
+    for o in project['mapped_users']:
+        o._extend_tag = 'existing'
+
+    assert _autodetect(project, {}) == []
+    assert project['folders'] == {}
+
+
+def test_autodetect_nested_new_users_need_users_folder():
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta'), _shf('c', 'Gamma')], users=0)
+    project['mapped_resources'][0].users = [SimpleNamespace(type='pamUser', title='N', folder_path='',
+                                                            _extend_tag='new')]
+
+    assert _autodetect(project, {'a': ['pamMachine'], 'b': ['pamUser']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'b'}
+
+
+def test_autodetect_warns_when_both_roles_share_one_folder(capsys):
+    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta')])
+
+    assert _autodetect(project, {'a': ['pamMachine', 'pamUser']}) == []
+    assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'a'}
+    assert 'same folder "Alpha"' in capsys.readouterr().out
+
+
+# --- --resources-folder / --users-folder (KC-1491) ---
+
+def test_resolve_folder_option_accepts_uid_and_path():
+    tree = {'Prod': {'uid': 'prod_uid', 'name': 'Prod', 'subfolders': {
+        'Db': {'uid': 'db_uid', 'name': 'Db', 'subfolders': {}}}}}
+    shared = [_shf('root_uid', 'Proj - Resources', tree)]
+
+    assert _resolve_folder_option('root_uid', shared) == 'root_uid'
+    assert _resolve_folder_option('prod_uid', shared) == 'prod_uid'
+    assert _resolve_folder_option('Proj - Resources', shared) == 'root_uid'
+    assert _resolve_folder_option('Proj - Resources/Prod/Db', shared) == 'db_uid'
+    assert _resolve_folder_option('  Proj - Resources/Prod  ', shared) == 'prod_uid'
+
+
+def test_resolve_folder_option_rejects_unknown_or_empty():
+    shared = [_shf('root_uid', 'Proj - Resources')]
+
+    assert _resolve_folder_option('', shared) == ''
+    assert _resolve_folder_option('nope', shared) == ''
+    assert _resolve_folder_option('Proj - Resources/New', shared) == ''
+
+
+def _pam_data():
+    return {
+        'resources': [
+            {'title': 'R1', 'folder_path': 'A/res',
+             'users': [{'title': 'N1', 'folder_path': 'A/usr'}, {'title': 'N2'}]},
+            {'title': 'R2'},
+        ],
+        'users': [{'title': 'U1', 'folder_path': 'A/usr'}, {'title': 'U2'}],
+    }
+
+
+def test_drop_folder_paths_resources_only():
+    pam_data = _pam_data()
+
+    assert _drop_folder_paths(pam_data, True, False) == 1
+    assert 'folder_path' not in pam_data['resources'][0]
+    assert pam_data['resources'][0]['users'][0]['folder_path'] == 'A/usr'
+    assert pam_data['users'][0]['folder_path'] == 'A/usr'
+
+
+def test_drop_folder_paths_users_only_covers_nested_users():
+    pam_data = _pam_data()
+
+    assert _drop_folder_paths(pam_data, False, True) == 2
+    assert pam_data['resources'][0]['folder_path'] == 'A/res'
+    assert 'folder_path' not in pam_data['resources'][0]['users'][0]
+    assert 'folder_path' not in pam_data['users'][0]
+
+
+def test_extend_parser_accepts_folder_overrides():
+    args = PAMProjectExtendCommand.parser.parse_args(
+        ['--config', 'c', '--filename', 'f', '--resources-folder', 'R', '--users-folder', 'U'])
+
+    assert (args.resources_folder, args.users_folder) == ('R', 'U')
+    assert PAMProjectExtendCommand.parser.parse_args(['-c', 'c', '-f', 'f']).resources_folder == ''
