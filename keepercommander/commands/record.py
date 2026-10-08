@@ -2534,7 +2534,7 @@ class TrashGetCommand(Command, TrashMixin):
             return
 
         record = vault.KeeperRecord.load(params, rec) if not is_drive else None
-        nsf_record = _nsf.get_record_details_v3(params, record_uid).get('data', [{}])[0] if is_drive else None
+        nsf_record = _nsf.get_record_details_v3(params, [record_uid]).get('data', [{}])[0] if is_drive else None
         if not record and not nsf_record:
             message = f'Cannot restore record {record_uid}'
             if fmt == 'json':
@@ -2551,14 +2551,15 @@ class TrashGetCommand(Command, TrashMixin):
                 'status': 'Share' if is_shared else 'Record',
                 'fields': {},
             }
-            for name, value in record.enumerate_fields():
-                if value:
-                    if isinstance(value, list):
-                        payload['fields'][name] = value
-                    elif len(value) > 100:
-                        payload['fields'][name] = value[:99] + '...'
-                    else:
-                        payload['fields'][name] = value
+            if record:
+                for name, value in record.enumerate_fields():
+                    if value:
+                        if isinstance(value, list):
+                            payload['fields'][name] = value
+                        elif len(value) > 100:
+                            payload['fields'][name] = value[:99] + '...'
+                        else:
+                            payload['fields'][name] = value
 
             if is_shared:
                 if 'shares' not in rec:
@@ -2591,13 +2592,17 @@ class TrashGetCommand(Command, TrashMixin):
             print(json.dumps(payload, indent=2, default=base.json_serialized))
             return
 
-        for name, value in record.enumerate_fields():
-            if value:
-                if isinstance(value, list):
-                    value = '\n'.join(value)
-                if len(value) > 100:
-                    value = value[:99] + '...'
-                print('{0:>21s}: {1}'.format(name, value))
+        if record:
+            for name, value in record.enumerate_fields():
+                if value:
+                    if isinstance(value, list):
+                        value = '\n'.join(value)
+                    if len(value) > 100:
+                        value = value[:99] + '...'
+                    print('{0:>21s}: {1}'.format(name, value))
+        elif nsf_record:
+            print('{0:>21s}: {1}'.format('(title)', nsf_record.get('title')))
+            print('{0:>21s}: {1}'.format('(type)', nsf_record.get('type')))
         if is_shared:
             if 'shares' not in rec:
                 rec['shares'] = {}
@@ -2834,6 +2839,7 @@ class TrashRestoreCommand(Command, TrashMixin):
         has_nsf = bool(nsf_records_to_restore or nsf_folders_to_restore)
 
         target_folder_name = kwargs.get('folder')
+        target_folder_uid = None
         if target_folder_name:
             try:
                 from .nested_share_folder.helpers import ensure_nested_share_folder
