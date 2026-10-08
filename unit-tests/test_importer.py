@@ -1,11 +1,14 @@
+import io
+import json
 import os
 import tempfile
 from unittest import TestCase, mock, skipUnless
 
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander import vault
-from keepercommander.importer import importer, commands
+from keepercommander import params as params_module, vault
+from keepercommander.error import CommandError
+from keepercommander.importer import importer, commands, imp_exp
 
 try:
     from keepercommander.importer.keepass.keepass import KeepassExporter, PyKeePass
@@ -79,6 +82,136 @@ class TestImporterUtils(TestCase):
             }
             with mock.patch('os.path.isfile', return_value=True):
                 cmd_import.execute(param_import, format='json', name='json')
+
+    def test_json_export_stdout_does_not_open_output_file(self):
+        record = importer.Record()
+        record.uid = 'PAM_RECORD_UID'
+        record.title = 'PAM record'
+        record.type = 'pamUser'
+        output = io.StringIO()
+
+        with mock.patch('sys.stdout', output), \
+                mock.patch('builtins.open', side_effect=AssertionError('stdout export must not open a file')):
+            importer.exporter_for_format('json')().execute(None, [record])
+
+        exported = json.loads(output.getvalue())
+        self.assertEqual(exported['records'][0]['uid'], 'PAM_RECORD_UID')
+
+    def test_service_mode_export_defense_in_depth(self):
+        params = params_module.KeeperParams()
+        params.service_mode = True
+        command = commands.RecordExportCommand()
+
+        for options in (
+            {'format': 'json', 'name': '/tmp/export.json'},
+            {'format': 'json', 'name': None, 'zip_archive': True},
+            {'format': 'json', 'name': None, 'max_size': '1M'},
+            {'format': 'csv', 'name': None},
+        ):
+            with self.subTest(options=options), self.assertRaises(CommandError):
+                command.execute(params, **options)
+
+        with mock.patch('keepercommander.importer.commands.imp_exp.export') as export:
+            command.execute(
+                params, format='json', name=None, folder='FOLDER_UID',
+                owned_only=True,
+            )
+
+        export.assert_called_once_with(
+            params, 'json', None, folder='FOLDER_UID', owned_only=True,
+            _service_mode_record_limit=imp_exp.SERVICE_MODE_EXPORT_MAX_RECORDS,
+            _service_mode_input_limit=imp_exp.SERVICE_MODE_EXPORT_MAX_INPUT_BYTES,
+        )
+
+    def test_service_mode_export_restriction_is_an_explicit_command_error(self):
+        params = params_module.KeeperParams()
+        params.service_mode = True
+        params.enforcements = {
+            'booleans': [{'key': 'restrict_export', 'value': True}],
+        }
+
+        with self.assertRaisesRegex(CommandError, 'enterprise export restrictions'):
+            commands.RecordExportCommand().execute(
+                params,
+                format='json',
+                name=None,
+            )
+
+    def test_json_export_service_mode_record_limit(self):
+        params = params_module.KeeperParams()
+        params.record_cache = {
+            uid: {
+                'record_uid': uid,
+                'version': 3,
+                'client_modified_time': 0,
+                'data_unencrypted': json.dumps({
+                    'title': f'Record {uid}',
+                    'type': 'login',
+                    'fields': [],
+                }).encode('utf-8'),
+            }
+            for uid in ('ONE', 'TWO')
+        }
+
+        with mock.patch('keepercommander.importer.imp_exp.sync_down.sync_down'):
+            with self.assertRaisesRegex(CommandError, 'record processing limit'):
+                imp_exp.export(
+                    params,
+                    'json',
+                    None,
+                    _service_mode_record_limit=1,
+                )
+
+    def test_json_export_service_mode_input_data_limit(self):
+        params = params_module.KeeperParams()
+        params.record_cache = {
+            'ONE': {
+                'record_uid': 'ONE',
+                'version': 3,
+                'client_modified_time': 0,
+                'data_unencrypted': b'x' * 32,
+            },
+        }
+
+        with mock.patch('keepercommander.importer.imp_exp.sync_down.sync_down'):
+            with self.assertRaisesRegex(CommandError, 'input data processing limit'):
+                imp_exp.export(
+                    params,
+                    'json',
+                    None,
+                    _service_mode_input_limit=8,
+                )
+
+    def test_owned_only_export_skips_protected_record_missing_from_record_cache(self):
+        params = params_module.KeeperParams()
+        visible_uid = 'VISIBLE_RECORD_UID'
+        protected_uid = 'PROTECTED_CONFIG_UID'
+        params.record_cache = {
+            visible_uid: {
+                'record_uid': visible_uid,
+                'version': 3,
+                'client_modified_time': 0,
+                'data_unencrypted': json.dumps({
+                    'title': 'Visible record',
+                    'type': 'login',
+                    'fields': [],
+                }).encode('utf-8'),
+            }
+        }
+        # Service Mode hides the protected record payload but its ownership
+        # metadata remains available for unrelated commands.
+        params.record_owner_cache = {
+            visible_uid: params_module.RecordOwner(True, None),
+            protected_uid: params_module.RecordOwner(True, None),
+        }
+        output = io.StringIO()
+
+        with mock.patch('keepercommander.importer.imp_exp.sync_down.sync_down'), \
+                mock.patch('sys.stdout', output):
+            imp_exp.export(params, 'json', None, owned_only=True)
+
+        exported = json.loads(output.getvalue())
+        self.assertEqual([record['uid'] for record in exported['records']], [visible_uid])
 
     @skipUnless(KeepassExporter and PyKeePass, 'pykeepass is not installed')
     def test_keepass_export_sanitizes_xml_invalid_characters(self):
