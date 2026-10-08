@@ -97,6 +97,49 @@ class TestRecord(TestCase):
             self.assertIsNotNone(field)
             self.assertEqual(field.get_default_value(str), 'BBB')
 
+    def test_add_command_shared_folder_no_permission(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache))
+        shared_folder = params.shared_folder_cache[shared_folder_uid]
+        shared_folder['owner_account_uid'] = utils.generate_uid()
+        shared_folder['users'][0]['manage_records'] = False
+        for team in shared_folder.get('teams', []):
+            team['manage_records'] = False
+
+        cmd = record_edit.RecordAddCommand()
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar:
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, force=True, title='New Record', record_type='login',
+                            folder=shared_folder_uid)
+            self.assertIn('You do not have the required privilege', str(ctx.exception))
+            ar.assert_not_called()
+
+    def test_add_command_unresolvable_folder_raises(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache))
+        bogus_uid = shared_folder_uid[:-4]  # truncated/invalid uid that resolves to nothing
+
+        cmd = record_edit.RecordAddCommand()
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar:
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, force=True, title='New Record', record_type='login',
+                            folder=bogus_uid)
+            self.assertIn('cannot be found', str(ctx.exception))
+            ar.assert_not_called()
+
+    def test_add_command_shared_folder_with_permission(self):
+        params = get_synced_params()
+        shared_folder_uid = next(iter(params.shared_folder_cache))
+
+        cmd = record_edit.RecordAddCommand()
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar:
+            cmd.execute(params, force=True, title='New Record', record_type='login',
+                        folder=shared_folder_uid)
+            ar.assert_called_once()
+
     def _run_add(self, params, **kwargs):
         """Run record-add with the API mocked; return the TypedRecord that would be saved."""
         cmd = record_edit.RecordAddCommand()
