@@ -4,6 +4,7 @@ import unittest
 from unittest import TestCase, mock
 from flask import Flask
 from keepercommander import params as params_module, vault
+from keepercommander.error import CommandError
 from keepercommander.subfolder import RootFolderNode, SharedFolderNode
 from keepercommander.service.util.command_util import (
     CommandExecutor,
@@ -163,6 +164,28 @@ class TestCommandAPI(TestCase):
                     {}, 'export --format=json'
                 )
 
+    def test_bulk_json_limit_remains_exceeded_if_command_swallows_write_error(self):
+        def swallow_output_errors(_params, _command):
+            import sys
+
+            for value in ('123456789', 'x'):
+                try:
+                    sys.stdout.write(value)
+                except Exception:
+                    pass
+
+        with mock.patch(
+            'keepercommander.service.util.command_util.MAX_SERVICE_MODE_JSON_RESPONSE_BYTES',
+            8,
+        ), mock.patch(
+            'keepercommander.cli.do_command',
+            side_effect=swallow_output_errors,
+        ):
+            with self.assertRaises(ServiceModeOutputLimitExceeded):
+                CommandExecutor.capture_output_and_logs(
+                    {}, 'export --format=json'
+                )
+
     def test_bulk_json_output_limit_returns_payload_too_large(self):
         params = _params_with_protected_and_normal_record()
         with mock.patch(
@@ -178,6 +201,45 @@ class TestCommandAPI(TestCase):
         self.assertEqual(status_code, 413)
         self.assertEqual(response['status'], 'error')
         self.assertIn('10 MiB', response['error'])
+
+    def test_final_encrypted_bulk_response_is_checked_against_wire_limit(self):
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.util.command_util.MAX_SERVICE_MODE_JSON_RESPONSE_BYTES',
+            8,
+        ), mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded',
+            return_value=params,
+        ), mock.patch.object(
+            CommandExecutor,
+            'capture_output_and_logs',
+            return_value=(None, '{}', ''),
+        ), mock.patch.object(
+            CommandExecutor,
+            'encrypt_response',
+            return_value=b'x' * 9,
+        ):
+            response, status_code = CommandExecutor.execute('export --format=json')
+
+        self.assertEqual(status_code, 413)
+        self.assertIn('discarded', response['error'])
+
+    def test_command_error_status_change_is_limited_to_bulk_json_commands(self):
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded',
+            return_value=params,
+        ), mock.patch.object(
+            CommandExecutor,
+            'capture_output_and_logs',
+            side_effect=CommandError('export', 'restricted'),
+        ):
+            bulk_response, bulk_status = CommandExecutor.execute('export --format=json')
+            legacy_response, legacy_status = CommandExecutor.execute(f'get {NORMAL_UID}')
+
+        self.assertEqual(bulk_status, 400)
+        self.assertEqual(legacy_status, 500)
+        self.assertIn('Unexpected error', legacy_response['error'])
 
     @unittest.skip
     def test_integration_command_flow(self):

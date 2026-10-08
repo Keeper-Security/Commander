@@ -10,7 +10,6 @@
 #
 
 from typing import Any
-from ..decorators.logging import logger
 
 class ConfigReader:
     _service_config = None
@@ -26,6 +25,10 @@ class ConfigReader:
     @classmethod
     def read_config(cls, service_config_param: str, api_key: str = "") -> Any:
         """Read configuration parameter from service config file."""
+        # Import lazily: decorators.__init__ imports auth, which imports this
+        # module. A module-level import here would create a ConfigReader cycle.
+        from ..decorators.logging import logger
+
         service_config = cls._get_service_config()
         
         try:

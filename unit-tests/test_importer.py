@@ -123,6 +123,20 @@ class TestImporterUtils(TestCase):
             _service_mode_input_limit=imp_exp.SERVICE_MODE_EXPORT_MAX_INPUT_BYTES,
         )
 
+    def test_service_mode_export_restriction_is_an_explicit_command_error(self):
+        params = params_module.KeeperParams()
+        params.service_mode = True
+        params.enforcements = {
+            'booleans': [{'key': 'restrict_export', 'value': True}],
+        }
+
+        with self.assertRaisesRegex(CommandError, 'enterprise export restrictions'):
+            commands.RecordExportCommand().execute(
+                params,
+                format='json',
+                name=None,
+            )
+
     def test_json_export_service_mode_record_limit(self):
         params = params_module.KeeperParams()
         params.record_cache = {

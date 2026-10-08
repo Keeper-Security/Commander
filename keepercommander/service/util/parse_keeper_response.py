@@ -835,15 +835,12 @@ class KeeperResponseParser:
         # Export may have safe selector flags before the format flag
         # (e.g. `export --owned-only --format=json`); keep its command name
         # stable instead of returning the preceding options as the command.
+        from .command_util import is_pam_debug_dump_command
         command_parts = command.split()
         command_name = command_parts[:1]
         if command_name and command_name[0].lower() == 'export':
             base_command = 'export'
-        elif (len(command_parts) >= 4
-              and command_parts[0].lower() == 'pam'
-              and command_parts[1].lower() in ('action', 'a')
-              and command_parts[2].lower() == 'debug'
-              and command_parts[3].lower() in ('dump', 'd')):
+        elif is_pam_debug_dump_command(command_parts):
             base_command = 'pam action debug dump'
         # Extract base command by removing --format=json or --format json
         elif ' --format=json' in command:

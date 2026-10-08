@@ -322,13 +322,8 @@ class Verifycommand:
     @staticmethod
     def validate_service_mode_pam_debug_dump_command(command_tokens, request_temp_dir=None):
         """Allow the folder-scoped PAM debug dump only when it emits JSON to stdout."""
-        if not command_tokens or len(command_tokens) < 4:
-            return None
-        tokens = [token.lower() for token in command_tokens[:4]]
-        if (tokens[0] != 'pam'
-                or tokens[1] not in ('action', 'a')
-                or tokens[2] != 'debug'
-                or tokens[3] not in ('dump', 'd')):
+        from .command_util import is_pam_debug_dump_command
+        if not is_pam_debug_dump_command(command_tokens or []):
             return None
 
         parser = argparse.ArgumentParser(

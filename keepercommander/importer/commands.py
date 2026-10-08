@@ -388,6 +388,11 @@ class RecordExportCommand(ImporterCommand):
     def execute(self, params, **kwargs):
 
         if imp_exp.is_export_restricted(params):
+            if getattr(params, 'service_mode', False):
+                raise CommandError(
+                    'export',
+                    'Export is disabled by enterprise export restrictions.',
+                )
             logging.warning('Permissions Required: `export` command is disabled. '
                             'Please contact your enterprise administrator.')
             return

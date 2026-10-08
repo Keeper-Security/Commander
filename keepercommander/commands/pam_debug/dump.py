@@ -200,7 +200,7 @@ class PAMDebugDumpCommand(Command):
         config_to_records: dict[str, list[str]] = {}
         record_configs: dict[str, set[str]] = {}
         valid_uids: list[str] = []  # passed version filter, in discovery order
-        unavailable_record_count = 0
+        unavailable_record_uids: list[str] = []
 
         for rec_uid in record_folder_map:
             rec = get_record_from_cache(params, rec_uid)
@@ -208,7 +208,7 @@ class PAMDebugDumpCommand(Command):
                 loaded = load_pam_record(params, rec_uid)
                 if loaded is None:
                     logging.warning('skipping record %s version unknown - not in record cache', rec_uid)
-                    unavailable_record_count += 1
+                    unavailable_record_uids.append(rec_uid)
                     continue
                 version = getattr(loaded, 'version', None)
                 rec = {'version': version, 'revision': 0, 'shared': False}
@@ -257,15 +257,15 @@ class PAMDebugDumpCommand(Command):
                           'no krouter leafs match; graph data unavailable.', rec_uid)
             record_configs.setdefault(rec_uid, set())
 
-        if unavailable_record_count:
-            raise CommandError(
-                'pam action debug dump',
-                'One or more records in the selected folder could not be loaded; '
-                'no complete dump was returned.',
-            )
+        unavailable_folders = sorted({
+            record_folder_map[uid][0] for uid in unavailable_record_uids
+        })
 
         if not valid_uids:
-            _write_result([])
+            if getattr(params, 'service_mode', False):
+                _write_result(_build_unavailable_rows(unavailable_folders))
+            else:
+                _write_result([])
             return
 
         if (getattr(params, 'service_mode', False)
@@ -424,7 +424,36 @@ class PAMDebugDumpCommand(Command):
                 row['errors'] = record_errors
             return row
 
-        _write_result(_build_row(uid) for uid in valid_uids)
+        def _iter_rows():
+            for uid in valid_uids:
+                yield _build_row(uid)
+            if getattr(params, 'service_mode', False):
+                yield from _build_unavailable_rows(unavailable_folders)
+
+        _write_result(_iter_rows())
+
+
+def _build_unavailable_rows(folder_uids: Iterable[str]):
+    """Return anonymous error rows so Service Mode never echoes a hidden UID."""
+    for folder_uid in folder_uids:
+        yield {
+            'uid': None,
+            'metadata': {
+                'uid': None,
+                'folder_uid': folder_uid,
+                'folder_uid_parent': None,
+                'version': None,
+                'shared': None,
+                'client_modified_time': None,
+                'revision': None,
+            },
+            'data': {},
+            'graph_sync': {},
+            'errors': [{
+                'stage': 'record_data',
+                'message': 'One or more folder records could not be loaded.',
+            }],
+        }
 
 
 def _collect_graph_entry(dag: 'DAGType', record_uid: str, params: 'KeeperParams',

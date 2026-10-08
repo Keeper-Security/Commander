@@ -175,16 +175,34 @@ class TestPamDebugNsf(unittest.TestCase):
         self.assertEqual(row['errors'][0]['stage'], 'graph_sync')
         self.assertNotIn('backend details', json.dumps(row['errors']))
 
-    def test_dump_fails_instead_of_returning_partial_data_for_unavailable_record(self):
+    def test_cli_dump_skips_unavailable_record_and_preserves_other_results(self):
         params = _params()
         params.nested_share_folder_records = {'nsf_folder': {'unavailable_uid'}}
-
-        with self.assertRaisesRegex(CommandError, 'no complete dump was returned'):
+        output = io.StringIO()
+        with patch('sys.stdout', output):
             PAMDebugDumpCommand().execute(
                 params,
                 folder_uid='nsf_folder',
                 format='json',
             )
+        self.assertEqual(json.loads(output.getvalue()), [])
+
+    def test_service_mode_reports_unavailable_record_without_echoing_uid(self):
+        params = _params()
+        params.service_mode = True
+        params.nested_share_folder_records = {'nsf_folder': {'unavailable_uid'}}
+        output = io.StringIO()
+        with patch('sys.stdout', output):
+            PAMDebugDumpCommand().execute(
+                params,
+                folder_uid='nsf_folder',
+                format='json',
+            )
+        data = json.loads(output.getvalue())
+        self.assertEqual(len(data), 1)
+        self.assertIsNone(data[0]['uid'])
+        self.assertEqual(data[0]['errors'][0]['stage'], 'record_data')
+        self.assertNotIn('unavailable_uid', json.dumps(data))
 
     def test_service_mode_dump_limits_folder_record_count(self):
         params = _params()

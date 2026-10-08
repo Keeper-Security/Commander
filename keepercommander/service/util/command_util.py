@@ -43,6 +43,17 @@ MAX_SERVICE_MODE_JSON_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_SERVICE_MODE_JSON_LOG_BYTES = 1024 * 1024
 
 
+def is_pam_debug_dump_command(command_tokens) -> bool:
+    """Return True for `pam action|a debug dump|d` token sequences."""
+    return (
+        len(command_tokens) >= 4
+        and command_tokens[0].lower() == 'pam'
+        and command_tokens[1].lower() in ('action', 'a')
+        and command_tokens[2].lower() == 'debug'
+        and command_tokens[3].lower() in ('dump', 'd')
+    )
+
+
 class ServiceModeOutputLimitExceeded(Exception):
     """Raised when a bulk JSON command would exceed its response-size budget."""
 
@@ -51,10 +62,14 @@ class _OutputByteBudget:
     def __init__(self, max_bytes: int):
         self.max_bytes = max_bytes
         self.bytes_written = 0
+        self.exceeded = False
 
     def consume(self, value: str):
+        if self.exceeded:
+            raise ServiceModeOutputLimitExceeded
         byte_count = len(value.encode('utf-8', errors='replace'))
         if self.bytes_written + byte_count > self.max_bytes:
+            self.exceeded = True
             raise ServiceModeOutputLimitExceeded
         self.bytes_written += byte_count
 
@@ -104,13 +119,7 @@ class CommandExecutor:
             return False
         if tokens[0].lower() == 'export':
             return True
-        return (
-            len(tokens) >= 4
-            and tokens[0].lower() == 'pam'
-            and tokens[1].lower() in ('action', 'a')
-            and tokens[2].lower() == 'debug'
-            and tokens[3].lower() in ('dump', 'd')
-        )
+        return is_pam_debug_dump_command(tokens)
 
     @staticmethod
     @debug_decorator
@@ -142,6 +151,7 @@ class CommandExecutor:
             captured_stderr = _BoundedStringIO(response_budget)
             captured_logs = _TruncatedStringIO(MAX_SERVICE_MODE_JSON_LOG_BYTES)
         else:
+            response_budget = None
             captured_stdout = io.StringIO()
             captured_stderr = io.StringIO()
             captured_logs = io.StringIO()
@@ -167,6 +177,8 @@ class CommandExecutor:
             root_logger.setLevel(logging.INFO)
             
             return_value = cli.do_command(params, command)
+            if response_budget is not None and response_budget.exceeded:
+                raise ServiceModeOutputLimitExceeded
             
             stdout_content = captured_stdout.getvalue()
             stderr_content = captured_stderr.getvalue()
@@ -248,6 +260,7 @@ class CommandExecutor:
             return validation_error
 
         from ..core.globals import ensure_params_loaded
+        params = None
         try:
             params = ensure_params_loaded()
             # Set service mode flag to bypass master password enforcement
@@ -355,13 +368,27 @@ class CommandExecutor:
                     return CommandExecutor.encrypt_response(err), 500
 
             response = CommandExecutor.encrypt_response(response)
+            if cls._is_bulk_json_command(command):
+                response_size = (
+                    len(response)
+                    if isinstance(response, bytes)
+                    else len(json.dumps(response).encode('utf-8'))
+                )
+                if response_size > MAX_SERVICE_MODE_JSON_RESPONSE_BYTES:
+                    return {
+                        "status": "error",
+                        "error": (
+                            'Command response exceeds the 10 MiB Service Mode limit '
+                            'and was discarded. Reduce the requested scope and retry.'
+                        ),
+                    }, 413
             logger.debug(f"Command executed successfully")
             return response, status_code
         except ServiceModeOutputLimitExceeded:
             return {
                 "status": "error",
                 "error": (
-                    'Command response exceeds the 10 MiB Service Mode limit. '
+                    'Command response exceeds the 10 MiB Service Mode limit and was discarded. '
                     'Reduce the requested scope using supported command filters and retry.'
                 ),
             }, 413
@@ -372,8 +399,15 @@ class CommandExecutor:
                 return throttle_error_response(str(e))
             return {"status": "error", "error": str(e)}, 400
         except CommandError as e:
-            logger.warning("Command rejected: %s", sanitize_debug_data(str(e)))
-            return {"status": "error", "error": str(e)}, 400
+            if (params is not None
+                    and getattr(params, 'service_mode', False)
+                    and cls._is_bulk_json_command(command)):
+                logger.warning(
+                    f"Service Mode command rejected: {sanitize_debug_data(str(e))}"
+                )
+                return {"status": "error", "error": str(e)}, 400
+            logger.error(f"Unexpected error during command execution: {sanitize_debug_data(str(e))}")
+            return {"status": "error", "error": f"Unexpected error: {str(e)}"}, 500
         except KeeperApiError as e:
             if is_throttle_error(e):
                 return throttle_error_response(e.message or str(e), e.result_code)
