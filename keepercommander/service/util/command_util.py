@@ -36,10 +36,82 @@ from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator, sanitize_debug_data, sanitize_command_fields
 from ... import cli, utils
 from ...crypto import encrypt_aes_v2
-from ...error import KeeperApiError
+from ...error import CommandError, KeeperApiError
+
+
+MAX_SERVICE_MODE_JSON_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_SERVICE_MODE_JSON_LOG_BYTES = 1024 * 1024
+
+
+class ServiceModeOutputLimitExceeded(Exception):
+    """Raised when a bulk JSON command would exceed its response-size budget."""
+
+
+class _OutputByteBudget:
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        self.bytes_written = 0
+
+    def consume(self, value: str):
+        byte_count = len(value.encode('utf-8', errors='replace'))
+        if self.bytes_written + byte_count > self.max_bytes:
+            raise ServiceModeOutputLimitExceeded
+        self.bytes_written += byte_count
+
+
+class _BoundedStringIO(io.StringIO):
+    """StringIO that rejects writes exceeding a UTF-8 byte limit."""
+
+    def __init__(self, budget: _OutputByteBudget):
+        super().__init__()
+        self.budget = budget
+
+    def write(self, value: str) -> int:
+        self.budget.consume(value)
+        return super().write(value)
+
+
+class _TruncatedStringIO(io.StringIO):
+    """Keep a bounded diagnostic log buffer without interrupting command work."""
+
+    def __init__(self, max_bytes: int):
+        super().__init__()
+        self.max_bytes = max_bytes
+        self.bytes_written = 0
+        self.truncated = False
+
+    def write(self, value: str) -> int:
+        if self.truncated:
+            return len(value)
+        byte_count = len(value.encode('utf-8', errors='replace'))
+        if self.bytes_written + byte_count > self.max_bytes:
+            self.truncated = True
+            return len(value)
+        self.bytes_written += byte_count
+        return super().write(value)
 
 
 class CommandExecutor:
+    @staticmethod
+    def _is_bulk_json_command(command: str) -> bool:
+        """Whether this command returns a potentially large JSON document."""
+        try:
+            tokens = Verifycommand.tokenize_service_command(command)
+        except ValueError:
+            return False
+
+        if not tokens:
+            return False
+        if tokens[0].lower() == 'export':
+            return True
+        return (
+            len(tokens) >= 4
+            and tokens[0].lower() == 'pam'
+            and tokens[1].lower() in ('action', 'a')
+            and tokens[2].lower() == 'debug'
+            and tokens[3].lower() in ('dump', 'd')
+        )
+
     @staticmethod
     @debug_decorator
     def validate_command(command: str) -> Optional[Tuple[dict, int]]:
@@ -58,10 +130,21 @@ class CommandExecutor:
     @staticmethod
     @debug_decorator
     def capture_output_and_logs(params: Any, command: str) -> Tuple[Any, str, str]:
-        """Capture both stdout/stderr and logging output from command execution."""
-        captured_stdout = io.StringIO()
-        captured_stderr = io.StringIO()
-        captured_logs = io.StringIO()
+        """Capture command output, bounding bulk JSON responses in Service Mode."""
+        max_response_bytes = (
+            MAX_SERVICE_MODE_JSON_RESPONSE_BYTES
+            if CommandExecutor._is_bulk_json_command(command)
+            else None
+        )
+        if max_response_bytes is not None:
+            response_budget = _OutputByteBudget(max_response_bytes)
+            captured_stdout = _BoundedStringIO(response_budget)
+            captured_stderr = _BoundedStringIO(response_budget)
+            captured_logs = _TruncatedStringIO(MAX_SERVICE_MODE_JSON_LOG_BYTES)
+        else:
+            captured_stdout = io.StringIO()
+            captured_stderr = io.StringIO()
+            captured_logs = io.StringIO()
         
         # Create a temporary log handler to capture command logs
         temp_handler = logging.StreamHandler(captured_logs)
@@ -98,8 +181,12 @@ class CommandExecutor:
                 combined_output = stderr_clean + '\n' + stdout_clean
             else:
                 combined_output = stderr_clean or stdout_clean
+            if getattr(captured_logs, 'truncated', False):
+                log_clean = f'{log_clean}\n[Service Mode diagnostic logs truncated]'.strip()
             
             return return_value, combined_output, log_clean
+        except ServiceModeOutputLimitExceeded:
+            raise
         except Exception as e:
             # If there's an exception, capture any error output
             stderr_content = captured_stderr.getvalue()
@@ -270,11 +357,22 @@ class CommandExecutor:
             response = CommandExecutor.encrypt_response(response)
             logger.debug(f"Command executed successfully")
             return response, status_code
+        except ServiceModeOutputLimitExceeded:
+            return {
+                "status": "error",
+                "error": (
+                    'Command response exceeds the 10 MiB Service Mode limit. '
+                    'Reduce the requested scope using supported command filters and retry.'
+                ),
+            }, 413
         except CommandExecutionError as e:
             # Return the actual command error instead of generic "server busy"
             logger.error(f"Command execution error: {sanitize_debug_data(str(e))}")
             if is_throttle_error(e):
                 return throttle_error_response(str(e))
+            return {"status": "error", "error": str(e)}, 400
+        except CommandError as e:
+            logger.warning("Command rejected: %s", sanitize_debug_data(str(e)))
             return {"status": "error", "error": str(e)}, 400
         except KeeperApiError as e:
             if is_throttle_error(e):

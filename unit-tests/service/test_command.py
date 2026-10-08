@@ -5,7 +5,10 @@ from unittest import TestCase, mock
 from flask import Flask
 from keepercommander import params as params_module, vault
 from keepercommander.subfolder import RootFolderNode, SharedFolderNode
-from keepercommander.service.util.command_util import CommandExecutor
+from keepercommander.service.util.command_util import (
+    CommandExecutor,
+    ServiceModeOutputLimitExceeded,
+)
 from keepercommander.service.util.exceptions import CommandExecutionError
 from keepercommander.service.util.parse_keeper_response import parse_keeper_response
 from keepercommander.service.util.protected_records import get_protected_record_uids
@@ -122,6 +125,21 @@ class TestCommandAPI(TestCase):
         self.assertIsInstance(parsed["data"], dict)
         self.assertIn("tree", parsed["data"])
 
+        export_response = json.dumps({"records": [{"uid": "one"}]})
+        parsed = parse_keeper_response(
+            "export --owned-only --format=json", export_response
+        )
+        self.assertEqual(parsed["command"], "export")
+        self.assertEqual(parsed["data"], {"records": [{"uid": "one"}]})
+
+        dump_response = json.dumps([{"uid": "record-one", "graph_sync": {}}])
+        parsed = parse_keeper_response(
+            "pam action debug dump FOLDER_UID --recursive --format=json",
+            dump_response,
+        )
+        self.assertEqual(parsed["command"], "pam action debug dump")
+        self.assertEqual(parsed["data"], [{"uid": "record-one", "graph_sync": {}}])
+
     def test_capture_output(self):
         """Test command output capture"""
         test_command = "ls"
@@ -131,6 +149,35 @@ class TestCommandAPI(TestCase):
         with mock.patch('keepercommander.cli.do_command', return_value=expected_output):
             return_value, output, logs = CommandExecutor.capture_output_and_logs(mock_params, test_command)
             self.assertEqual(return_value, expected_output)
+
+    def test_bulk_json_output_is_capped_before_capture_grows_unbounded(self):
+        with mock.patch(
+            'keepercommander.service.util.command_util.MAX_SERVICE_MODE_JSON_RESPONSE_BYTES',
+            8,
+        ), mock.patch(
+            'keepercommander.cli.do_command',
+            side_effect=lambda _params, _command: print('123456789'),
+        ):
+            with self.assertRaises(ServiceModeOutputLimitExceeded):
+                CommandExecutor.capture_output_and_logs(
+                    {}, 'export --format=json'
+                )
+
+    def test_bulk_json_output_limit_returns_payload_too_large(self):
+        params = _params_with_protected_and_normal_record()
+        with mock.patch(
+            'keepercommander.service.core.globals.ensure_params_loaded',
+            return_value=params,
+        ), mock.patch.object(
+            CommandExecutor,
+            'capture_output_and_logs',
+            side_effect=ServiceModeOutputLimitExceeded,
+        ):
+            response, status_code = CommandExecutor.execute('export --format=json')
+
+        self.assertEqual(status_code, 413)
+        self.assertEqual(response['status'], 'error')
+        self.assertIn('10 MiB', response['error'])
 
     @unittest.skip
     def test_integration_command_flow(self):

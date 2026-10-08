@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import os
@@ -50,16 +51,28 @@ class Verifycommand:
     # writes a host file and is NOT enumerated here is allowed by default.
     # Adding a new command with local file I/O? Add it here, or it silently
     # bypasses Service Mode's "no host filesystem access" boundary.
+    # `export` is excluded because its JSON-to-response form has a separate,
+    # strict allowlist validator; every other export form is rejected there.
     #
     # Commands that always read/write host files (no safe Service Mode form).
     _HOST_FS_COMMANDS = frozenset({
         'run-batch', 'run',
-        'export',
         'download-membership',
         'download-record-types',
         'apply-membership',
         'load-record-types',
     })
+    _EXPORT_SERVICE_MODE_MSG = (
+        'Local filesystem access is not permitted through Service Mode. '
+        "Only JSON export to the API response is allowed; use 'export --format=json' "
+        '(optional: --folder <vault-folder>, --owned-only). '
+        'Do not specify an output filename or any other export options.'
+    )
+    _PAM_DEBUG_DUMP_SERVICE_MODE_MSG = (
+        'Service Mode allows PAM debug dump only as JSON in the API response. '
+        "Use 'pam action debug dump <folder-uid> --format=json' "
+        '(optionally with --recursive); file output is not permitted.'
+    )
     # Positional file input; FILEDATA is rewritten to a temp path before execute.
     _FILE_INPUT_COMMANDS = frozenset({'import', 'enterprise-push'})
     # import --format values that name an account/API/URL source, not a local
@@ -102,6 +115,8 @@ class Verifycommand:
             Verifycommand.validate_service_mode_download_attachment_command,
             Verifycommand.validate_service_mode_upload_attachment_command,
             Verifycommand.validate_service_mode_record_file_attachment_command,
+            Verifycommand.validate_service_mode_export_command,
+            Verifycommand.validate_service_mode_pam_debug_dump_command,
             Verifycommand.validate_service_mode_host_filesystem_command,
             Verifycommand.validate_service_mode_host_path_args,
             Verifycommand.validate_service_mode_file_input_command,
@@ -256,6 +271,95 @@ class Verifycommand:
         if command_tokens[0].lower() not in Verifycommand._HOST_FS_COMMANDS:
             return None
         return Verifycommand._HOST_FS_MSG
+
+    @staticmethod
+    def validate_service_mode_export_command(command_tokens, request_temp_dir=None):
+        """Allow only JSON export to captured output, with a tightly scoped option set.
+
+        The regular export command supports local output files, ZIP archives, and
+        other file-oriented options. Service Mode accepts a deliberately smaller
+        grammar so it can only use the JSON exporter with no output filename.
+        """
+        if not command_tokens or command_tokens[0].lower() != 'export':
+            return None
+
+        parser = argparse.ArgumentParser(prog='export', add_help=False, allow_abbrev=False)
+        parser.add_argument('--format', choices=('json',), required=True)
+        parser.add_argument('--folder')
+        parser.add_argument('--owned-only', action='store_true')
+
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                parsed = parser.parse_args(command_tokens[1:])
+        except SystemExit:
+            return Verifycommand._EXPORT_SERVICE_MODE_MSG
+        except Exception:
+            return Verifycommand._EXPORT_SERVICE_MODE_MSG
+
+        # argparse accepts repeated options and keeps the last value. Fail closed
+        # rather than permit ambiguous combinations in this security-sensitive
+        # command. Both --option value and --option=value are accepted.
+        seen_options = set()
+        value_options = {'--format', '--folder'}
+        i = 1
+        while i < len(command_tokens):
+            token = command_tokens[i]
+            option = token.partition('=')[0]
+            if option not in {'--format', '--folder', '--owned-only'}:
+                return Verifycommand._EXPORT_SERVICE_MODE_MSG
+            if option in seen_options:
+                return Verifycommand._EXPORT_SERVICE_MODE_MSG
+            seen_options.add(option)
+            if option in value_options and '=' not in token:
+                i += 2
+            else:
+                i += 1
+
+        if parsed.folder is not None and not parsed.folder.strip():
+            return Verifycommand._EXPORT_SERVICE_MODE_MSG
+        return None
+
+    @staticmethod
+    def validate_service_mode_pam_debug_dump_command(command_tokens, request_temp_dir=None):
+        """Allow the folder-scoped PAM debug dump only when it emits JSON to stdout."""
+        if not command_tokens or len(command_tokens) < 4:
+            return None
+        tokens = [token.lower() for token in command_tokens[:4]]
+        if (tokens[0] != 'pam'
+                or tokens[1] not in ('action', 'a')
+                or tokens[2] != 'debug'
+                or tokens[3] not in ('dump', 'd')):
+            return None
+
+        parser = argparse.ArgumentParser(
+            prog='pam action debug dump', add_help=False, allow_abbrev=False)
+        parser.add_argument('folder_uid')
+        parser.add_argument('--recursive', '-r', action='store_true')
+        parser.add_argument('--format', choices=('json',), required=True)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                parsed = parser.parse_args(command_tokens[4:])
+        except SystemExit:
+            return Verifycommand._PAM_DEBUG_DUMP_SERVICE_MODE_MSG
+        except Exception:
+            return Verifycommand._PAM_DEBUG_DUMP_SERVICE_MODE_MSG
+
+        if not parsed.folder_uid.strip():
+            return Verifycommand._PAM_DEBUG_DUMP_SERVICE_MODE_MSG
+
+        # Do not let argparse's last-option-wins behavior make repeated flags
+        # ambiguous. Positional values and any non-allowlisted options have
+        # already been rejected by parse_args.
+        seen_options = set()
+        for token in command_tokens[4:]:
+            option = token.partition('=')[0]
+            if option in ('--format', '--recursive', '-r'):
+                if option in seen_options:
+                    return Verifycommand._PAM_DEBUG_DUMP_SERVICE_MODE_MSG
+                seen_options.add(option)
+        if '--recursive' in seen_options and '-r' in seen_options:
+            return Verifycommand._PAM_DEBUG_DUMP_SERVICE_MODE_MSG
+        return None
 
     @staticmethod
     def validate_service_mode_host_path_args(command_tokens, request_temp_dir=None):
