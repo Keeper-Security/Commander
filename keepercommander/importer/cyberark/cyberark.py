@@ -820,7 +820,7 @@ class CyberArkImporter(BaseImporter):
             )
         return result
 
-    def fetch_all_safes(self, pvwa_host, authorization_token, timeout, safes_filter=None, api_page_size_limit=API_PAGE_SIZE_LIMIT):
+    def fetch_all_safes(self, pvwa_host, authorization_token, timeout, api_page_size_limit=API_PAGE_SIZE_LIMIT, safes_filter=None):
         """Return full safe objects from PVWA (not just names).
 
         ``safes_filter`` is an optional set of safe names to restrict the result.
@@ -842,8 +842,8 @@ class CyberArkImporter(BaseImporter):
             response = self.get_response(
                 self.get_url(pvwa_host, "safes"),
                 authorization_token,
-                timeout,
                 {"offset": offset, "limit": limit},
+                timeout
             )
             if response is None or response.status_code != 200:
                 break
@@ -865,7 +865,7 @@ class CyberArkImporter(BaseImporter):
             ]
         return safes
 
-    def fetch_safe_members(self, pvwa_host, authorization_token, timeout, safe_url_id, api_page_size_limit=API_PAGE_SIZE_LIMIT):
+    def fetch_safe_members(self, pvwa_host, authorization_token, safe_url_id, timeout, api_page_size_limit=API_PAGE_SIZE_LIMIT):
         """Fetch all members of a CyberArk safe (excluding predefined system members)."""
         if not safe_url_id:
             return []
@@ -879,7 +879,7 @@ class CyberArkImporter(BaseImporter):
         while True:
             sleep(self.DELAY)
             response = self.get_response(
-                url, authorization_token, timeout, {"offset": offset, "limit": limit},
+                url, authorization_token, {"offset": offset, "limit": limit}, timeout
             )
             if response is None or response.status_code != 200:
                 break
