@@ -2602,8 +2602,8 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
             response = self.get_response(
                 self.get_url(pvwa_host, "user_groups"),
                 authorization_token,
-                timeout,
                 {"includeMembers": "True"},
+                timeout
             )
             if response is None:
                 return
@@ -2638,8 +2638,8 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
                     detail = self.get_response(
                         self.get_url(pvwa_host, "user_group").format(group_id=group_id),
                         authorization_token,
-                        timeout,
                         {"includeMembers": "True"},
+                        timeout
                     )
                     if detail is not None and detail.status_code == 200:
                         try:
