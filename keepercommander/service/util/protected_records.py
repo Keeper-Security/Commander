@@ -34,7 +34,9 @@ _GUARDED_CACHE_ATTRS = ('record_cache', 'nested_share_records', 'nested_share_re
 
 # Raw + derived folder caches every folder-resolving command reads through,
 # directly or via subfolder.try_resolve_path/get_folder_uids.
-_GUARDED_FOLDER_CACHE_ATTRS = ('folder_cache', 'shared_folder_cache', 'subfolder_cache')
+_GUARDED_FOLDER_CACHE_ATTRS = (
+    'folder_cache', 'shared_folder_cache', 'subfolder_cache', 'nested_share_folders',
+)
 
 # Commander's own session (config.json) and Service Mode's own runtime (service_config.json)
 # config files -- always attached under these exact, hardcoded names, never user-choosable.
@@ -105,20 +107,36 @@ def get_protected_record_uids(params) -> Dict[str, str]:
             continue
         found[uid] = label
 
-    if params is None or not isinstance(getattr(params, 'record_cache', None), dict) or not params.record_cache:
+    if params is None:
         return found
 
     from ... import vault
+    from ...commands.pam_import.record_loader import (
+        load_pam_record,
+    )
 
     protected_titles = get_protected_record_title_set()
-    # One load per record_cache entry, no more -- a FileRecord attachment target is itself an
-    # entry in this same cache, so its name is picked up by this same pass rather than a second,
-    # per-attachment load 
+    # Scan classic and NSF caches. A FileRecord attachment target is itself an
+    # accessible UID, so its name is picked up in the same pass.
     reserved_file_uids: Set[str] = set()
     pending_attachments: Dict[str, list] = {}
-    for uid in params.record_cache:
+    record_cache = getattr(params, 'record_cache', None)
+    record_uids = list(record_cache) if isinstance(record_cache, dict) else []
+    seen_record_uids = set(record_uids)
+    for attr in ('nested_share_records', 'nested_share_record_data'):
+        cache = getattr(params, attr, None)
+        if isinstance(cache, dict):
+            for uid in cache:
+                if uid not in seen_record_uids:
+                    seen_record_uids.add(uid)
+                    record_uids.append(uid)
+
+    for uid in record_uids:
         try:
-            record = vault.KeeperRecord.load(params, uid)
+            if isinstance(record_cache, dict) and uid in record_cache:
+                record = vault.KeeperRecord.load(params, uid)
+            else:
+                record = load_pam_record(params, uid)
         except Exception as e:
             logger.debug(f'protected_records: could not load record {uid} ({type(e).__name__}); skipping')
             continue
@@ -130,7 +148,7 @@ def get_protected_record_uids(params) -> Dict[str, str]:
                 reserved_file_uids.add(uid)
             continue
 
-        if record.title.lower() in protected_titles:
+        if (record.title or '').lower() in protected_titles:
             found[uid] = record.title
         elif _has_reserved_legacy_attachment(record):
             found[uid] = '<record with a reserved config attachment>'
@@ -150,16 +168,22 @@ def get_protected_record_uids(params) -> Dict[str, str]:
 
 
 def get_protected_folder_uids(params, protected_record_uids: Dict[str, str]) -> Set[str]:
-    """Folders directly containing an already-protected record, via subfolder_record_cache (folder_uid -> set of record UIDs) -- derived from record protection rather than a separate per-integration title list, so it stays correct even if a folder is renamed."""
-    subfolder_record_cache = getattr(params, 'subfolder_record_cache', None)
-    if params is None or not protected_record_uids or not isinstance(subfolder_record_cache, dict):
+    """Folders directly containing protected records, in classic vault or NSF maps."""
+    if params is None or not protected_record_uids:
         return set()
 
     record_uids = protected_record_uids.keys()
-    return {
-        folder_uid for folder_uid, uids in subfolder_record_cache.items()
-        if folder_uid and isinstance(uids, (set, frozenset)) and uids & record_uids
-    }
+    protected_folders = set()
+    for attr in ('subfolder_record_cache', 'nested_share_folder_records'):
+        folder_records = getattr(params, attr, None)
+        if not isinstance(folder_records, dict):
+            continue
+        protected_folders.update(
+            folder_uid for folder_uid, uids in folder_records.items()
+            if folder_uid and isinstance(uids, (set, frozenset, list, tuple))
+            and set(uids) & record_uids
+        )
+    return protected_folders
 
 
 def _sync_down_exempt_commands() -> Dict[str, str]:
@@ -227,6 +251,17 @@ def hide_from_record_cache(params, protected_uids: Dict[str, str]):
                 removed_from_folders[folder_uid] = hit
                 uids -= hit
 
+    nsf_folder_records = getattr(params, 'nested_share_folder_records', None)
+    removed_from_nsf_folders: Dict[str, set] = {}
+    if isinstance(nsf_folder_records, dict):
+        for folder_uid, uids in nsf_folder_records.items():
+            if not isinstance(uids, set):
+                continue
+            hit = uids & protected_uid_set
+            if hit:
+                removed_from_nsf_folders[folder_uid] = hit
+                uids -= hit
+
     try:
         yield
     finally:
@@ -252,6 +287,18 @@ def hide_from_record_cache(params, protected_uids: Dict[str, str]):
                         uids |= hit
                 except Exception as e:
                     logger.debug(f'hide_from_record_cache: failed to restore subfolder {folder_uid} ({type(e).__name__})')
+
+        if isinstance(nsf_folder_records, dict):
+            for folder_uid, hit in removed_from_nsf_folders.items():
+                try:
+                    uids = nsf_folder_records.get(folder_uid)
+                    if isinstance(uids, set):
+                        uids |= hit
+                except Exception as e:
+                    logger.debug(
+                        f'hide_from_record_cache: failed to restore nested shared folder '
+                        f'{folder_uid} ({type(e).__name__})'
+                    )
 
 
 @contextlib.contextmanager
