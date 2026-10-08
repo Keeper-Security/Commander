@@ -1288,13 +1288,35 @@ def get_folder_access_state(params, folder_uid, actor_uid):
     return FOLDER_ACCESS_NONE
 
 
-def plan_folder_access_change(params, folder_uid, actor_uid, action):
+def folder_access_state_from_accessors(accessors):
+    """Classify server accessor rows (``get_folder_access_v3`` shape) for one actor.
+
+    ``accessors`` is every row returned for the same actor on one folder (the
+    server may report an inherited row alongside a direct or denied one).
+    A denial wins, then any direct (non-inherited) row, then inherited.
+    """
+    rows = [a for a in (accessors or []) if a]
+    if not rows:
+        return FOLDER_ACCESS_NONE
+    if any(a.get('denied_access') for a in rows):
+        return FOLDER_ACCESS_DENIED
+    if any(not a.get('inherited') for a in rows):
+        return FOLDER_ACCESS_DIRECT
+    return FOLDER_ACCESS_INHERITED
+
+
+def plan_folder_access_change(params, folder_uid, actor_uid, action, state=None):
     """Return the ordered request steps for a share change on a child folder.
 
     ``action`` is one of ``'grant'`` (set/change a role), ``'deny'`` or
     ``'remove'``. Each step is a dict ``{'request': <list name>,
     'include_folder_key': bool, 'denied_access': bool}``. Steps must be sent
     sequentially; a later step is sent only if the previous one succeeded.
+
+    ``state`` should be supplied by callers that looked the accessor up on the
+    server (``folder_access_state_from_accessors``). The sync cache only holds
+    the caller's own access row, so for other accessors the cache-based
+    ``get_folder_access_state`` is only a fallback.
 
     Rules:
       * inherited -> grant : folderAccessAdds + recipient-encrypted folderKey
@@ -1305,18 +1327,21 @@ def plan_folder_access_change(params, folder_uid, actor_uid, action):
       * none      -> grant : folderAccessAdds + folderKey.
       * direct    -> grant : folderAccessUpdates, no folderKey.
       * inherited -> deny  : folderAccessUpdates with deniedAccess=True, no folderKey.
+      * denied    -> deny / remove : nothing to send.
       * direct    -> remove: folderAccessRemoves.
+      * none      -> remove: folderAccessRemoves (let the server report it).
     Raises ValueError for transitions that are not allowed.
     """
-    state = get_folder_access_state(params, folder_uid, actor_uid)
+    if state is None:
+        state = get_folder_access_state(params, folder_uid, actor_uid)
     add_with_key = {'request': FOLDER_ACCESS_ADD, 'include_folder_key': True, 'denied_access': False}
+    remove = {'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False}
 
     if action == 'grant':
         if state == FOLDER_ACCESS_DIRECT:
             return [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False, 'denied_access': False}]
         if state == FOLDER_ACCESS_DENIED:
-            return [{'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False},
-                    add_with_key]
+            return [remove, add_with_key]
         return [add_with_key]  # inherited or none
 
     if action == 'deny':
@@ -1327,10 +1352,10 @@ def plan_folder_access_change(params, folder_uid, actor_uid, action):
         raise ValueError('Only inherited access can be denied (current state: %s)' % state)
 
     if action == 'remove':
-        if state == FOLDER_ACCESS_DIRECT:
-            return [{'request': FOLDER_ACCESS_REMOVE, 'include_folder_key': False, 'denied_access': False}]
-        if state == FOLDER_ACCESS_INHERITED:
-            raise ValueError('Inherited access cannot be removed directly; it comes from a parent folder')
-        raise ValueError('Nothing to remove (current state: %s)' % state)
+        if state in (FOLDER_ACCESS_DIRECT, FOLDER_ACCESS_NONE):
+            return [remove]
+        if state == FOLDER_ACCESS_DENIED:
+            return []
+        raise ValueError('Inherited access cannot be removed directly; it comes from a parent folder')
 
     raise ValueError('Unknown folder access action: %s' % action)
