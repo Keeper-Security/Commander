@@ -23,6 +23,7 @@ from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_ema
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
+from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2
 
@@ -134,7 +135,8 @@ import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
 
-export_parser = argparse.ArgumentParser(prog='export', description='Export vault data from Keeper to a local file')
+export_parser = argparse.ArgumentParser(
+    prog='export', description='Export vault data from Keeper to a file or standard output')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True,
                            help='file format')
 export_parser.add_argument('--max-size', dest='max_size',
@@ -146,7 +148,7 @@ export_parser.add_argument('-kkf', '--keepass-key-file', dest='kbdx_key_file', a
 export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
 export_parser.add_argument('--owned-only', dest='owned_only', action='store_true',
-                           help='Only export owned records')                           
+                           help='Only export owned records')
 export_parser.add_argument('--save-in-vault', dest='save_in_vault', action='store_true',
                            help='Stores exports file as a record attachment. KeePass only')
 export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
@@ -385,7 +387,12 @@ class RecordExportCommand(ImporterCommand):
 
     def execute(self, params, **kwargs):
 
-        if is_export_restricted(params):
+        if imp_exp.is_export_restricted(params):
+            if getattr(params, 'service_mode', False):
+                raise CommandError(
+                    'export',
+                    'Export is disabled by enterprise export restrictions.',
+                )
             logging.warning('Permissions Required: `export` command is disabled. '
                             'Please contact your enterprise administrator.')
             return
@@ -393,6 +400,26 @@ class RecordExportCommand(ImporterCommand):
         export_format = kwargs.pop('format', None)
         export_name = kwargs.pop('name', None)
         save_in_file = kwargs.pop('save_in_file', None)
+
+        if getattr(params, 'service_mode', False):
+            has_file_options = (
+                kwargs.get('max_size') is not None
+                or kwargs.get('file_password') is not None
+                or kwargs.get('kbdx_key_file') is not None
+                or kwargs.get('zip_archive') is True
+                or kwargs.get('save_in_vault') is True
+                or kwargs.get('force') is True
+                or save_in_file is not None
+            )
+            if export_format != 'json' or export_name is not None or has_file_options:
+                raise CommandError(
+                    'export',
+                    'Service Mode permits only JSON export to the API response. '
+                    'Use export --format=json with optional --folder and --owned-only; '
+                    'do not specify an output filename or other options.',
+                )
+            kwargs['_service_mode_record_limit'] = imp_exp.SERVICE_MODE_EXPORT_MAX_RECORDS
+            kwargs['_service_mode_input_limit'] = imp_exp.SERVICE_MODE_EXPORT_MAX_INPUT_BYTES
 
         if export_format:
             msize = kwargs.pop('max_size', None)
@@ -422,17 +449,8 @@ class RecordExportCommand(ImporterCommand):
 
 
 def is_export_restricted(params):
-    is_export_restricted = False
-
-    booleans = params.enforcements['booleans'] if params.enforcements and 'booleans' in params.enforcements else []
-
-    if len(booleans) > 0:
-        restrict_export_boolean = next((s for s in booleans if s['key'] == 'restrict_export'), None)
-
-        if restrict_export_boolean:
-            is_export_restricted = restrict_export_boolean['value']
-
-    return is_export_restricted
+    """Backward-compatible alias for the shared export policy check."""
+    return imp_exp.is_export_restricted(params)
 
 
 def set_permission(perm, user, permit, restrict, perm_name):
