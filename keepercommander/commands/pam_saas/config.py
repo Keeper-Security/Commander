@@ -75,8 +75,36 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                         action='store',
                         help='Shared folder or Nested Share Folder UID/name to store SaaS configuration.')
 
+    parser.add_argument('--format', '-f', required=False, dest='format', action='store',
+                        choices=['text', 'json'], default='text',
+                        help='Output format: text (default) or json.')
+
     def get_parser(self):
         return PAMActionSaasConfigCommand.parser
+
+    @staticmethod
+    def _list_to_json(plugins: dict[str, SaasCatalog]) -> str:
+        """Convert plugins list to JSON format."""
+        result = []
+        sorted_catalog = {}  # type: dict[str, SaasCatalog]
+        if plugins:
+            sorted_catalog = dict(sorted(plugins.items(), key=lambda i: i[1].name))
+
+        for _, plugin in sorted_catalog.items():
+            plugin_dict = {
+                "name": plugin.name,
+                "type": plugin.type,
+                "summary": plugin.summary or "",
+                "author": plugin.author or "",
+                "email": plugin.email or "",
+                "readme": plugin.readme or "",
+                "installed": plugin.installed,
+                "using": len(plugin.used_by) > 0,
+                "used_by_count": len(plugin.used_by),
+            }
+            result.append(plugin_dict)
+
+        return json.dumps(result, indent=2)
 
     @staticmethod
     def _show_list(plugins: dict[str, SaasCatalog]):
@@ -111,6 +139,47 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                     desc += f"{bcolors.ENDC})"
                     row = f" * {name}{desc} - {summary}"
                     print(row)
+
+    @staticmethod
+    def _plugin_info_to_json(plugin: SaasCatalog) -> str:
+        """Convert plugin info to JSON format."""
+        required_fields = []
+        optional_fields = []
+
+        for field in plugin.fields:
+            field_dict = {
+                "label": field.label,
+                "description": field.desc,
+                "type": field.type or "text",
+                "required": field.required,
+            }
+            if field.default_value is not None:
+                field_dict["default_value"] = field.default_value
+            if field.enum_values:
+                field_dict["enum_values"] = [
+                    {"value": ev.value, "description": ev.desc or ""}
+                    for ev in field.enum_values
+                ]
+
+            if field.required:
+                required_fields.append(field_dict)
+            else:
+                optional_fields.append(field_dict)
+
+        result = {
+            "name": plugin.name,
+            "type": plugin.type,
+            "author": plugin.author or "",
+            "email": plugin.email or "",
+            "summary": plugin.summary or "",
+            "readme": plugin.readme or "",
+            "installed": plugin.installed,
+            "allows_remote_management": plugin.allows_remote_management or False,
+            "required_fields": required_fields,
+            "optional_fields": optional_fields,
+        }
+
+        return json.dumps(result, indent=2)
 
     @staticmethod
     def _show_plugin_info(plugin: SaasCatalog):
@@ -295,6 +364,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         do_create = kwargs.get("do_create", False)  # type: bool
         do_update = kwargs.get("do_update", False)  # type: bool
         shared_folder_uid = kwargs.get("shared_folder_uid")  # type: str
+        format_option = kwargs.get("format", "text")  # type: str
 
         use_plugin = kwargs.get("plugin")  # type: str | None
         gateway = kwargs.get("gateway")  # type: str
@@ -317,18 +387,27 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         )
 
         if do_list:
-            self._show_list(plugins)
+            if format_option == "json":
+                print(self._list_to_json(plugins))
+            else:
+                self._show_list(plugins)
         elif use_plugin is not None:
 
             if use_plugin not in plugins:
-                print("")
-                print(f"{bcolors.FAIL}Cannot find '{use_plugin}' in the catalog.{bcolors.ENDC}")
+                if format_option == "json":
+                    print(json.dumps({"error": f"Cannot find '{use_plugin}' in the catalog."}))
+                else:
+                    print("")
+                    print(f"{bcolors.FAIL}Cannot find '{use_plugin}' in the catalog.{bcolors.ENDC}")
                 return
 
             plugin = plugins[use_plugin]
 
             if do_info:
-                self._show_plugin_info(plugin=plugin)
+                if format_option == "json":
+                    print(self._plugin_info_to_json(plugin=plugin))
+                else:
+                    self._show_plugin_info(plugin=plugin)
 
             elif do_create:
 
