@@ -2548,7 +2548,7 @@ class TrashGetCommand(Command, TrashMixin):
                 'record_uid': record.record_uid if record else nsf_record.get('record_uid'),
                 'title': record.title if record else nsf_record.get('title'),
                 'record_type': record.record_type if record else nsf_record.get('type'),
-                'status': 'Share' if is_shared else 'Record',
+                'status': 'Share' if is_shared else 'Drive' if is_drive else 'Record',
                 'fields': {},
             }
             if record:
