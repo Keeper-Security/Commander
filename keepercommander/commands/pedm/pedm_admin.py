@@ -58,7 +58,12 @@ class PedmUtils:
         return deployments[0]
 
     @staticmethod
-    def resolve_existing_policies(pedm: admin_plugin.PedmPlugin, policy_names: Any) -> List[admin_types.PedmPolicy]:
+    def resolve_existing_policies(
+            pedm: admin_plugin.PedmPlugin,
+            policy_names: Any,
+            *,
+            missing_names: Optional[Set[str]] = None,
+    ) -> List[admin_types.PedmPolicy]:
         found_policies: Dict[str, admin_types.PedmPolicy] = {}
         p: Optional[admin_types.PedmPolicy]
         if isinstance(policy_names, list):
@@ -79,13 +84,19 @@ class PedmUtils:
                                isinstance(x.data.get('PolicyName'), str) and
                                x.data['PolicyName'].lower() == l_name]
                     if len(matches) == 0:
-                        raise base.CommandError(f'Policy "{policy_name}" is not found')
+                        if missing_names is None:
+                            raise base.CommandError(f'Policy "{policy_name}" is not found')
+                        else:
+                            logging.warning(f'Policy "{policy_name}" is not found')
+                            missing_names.add(policy_name)
+                        continue
                     if len(matches) > 1:
                         raise base.CommandError(f'Policy "{policy_name}" is not unique. Please use Policy UID')
                     found_policies[matches[0].policy_uid] = matches[0]
 
         if len(found_policies) == 0:
-            raise base.CommandError('No policies were found')
+            if missing_names is None or len(missing_names) == 0:
+                raise base.CommandError('No policies were found')
         return list(found_policies.values())
 
     @staticmethod
@@ -1667,23 +1678,51 @@ class PedmPolicyViewCommand(base.ArgparseCommand):
 class PedmPolicyDeleteCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='delete', description='Delete EPM policy')
+        parser.add_argument('-f', '--force', dest='force', action='store_true',
+                            help='do not prompt for confirmation')
         parser.add_argument('policy', type=str, nargs='+', help='Policy UID or name')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
         plugin = admin_plugin.get_pedm_plugin(context)
 
-        policies = PedmUtils.resolve_existing_policies(plugin, kwargs.get('policy'))
-        to_delete = [x.policy_uid for x in policies]
+        policy = kwargs.get('policy')
+        force = kwargs.get('force') is True
 
-        rs = plugin.modify_policies(remove_policies=to_delete)
+        missing_uids: Set[str] = set()
+        policies = PedmUtils.resolve_existing_policies(plugin, policy, missing_names=missing_uids)
+        to_delete = {x.policy_uid for x in policies}
+        if force and len(missing_uids) > 0:
+            for policy_uid in missing_uids:
+                try:
+                    uid = utils.base64_url_decode(policy_uid)
+                    if len(uid) == 16:
+                        to_delete.add(policy_uid)
+                except:
+                    pass
+
+        if len(to_delete) == 0:
+            logging.info('No policies found')
+            return
+
+        if not force:
+            answer = prompt_utils.user_choice(f'Do you want to remove {len(to_delete)} policy(s)?', 'yN', default='n')
+            if answer.lower() not in ('y', 'yes'):
+                return
+
+        rs = plugin.modify_policies(remove_policies=list(to_delete))
         if len(rs.remove) > 0:
-            status = rs.remove[0]
-            if isinstance(status, admin_types.EntityStatus) and not status.success:
-                raise base.CommandError(f'Failed to delete policy "{status.entity_uid}": {status.message}')
+            for status in rs.remove:
+                if isinstance(status, admin_types.EntityStatus) and not status.success:
+                    message = f'Failed to delete policy "{status.entity_uid}": {status.message}'
+                    if force:
+                        logging.warning(message)
+                    else:
+                        raise base.CommandError(message)
 
-        policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
-        logging.info('Successfully deleted policy: %s', policy_names)
+        if len(policies) > 0:
+            policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
+            logging.info('Successfully deleted policy: %s', policy_names)
 
 
 class PedmPolicyAgentsCommand(base.ArgparseCommand):
