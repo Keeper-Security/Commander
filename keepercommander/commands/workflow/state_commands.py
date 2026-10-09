@@ -11,6 +11,7 @@
 
 import argparse
 import json
+import logging
 from datetime import datetime
 
 from ..base import Command, dump_report_data
@@ -150,16 +151,46 @@ class WorkflowGetUserAccessStateCommand(Command):
                     print(f"\n{bcolors.WARNING}No active workflows{bcolors.ENDC}\n")
                 return
 
+            checked_out_by = {
+                bytes(wf.flowUid): self._get_checked_out_by(params, wf)
+                for wf in response.workflows
+            }
+
             if kwargs.get('format') == 'json':
-                self._print_json(params, response)
+                self._print_json(params, response, checked_out_by)
             else:
-                self._print_table(params, response)
+                self._print_table(params, response, checked_out_by)
 
         except Exception as e:
             raise CommandError('', f'Failed to get user access state: {sanitize_router_error(e)}')
 
     @staticmethod
-    def _print_json(params, response):
+    def _get_checked_out_by(params, workflow):
+        """Resolve checkout ownership from full state, which may be omitted by get_user_access_state."""
+        if not workflow.flowUid:
+            return None
+
+        state_query = workflow_pb2.WorkflowState()
+        state_query.flowUid = workflow.flowUid
+        try:
+            state = _post_request_to_router(
+                params, 'get_workflow_state',
+                rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
+            )
+            if not state or not state.status:
+                return None
+
+            checked_out_by = state.status.checkedOutBy
+            return checked_out_by or None
+        except Exception:
+            # my-access should still be useful if an individual state/config
+            # lookup fails; leave the checkout owner unknown for this workflow.
+            logging.debug('Failed to resolve checkout owner for workflow', exc_info=True)
+            return None
+
+    @staticmethod
+    def _print_json(params, response, checked_out_by=None):
+        checked_out_by = checked_out_by or {}
         result = {
             'workflows': [
                 {
@@ -169,7 +200,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                     'stage': WorkflowFormatter.format_stage(wf.status.stage, wf.status),
                     'conditions': [WorkflowFormatter.format_conditions([c]) for c in wf.status.conditions],
                     'escalated': wf.status.escalated,
-                    'checked_out_by': wf.status.checkedOutBy or None,
+                    'checked_out_by': checked_out_by.get(bytes(wf.flowUid)),
                     'can_force_checkin': wf.status.canForceCheckIn,
                     'started_on': wf.status.startedOn or None,
                     'expires_on': wf.status.expiresOn or None,
@@ -187,14 +218,15 @@ class WorkflowGetUserAccessStateCommand(Command):
         print(json.dumps(result, indent=2))
 
     @staticmethod
-    def _print_table(params, response):
+    def _print_table(params, response, checked_out_by=None):
+        checked_out_by = checked_out_by or {}
         rows = []
         for wf in response.workflows:
             stage = WorkflowFormatter.format_stage(wf.status.stage, wf.status)
             record_name = RecordResolver.resolve_name(params, wf.resource)
             record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
             flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
-            checked_out_by = wf.status.checkedOutBy or ''
+            checkout_owner = checked_out_by.get(bytes(wf.flowUid)) or ''
             started = _fmt_ts_or_empty(wf.status.startedOn)
             expires = _fmt_ts_or_empty(wf.status.expiresOn)
             approved_by = ''
@@ -204,7 +236,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                     for a in wf.status.approvedBy
                 ]
                 approved_by = '\n'.join(approved_names)
-            rows.append([stage, record_name, record_uid, flow_uid, checked_out_by, approved_by, started, expires])
+            rows.append([stage, record_name, record_uid, flow_uid, checkout_owner, approved_by, started, expires])
 
         headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Checked Out By', 'Approved By', 'Started', 'Expires']
         print()
