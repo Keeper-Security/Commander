@@ -151,10 +151,29 @@ class WorkflowGetUserAccessStateCommand(Command):
                     print(f"\n{bcolors.WARNING}No active workflows{bcolors.ENDC}\n")
                 return
 
-            checked_out_by = {
-                bytes(wf.flowUid): self._get_checked_out_by(params, wf)
-                for wf in response.workflows
-            }
+            checked_out_by = {}
+            lookup_failures = 0
+            for wf in response.workflows:
+                flow_uid = bytes(wf.flowUid)
+                owner = wf.status.checkedOutBy or None
+                if not owner:
+                    try:
+                        owner = self._get_checked_out_by(params, wf)
+                    except Exception:
+                        lookup_failures += 1
+                        logging.debug(
+                            'Failed to resolve checkout owner for workflow %s',
+                            utils.base64_url_encode(wf.flowUid),
+                            exc_info=True,
+                        )
+                checked_out_by[flow_uid] = owner
+
+            if lookup_failures:
+                logging.warning(
+                    'Checkout owner lookup failed for %d workflow(s); '
+                    'the corresponding values may be blank.',
+                    lookup_failures,
+                )
 
             if kwargs.get('format') == 'json':
                 self._print_json(params, response, checked_out_by)
@@ -172,21 +191,15 @@ class WorkflowGetUserAccessStateCommand(Command):
 
         state_query = workflow_pb2.WorkflowState()
         state_query.flowUid = workflow.flowUid
-        try:
-            state = _post_request_to_router(
-                params, 'get_workflow_state',
-                rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
-            )
-            if not state or not state.status:
-                return None
-
-            checked_out_by = state.status.checkedOutBy
-            return checked_out_by or None
-        except Exception:
-            # my-access should still be useful if an individual state/config
-            # lookup fails; leave the checkout owner unknown for this workflow.
-            logging.debug('Failed to resolve checkout owner for workflow', exc_info=True)
+        state = _post_request_to_router(
+            params, 'get_workflow_state',
+            rq_proto=state_query, rs_type=workflow_pb2.WorkflowState,
+        )
+        if not state or not state.status:
             return None
+
+        checked_out_by = state.status.checkedOutBy
+        return checked_out_by or None
 
     @staticmethod
     def _print_json(params, response, checked_out_by=None):
