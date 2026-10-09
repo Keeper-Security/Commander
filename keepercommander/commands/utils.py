@@ -1705,21 +1705,18 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        from ..constants import KEEPER_SERVERS, get_abbrev_by_host
+        from ..constants import KEEPER_SERVERS, get_abbrev_by_host, resolve_server
 
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        # Handle --server option to change data center
+        # Handle --server option to change data center (or point at a
+        # custom/self-hosted Keeper server address).
         server = kwargs.get('server')
         if server:
-            server_upper = server.upper().replace('-', '_')
-            if server_upper in KEEPER_SERVERS:
-                params.server = KEEPER_SERVERS[server_upper]
-                logging.info(f'Data center set to {server_upper}')
-            else:
-                logging.warning(f'Unknown server region: {server}. Using default.')
+            params.server = resolve_server(server)
+            logging.info(f'Keeper server set to {params.server}')
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''

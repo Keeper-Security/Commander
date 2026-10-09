@@ -39,7 +39,7 @@ from .commands import (
 from .commands.base import CliCommand, GroupCommand
 from .commands.utils import LoginCommand
 from .commands import msp
-from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, KEEPER_SERVERS
+from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, resolve_server
 from .command_categories import COMMAND_CATEGORIES
 from .error import CommandError, Error
 from .params import KeeperParams
@@ -289,20 +289,10 @@ def do_command(params, command_line):
 
         if server:
             if not params.session_token:
-                # Look up server in KEEPER_SERVERS (case insensitive)
-                server_upper = server.upper()
-                if server_upper in KEEPER_SERVERS:
-                    params.server = KEEPER_SERVERS[server_upper]
-                    logging.info('Keeper region is set to %s', server_upper)
-                else:
-                    # Check if it matches a valid hostname directly
-                    server_lower = server.lower()
-                    if server_lower in KEEPER_SERVERS.values():
-                        params.server = server_lower
-                        logging.info('Keeper server is set to %s', params.server)
-                    else:
-                        logging.error('Invalid region: %s', server)
-                        print(f'Valid regions: {", ".join(sorted(KEEPER_SERVERS.keys()))}')
+                # Resolve a known Keeper cloud region/hostname, or fall back to
+                # treating the input as a custom/self-hosted server address.
+                params.server = resolve_server(server)
+                logging.info('Keeper server is set to %s', params.server)
             else:
                 logging.warning('Cannot change Keeper region while logged in')
         else:
