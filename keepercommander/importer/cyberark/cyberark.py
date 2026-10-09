@@ -290,10 +290,12 @@ class CyberArkImporter(BaseImporter):
         self._tmp_cert_files = []
         # ``verify`` value used for every PVWA request. Defaults to False (self-hosted PVWAs typically use a private CA), but can be overridden by the ``_CYBERARK_CA_BUNDLE`` env var to point at a CA file/dir.
         self._verify_tls = False
+        self.timeout = self.TIMEOUT
+        self.api_page_size_limit = self.API_PAGE_SIZE_LIMIT
         timeout_env = environ.get("_CYBERARK_TIMEOUT")
         if timeout_env:
             try:
-                self.TIMEOUT = int(timeout_env)
+                self.timeout = int(timeout_env)
             except ValueError:
                 pass
 
@@ -646,7 +648,7 @@ class CyberArkImporter(BaseImporter):
         )
         return True
 
-    def get_response(self, url, authorization_token, query_params, timeout=TIMEOUT):
+    def get_response(self, url, authorization_token, query_params):
         """GET helper that surfaces connection errors as a graceful warning instead of a stack trace.
 
         Returns the ``requests.Response`` on success, or ``None`` if the request could not be sent
@@ -662,7 +664,7 @@ class CyberArkImporter(BaseImporter):
                     "Content-Type": "application/json",
                 },
                 params=query_params,
-                timeout=timeout,
+                timeout=self.timeout,
                 cert=self._client_cert,
                 verify=self._verify_tls,
             )
@@ -820,7 +822,7 @@ class CyberArkImporter(BaseImporter):
             )
         return result
 
-    def fetch_all_safes(self, pvwa_host, authorization_token, timeout, api_page_size_limit=API_PAGE_SIZE_LIMIT, safes_filter=None):
+    def fetch_all_safes(self, pvwa_host, authorization_token, safes_filter=None):
         """Return full safe objects from PVWA (not just names).
 
         ``safes_filter`` is an optional set of safe names to restrict the result.
@@ -836,14 +838,13 @@ class CyberArkImporter(BaseImporter):
 
         safes = []
         offset = 0
-        limit = api_page_size_limit
+        limit = self.api_page_size_limit
         while True:
             sleep(self.DELAY)
             response = self.get_response(
                 self.get_url(pvwa_host, "safes"),
                 authorization_token,
-                {"offset": offset, "limit": limit},
-                timeout
+                {"offset": offset, "limit": limit},           
             )
             if response is None or response.status_code != 200:
                 break
@@ -865,7 +866,7 @@ class CyberArkImporter(BaseImporter):
             ]
         return safes
 
-    def fetch_safe_members(self, pvwa_host, authorization_token, safe_url_id, timeout, api_page_size_limit=API_PAGE_SIZE_LIMIT):
+    def fetch_safe_members(self, pvwa_host, authorization_token, safe_url_id):
         """Fetch all members of a CyberArk safe (excluding predefined system members)."""
         if not safe_url_id:
             return []
@@ -875,11 +876,11 @@ class CyberArkImporter(BaseImporter):
         url = f"{self.get_url(pvwa_host, 'safes')}/{safe_url_id}/Members"
         members = []
         offset = 0
-        limit = api_page_size_limit
+        limit = self.api_page_size_limit
         while True:
             sleep(self.DELAY)
             response = self.get_response(
-                url, authorization_token, {"offset": offset, "limit": limit}, timeout
+                url, authorization_token, {"offset": offset, "limit": limit},
             )
             if response is None or response.status_code != 200:
                 break
@@ -1008,7 +1009,7 @@ class CyberArkImporter(BaseImporter):
                     "POST",
                     self.get_url(pvwa_host, "logon").format(type=login_type),
                     json={"username": username, "password": password},
-                    timeout=self.TIMEOUT,
+                    timeout=self.timeout,
                     verify=self._verify_tls,
                     cert=self._client_cert,
                 )
@@ -1414,7 +1415,7 @@ class CyberArkImporter(BaseImporter):
                                     "Content-Type": "application/json",
                                 },
                                 json={"reason": "Keeper Commander Import"},
-                                timeout=self.TIMEOUT,
+                                timeout=self.timeout,
                                 verify=True if pvwa_host.endswith(".cyberark.cloud") else self._verify_tls,
                                 cert=None if pvwa_host.endswith(".cyberark.cloud") else self._client_cert,
                             )
@@ -2404,18 +2405,36 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
     ``Permission`` entries) and CyberArk User Groups → Keeper ``Team`` objects.
     """
     @staticmethod
-    def _ispositive_int(raw, default, label):
-        if raw is None or raw == "":
-            return default
+    def _ispositive_int(raw):
         try:
             value = int(raw)
         except (TypeError, ValueError):
-            logging.error('%s must be an integer, got "%s"', label, raw)
             return None
         if value <= 0:
-            logging.error('%s must be a positive integer', label, raw)
             return None
         return value
+
+    def set_timeout(self, value):
+        """Set the timeout for CyberArk API requests (in seconds)."""
+        if value is None:
+            return True
+        timeout = self._ispositive_int(value)
+        if timeout is None or timeout < 10:
+            print_formatted_text(HTML("<ansired>Timeout must be a positive integer greater than 10 seconds</ansired>"))
+            return False
+        self.timeout = timeout
+        return True
+
+    def set_api_page_size_limit(self, value):
+        """Set the page size limit for CyberArk API requests (in items per page)."""
+        if value is None:
+            return True
+        limit = self._ispositive_int(value)
+        if limit is None or limit < 10:
+            print_formatted_text(HTML("<ansired>API page size limit must be a positive integer greater than 10</ansired>"))
+            return False
+        self.api_page_size_limit = limit
+        return True
 
     @staticmethod
     def _resolve_pvwa_host():
@@ -2464,13 +2483,9 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
 
     def download_membership(self, params, **kwargs):
         folders_only = kwargs.get("folders_only") is True
-        timeout = self._ispositive_int(kwargs.get("timeout"), self.TIMEOUT, label="Timeout")
-        api_page_size_limit = self._ispositive_int(kwargs.get("api_page_size_limit"), self.API_PAGE_SIZE_LIMIT, label="API page size limit")
-        if not timeout or not timeout >= 10:
-            print_formatted_text(HTML("<ansired>Timeout must be a positive integer greater than 10 seconds</ansired>"))
+        if not self.set_timeout(kwargs.get("timeout")):
             return
-        if not api_page_size_limit or not api_page_size_limit >= 10:
-            print_formatted_text(HTML("<ansired>API page size limit must be a positive integer greater than 10</ansired>"))
+        if not self.set_api_page_size_limit(kwargs.get("api_page_size_limit")):
             return
         include_service_accounts = environ.get(
             "_CYBERARK_INCLUDE_COMPONENT_USERS", ""
@@ -2528,7 +2543,7 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
                 safes_filter = {x.strip() for x in environ.get("_CYBERARK_SAFES").split(",") if x.strip()}
 
             print_formatted_text(HTML("\nFetching CyberArk Safes..."))
-            safes = self.fetch_all_safes(pvwa_host, authorization_token, api_page_size_limit, timeout, safes_filter)
+            safes = self.fetch_all_safes(pvwa_host, authorization_token, safes_filter=safes_filter)
             if not safes:
                 print_formatted_text(HTML("<ansiyellow>No safes returned by CyberArk</ansiyellow>"))
             else:
@@ -2545,7 +2560,7 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
 
                 print(f"Fetching membership for safe '{safe_name}'... (this may take a while)")
 
-                members = self.fetch_safe_members(pvwa_host, authorization_token, safe_url_id, timeout, api_page_size_limit)
+                members = self.fetch_safe_members(pvwa_host, authorization_token, safe_url_id)
                 if not members:
                     continue
 
@@ -2603,7 +2618,6 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
                 self.get_url(pvwa_host, "user_groups"),
                 authorization_token,
                 {"includeMembers": "True"},
-                timeout
             )
             if response is None:
                 return
@@ -2639,7 +2653,6 @@ class CyberArkMembershipDownload(CyberArkImporter, BaseDownloadMembership):
                         self.get_url(pvwa_host, "user_group").format(group_id=group_id),
                         authorization_token,
                         {"includeMembers": "True"},
-                        timeout
                     )
                     if detail is not None and detail.status_code == 200:
                         try:
