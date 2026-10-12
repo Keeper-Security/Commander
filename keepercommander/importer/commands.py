@@ -167,6 +167,8 @@ download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain'
 download_membership_parser.add_argument('--sub-folder', '-sf', dest='sub_folder', action='store', choices=['ignore', 'flatten'],
                                         help='shared sub-folder handling')
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
+download_membership_parser.add_argument('--timeout', dest='timeout', action='store', type=int, default=10, help='Timeout in seconds for network requests. Currently, supported for cyberark. Default: 10')
+download_membership_parser.add_argument('--api-page-size-limit', dest='api_page_size_limit', action='store', type=int, default=200, help='Page size limit for API requests. Currently, supported for cyberark. Default: 200')
 download_membership_parser.error = raise_parse_exception
 download_membership_parser.exit = suppress_exit
 
@@ -488,7 +490,9 @@ class DownloadMembershipCommand(Command):
             logging.warning('Error loading membership plugin: %s', source)
             return
 
-        for obj in plugin.download_membership(params, folders_only=folders_only):
+        download_membership = plugin.download_membership(params, folders_only=folders_only,timeout=kwargs.get('timeout'), api_page_size_limit=kwargs.get('api_page_size_limit'))
+
+        for obj in download_membership:
             if isinstance(obj, SharedFolder):
                 obj.path = obj.path.strip()
                 if import_into:
