@@ -379,25 +379,41 @@ KEEPER_SERVERS = {
 }
 
 
+def is_server_address(server_input):
+    """True when server_input looks like a host name or address rather than a region code:
+    it has a scheme, a dot or a port (``keeper.example.com``, ``192.0.2.10``, ``host:8443``), or is localhost."""
+    value = (server_input or '').strip().lower()
+    return bool(value) and ('://' in value or '.' in value or ':' in value or value == 'localhost')
+
+
 def resolve_server(server_input):
     """
-    Resolve a server input to a valid Keeper host.
+    Resolve a server input to a Keeper host.
+
+    Accepts a known Keeper cloud region code or hostname, or the host name or
+    address of a self-managed Keeper deployment (e.g. ``localhost``,
+    ``localhost:8080``, ``keeper.example.com``). Anything else, such as a
+    mistyped region code, is not a server.
 
     Args:
-        server_input: Can be a region code (US, EU, GOV_DEV, etc.) or a full hostname
+        server_input: A region code (US, EU, GOV_DEV, etc.), a known Keeper
+            hostname, or a custom server address.
 
     Returns:
-        The resolved hostname if valid, None if invalid
+        The resolved server address, or None if server_input is empty or is
+        neither a region code nor a server address.
 
     Examples:
         resolve_server('US') -> 'keepersecurity.com'
         resolve_server('us') -> 'keepersecurity.com'
         resolve_server('GOV_DEV') -> 'govcloud.dev.keepersecurity.us'
         resolve_server('keepersecurity.eu') -> 'keepersecurity.eu'
-        resolve_server('foo.com') -> None
+        resolve_server('localhost:8080') -> 'localhost:8080'
+        resolve_server('EUU') -> None
     """
     if not server_input:
         return None
+    server_input = server_input.strip()
 
     # Normalize input - uppercase for lookup
     server_upper = server_input.upper().replace('-', '_')
@@ -411,8 +427,21 @@ def resolve_server(server_input):
     if server_lower in KEEPER_SERVERS.values():
         return server_lower
 
-    # Not a valid server
+    # Not a known Keeper cloud region/hostname: a self-managed server address,
+    # used as-is. A bare word that is not a region code is most likely a typo.
+    if is_server_address(server_input):
+        return server_input
     return None
+
+
+def invalid_server_message(server_input):   # type: (str) -> str
+    return (f"'{server_input}' is not a valid Keeper server.\n"
+            'Valid server codes:\n'
+            '  Production: US, EU, AU, CA, JP, GOV\n'
+            '  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV\n'
+            '  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA\n'
+            'You can also use a full host name: a Keeper host (keepersecurity.eu) or the host of a\n'
+            'self-managed Keeper deployment (keeper.example.com, 192.0.2.10:8443, localhost)')
 
 
 def get_valid_server_codes():

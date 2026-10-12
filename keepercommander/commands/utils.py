@@ -297,7 +297,8 @@ proxy_parser.exit = suppress_exit
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
-login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
+login_parser.add_argument('--server', dest='server', action='store', help='Keeper region (US, EU, AU, CA, JP, GOV, etc.), Keeper host, '
+                          'or the host of a self-managed Keeper deployment')
 login_parser.add_argument('--config-file', dest='config_file', action='store_true',
                           help='Store config in config.json instead of the OS-native keychain '
                                '(use for headless servers, Docker, or CI/CD environments). '
@@ -1705,21 +1706,21 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        from ..constants import KEEPER_SERVERS, get_abbrev_by_host
+        from ..constants import KEEPER_SERVERS, get_abbrev_by_host, resolve_server, invalid_server_message
 
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        # Handle --server option to change data center
+        # Handle --server option to change data center (or point at a
+        # custom/self-hosted Keeper server address).
         server = kwargs.get('server')
         if server:
-            server_upper = server.upper().replace('-', '_')
-            if server_upper in KEEPER_SERVERS:
-                params.server = KEEPER_SERVERS[server_upper]
-                logging.info(f'Data center set to {server_upper}')
-            else:
-                logging.warning(f'Unknown server region: {server}. Using default.')
+            resolved_server = resolve_server(server)
+            if not resolved_server:
+                raise CommandError('login', invalid_server_message(server))
+            params.server = resolved_server
+            logging.info(f'Keeper server set to {params.server}')
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
@@ -1966,7 +1967,7 @@ class LogoutCommand(Command):
                 api_rq = APIRequest_pb2.ApiRequest()
                 api_rq.locale = params.rest_context.locale or 'en_US'
 
-                server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+                server_public_key = rest_api.get_server_public_key(params.rest_context)
                 if isinstance(server_public_key, rsa.RSAPublicKey):
                     api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, server_public_key)
                 elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
