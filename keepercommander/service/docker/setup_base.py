@@ -596,8 +596,6 @@ class DockerSetupBase:
 
         if use_tailscale:
             while True:
-                # Echoed on purpose: these keys are long and pasted, and a silent
-                # prompt made paste errors impossible to spot.
                 key = input(f"{bcolors.OKBLUE}Tailscale auth key:{bcolors.ENDC} ").strip()
                 try:
                     config['tailscale_auth_key'] = ConfigValidator.validate_tailscale_auth_key(key)
@@ -611,6 +609,11 @@ class DockerSetupBase:
             ).strip()
 
         return config
+
+    @staticmethod
+    def _disabled_tailscale_config() -> Dict[str, Any]:
+        return {'tailscale_enabled': False, 'tailscale_auth_key': '',
+                'tailscale_advertise_tags': '', 'tailscale_public_url': ''}
 
     def _get_advanced_security_config(self) -> Dict[str, Any]:
         """Get advanced security configuration (IP filter, rate limit, encryption, token expiry)."""

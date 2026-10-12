@@ -504,9 +504,16 @@ def _downloaded_to_tempfile(url, suffix):
 
 
 def _install_tailscale_linux():
-    """Download and run the official install script. May prompt for sudo interactively."""
+    """Download and run the official install script. No published checksum exists to verify against."""
+    import hashlib
     try:
         with _downloaded_to_tempfile(TAILSCALE_INSTALL_SCRIPT_URL, '.sh') as tmp_path:
+            with open(tmp_path, 'rb') as f:
+                script_bytes = f.read()
+            if len(script_bytes) < 1000:
+                logging.error(f"Downloaded Tailscale install script looks truncated ({len(script_bytes)} bytes)")
+                return False
+            logging.info(f"Tailscale install script SHA256: {hashlib.sha256(script_bytes).hexdigest()}")
             return _run_privileged_tailscale_command(['sh', tmp_path], TAILSCALE_INSTALL_TIMEOUT, "Tailscale install")
     except Exception as e:
         logging.error(f"Error downloading Tailscale install script: {type(e).__name__}")

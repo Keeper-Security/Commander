@@ -519,5 +519,34 @@ class TestTailscaleUpUnattended(unittest.TestCase):
         self.assertTrue(any(a.startswith('--auth-key=file:') for a in cmd))
 
 
+class TestInstallTailscaleLinux(unittest.TestCase):
+    def _run_with_script(self, content: bytes):
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            with mock.patch('keepercommander.service.util.tunneling._downloaded_to_tempfile') as mock_dl, \
+                 mock.patch('keepercommander.service.util.tunneling._run_privileged_tailscale_command',
+                             return_value=True) as mock_run:
+                mock_dl.return_value.__enter__.return_value = tmp_path
+                result = tunneling._install_tailscale_linux()
+                return result, mock_run
+        finally:
+            os.unlink(tmp_path)
+
+    def test_rejects_truncated_download(self):
+        result, mock_run = self._run_with_script(b'short')
+        self.assertFalse(result)
+        mock_run.assert_not_called()
+
+    def test_runs_install_and_logs_sha256_for_a_normal_script(self):
+        with self.assertLogs(level='INFO') as logs:
+            result, mock_run = self._run_with_script(b'#!/bin/sh\n' + b'x' * 2000)
+        self.assertTrue(result)
+        mock_run.assert_called_once()
+        self.assertTrue(any('SHA256' in m for m in logs.output))
+
+
 if __name__ == '__main__':
     unittest.main()

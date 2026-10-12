@@ -164,10 +164,6 @@ class DockerComposeBuilder:
             if self.config.get('cloudflare_custom_domain'):
                 self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
 
-        # Tailscale is handled via a sidecar container (see _add_tailscale_sidecar_if_enabled),
-        # not a service-create flag -- Docker deployments are headless and can't answer the
-        # install/daemon-start prompts that -ts would otherwise trigger inside the container.
-
     def _add_docker_options(self) -> None:
         self._service_cmd_parts.extend([
             f"-ur {self.setup_result.record_uid}",
@@ -204,29 +200,33 @@ class DockerComposeBuilder:
         }, indent=2)
         self._top_level_configs[TAILSCALE_SERVE_CONFIG_NAME] = {'content': serve_config}
 
-        # Print-only: Funnel itself is TS_SERVE_CONFIG's job, so losing this hook
-        # only costs the log line. /proc/1/fd/1 gets stdout into `docker logs`.
-        # Bounded at ~8s - a hook still running when `compose up` finishes gets
-        # SIGKILLed and tears the project down. Retries the AllowFunnel check (not
-        # just the hostname) across the budget: the hostname lands in ~2s, but
-        # TS_SERVE_CONFIG application + the ACME cert fetch behind it can take 30s+.
-        # No jq in this image - matched via sed/case text instead.
+        # Print-only (TS_SERVE_CONFIG owns Funnel) and bounded at ~8s - a hook still
+        # running when `compose up` finishes gets SIGKILLed and tears the project down.
+        # Retries AllowFunnel, not just the hostname: cert fetch can take 30s+. No jq
+        # in this image, so matched via sed/case text.
         sed_dns_name = r"""sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p'"""
         allow_funnel_glob = r"""*'"'"$$h"':443":'*'true'*"""  # tolerates "true" and ": true" (Go JSON spacing varies)
-        url_hook = (
-            f"i=0; while [ \"$$i\" -lt 8 ]; do "
-            f"h=$$(tailscale status --json --peers=false 2>/dev/null | {sed_dns_name} | head -n1); "
-            f"if [ -n \"$$h\" ]; then "
-            f"case \"$$(tailscale funnel status --json 2>/dev/null)\" in "
-            f"{allow_funnel_glob}) "
-            f"echo \"Tailscale Funnel URL: https://$$h\" > /proc/1/fd/1; exit 0 ;; "
-            f"esac; fi; "
-            f"i=$$((i+1)); sleep 1; "
-            f"done; "
-            f"if [ -n \"$$h\" ]; then "
-            f"echo \"Tailscale hostname is $$h but Funnel is not active - check 'tailscale funnel status' (tailnet HTTPS Certificates or the Funnel ACL grant may be missing)\" > /proc/1/fd/1; "
-            f"fi; exit 0"
-        )
+        not_active_msg = ("Tailscale hostname is $$h but Funnel is not active - check "
+                          "'tailscale funnel status' (tailnet HTTPS Certificates or the Funnel ACL grant may be missing)")
+        url_hook = f"""i=0
+while [ "$$i" -lt 8 ]; do
+  h=$$(tailscale status --json --peers=false 2>/dev/null | {sed_dns_name} | head -n1)
+  if [ -n "$$h" ]; then
+    case "$$(tailscale funnel status --json 2>/dev/null)" in
+      {allow_funnel_glob})
+        echo "Tailscale Funnel URL: https://$$h" > /proc/1/fd/1
+        exit 0
+        ;;
+    esac
+  fi
+  i=$$((i+1))
+  sleep 1
+done
+if [ -n "$$h" ]; then
+  echo "{not_active_msg}" > /proc/1/fd/1
+fi
+exit 0
+"""
 
         # Matches the keeper-service[-<integration>] convention already used for the
         # commander container name (e.g. keeper-service-slack -> keeper-tailscale-slack).

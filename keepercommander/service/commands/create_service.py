@@ -129,7 +129,7 @@ class CreateService(Command):
                 actual_service_url = self._get_service_url(config_data)
                 write_service_metadata(params, args.update_vault_record, actual_service_url, api_key)
 
-            self._upload_and_start_service(params)
+            self._upload_and_start_service(params, args.update_vault_record, api_key)
 
         except ValidationError as e:
             print(f"Validation Error: {str(e)}")
@@ -171,16 +171,16 @@ class CreateService(Command):
         # Return the API key for Docker mode
         return record.get('api-key')
         
-    def _upload_and_start_service(self, params: KeeperParams) -> None:
+    def _upload_and_start_service(self, params: KeeperParams, vault_record_uid: Optional[str] = None,
+                                   api_key: Optional[str] = None) -> None:
         self.service_config.update_or_add_record(params)
         from ..core.service_manager import ServiceManager
-        ServiceManager.start_service()
+        ServiceManager.start_service(params=params, vault_record_uid=vault_record_uid, api_key=api_key)
     
     def _get_service_url(self, config_data: Dict[str, Any]) -> str:
         """Determine the actual service URL (ngrok, cloudflare, tailscale, or localhost) with API version path"""
-        # Determine API version based on queue_enabled
-        queue_enabled = config_data.get("queue_enabled", "y")
-        api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
+        from ..util.str_util import get_api_path_suffix
+        api_path = get_api_path_suffix(config_data.get("queue_enabled", "y"))
 
         # Priority: ngrok > cloudflare > tailscale > localhost
         base_url = ""

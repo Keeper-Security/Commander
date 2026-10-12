@@ -255,7 +255,7 @@ class TestTailscaleSidecar(TestCase):
         project down - the ~8s cap and clean exit avoid that."""
         hook = self._hook()
         self.assertIn('-lt 8', hook)
-        self.assertIn('sleep 1;', hook)
+        self.assertIn('sleep 1', hook)
         self.assertTrue(hook.rstrip().endswith('exit 0'))
         self.assertIn('h=$$(', hook)              # Compose-escaped
         self.assertNotIn('h=$(', hook)

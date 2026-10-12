@@ -350,6 +350,45 @@ class TestServiceManagement(unittest.TestCase):
             mock_stop_funnel.assert_called_once_with(8000)
             mock_spawn.assert_not_called()
 
+    def test_start_service_corrects_vault_metadata_with_real_tailscale_url(self):
+        """-ur writes a localhost fallback at record-creation time, before Funnel
+        starts. Once configure_tailscale discovers the real URL, start_service must
+        correct the vault record - the only in-process point where both are known."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.tailscale_config.TailscaleConfigurator.configure_tailscale',
+                       side_effect=lambda config_data, _sc: config_data.update(
+                           tailscale_public_url='https://my-host.ts.net')), \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process'), \
+            mock.patch('keepercommander.service.commands.integrations.vault_metadata.write_service_metadata'
+                       ) as mock_write:
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "tailscale": "y", "queue_enabled": "y"
+            }
+
+            ServiceManager.start_service(params=self.params, vault_record_uid='rec-1', api_key='key-1')
+
+            mock_write.assert_called_once_with(
+                self.params, 'rec-1', 'https://my-host.ts.net/api/v2', 'key-1'
+            )
+
+    def test_start_service_skips_vault_correction_when_record_or_key_missing(self):
+        """service-start (resume) calls start_service with no vault context - must stay
+        inert, not raise, since there's nothing to correct."""
+        with mock.patch('keepercommander.service.core.service_manager.ServiceConfig') as mock_config, \
+            mock.patch('keepercommander.service.config.tailscale_config.TailscaleConfigurator.configure_tailscale',
+                       side_effect=lambda config_data, _sc: config_data.update(
+                           tailscale_public_url='https://my-host.ts.net')), \
+            mock.patch('keepercommander.service.core.service_manager.spawn_detached_process'), \
+            mock.patch('keepercommander.service.commands.integrations.vault_metadata.write_service_metadata'
+                       ) as mock_write:
+            mock_config.return_value.load_config.return_value = {
+                "port": 8000, "run_mode": "background", "tailscale": "y", "queue_enabled": "y"
+            }
+
+            ServiceManager.start_service()  # no params/vault_record_uid/api_key
+
+            mock_write.assert_not_called()
+
     def test_start_service_tailscale_auth_failure_before_funnel_starts_skips_teardown(self):
         """A bad-key/auth failure happens before Funnel is ever started - must not
         call stop_tailscale_funnel (and risk its 'reset' fallback) when there's

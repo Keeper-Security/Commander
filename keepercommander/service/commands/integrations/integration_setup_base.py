@@ -300,17 +300,11 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 'cloudflare_enabled': False, 'cloudflare_tunnel_token': '',
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
-            tailscale_config = {
-                'tailscale_enabled': False, 'tailscale_auth_key': '',
-                'tailscale_advertise_tags': '', 'tailscale_public_url': ''
-            }
+            tailscale_config = self._disabled_tailscale_config()
         else:
             cloudflare_config = self._get_cloudflare_config()
             if cloudflare_config['cloudflare_enabled']:
-                tailscale_config = {
-                    'tailscale_enabled': False, 'tailscale_auth_key': '',
-                    'tailscale_advertise_tags': '', 'tailscale_public_url': ''
-                }
+                tailscale_config = self._disabled_tailscale_config()
             else:
                 tailscale_config = self._get_tailscale_config()
 

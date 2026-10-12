@@ -13,8 +13,10 @@ import os
 import logging
 import signal
 import psutil
+from typing import Optional
 
 from ... import utils
+from ...params import KeeperParams
 from ...service.config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from ..util.process_util import spawn_detached_process, CREATE_NO_WINDOW
@@ -57,7 +59,8 @@ class ServiceManager:
 
     
     @classmethod
-    def start_service(cls) -> None:
+    def start_service(cls, params: Optional[KeeperParams] = None, vault_record_uid: Optional[str] = None,
+                       api_key: Optional[str] = None) -> None:
         """Start the service if not already running."""
         process_info = ProcessInfo.load()
         
@@ -145,6 +148,18 @@ class ServiceManager:
                             )
                         except Exception as save_error:
                             logger.debug(f"Could not persist tailscale_public_url: {save_error}")
+
+                        if params and vault_record_uid and api_key:
+                            try:
+                                from ..util.str_util import get_api_path_suffix
+                                from ..commands.integrations.vault_metadata import write_service_metadata
+                                api_path = get_api_path_suffix(config_data.get("queue_enabled", "y"))
+                                write_service_metadata(
+                                    params, vault_record_uid,
+                                    f"{config_data['tailscale_public_url']}{api_path}", api_key
+                                )
+                            except Exception as metadata_error:
+                                logger.debug(f"Could not correct vault record with real Tailscale URL: {metadata_error}")
             except (KeyboardInterrupt, Exception) as e:
                 # KeyboardInterrupt (e.g. Ctrl+C during a Tailscale install/daemon-start
                 # prompt) is not an Exception subclass -- must be caught explicitly here
