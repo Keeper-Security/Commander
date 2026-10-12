@@ -35,7 +35,6 @@ import requests
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report, reporting
-from .helpers.enterprise import user_has_privilege
 from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
 from ..constants import EMAIL_PATTERN
@@ -180,11 +179,22 @@ API_EVENT_RAW_ROW_LIMIT = 1000
 
 def raise_if_audit_report_failed(response, cmd):
     # type: (dict, str) -> None
-    if response.get('result') == 'fail':
+    if isinstance(response, dict) and response.get('result') == 'fail':
         raise CommandError(cmd, response.get('message') or 'Request failed')
 
 
-def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None, cmd='audit-report'):
+def communicate_audit_report(params, request, cmd):
+    # type: (KeeperParams, Dict[str, Any], str) -> Dict[str, Any]
+    try:
+        response = api.communicate(params, request)
+    except Error as e:
+        raise CommandError(cmd, e.message) from e
+    raise_if_audit_report_failed(response, cmd)
+    return response
+
+
+def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None,
+                       cmd='audit-report'):
     # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str], str) -> List[Dict[str, Any]]
     """
     Fetch audit events with pagination support.
@@ -244,7 +254,7 @@ def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, repor
         for idx, rs in enumerate(rss):
             raise_if_audit_report_failed(rs, cmd)
             batch_events = rs.get('audit_event_overview_report_rows') or []
-            if not isinstance(batch_events, list) or not batch_events:
+            if not batch_events or not isinstance(batch_events, list):
                 continue
 
             events.extend(batch_events)
@@ -291,8 +301,8 @@ def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, repor
                             reverse = 'descending' if asc else 'ascending'
                             last_rq['order'] = reverse
                             last_rq['limit'] = 1
-                            rs_last = api.communicate(params, last_rq)
-                            last_row_events = rs_last.get('audit_event_overview_report_rows')
+                            rs_last = communicate_audit_report(params, last_rq, cmd)
+                            last_row_events = rs_last.get('audit_event_overview_report_rows') or []
                             if last_row_events:
                                 last_row = last_row_events[0]
                                 last_timestamp = last_row.get(timestamp_field, last_row.get('created', 0))
@@ -935,12 +945,20 @@ class AuditLogCommand(EnterpriseCommand):
             uid = cache.get(uname)
         return uid
 
+    @staticmethod
+    def validate_reporting_access(params):
+        """Ask the server to authorize audit reporting before prompting or creating records."""
+        now_ts = int(datetime.datetime.now().timestamp())
+        request = {
+            'command': 'get_audit_event_reports',
+            'report_type': 'span',
+            'scope': 'enterprise',
+            'limit': 1,
+            'filter': {'created': {'min': 0, 'max': now_ts}}
+        }
+        communicate_audit_report(params, request, 'audit-log')
+
     def execute(self, params, **kwargs):
-        if not user_has_privilege(params, 'run_reports'):
-            raise CommandError('audit-log', 'You do not have the required privilege to run an Audit Log export.')
-
-        load_syslog_templates(params)
-
         target = kwargs.get('target')
 
         log_export = None        # type: Optional[AuditLogBaseExport]
@@ -958,6 +976,9 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
             raise CommandError('audit-log', 'Audit log export: unsupported target')
+
+        self.validate_reporting_access(params)
+        load_syslog_templates(params)
 
         self.log_export = log_export
         record = None   # type: Union[vault.PasswordRecord, vault.TypedRecord, None]
@@ -1072,15 +1093,9 @@ class AuditLogCommand(EnterpriseCommand):
         filter_copy = {**rq_filter, 'created': created_filter_copy}
         total_events_rq = {**rq, 'filter': filter_copy, 'report_type': 'span'}
         total_events = 0
-        try:
-            total_events_rs = api.communicate(params, total_events_rq)
-            rows = total_events_rs.get('audit_event_overview_report_rows') or []
-            total_events = rows[0].get('occurrences', 0) if rows else 0
-        except Error as e:
-            raise CommandError('audit-log', e.message) from e
-        except Exception:
-            logging.info('No events to export')
-            return
+        total_events_rs = communicate_audit_report(params, total_events_rq, 'audit-log')
+        rows = total_events_rs.get('audit_event_overview_report_rows') or []
+        total_events = rows[0].get('occurrences', 0) if rows else 0
 
         while not finished:
             finished = True
@@ -1088,10 +1103,10 @@ class AuditLogCommand(EnterpriseCommand):
             if last_event_time > 0:
                 created_filter['min'] = last_event_time
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
+            rs = communicate_audit_report(params, rq, 'audit-log')
+            if rs.get('result') == 'success':
                 finished = True
-                if 'audit_event_overview_report_rows' in rs:
+                if rs.get('audit_event_overview_report_rows'):
                     audit_events = rs['audit_event_overview_report_rows']
                     event_count = len(audit_events)
                     last_event_time = int(audit_events[-1]['created']) if event_count else now_ts
