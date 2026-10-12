@@ -162,7 +162,7 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
     if not transmission_key:
         transmission_key = utils.generate_aes_key()
     if not encrypted_transmission_key:
-        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+        server_public_key = rest_api.get_server_public_key(params.rest_context)
 
         if params.rest_context.server_key_id < 7:
             encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
@@ -360,7 +360,7 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto,
     krouter_host = get_router_url(params)
 
     if not encrypted_transmission_key:
-        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+        server_public_key = rest_api.get_server_public_key(params.rest_context)
 
         if params.rest_context.server_key_id < 7:
             encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)

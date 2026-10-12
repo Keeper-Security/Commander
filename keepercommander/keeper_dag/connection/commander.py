@@ -86,7 +86,7 @@ class Connection(ConnectionBase):
     # deprecated
     def get_keeper_tokens(self):
         self.transmission_key = utils.generate_aes_key()
-        server_public_key = rest_api.SERVER_PUBLIC_KEYS[self.params.rest_context.server_key_id]
+        server_public_key = rest_api.get_server_public_key(self.params.rest_context)
 
         if self.params.rest_context.server_key_id < 7:
             self.dep_encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
@@ -108,7 +108,7 @@ class Connection(ConnectionBase):
             self.transmission_key = utils.generate_aes_key()
             self.logger.debug(f"transmission key is {self.transmission_key}")
             # self.params.rest_context.transmission_key = self.transmission_key
-            server_public_key = rest_api.SERVER_PUBLIC_KEYS[self.params.rest_context.server_key_id]
+            server_public_key = rest_api.get_server_public_key(self.params.rest_context)
 
             if self.params.rest_context.server_key_id < 7:
                 encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
