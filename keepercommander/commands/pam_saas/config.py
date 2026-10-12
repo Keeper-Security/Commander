@@ -150,7 +150,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
             field_dict = {
                 "label": field.label,
                 "description": field.desc,
-                "type": field.type or "text",
+                # Match get --format json behavior: display type as "secret" for sensitive fields
+                "type": "secret" if field.is_secret else (field.type or "text"),
                 "required": field.required,
             }
             if field.default_value is not None:
