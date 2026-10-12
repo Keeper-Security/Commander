@@ -114,7 +114,6 @@ class TestServiceModeCommandPolicy(TestCase):
         for cmd in (
             'run-batch --dry-run /etc/passwd',
             'run --dry-run ~/.keeper/config.json',
-            'export --format=json /tmp/out.json',
             'download-membership --source=keeper /tmp/m.json',
             'download-record-types --source=keeper /tmp/rt.json',
             'apply-membership /tmp/m.json',
@@ -124,6 +123,67 @@ class TestServiceModeCommandPolicy(TestCase):
                 err = check(_tokens(cmd))
                 self.assertIsNotNone(err)
                 self.assertIn(ban, err)
+
+    def test_service_mode_export_only_allows_json_to_response(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        for cmd in (
+            'export --format=json',
+            'export --format json',
+            'export --format=json --folder "Team Vault"',
+            'export --format=json --folder=FOLDER_UID --owned-only',
+            'export --owned-only --format=json --folder=FOLDER_UID',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(check(_tokens(cmd)))
+
+    def test_service_mode_export_rejects_file_output_and_unapproved_options(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        for cmd in (
+            'export',
+            'export --format=csv',
+            'export --format=keepass',
+            'export --format=json /tmp/out.json',
+            'export --format=json --zip',
+            'export --format=json --max-size=1M',
+            'export --format=json --save-in-vault',
+            'export --format=json --keepass-key-file=/tmp/key',
+            'export --format=json --folder FOLDER_UID --force',
+            'export --format=json --unexpected',
+            'export --format=json --form=json',
+            'export --format=json --format=json',
+            'export --format=json --folder=FOLDER_UID --folder=OTHER_UID',
+            'export --format=json --folder=',
+            'export --format=json --include-dag',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn(ban, err)
+                self.assertIn('export --format=json', err)
+
+    def test_service_mode_pam_debug_dump_allows_only_json_response(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        for cmd in (
+            'pam action debug dump FOLDER_UID --format=json',
+            'pam action debug dump FOLDER_UID --recursive --format json',
+            'pam a debug d FOLDER_UID -r --format=json',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(check(_tokens(cmd)))
+
+        for cmd in (
+            'pam action debug dump FOLDER_UID --recursive -s textdump.json',
+            'pam action debug dump FOLDER_UID --save-as=/tmp/textdump.json --format=json',
+            'pam action debug dump FOLDER_UID --recursive',
+            'pam action debug dump FOLDER_UID --format=csv',
+            'pam action debug dump FOLDER_UID --format=json --unexpected',
+            'pam a debug d FOLDER_UID -s /tmp/out.json --format=json',
+        ):
+            with self.subTest(cmd=cmd):
+                err = check(_tokens(cmd))
+                self.assertIsNotNone(err)
+                self.assertIn('API response', err)
 
     def test_host_path_output_args_blocked(self):
         check = Verifycommand.validate_service_mode_restrictions

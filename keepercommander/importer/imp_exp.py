@@ -57,6 +57,8 @@ RECORD_MAX_DATA_LEN = 2000000
 RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
 LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 2Mb record limit'
 FILE_ATTACHMENT_CHUNK = 100
+SERVICE_MODE_EXPORT_MAX_RECORDS = 5000
+SERVICE_MODE_EXPORT_MAX_INPUT_BYTES = 5 * 1024 * 1024
 
 
 STANDARD_RECORD_TYPES = {
@@ -273,9 +275,35 @@ def load_existing_nsf_record_for_match(params, record_uid):
     })
 
 
+def is_export_restricted(params):
+    """Return whether the enterprise policy disables vault data exports."""
+    enforcements = getattr(params, 'enforcements', None) or {}
+    if not isinstance(enforcements, dict):
+        return False
+    booleans = enforcements.get('booleans') or []
+    if not isinstance(booleans, (list, tuple)):
+        return False
+    return any(
+        isinstance(enforcement, dict)
+        and enforcement.get('key') == 'restrict_export'
+        and bool(enforcement.get('value'))
+        for enforcement in booleans
+    )
+
+
+def _byte_length(value):
+    if isinstance(value, bytes):
+        return len(value)
+    if isinstance(value, str):
+        return len(value.encode('utf-8', errors='replace'))
+    return 0
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
+    service_mode_record_limit = kwargs.pop('_service_mode_record_limit', None)
+    service_mode_input_limit = kwargs.pop('_service_mode_input_limit', None)
     sync_down.sync_down(params)
 
     exporter = exporter_for_format(file_format)()  # type: BaseExporter
@@ -361,7 +389,19 @@ def export(params, file_format, filename, **kwargs):
     # for record_uid in params.record_cache.keys():
     #     ext_id += 1
     #     external_ids[record_uid] = ext_id
-    record_list = params.record_cache if not kwargs.get('owned_only') else {uid:params.record_cache[uid] for uid in params.record_owner_cache if params.record_owner_cache[uid].owner is True}
+    if kwargs.get('owned_only'):
+        owner_cache = getattr(params, 'record_owner_cache', {}) or {}
+        # Iterate the records still available to this command, rather than
+        # owner metadata alone. Service Mode hides its protected records from
+        # record_cache while the ownership metadata may still contain them.
+        record_list = {
+            uid: record for uid, record in params.record_cache.items()
+            if getattr(owner_cache.get(uid), 'owner', False) is True
+        }
+    else:
+        record_list = params.record_cache
+    service_mode_record_count = 0
+    service_mode_input_bytes = 0
     for record_uid in record_list:
         if record_filter or folder_path:
             if record_uid not in record_filter:
@@ -370,6 +410,26 @@ def export(params, file_format, filename, **kwargs):
         record = record_list[record_uid]
         record_version = record.get('version') or 0
         if record_version == 2 or record_version == 3:
+            if service_mode_record_limit is not None or service_mode_input_limit is not None:
+                record_data = record.get('data_unencrypted') or b''
+                record_extra = record.get('extra_unencrypted') or b''
+
+                service_mode_record_count += 1
+                service_mode_input_bytes += _byte_length(record_data) + _byte_length(record_extra)
+                if (service_mode_record_limit is not None
+                        and service_mode_record_count > service_mode_record_limit):
+                    raise CommandError(
+                        'export',
+                        'Service Mode JSON export exceeds its record processing limit. '
+                        'Use --folder or --owned-only to reduce the export scope.',
+                    )
+                if (service_mode_input_limit is not None
+                        and service_mode_input_bytes > service_mode_input_limit):
+                    raise CommandError(
+                        'export',
+                        'Service Mode JSON export exceeds its input data processing limit. '
+                        'Use --folder or --owned-only to reduce the export scope.',
+                    )
             try:
                 rec = convert_keeper_record(record, exporter.has_attachments())
                 if not rec:

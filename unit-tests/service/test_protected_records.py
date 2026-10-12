@@ -203,6 +203,21 @@ class TestGetProtectedRecordUidsNotCached(TestCase):
         second = get_protected_record_uids(p)
         self.assertEqual(set(second.keys()), {'UID_CONFIG'})
 
+    def test_protected_title_is_found_in_nsf_record_cache(self):
+        p = params_module.KeeperParams()
+        p.nested_share_records = {'NSF_CONFIG': {'version': 3}}
+        p.nested_share_record_data = {
+            'NSF_CONFIG': {
+                'data_json': {
+                    'type': 'login',
+                    'title': PROTECTED_TITLE,
+                    'fields': [],
+                },
+            },
+        }
+
+        self.assertIn('NSF_CONFIG', get_protected_record_uids(p))
+
 
 class TestHideFromRecordCache(TestCase):
     def test_hides_protected_uid_inside_the_block(self):
@@ -247,6 +262,20 @@ class TestHideFromRecordCache(TestCase):
         p = _params_with_records({'NORMAL': 'Other'})
         with hide_from_record_cache(p, {}):
             self.assertIn('NORMAL', p.record_cache)
+
+    def test_hides_and_restores_protected_uid_in_nsf_folder_membership(self):
+        p = params_module.KeeperParams()
+        p.nested_share_folder_records = {
+            'NSF_FOLDER': {'PROTECTED', 'NORMAL'},
+        }
+
+        with hide_from_record_cache(p, {'PROTECTED': PROTECTED_TITLE}):
+            self.assertEqual(p.nested_share_folder_records['NSF_FOLDER'], {'NORMAL'})
+
+        self.assertEqual(
+            p.nested_share_folder_records['NSF_FOLDER'],
+            {'PROTECTED', 'NORMAL'},
+        )
 
     def test_params_none_is_a_noop(self):
         with hide_from_record_cache(None, {'PROTECTED': PROTECTED_TITLE}):
@@ -423,6 +452,16 @@ class TestGetProtectedFolderUids(TestCase):
         p = params_module.KeeperParams()
         self.assertEqual(get_protected_folder_uids(p, {'PROTECTED': 'x'}), set())
 
+    def test_returns_nsf_folder_containing_a_protected_record(self):
+        p = params_module.KeeperParams()
+        p.nested_share_folder_records = {
+            'NSF_FOLDER': {'PROTECTED', 'NORMAL'},
+        }
+        self.assertEqual(
+            get_protected_folder_uids(p, {'PROTECTED': PROTECTED_TITLE}),
+            {'NSF_FOLDER'},
+        )
+
     def test_renamed_folder_is_still_found(self):
         """Derived from record containment, not a title list -- a rename doesn't lose protection."""
         p = _params_with_folder(folder_uid='FOLDER1', record_uid='PROTECTED')
@@ -439,6 +478,15 @@ class TestHideFromFolderCache(TestCase):
             self.assertNotIn('FOLDER1', p.folder_cache)
             self.assertNotIn('FOLDER1', p.shared_folder_cache)
             self.assertNotIn('FOLDER1', p.subfolder_cache)
+
+    def test_hides_and_restores_protected_nsf_folder(self):
+        p = params_module.KeeperParams()
+        p.nested_share_folders = {
+            'NSF_FOLDER': {'name': 'Service Config Folder', 'parent_uid': None},
+        }
+        with hide_from_folder_cache(p, {'NSF_FOLDER'}):
+            self.assertNotIn('NSF_FOLDER', p.nested_share_folders)
+        self.assertIn('NSF_FOLDER', p.nested_share_folders)
 
     def test_strips_uid_from_root_folder_subfolders_during_the_block(self):
         p = _params_with_folder(folder_uid='FOLDER1')

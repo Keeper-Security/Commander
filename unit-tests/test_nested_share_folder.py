@@ -44,6 +44,7 @@ def _make_params(**overrides):
     p.nested_share_folders = {}
     p.nested_share_folder_keys = {}
     p.nested_share_folder_accesses = {}
+    p.nested_share_folder_denied_accesses = {}
     p.nested_share_records = {}
     p.nested_share_record_data = {}
     p.nested_share_record_keys = {}
@@ -60,6 +61,13 @@ def _make_params(**overrides):
     for k, v in overrides.items():
         setattr(p, k, v)
     return p
+
+
+def _direct_viewer_row(uid_bytes, inherited=False, denied=False, role='VIEWER',
+                       access_type='AT_USER'):
+    return {'accessor_uid': utils.base64_url_encode(uid_bytes),
+            'access_type': access_type, 'role': role,
+            'inherited': inherited, 'denied_access': denied}
 
 
 def _make_folder(folder_uid=None, name='Test Folder', parent_uid=None,
@@ -1627,7 +1635,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         self.assertEqual(ad.tlaProperties.expiration, expiration)
 
     @patch('keepercommander.nested_share_folder.folder_api.update_folder_access_v3')
-    @patch('keepercommander.nested_share_folder.folder_api._check_existing_access')
+    @patch('keepercommander.nested_share_folder.folder_api._lookup_folder_accessors')
     @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
     @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
     def test_grant_folder_access_update_passes_expiration(
@@ -1640,7 +1648,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         uid_bytes = utils.base64_url_decode(utils.generate_uid())
         mock_resolve_folder.return_value = fuid
         mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
-        mock_existing.return_value = 'viewer'
+        mock_existing.return_value = [_direct_viewer_row(uid_bytes)]
         mock_update.return_value = {'success': True}
 
         expiration = 1_800_000_000_000
@@ -1650,10 +1658,11 @@ class TestNestedShareFolderFolderApi(TestCase):
 
         mock_update.assert_called_once_with(
             mock.ANY, fuid, email, role='content-manager', as_team=False,
-            expiration_timestamp=expiration, rotate_on_expiration=False)
+            expiration_timestamp=expiration, rotate_on_expiration=False,
+            known_state='direct')
 
     @patch('keepercommander.nested_share_folder.folder_api.update_folder_access_v3')
-    @patch('keepercommander.nested_share_folder.folder_api._check_existing_access')
+    @patch('keepercommander.nested_share_folder.folder_api._lookup_folder_accessors')
     @patch('keepercommander.nested_share_folder.folder_api.get_user_public_key')
     @patch('keepercommander.nested_share_folder.folder_api.resolve_folder_identifier')
     def test_grant_folder_access_same_role_updates_expiration(
@@ -1666,7 +1675,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         uid_bytes = utils.base64_url_decode(utils.generate_uid())
         mock_resolve_folder.return_value = fuid
         mock_get_public_key.return_value = (Mock(), False, uid_bytes, False)
-        mock_existing.return_value = 'viewer'
+        mock_existing.return_value = [_direct_viewer_row(uid_bytes)]
         mock_update.return_value = {'success': True}
 
         expiration = 1_900_000_000_000
@@ -1676,7 +1685,8 @@ class TestNestedShareFolderFolderApi(TestCase):
 
         mock_update.assert_called_once_with(
             mock.ANY, fuid, email, role='viewer', as_team=False,
-            expiration_timestamp=expiration, rotate_on_expiration=False)
+            expiration_timestamp=expiration, rotate_on_expiration=False,
+            known_state='direct')
 
 
     @patch('keepercommander.nested_share_folder.folder_api.folder_access_update_v3')
@@ -2613,3 +2623,220 @@ class TestCommandRegistration(TestCase):
                     'kd-record-access', 'kd-folder-access']
         for name in removed:
             self.assertNotIn(name, commands)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Child-folder access transitions (inherited / denied / direct)
+# ══════════════════════════════════════════════════════════════════════════
+
+def _access_response(*statuses):
+    rs = Mock()
+    results = []
+    for st in statuses:
+        r = Mock()
+        r.status = st
+        r.message = ''
+        r.folderUid = b''
+        r.accessUid = b''
+        results.append(r)
+    rs.folderAccessResults = results
+    return rs
+
+
+_FA = 'keepercommander.nested_share_folder.folder_api.'
+
+
+class TestNestedShareFolderAccessTransitions(TestCase):
+
+    def setUp(self):
+        self.parent_uid, parent = _make_folder(name='Parent')
+        self.child_uid, child = _make_folder(name='Child', parent_uid=self.parent_uid)
+        self.params = _make_params(nested_share_folders={
+            self.parent_uid: parent, self.child_uid: child})
+        self.uid_bytes = utils.base64_url_decode(utils.generate_uid())
+        self.email = 'user@example.com'
+        self.fake_key = folder_pb2.EncryptedDataKey(
+            encryptedKey=b'enc', encryptedKeyType=folder_pb2.encrypted_by_public_key)
+
+    def _grant(self, rows, access_side_effect):
+        from keepercommander.nested_share_folder.folder_api import grant_folder_access_v3
+        with patch(_FA + 'resolve_folder_identifier', return_value=self.child_uid), \
+                patch(_FA + 'get_user_public_key',
+                      return_value=(Mock(), False, self.uid_bytes, False)), \
+                patch(_FA + '_lookup_folder_accessors', return_value=rows), \
+                patch(_FA + '_encrypted_folder_key_for', return_value=self.fake_key) as enc, \
+                patch(_FA + 'folder_access_update_v3', side_effect=access_side_effect) as upd:
+            result = grant_folder_access_v3(self.params, self.child_uid, self.email,
+                                            role='content-manager')
+        return result, upd, enc
+
+    def test_grant_inherited_becomes_add_with_folder_key(self):
+        rows = [_direct_viewer_row(self.uid_bytes, inherited=True)]
+        result, upd, enc = self._grant(rows, [_access_response(folder_pb2.SUCCESS)])
+        self.assertTrue(result['success'])
+        self.assertEqual(result['previous_access_state'], 'inherited')
+        upd.assert_called_once()
+        ad = upd.call_args.kwargs['folder_access_adds'][0]
+        self.assertTrue(ad.HasField('folderKey'))
+        self.assertEqual(ad.folderKey.encryptedKeyType, folder_pb2.encrypted_by_public_key)
+        self.assertNotIn('folder_access_updates', upd.call_args.kwargs)
+        enc.assert_called_once()
+
+    def test_grant_inherited_same_role_still_creates_direct_grant(self):
+        rows = [_direct_viewer_row(self.uid_bytes, inherited=True, role='CONTENT_MANAGER')]
+        result, upd, _ = self._grant(rows, [_access_response(folder_pb2.SUCCESS)])
+        self.assertNotEqual(result.get('action_taken'), 'already_had_access')
+        self.assertIn('folder_access_adds', upd.call_args.kwargs)
+
+    def test_grant_denied_removes_denial_then_adds(self):
+        rows = [_direct_viewer_row(self.uid_bytes, inherited=True, denied=True)]
+        result, upd, _ = self._grant(rows, [_access_response(folder_pb2.SUCCESS),
+                                            _access_response(folder_pb2.SUCCESS)])
+        self.assertTrue(result['success'])
+        self.assertEqual(upd.call_count, 2)
+        first, second = upd.call_args_list
+        self.assertIn('folder_access_removes', first.kwargs)
+        self.assertFalse(first.kwargs['folder_access_removes'][0].HasField('folderKey'))
+        add = second.kwargs['folder_access_adds'][0]
+        self.assertTrue(add.HasField('folderKey'))
+        self.assertFalse(add.deniedAccess)
+
+    def test_grant_denied_skips_add_when_removal_fails(self):
+        rows = [_direct_viewer_row(self.uid_bytes, denied=True)]
+        failure = next(v for k, v in folder_pb2.FolderModifyStatus.items() if v != folder_pb2.SUCCESS)
+        result, upd, _ = self._grant(rows, [_access_response(failure)])
+        self.assertFalse(result['success'])
+        upd.assert_called_once()
+        self.assertIn('folder_access_removes', upd.call_args.kwargs)
+
+    def test_grant_direct_uses_update_without_key(self):
+        from keepercommander.nested_share_folder.folder_api import grant_folder_access_v3
+        rows = [_direct_viewer_row(self.uid_bytes)]
+        with patch(_FA + 'resolve_folder_identifier', return_value=self.child_uid), \
+                patch(_FA + 'get_user_public_key',
+                      return_value=(Mock(), False, self.uid_bytes, False)), \
+                patch(_FA + '_lookup_folder_accessors', return_value=rows), \
+                patch(_FA + '_resolve_accessor',
+                      return_value=(self.uid_bytes, self.email, folder_pb2.AT_USER)), \
+                patch(_FA + '_encrypted_folder_key_for') as enc, \
+                patch(_FA + 'folder_access_update_v3',
+                      return_value=_access_response(folder_pb2.SUCCESS)) as upd:
+            result = grant_folder_access_v3(self.params, self.child_uid, self.email,
+                                            role='content-manager')
+        self.assertEqual(result['action_taken'], 'updated')
+        ad = upd.call_args.kwargs['folder_access_updates'][0]
+        self.assertFalse(ad.HasField('folderKey'))
+        enc.assert_not_called()
+
+    def test_update_inherited_keeps_current_role_and_adds_key(self):
+        from keepercommander.nested_share_folder.folder_api import update_folder_access_v3
+        rows = [_direct_viewer_row(self.uid_bytes, inherited=True)]
+        with patch(_FA + 'resolve_folder_identifier', return_value=self.child_uid), \
+                patch(_FA + '_resolve_accessor',
+                      return_value=(self.uid_bytes, self.email, folder_pb2.AT_USER)), \
+                patch(_FA + '_lookup_folder_accessors', return_value=rows), \
+                patch(_FA + '_encrypted_folder_key_for', return_value=self.fake_key), \
+                patch(_FA + 'folder_access_update_v3',
+                      return_value=_access_response(folder_pb2.SUCCESS)) as upd:
+            update_folder_access_v3(self.params, self.child_uid, self.email,
+                                    expiration_timestamp=1_900_000_000_000)
+        ad = upd.call_args.kwargs['folder_access_adds'][0]
+        self.assertEqual(ad.accessRoleType, folder_pb2.VIEWER)
+        self.assertTrue(ad.HasField('folderKey'))
+        self.assertEqual(ad.tlaProperties.expiration, 1_900_000_000_000)
+
+    def _revoke(self, rows, response=None):
+        with patch(_FA + 'resolve_folder_identifier', return_value=self.child_uid), \
+                patch(_FA + '_resolve_accessor',
+                      return_value=(self.uid_bytes, self.email, folder_pb2.AT_USER)), \
+                patch(_FA + '_lookup_folder_accessors', return_value=rows), \
+                patch(_FA + 'folder_access_update_v3',
+                      return_value=response or _access_response(folder_pb2.SUCCESS)) as upd:
+            result = revoke_folder_access_v3(self.params, self.child_uid, self.email)
+        return result, upd
+
+    def test_revoke_inherited_sends_denial_without_key(self):
+        result, upd = self._revoke([_direct_viewer_row(self.uid_bytes, inherited=True)])
+        self.assertEqual(result['action_taken'], 'denied')
+        ad = upd.call_args.kwargs['folder_access_updates'][0]
+        self.assertTrue(ad.deniedAccess)
+        self.assertFalse(ad.HasField('folderKey'))
+
+    def test_revoke_direct_sends_remove(self):
+        _, upd = self._revoke([_direct_viewer_row(self.uid_bytes)])
+        self.assertIn('folder_access_removes', upd.call_args.kwargs)
+
+    def test_revoke_already_denied_sends_nothing(self):
+        result, upd = self._revoke([_direct_viewer_row(self.uid_bytes, denied=True)])
+        self.assertTrue(result['success'])
+        self.assertEqual(result['action_taken'], 'already_denied')
+        upd.assert_not_called()
+
+    def test_batch_mixed_states(self):
+        from keepercommander.nested_share_folder.folder_api import manage_folder_access_batch_v3
+        inh, den, direct = (utils.generate_uid() for _ in range(3))
+        index = {
+            (self.child_uid, inh): [{'accessor_uid': inh, 'access_type': 'AT_USER',
+                                     'role': 'VIEWER', 'inherited': True}],
+            (self.child_uid, den): [{'accessor_uid': den, 'access_type': 'AT_USER',
+                                     'role': 'VIEWER', 'inherited': True,
+                                     'denied_access': True}],
+            (self.child_uid, direct): [{'accessor_uid': direct, 'access_type': 'AT_USER',
+                                        'role': 'VIEWER', 'inherited': False}],
+        }
+        with patch(_FA + 'resolve_folder_identifier', return_value=self.child_uid), \
+                patch(_FA + 'resolve_user_uid_bytes',
+                      side_effect=lambda p, u: utils.base64_url_decode(u)), \
+                patch(_FA + '_batch_accessor_index', return_value=index), \
+                patch(_FA + '_encrypted_folder_key_for', return_value=self.fake_key), \
+                patch(_FA + 'folder_access_update_v3',
+                      return_value=_access_response()) as upd:
+            results = manage_folder_access_batch_v3(
+                self.params,
+                access_grants=[{'folder_uid': self.child_uid, 'user_uid': den,
+                                'role': 'viewer'}],
+                access_updates=[{'folder_uid': self.child_uid, 'user_uid': inh,
+                                 'role': 'content-manager'},
+                                {'folder_uid': self.child_uid, 'user_uid': direct,
+                                 'role': 'content-manager'}])
+        self.assertTrue(all(r['success'] for r in results))
+        self.assertEqual(upd.call_count, 2)
+        pre, main = upd.call_args_list
+        self.assertEqual(len(pre.kwargs['folder_access_removes']), 1)
+        adds = main.kwargs['folder_access_adds']
+        self.assertEqual({utils.base64_url_encode(a.accessTypeUid) for a in adds}, {inh, den})
+        self.assertTrue(all(a.HasField('folderKey') for a in adds))
+        upd_rows = main.kwargs['folder_access_updates']
+        self.assertEqual([utils.base64_url_encode(a.accessTypeUid) for a in upd_rows], [direct])
+        self.assertFalse(upd_rows[0].HasField('folderKey'))
+
+
+class TestPlanFolderAccessChange(TestCase):
+
+    def test_state_from_accessors(self):
+        from keepercommander.nested_share_folder.sync import folder_access_state_from_accessors as f
+        self.assertEqual(f([]), 'none')
+        self.assertEqual(f([{'inherited': True}]), 'inherited')
+        self.assertEqual(f([{'inherited': True}, {'inherited': False}]), 'direct')
+        self.assertEqual(f([{'inherited': False}, {'denied_access': True}]), 'denied')
+
+    def test_transitions(self):
+        from keepercommander.nested_share_folder.sync import plan_folder_access_change as plan
+        p = _make_params()
+        reqs = lambda st, act: [s['request'] for s in plan(p, 'f', 'a', act, state=st)]
+        self.assertEqual(reqs('inherited', 'grant'), ['folderAccessAdds'])
+        self.assertEqual(reqs('none', 'grant'), ['folderAccessAdds'])
+        self.assertEqual(reqs('denied', 'grant'), ['folderAccessRemoves', 'folderAccessAdds'])
+        self.assertEqual(reqs('direct', 'grant'), ['folderAccessUpdates'])
+        self.assertEqual(reqs('inherited', 'deny'), ['folderAccessUpdates'])
+        self.assertEqual(reqs('denied', 'remove'), [])
+        self.assertEqual(reqs('direct', 'remove'), ['folderAccessRemoves'])
+        self.assertTrue(plan(p, 'f', 'a', 'grant', state='inherited')[0]['include_folder_key'])
+        self.assertFalse(plan(p, 'f', 'a', 'grant', state='direct')[0]['include_folder_key'])
+        deny = plan(p, 'f', 'a', 'deny', state='inherited')[0]
+        self.assertTrue(deny['denied_access'])
+        self.assertFalse(deny['include_folder_key'])
+        with self.assertRaises(ValueError):
+            plan(p, 'f', 'a', 'remove', state='inherited')
+        with self.assertRaises(ValueError):
+            plan(p, 'f', 'a', 'deny', state='direct')

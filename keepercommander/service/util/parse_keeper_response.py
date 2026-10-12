@@ -832,8 +832,18 @@ class KeeperResponseParser:
         Returns:
             Dict[str, Any]: Structured response with standard format
         """
+        # Export may have safe selector flags before the format flag
+        # (e.g. `export --owned-only --format=json`); keep its command name
+        # stable instead of returning the preceding options as the command.
+        from .command_util import is_pam_debug_dump_command
+        command_parts = command.split()
+        command_name = command_parts[:1]
+        if command_name and command_name[0].lower() == 'export':
+            base_command = 'export'
+        elif is_pam_debug_dump_command(command_parts):
+            base_command = 'pam action debug dump'
         # Extract base command by removing --format=json or --format json
-        if ' --format=json' in command:
+        elif ' --format=json' in command:
             base_command = command.split(' --format=json')[0]
         elif ' --format json' in command:
             base_command = command.split(' --format json')[0]

@@ -27,6 +27,13 @@ from .permissions import (
     FolderUsageType, SetBooleanValue, resolve_role_name, ROLE_NAME_MAP,
     get_folder_permissions_for_role,
 )
+from .sync import (
+    plan_folder_access_change, folder_access_state_from_accessors,
+    get_folder_access_state,
+    FOLDER_ACCESS_NONE, FOLDER_ACCESS_INHERITED, FOLDER_ACCESS_DIRECT,
+    FOLDER_ACCESS_DENIED,
+    FOLDER_ACCESS_ADD, FOLDER_ACCESS_UPDATE, FOLDER_ACCESS_REMOVE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,10 +327,173 @@ def _apply_folder_expiration_tla(tla_props, expiration_timestamp,
         tla_props.rotateOnExpiration = True
 
 
+# ── Access-state aware request planning ───────────────────────────────────
+#
+# A child folder's accessor can be:
+#   * direct    - its own access row (and folder-key edge) on this folder
+#   * inherited - access flowing from a parent folder; no folder-key edge here
+#   * denied    - an inherited access explicitly denied on this folder
+#   * none      - no access
+#
+# The backend refuses to change a folder key on another user's existing access
+# row, so turning inherited access into an explicit role must be an *add* with
+# the recipient-encrypted folder key, not an update. Otherwise the child loses
+# its only key edge when the parent grant is revoked and disappears on sync.
+# ``plan_folder_access_change`` (sync.py) owns the transition rules.
+
+_STEP_MESSAGES = {
+    FOLDER_ACCESS_ADD: 'Access granted successfully',
+    FOLDER_ACCESS_UPDATE: 'Access updated successfully',
+    FOLDER_ACCESS_REMOVE: 'Access revoked successfully',
+}
+
+
+def _lookup_folder_accessors(params, folder_uid, accessor_uid_b64,
+                             access_type_label=None):
+    """Return every server accessor row for one actor on *folder_uid*.
+
+    Rows matching *access_type_label* are preferred; otherwise all rows for
+    the UID are returned. Lookup failures return an empty list.
+    """
+    try:
+        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=False)
+    except Exception as exc:
+        logger.debug('Folder accessor lookup failed for %s: %s', folder_uid, exc)
+        return []
+    rows = []
+    for fr in info.get('results', []):
+        if not fr.get('success'):
+            continue
+        rows.extend(a for a in fr.get('accessors', [])
+                    if a.get('accessor_uid') == accessor_uid_b64)
+    if access_type_label:
+        typed = [a for a in rows if a.get('access_type') == access_type_label]
+        if typed:
+            return typed
+    return rows
+
+
+def _folder_access_state(params, folder_uid, accessor_uid_b64, accessors):
+    """Classify an accessor, preferring server rows over the sync cache.
+
+    The sync cache only carries the caller's own row (plus denials seen in
+    sync), so it is a fallback for when the server returned nothing.
+    """
+    if accessors:
+        return folder_access_state_from_accessors(accessors)
+    try:
+        return get_folder_access_state(params, folder_uid, accessor_uid_b64)
+    except Exception as exc:
+        logger.debug('Cached folder access state unavailable for %s: %s', folder_uid, exc)
+        return FOLDER_ACCESS_NONE
+
+
+def _current_role_name(accessors):
+    """Role of the most specific accessor row (direct over inherited)."""
+    for a in sorted(accessors or [], key=lambda r: bool(r.get('inherited'))):
+        if a.get('role'):
+            return a['role']
+    return None
+
+
+def _encrypted_folder_key_for(params, folder_uid, accessor_uid_b64, as_team,
+                              user_email=None, user_public_key=None,
+                              use_ecc=False, team_keys=None):
+    """Encrypt *folder_uid*'s key for a user (public key) or team."""
+    fk = get_folder_key(params, folder_uid)
+    ek = folder_pb2.EncryptedDataKey()
+    if as_team:
+        if team_keys is None:
+            team_keys = get_team_keys(params, accessor_uid_b64)
+        efk, key_type = encrypt_for_team(
+            fk, team_keys, prefer_aes=False,
+            forbid_rsa=getattr(params, 'forbid_rsa', False))
+    else:
+        if not user_public_key:
+            if not user_email or '@' not in user_email:
+                _, user_email = resolve_uid_email(params, user_email or accessor_uid_b64)
+            user_public_key, use_ecc = load_user_public_key(params, user_email)
+        efk = encrypt_for_recipient(fk, user_public_key, use_ecc)
+        key_type = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
+                    else folder_pb2.encrypted_by_public_key)
+    ek.encryptedKey = efk
+    ek.encryptedKeyType = key_type
+    return ek
+
+
+def _build_access_step_data(folder_uid, uid_bytes, access_type_enum, step,
+                            role=None, hidden=None, expiration_timestamp=None,
+                            rotate_on_expiration=False, folder_key=None):
+    """Build the FolderAccessData for one planned step."""
+    ad = folder_pb2.FolderAccessData()
+    ad.folderUid = utils.base64_url_decode(folder_uid)
+    ad.accessTypeUid = uid_bytes
+    ad.accessType = access_type_enum
+    if step['request'] == FOLDER_ACCESS_REMOVE:
+        return ad
+    if step['denied_access']:
+        # A denial is not a direct grant: no role change and never a folder key.
+        ad.deniedAccess = True
+        return ad
+    if role:
+        access_role = resolve_role_name(role)
+        ad.accessRoleType = access_role
+        ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
+    if hidden is not None:
+        ad.hidden = hidden
+    _apply_folder_expiration_tla(ad.tlaProperties, expiration_timestamp,
+                                 rotate_on_expiration)
+    if step['include_folder_key']:
+        if folder_key is None:
+            raise ValueError('Folder key is required to create direct folder access')
+        ad.folderKey.CopyFrom(folder_key)
+    return ad
+
+
+def _send_access_step(params, step, ad):
+    if step['request'] == FOLDER_ACCESS_ADD:
+        return folder_access_update_v3(params, folder_access_adds=[ad])
+    if step['request'] == FOLDER_ACCESS_UPDATE:
+        return folder_access_update_v3(params, folder_access_updates=[ad])
+    return folder_access_update_v3(params, folder_access_removes=[ad])
+
+
+def _execute_access_plan(params, folder_uid, identifier_label, uid_bytes,
+                         access_type_enum, plan, folder_key_factory=None,
+                         messages=None, **fields):
+    """Send *plan* steps sequentially, stopping at the first failure.
+
+    Used for the two-step re-add of a denied accessor: the add is only sent
+    once the denial removal succeeded, so no add races an existing denied row.
+    """
+    messages = dict(_STEP_MESSAGES, **(messages or {}))
+    result = None
+    for idx, step in enumerate(plan):
+        folder_key = folder_key_factory() if step['include_folder_key'] else None
+        ad = _build_access_step_data(folder_uid, uid_bytes, access_type_enum, step,
+                                     folder_key=folder_key, **fields)
+        message = ('Access denied successfully' if step['denied_access']
+                   else messages[step['request']])
+        response = _send_access_step(params, step, ad)
+        result = parse_folder_access_result(response, folder_uid, identifier_label, message)
+        result['request'] = step['request']
+        if not result.get('success'):
+            if idx < len(plan) - 1:
+                result['message'] = (f"{result.get('message')} "
+                                     f"(step {idx + 1} of {len(plan)}; remaining steps skipped)")
+            break
+    return result
+
+
 def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
                            share_folder_key=True, expiration_timestamp=None,
                            as_team=False, rotate_on_expiration=False):
     """Grant a user *or team* access to a Nested Share Folder.
+
+    The request depends on the accessor's current state on this folder:
+    existing direct access is updated (no new key); inherited access becomes a
+    direct grant via ``folderAccessAdds`` with the recipient-encrypted folder
+    key; a denied accessor has the denial removed first, then is added.
     """
     resolved = resolve_folder_identifier(params, folder_uid)
     if not resolved:
@@ -370,57 +540,52 @@ def grant_folder_access_v3(params, folder_uid, user_uid, role='viewer',
 
     access_role = resolve_role_name(role)
     target_role_name = folder_pb2.AccessRoleType.Name(access_role)
+    accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
 
-    if actual_uid_bytes:
-        existing = _check_existing_access(params, folder_uid, actual_uid_bytes,
-                                          target_role_name, access_type_label)
-        if existing is not None:
-            if existing == target_role_name and expiration_timestamp is None:
-                return {'folder_uid': folder_uid, 'user_uid': identifier_label,
-                        'access_type': access_type_label,
-                        'status': 'SUCCESS',
-                        'message': f"{'Team' if as_team else 'User'} already has {role} access",
-                        'success': True, 'action_taken': 'already_had_access'}
-            result = update_folder_access_v3(params, folder_uid, identifier_label,
-                                             role=role, as_team=as_team,
-                                             expiration_timestamp=expiration_timestamp,
-                                             rotate_on_expiration=rotate_on_expiration)
-            result['action_taken'] = 'updated'
-            return result
+    accessors = _lookup_folder_accessors(params, folder_uid, accessor_uid_b64,
+                                         access_type_label)
+    state = _folder_access_state(params, folder_uid, accessor_uid_b64, accessors)
 
-    ad = folder_pb2.FolderAccessData()
-    ad.folderUid = utils.base64_url_decode(folder_uid)
-    ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = access_type_enum
-    ad.accessRoleType = access_role
-    ad.permissions.CopyFrom(get_folder_permissions_for_role(access_role))
+    if state == FOLDER_ACCESS_DIRECT:
+        if _current_role_name(accessors) == target_role_name and expiration_timestamp is None:
+            return {'folder_uid': folder_uid, 'user_uid': identifier_label,
+                    'access_type': access_type_label,
+                    'status': 'SUCCESS',
+                    'message': f"{'Team' if as_team else 'User'} already has {role} access",
+                    'success': True, 'action_taken': 'already_had_access'}
+        result = update_folder_access_v3(params, folder_uid, identifier_label,
+                                         role=role, as_team=as_team,
+                                         expiration_timestamp=expiration_timestamp,
+                                         rotate_on_expiration=rotate_on_expiration,
+                                         known_state=FOLDER_ACCESS_DIRECT)
+        result['action_taken'] = 'updated'
+        return result
 
-    _apply_folder_expiration_tla(
-        ad.tlaProperties, expiration_timestamp, rotate_on_expiration)
+    plan = plan_folder_access_change(params, folder_uid, accessor_uid_b64, 'grant',
+                                     state=state)
+    if not share_folder_key:
+        if state in (FOLDER_ACCESS_INHERITED, FOLDER_ACCESS_DENIED):
+            raise ValueError('A folder key is required to give direct access on a '
+                             'folder where the accessor has inherited or denied access')
+        plan = [dict(step, include_folder_key=False) for step in plan]
 
-    if share_folder_key:
-        fk = get_folder_key(params, folder_uid)
-        ek = folder_pb2.EncryptedDataKey()
-        if as_team:
-            efk, key_type = encrypt_for_team(
-                fk, team_keys, prefer_aes=False,
-                forbid_rsa=getattr(params, 'forbid_rsa', False))
-            ek.encryptedKey = efk
-            ek.encryptedKeyType = key_type
-        else:
-            if not user_public_key:
-                user_public_key, use_ecc = load_user_public_key(params, user_email)
-            efk = encrypt_for_recipient(fk, user_public_key, use_ecc)
-            ek.encryptedKey = efk
-            ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
-                                   else folder_pb2.encrypted_by_public_key)
-        ad.folderKey.CopyFrom(ek)
+    def folder_key_factory():
+        return _encrypted_folder_key_for(
+            params, folder_uid, accessor_uid_b64, as_team,
+            user_email=user_email, user_public_key=user_public_key,
+            use_ecc=use_ecc, team_keys=team_keys)
 
-    response = folder_access_update_v3(params, folder_access_adds=[ad])
-    result = parse_folder_access_result(response, folder_uid, identifier_label,
-                                        'Access granted successfully')
+    result = _execute_access_plan(
+        params, folder_uid, identifier_label, actual_uid_bytes, access_type_enum,
+        plan, folder_key_factory=folder_key_factory,
+        role=role, expiration_timestamp=expiration_timestamp,
+        rotate_on_expiration=rotate_on_expiration)
     result['access_type'] = access_type_label
-    result.setdefault('action_taken', 'granted' if result['success'] else 'grant_failed')
+    result['previous_access_state'] = state
+    if result['success']:
+        result.setdefault('action_taken', 'granted')
+    else:
+        result.setdefault('action_taken', 'grant_failed')
     return result
 
 
@@ -442,7 +607,14 @@ def _check_existing_access(params, folder_uid, uid_bytes, target_role_name,
 
 def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None,
                             expiration_timestamp=None, as_team=False,
-                            rotate_on_expiration=False):
+                            rotate_on_expiration=False, known_state=None):
+    """Change an accessor's role / hidden flag / expiration on a folder.
+
+    Direct access is changed with ``folderAccessUpdates`` and keeps its
+    existing folder key. Inherited (or denied) access is turned into a direct
+    grant with ``folderAccessAdds`` plus the recipient-encrypted folder key,
+    so the child keeps its own key edge if parent access is later revoked.
+    """
     if role is None and hidden is None and expiration_timestamp is None:
         raise ValueError("At least one field (role, hidden, or expiration) required")
     resolved = resolve_folder_identifier(params, folder_uid)
@@ -454,45 +626,46 @@ def update_folder_access_v3(params, folder_uid, user_uid, role=None, hidden=None
         params, user_uid, as_team)
     if not actual_uid_bytes:
         raise ValueError(f"{'Team' if as_team else 'User'} '{user_uid}' not found")
+    accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
 
-    ad = folder_pb2.FolderAccessData()
-    ad.folderUid = utils.base64_url_decode(folder_uid)
-    ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = access_type_enum
-    if role:
-        resolved_role = resolve_role_name(role)
-        ad.accessRoleType = resolved_role
-        ad.permissions.CopyFrom(get_folder_permissions_for_role(resolved_role))
-    if hidden is not None:
-        ad.hidden = hidden
-    _apply_folder_expiration_tla(
-        ad.tlaProperties, expiration_timestamp, rotate_on_expiration)
+    accessors = []
+    state = known_state
+    if state is None:
+        accessors = _lookup_folder_accessors(
+            params, folder_uid, accessor_uid_b64,
+            folder_pb2.AccessType.Name(access_type_enum))
+        state = _folder_access_state(params, folder_uid, accessor_uid_b64, accessors)
 
-    response = folder_access_update_v3(params, folder_access_updates=[ad])
-    result = parse_folder_access_result(response, folder_uid, identifier_label,
-                                        'Access updated successfully')
+    if state in (FOLDER_ACCESS_DIRECT, FOLDER_ACCESS_NONE):
+        # NONE: nothing known to convert; let the server validate the update.
+        plan = [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False,
+                 'denied_access': False}]
+    else:
+        plan = plan_folder_access_change(params, folder_uid, accessor_uid_b64,
+                                         'grant', state=state)
+        if role is None:
+            # An add needs a role; keep the one currently in effect.
+            current = (_current_role_name(accessors) or '').lower()
+            if current not in ROLE_NAME_MAP:
+                raise ValueError(
+                    'A role is required to change inherited or denied access on '
+                    'this folder (it becomes a direct grant)')
+            role = current
+
+    def folder_key_factory():
+        return _encrypted_folder_key_for(
+            params, folder_uid, accessor_uid_b64, as_team,
+            user_email=user_uid if '@' in (user_uid or '') else None)
+
+    result = _execute_access_plan(
+        params, folder_uid, identifier_label, actual_uid_bytes, access_type_enum,
+        plan, folder_key_factory=folder_key_factory,
+        messages={FOLDER_ACCESS_ADD: 'Access updated successfully'},
+        role=role, hidden=hidden, expiration_timestamp=expiration_timestamp,
+        rotate_on_expiration=rotate_on_expiration)
     result['access_type'] = 'AT_TEAM' if as_team else 'AT_USER'
+    result['previous_access_state'] = state
     return result
-
-
-def _lookup_folder_accessor(params, folder_uid, accessor_uid_b64, access_type_label):
-    """Return a folder accessor row from ``get_folder_access_v3``, if present."""
-    try:
-        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=True)
-        for fr in info.get('results', []):
-            if not fr.get('success'):
-                continue
-            accessors = fr.get('accessors', [])
-            for accessor in accessors:
-                if (accessor.get('accessor_uid') == accessor_uid_b64
-                        and accessor.get('access_type') == access_type_label):
-                    return accessor
-            for accessor in accessors:
-                if accessor.get('accessor_uid') == accessor_uid_b64:
-                    return accessor
-    except Exception as exc:
-        logger.debug('Folder accessor lookup failed for %s: %s', folder_uid, exc)
-    return None
 
 
 def _folder_inherits_parent_permissions(params, folder_uid):
@@ -638,6 +811,13 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
 
     Looks up the accessor via ``get_folder_access_v3`` so sub-folders use the
     server-reported UID and access type (including inherited accessors).
+
+    * Direct access is removed with ``folderAccessRemoves``.
+    * Inherited access cannot be removed on the child (it comes from the
+      parent), so it is denied with ``folderAccessUpdates`` +
+      ``deniedAccess=True`` and no folder key.
+    * Already-denied access needs no request.
+
     On success, evicts the local access cache and sets ``params.sync_data``.
     """
     resolved = resolve_folder_identifier(params, folder_uid)
@@ -654,9 +834,10 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
 
     accessor_uid_b64 = utils.base64_url_encode(actual_uid_bytes)
     access_type_label = folder_pb2.AccessType.Name(access_type_enum)
-    accessor = _lookup_folder_accessor(
+    accessors = _lookup_folder_accessors(
         params, folder_uid, accessor_uid_b64, access_type_label)
-    if accessor:
+    if accessors:
+        accessor = accessors[0]
         server_uid = accessor.get('accessor_uid')
         if server_uid:
             actual_uid_bytes = utils.base64_url_decode(server_uid)
@@ -671,145 +852,174 @@ def revoke_folder_access_v3(params, folder_uid, user_uid, as_team=False):
                     f"Unrecognised access type '{server_type}' returned by server "
                     f"for folder '{folder_uid}'")
 
-    ad = folder_pb2.FolderAccessData()
-    ad.folderUid = utils.base64_url_decode(folder_uid)
-    ad.accessTypeUid = actual_uid_bytes
-    ad.accessType = access_type_enum
+    state = _folder_access_state(params, folder_uid, accessor_uid_b64, accessors)
+    action = 'deny' if state == FOLDER_ACCESS_INHERITED else 'remove'
+    plan = plan_folder_access_change(params, folder_uid, accessor_uid_b64, action,
+                                     state=state)
+    if not plan:
+        return {'folder_uid': folder_uid, 'user_uid': identifier_label,
+                'access_type': access_type_label, 'status': 'SUCCESS',
+                'message': 'Access is already denied on this folder',
+                'success': True, 'action_taken': 'already_denied',
+                'previous_access_state': state}
 
-    response = folder_access_update_v3(params, folder_access_removes=[ad])
-    result = parse_folder_access_result(response, folder_uid, identifier_label,
-                                        'Access revoked successfully')
+    result = _execute_access_plan(
+        params, folder_uid, identifier_label, actual_uid_bytes, access_type_enum, plan)
     result['access_type'] = access_type_label
+    result['previous_access_state'] = state
     if result.get('success'):
+        if action == 'deny':
+            result['action_taken'] = 'denied'
         _evict_folder_accessor_cache(params, folder_uid, accessor_uid_b64)
         params.sync_data = True
     return result
 
 
+def _batch_accessor_index(params, folder_uids):
+    """Map (folder_uid, accessor_uid_b64) -> server accessor rows for a batch."""
+    index = {}
+    uids = sorted(set(folder_uids))
+    for i in range(0, len(uids), 100):
+        try:
+            info = get_folder_access_v3(params, uids[i:i + 100], resolve_usernames=False)
+        except Exception as exc:
+            logger.debug('Batch folder accessor lookup failed: %s', exc)
+            continue
+        for fr in info.get('results', []):
+            if not fr.get('success'):
+                continue
+            for a in fr.get('accessors', []):
+                index.setdefault((fr['folder_uid'], a.get('accessor_uid')), []).append(a)
+    return index
+
+
+def _batch_resolve_accessor(params, spec):
+    as_team = bool(spec.get('as_team'))
+    if as_team:
+        resolved_team = resolve_team_identifier(params, spec['user_uid'])
+        if not resolved_team:
+            raise ValueError(f"Team '{spec['user_uid']}' not found")
+        _, uid_bytes = resolved_team
+        return uid_bytes, folder_pb2.AT_TEAM, as_team
+    uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
+    if not uid_bytes:
+        raise ValueError(f"User '{spec['user_uid']}' not found")
+    return uid_bytes, folder_pb2.AT_USER, as_team
+
+
 def manage_folder_access_batch_v3(params, access_grants=None,
                                    access_updates=None, access_revokes=None):
     """Apply a batch of folder access grants/updates/revokes.
+
+    Each operation is planned from the accessor's current state (see
+    ``plan_folder_access_change``):
+
+    * grant/update of inherited access -> ``folderAccessAdds`` + folder key
+    * grant/update of denied access    -> denial removed in a first request,
+      then ``folderAccessAdds`` + folder key in the main request (only for
+      denials that were removed successfully)
+    * grant/update of direct access    -> ``folderAccessUpdates`` (no key)
+    * revoke of inherited access       -> ``folderAccessUpdates`` + deniedAccess
+    * revoke of direct access          -> ``folderAccessRemoves``
     """
-    adds, updates, removes = [], [], []
-    tracking = []
-    forbid_rsa = getattr(params, 'forbid_rsa', False)
+    ops = []
+    for op, specs in (('grant', access_grants), ('update', access_updates),
+                      ('revoke', access_revokes)):
+        for spec in (specs or []):
+            fuid = resolve_folder_identifier(params, spec['folder_uid'])
+            if not fuid:
+                raise ValueError(f"Folder '{spec['folder_uid']}' not found")
+            uid_bytes, access_type_enum, as_team = _batch_resolve_accessor(params, spec)
+            ops.append({'op': op, 'folder_uid': fuid, 'spec': spec,
+                        'uid_bytes': uid_bytes,
+                        'uid_b64': utils.base64_url_encode(uid_bytes),
+                        'access_type_enum': access_type_enum, 'as_team': as_team})
 
-    for spec in (access_grants or []):
-        fuid = resolve_folder_identifier(params, spec['folder_uid'])
-        if not fuid:
-            raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        as_team = bool(spec.get('as_team'))
-        role = spec.get('role', 'viewer')
-        fk = get_folder_key(params, fuid)
+    index = _batch_accessor_index(params, [o['folder_uid'] for o in ops])
 
-        ad = folder_pb2.FolderAccessData()
-        ad.folderUid = utils.base64_url_decode(fuid)
-        ad.accessRoleType = resolve_role_name(role)
+    pre_removes, adds, updates, removes = [], [], [], []
+    for o in ops:
+        spec, fuid, uid_b64 = o['spec'], o['folder_uid'], o['uid_b64']
+        rows = index.get((fuid, uid_b64), [])
+        state = _folder_access_state(params, fuid, uid_b64, rows)
+        o['state'] = state
+        role = spec.get('role')
 
-        ek = folder_pb2.EncryptedDataKey()
-        if as_team:
-            resolved_team = resolve_team_identifier(params, spec['user_uid'])
-            if not resolved_team:
-                raise ValueError(f"Team '{spec['user_uid']}' not found")
-            team_uid_b64, uid_bytes = resolved_team
-            team_keys = get_team_keys(params, team_uid_b64)
-           
-            efk, key_type = encrypt_for_team(fk, team_keys, prefer_aes=False,
-                                              forbid_rsa=forbid_rsa)
-            ek.encryptedKey = efk
-            ek.encryptedKeyType = key_type
-            ad.accessType = folder_pb2.AT_TEAM
+        if o['op'] == 'revoke':
+            action = 'deny' if state == FOLDER_ACCESS_INHERITED else 'remove'
+            plan = plan_folder_access_change(params, fuid, uid_b64, action, state=state)
+        elif o['op'] == 'update' and state in (FOLDER_ACCESS_DIRECT, FOLDER_ACCESS_NONE):
+            plan = [{'request': FOLDER_ACCESS_UPDATE, 'include_folder_key': False,
+                     'denied_access': False}]
         else:
-            uid_bytes, email = resolve_uid_email(params, spec['user_uid'])
-            if not uid_bytes:
-                raise ValueError(f"User '{spec['user_uid']}' not found")
-            pk, use_ecc = load_user_public_key(params, email)
-            efk = encrypt_for_recipient(fk, pk, use_ecc)
-            ek.encryptedKey = efk
-            ek.encryptedKeyType = (folder_pb2.encrypted_by_public_key_ecc if use_ecc
-                                   else folder_pb2.encrypted_by_public_key)
-            ad.accessType = folder_pb2.AT_USER
+            plan = plan_folder_access_change(params, fuid, uid_b64, 'grant', state=state)
+            if o['op'] == 'grant':
+                role = role or 'viewer'
+            if plan[-1]['request'] == FOLDER_ACCESS_ADD and not role:
+                current = (_current_role_name(rows) or '').lower()
+                if current not in ROLE_NAME_MAP:
+                    raise ValueError(
+                        f"A role is required to change inherited or denied access for "
+                        f"'{spec['user_uid']}' on folder '{fuid}'")
+                role = current
 
-        ad.accessTypeUid = uid_bytes
-        ad.folderKey.CopyFrom(ek)
-        adds.append(ad)
-        tracking.append(('grant', fuid, spec['user_uid'], spec, as_team))
+        o['steps'] = plan
+        for idx, step in enumerate(plan):
+            folder_key = None
+            if step['include_folder_key']:
+                folder_key = _encrypted_folder_key_for(
+                    params, fuid, uid_b64, o['as_team'],
+                    user_email=spec['user_uid'] if not o['as_team'] else None)
+            ad = _build_access_step_data(
+                fuid, o['uid_bytes'], o['access_type_enum'], step,
+                role=role, hidden=spec.get('hidden'), folder_key=folder_key)
+            if idx < len(plan) - 1:
+                pre_removes.append((o, ad))   # denial removal before the add
+            elif step['request'] == FOLDER_ACCESS_ADD:
+                adds.append((o, ad))
+            elif step['request'] == FOLDER_ACCESS_UPDATE:
+                updates.append((o, ad))
+            else:
+                removes.append((o, ad))
 
-    for spec in (access_updates or []):
-        fuid = resolve_folder_identifier(params, spec['folder_uid'])
-        if not fuid:
-            raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        as_team = bool(spec.get('as_team'))
-        if as_team:
-            resolved_team = resolve_team_identifier(params, spec['user_uid'])
-            if not resolved_team:
-                raise ValueError(f"Team '{spec['user_uid']}' not found")
-            _, uid_bytes = resolved_team
-            access_type_enum = folder_pb2.AT_TEAM
-        else:
-            uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
-            if not uid_bytes:
-                raise ValueError(f"User '{spec['user_uid']}' not found")
-            access_type_enum = folder_pb2.AT_USER
+    def _failures(response):
+        failed = {}
+        for r in (response.folderAccessResults or []):
+            if r.status == folder_pb2.SUCCESS:
+                continue
+            key = (utils.base64_url_encode(r.folderUid),
+                   utils.base64_url_encode(r.accessUid) if r.accessUid else None)
+            failed[key] = (folder_pb2.FolderModifyStatus.Name(r.status), r.message)
+        return failed
 
-        ad = folder_pb2.FolderAccessData()
-        ad.folderUid = utils.base64_url_decode(fuid)
-        ad.accessTypeUid = uid_bytes
-        ad.accessType = access_type_enum
-        if spec.get('role'):
-            ad.accessRoleType = resolve_role_name(spec['role'])
-        if spec.get('hidden') is not None:
-            ad.hidden = spec['hidden']
-        updates.append(ad)
-        tracking.append(('update', fuid, spec['user_uid'], spec, as_team))
+    failed = {}
+    if pre_removes:
+        failed.update(_failures(folder_access_update_v3(
+            params, folder_access_removes=[ad for _, ad in pre_removes])))
+        # Only add accessors whose denial was actually removed.
+        adds = [(o, ad) for o, ad in adds
+                if (o['folder_uid'], o['uid_b64']) not in failed]
 
-    for spec in (access_revokes or []):
-        fuid = resolve_folder_identifier(params, spec['folder_uid'])
-        if not fuid:
-            raise ValueError(f"Folder '{spec['folder_uid']}' not found")
-        as_team = bool(spec.get('as_team'))
-        if as_team:
-            resolved_team = resolve_team_identifier(params, spec['user_uid'])
-            if not resolved_team:
-                raise ValueError(f"Team '{spec['user_uid']}' not found")
-            _, uid_bytes = resolved_team
-            access_type_enum = folder_pb2.AT_TEAM
-        else:
-            uid_bytes = resolve_user_uid_bytes(params, spec['user_uid'])
-            if not uid_bytes:
-                raise ValueError(f"User '{spec['user_uid']}' not found")
-            access_type_enum = folder_pb2.AT_USER
+    if adds or updates or removes:
+        failed.update(_failures(folder_access_update_v3(
+            params,
+            folder_access_adds=[ad for _, ad in adds] or None,
+            folder_access_updates=[ad for _, ad in updates] or None,
+            folder_access_removes=[ad for _, ad in removes] or None)))
 
-        ad = folder_pb2.FolderAccessData()
-        ad.folderUid = utils.base64_url_decode(fuid)
-        ad.accessTypeUid = uid_bytes
-        ad.accessType = access_type_enum
-        removes.append(ad)
-        tracking.append(('revoke', fuid, spec['user_uid'], spec, as_team))
-
-    response = folder_access_update_v3(
-        params,
-        folder_access_adds=adds or None,
-        folder_access_updates=updates or None,
-        folder_access_removes=removes or None)
-
-    results = [{'operation': op, 'folder_uid': f, 'user_uid': u,
-                'access_type': 'AT_TEAM' if at else 'AT_USER',
-                'status': 'SUCCESS', 'message': f'{op.capitalize()} completed', 'success': True}
-               for op, f, u, _, at in tracking]
-
-    if response.folderAccessResults:
-        for r in response.folderAccessResults:
-            f = utils.base64_url_encode(r.folderUid)
-            u = utils.base64_url_encode(r.accessUid) if r.accessUid else 'unknown'
-            for i, (op, tf, tu, _, at) in enumerate(tracking):
-                if tf == f and tu == u:
-                    results[i] = {
-                        'operation': op, 'folder_uid': f, 'user_uid': u,
-                        'access_type': 'AT_TEAM' if at else 'AT_USER',
-                        'status': folder_pb2.FolderModifyStatus.Name(r.status),
-                        'message': r.message, 'success': False}
-                    break
+    results = []
+    for o in ops:
+        res = {'operation': o['op'], 'folder_uid': o['folder_uid'],
+               'user_uid': o['spec']['user_uid'],
+               'access_type': 'AT_TEAM' if o['as_team'] else 'AT_USER',
+               'previous_access_state': o['state'],
+               'status': 'SUCCESS', 'success': True,
+               'message': (f"{o['op'].capitalize()} completed" if o['steps']
+                           else 'Access is already denied on this folder')}
+        err = failed.get((o['folder_uid'], o['uid_b64']))
+        if err:
+            res.update(status=err[0], message=err[1], success=False)
+        results.append(res)
     return results
 
 
@@ -939,6 +1149,7 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None,
                 ai = {
                     'accessor_uid': auid, 'access_type': at, 'role': rt,
                     'inherited': bool(a.inherited), 'hidden': bool(a.hidden),
+                    'denied_access': bool(getattr(a, 'deniedAccess', False)),
                     'username': username,
                     'date_created': a.dateCreated or None,
                     'last_modified': a.lastModified or None,

@@ -529,6 +529,9 @@ class NestedShareFolderShareCommand(Command):
                 taken = result.get('action_taken', verb)
                 if taken == 'already_had_access':
                     logging.info("%s '%s' already has access", kind, recipient)
+                elif taken in ('denied', 'already_denied'):
+                    logging.info("%s '%s' inherited access denied on this folder",
+                                 kind, recipient)
                 else:
                     logging.info("%s share '%s' %s", kind, recipient, verb)
             else:
