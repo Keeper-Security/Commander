@@ -235,6 +235,27 @@ def process_ksm_config(ksm_config_input):
 # KSM SECRETS MANAGER OPERATIONS
 # =============================================================================
 
+def _custom_server_key_args():
+    """
+    KEEPER_SERVER_PUBLIC_KEY (and KEEPER_SERVER_PUBLIC_KEY_ID, default 7) as SecretsManager arguments.
+
+    A self-managed Keeper deployment has its own server key. Without it the SDK encrypts
+    to Keeper's built-in key and fails with "encrypted transmission key is invalid".
+    A KSM config created by Commander for such a server already carries the key.
+    """
+    key_value = os.environ.get('KEEPER_SERVER_PUBLIC_KEY')
+    if not key_value:
+        return {}
+    key_id_str = os.environ.get('KEEPER_SERVER_PUBLIC_KEY_ID') or os.environ.get('KEEPER_SERVER_KEY_ID') or '7'
+    try:
+        key_id = int(key_id_str)
+    except ValueError:
+        print(f"WARNING: KEEPER_SERVER_PUBLIC_KEY_ID='{key_id_str}' is not a valid integer; "
+              f"ignoring custom server public key.")
+        return {}
+    return {'server_public_key': key_value, 'server_public_key_id': str(key_id)}
+
+
 def _initialize_secrets_manager(ksm_config_path, ksm_token):
     """
     Initialize SecretsManager with proper error handling.
@@ -248,15 +269,29 @@ def _initialize_secrets_manager(ksm_config_path, ksm_token):
     """
     from keeper_secrets_manager_core import SecretsManager
     from keeper_secrets_manager_core.storage import FileKeyValueStorage
-    
+
+    server_key_args = _custom_server_key_args()
+
+    def create(**kwargs):
+        try:
+            return SecretsManager(**kwargs, **server_key_args)
+        except TypeError:
+            if not server_key_args:
+                raise
+            # keeper-secrets-manager-core before 17.3.0 has no server_public_key argument;
+            # add the key to the SDK's own key table instead.
+            from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
+            keeper_public_keys[server_key_args['server_public_key_id']] = server_key_args['server_public_key']
+            return SecretsManager(**kwargs)
+
     try:
         if ksm_config_path:
             if not os.path.exists(ksm_config_path):
                 print("ERROR: KSM config file not found")
                 return None
-            return SecretsManager(config=FileKeyValueStorage(ksm_config_path))
+            return create(config=FileKeyValueStorage(ksm_config_path))
         else:
-            return SecretsManager(token=ksm_token)
+            return create(token=ksm_token)
     except Exception as e:
         print(f"ERROR: Failed to initialize SecretsManager: {e}")
         return None
