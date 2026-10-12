@@ -35,11 +35,12 @@ import requests
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report, reporting
+from .helpers.enterprise import user_has_privilege
 from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
 from ..constants import EMAIL_PATTERN
 from ..display import bcolors
-from ..error import CommandError
+from ..error import CommandError, Error
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
@@ -177,8 +178,14 @@ API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
 
 
-def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None):
-    # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str]) -> List[Dict[str, Any]]
+def raise_if_audit_report_failed(response, cmd):
+    # type: (dict, str) -> None
+    if response.get('result') == 'fail':
+        raise CommandError(cmd, response.get('message') or 'Request failed')
+
+
+def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None, cmd='audit-report'):
+    # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str], str) -> List[Dict[str, Any]]
     """
     Fetch audit events with pagination support.
 
@@ -235,8 +242,9 @@ def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, repor
         should_stop = False
 
         for idx, rs in enumerate(rss):
-            batch_events = rs.get('audit_event_overview_report_rows', [])
-            if not batch_events or not isinstance(batch_events, list):
+            raise_if_audit_report_failed(rs, cmd)
+            batch_events = rs.get('audit_event_overview_report_rows') or []
+            if not isinstance(batch_events, list) or not batch_events:
                 continue
 
             events.extend(batch_events)
@@ -928,6 +936,9 @@ class AuditLogCommand(EnterpriseCommand):
         return uid
 
     def execute(self, params, **kwargs):
+        if not user_has_privilege(params, 'run_reports'):
+            raise CommandError('audit-log', 'You do not have the required privilege to run an Audit Log export.')
+
         load_syslog_templates(params)
 
         target = kwargs.get('target')
@@ -1063,9 +1074,11 @@ class AuditLogCommand(EnterpriseCommand):
         total_events = 0
         try:
             total_events_rs = api.communicate(params, total_events_rq)
-            rows = total_events_rs['audit_event_overview_report_rows']
+            rows = total_events_rs.get('audit_event_overview_report_rows') or []
             total_events = rows[0].get('occurrences', 0) if rows else 0
-        except:
+        except Error as e:
+            raise CommandError('audit-log', e.message) from e
+        except Exception:
             logging.info('No events to export')
             return
 
@@ -1750,7 +1763,8 @@ class AuditReportCommand(Command):
             while reqs:
                 reqs = []
                 for rs in rss:
-                    events = rs.get('audit_event_overview_report_rows')
+                    raise_if_audit_report_failed(rs, 'audit-report')
+                    events = rs.get('audit_event_overview_report_rows') or []
                     for event in events:
                         if misc_fields:
                             lenf = len(fields)
@@ -1823,7 +1837,8 @@ class AuditReportCommand(Command):
                     aggregate=req.get('aggregate'),
                     report_type=report_type,
                     limit=user_limit,
-                    order=req.get('order')
+                    order=req.get('order'),
+                    cmd='audit-report'
                 )
                 all_events.extend(events)
 
@@ -2165,7 +2180,8 @@ class ActionReportCommand(EnterpriseCommand):
                 columns=cols,
                 aggregate=['last_created'],
                 report_type='span',
-                limit=None  # Get all matching events
+                limit=None,  # Get all matching events
+                cmd='action-report'
             )
 
             # Extract usernames from events that match the candidate usernames
@@ -2218,7 +2234,8 @@ class ActionReportCommand(EnterpriseCommand):
                     columns=['to_username'],
                     aggregate=['last_created'],
                     report_type='span',
-                    limit=API_EVENT_SUMMARY_ROW_LIMIT
+                    limit=API_EVENT_SUMMARY_ROW_LIMIT,
+                    cmd='action-report'
                 )
                 for event in events:
                     username = (event.get('to_username') or '').lower()

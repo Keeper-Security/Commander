@@ -756,6 +756,20 @@ class TestEnterprise(TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 splunk.get_properties(record, props)
 
+    def test_audit_log_fails_early_without_reporting_privilege(self):
+        params = get_connected_params()
+        cmd = aram.AuditLogCommand()
+        with mock.patch('keepercommander.commands.aram.user_has_privilege', return_value=False), \
+                mock.patch('keepercommander.commands.aram.load_syslog_templates') as load_templates, \
+                mock.patch('keepercommander.commands.aram.user_choice') as user_choice:
+            with self.assertRaises(CommandError) as context:
+                cmd.execute(params, target='json')
+
+        self.assertEqual(context.exception.command, 'audit-log')
+        self.assertIn('required privilege', context.exception.message)
+        load_templates.assert_not_called()
+        user_choice.assert_not_called()
+
     def test_audit_log_splunk_convert_event(self):
         splunk = aram.AuditLogSplunkExport()
         props = {
