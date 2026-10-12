@@ -18,7 +18,7 @@ from ..params import KeeperParams
 from ..sox import sox_types, get_node_id
 from ..sox.sox_data import SoxData
 from ..sox.storage_types import StorageRecordAging
-from .aram import API_EVENT_SUMMARY_ROW_LIMIT
+from .aram import API_EVENT_SUMMARY_ROW_LIMIT, raise_if_audit_report_failed
 
 compliance_parser = argparse.ArgumentParser(add_help=False, parents=[report_output_parser])
 rebuild_group = compliance_parser.add_mutually_exclusive_group()
@@ -228,8 +228,10 @@ def get_aging_data(params, sox_data, rec_ids, use_spinner=True, stale_rec_ids=No
     for stat in aging_stats:
         start, count = request_slices[stat]
         stat_responses = responses[start:start + count]
+        for response in stat_responses:
+            raise_if_audit_report_failed(response, 'compliance report')
         events = list(itertools.chain.from_iterable(
-            rs.get('audit_event_overview_report_rows', []) for rs in stat_responses
+            (rs.get('audit_event_overview_report_rows') or []) for rs in stat_responses
         ))
         aggregate = 'first_created' if stat == 'created' else 'last_created'
         record_timestamps = {e.get('record_uid'): e.get(aggregate) for e in events if e.get('record_uid')}
@@ -238,8 +240,10 @@ def get_aging_data(params, sox_data, rec_ids, use_spinner=True, stale_rec_ids=No
     # Parse event 80 occurrence counts
     pw_count_start, pw_count_n = request_slices['_pw_count']
     pw_count_responses = responses[pw_count_start:pw_count_start + pw_count_n]
+    for response in pw_count_responses:
+        raise_if_audit_report_failed(response, 'compliance report')
     pw_count_events = list(itertools.chain.from_iterable(
-        rs.get('audit_event_overview_report_rows', []) for rs in pw_count_responses
+        (rs.get('audit_event_overview_report_rows') or []) for rs in pw_count_responses
     ))
     pw_occurrences = {e.get('record_uid'): int(e.get('occurrences', 0))
                       for e in pw_count_events if e.get('record_uid')}
@@ -824,9 +828,11 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                         spinner.message = f'Loading record access events - Users remaining: {len(users_to_query)}/{total_users}'
                     requests = [get_records_accessed_rq(email, **filters_by_user.get(email)) for email in users_to_query]
                     responses = api.execute_batch(params, requests)
+                    for response in responses:
+                        raise_if_audit_report_failed(response, 'compliance record-access-report')
                     responses_by_user = zip(users_to_query, responses)
                     for user, response in responses_by_user:
-                        access_events = response.get('audit_event_overview_report_rows', [])
+                        access_events = response.get('audit_event_overview_report_rows') or []
                         records_accessed = records_accessed_by_user.get(user, {})
                         records_accessed_new, filters = process_access_events(access_events, filter_recs=filters_by_user.get(user, {}).get('filter_recs'))
                         for rec_uid, event in records_accessed_new.items():

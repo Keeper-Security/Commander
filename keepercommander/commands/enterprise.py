@@ -4014,7 +4014,8 @@ class UserReportCommand(EnterpriseCommand):
             report_filter['username'] = missing[:limit]
             missing = missing[limit:]
             rs = api.communicate(params, rq)
-            report_rows = rs['audit_event_overview_report_rows']
+            aram.raise_if_audit_report_failed(rs, 'user-report')
+            report_rows = rs.get('audit_event_overview_report_rows') or []
             last_login.update({row.get('username', '').lower(): row.get('last_created') for row in report_rows})
 
         get_fmt_dt = lambda x: dt_module.fromtimestamp(x, datetime.timezone.utc)
@@ -4335,14 +4336,14 @@ class DeviceApproveCommand(EnterpriseCommand):
                 'limit': 1000
             }
             rs = api.communicate(params, rq)
+            aram.raise_if_audit_report_failed(rs, 'device-approve')
             ip_map = {}
-            if 'audit_event_overview_report_rows' in rs:
-                for row in rs['audit_event_overview_report_rows']:
-                    if 'username' in row and 'ip_address' in row:
-                        uname = row['username']
-                        if uname not in ip_map:
-                            ip_map[uname] = set()
-                        ip_map[uname].add(row['ip_address'])
+            for row in rs.get('audit_event_overview_report_rows') or []:
+                if 'username' in row and 'ip_address' in row:
+                    uname = row['username']
+                    if uname not in ip_map:
+                        ip_map[uname] = set()
+                    ip_map[uname].add(row['ip_address'])
 
             # Filter out users that tried to login from an untrusted IP
             trusted_devices = {}    # To avoid array modification in a loop, we will store this into a separated dict
