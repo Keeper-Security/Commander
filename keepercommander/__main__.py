@@ -23,10 +23,10 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from . import cli, utils
+from . import cli, rest_api, utils
 from .params import KeeperParams
 from .config_storage import loader
-from .constants import resolve_server, KEEPER_SERVERS
+from .constants import resolve_server
 
 
 def get_params_from_config(config_filename=None, launched_with_shortcut=False, data_dir=None):    # type: (Optional[str], bool, Optional[str]) -> KeeperParams
@@ -58,6 +58,7 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False, d
                 with open(params.config_filename) as config_file:
                     params.config = json.load(config_file)
                     loader.load_config_properties(params)
+                    rest_api.load_server_keys(params.config)
                     if 'fail_on_throttle' in params.config:
                         params.rest_context.fail_on_throttle = params.config['fail_on_throttle'] is True
                     if 'certificate_check' in params.config:
@@ -283,19 +284,7 @@ def main(from_package=False):
         params.proxy = opts.proxy
 
     if opts.server:
-        resolved_server = resolve_server(opts.server)
-        if resolved_server:
-            params.server = resolved_server
-        else:
-            # Show error and valid options
-            logging.error(f"\nError: '{opts.server}' is not a valid Keeper server.")
-            logging.error('\nValid server codes:')
-            logging.error('  Production: US, EU, AU, CA, JP, GOV')
-            logging.error('  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV')
-            logging.error('  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA')
-            logging.error('\nYou can also use the full hostname (e.g., keepersecurity.com, keepersecurity.eu)')
-            logging.error('')
-            sys.exit(1)
+        params.server = resolve_server(opts.server)
 
     if opts.user is not None:
         params.user = opts.user

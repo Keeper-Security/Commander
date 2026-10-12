@@ -9,7 +9,9 @@
 # Contact: ops@keepersecurity.com
 #
 
+import argparse
 import datetime
+import json
 import logging
 import os
 import re
@@ -29,17 +31,17 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.key_binding import KeyBindings
 
-from . import api, display, ttk, utils
+from . import api, display, rest_api, ttk, utils
 from . import versioning
 from .autocomplete import CommandCompleter
 from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import CliCommand, GroupCommand
+from .commands.base import CliCommand, GroupCommand, ParseError, raise_parse_exception, suppress_exit
 from .commands.utils import LoginCommand
 from .commands import msp
-from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, KEEPER_SERVERS
+from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, resolve_server
 from .command_categories import COMMAND_CATEGORIES
 from .error import CommandError, Error
 from .params import KeeperParams
@@ -252,6 +254,91 @@ def command_and_args_from_cmd(command_line):
 _DISALLOWED_COMMAND_CHARS = ('\r', '\n', '\x00')
 
 
+server_parser = argparse.ArgumentParser(
+    prog='server', description='Set or display the Keeper server: a region, a Keeper host, '
+                               'or the host of a self-managed Keeper deployment.',
+    epilog='Regions: US, EU, AU, CA, JP, GOV. Dev: US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV. '
+           'QA: US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA. '
+           'A self-managed deployment has its own server key. Commander fetches it from the server; '
+           'use --key-id and --public-key to set it yourself instead.')
+server_parser.add_argument('--key-id', dest='key_id', type=int, action='store',
+                           help='self-managed server: server key ID')
+server_parser.add_argument('--public-key', dest='public_key', action='store',
+                           help='self-managed server: server public key, base64url encoded')
+server_parser.add_argument('--clear-key', dest='clear_key', action='store_true',
+                           help='self-managed server: forget the key that was set, and fetch it from the server')
+server_parser.add_argument('server', nargs='?', type=str, action='store', help='region or host name')
+server_parser.error = raise_parse_exception
+server_parser.exit = suppress_exit
+
+
+def save_server_keys(params):   # type: (KeeperParams) -> None
+    """Write only the "server_keys" property, leaving the rest of the file as it is."""
+    if not params.config_filename:
+        return
+    config = {}
+    if os.path.isfile(params.config_filename):
+        with open(params.config_filename) as fd:
+            config = json.load(fd)
+    if params.config.get('server_keys'):
+        config['server_keys'] = params.config['server_keys']
+    else:
+        config.pop('server_keys', None)
+    with open(params.config_filename, 'w') as fd:
+        json.dump(config, fd, ensure_ascii=False, indent=2)
+    utils.set_file_permissions(params.config_filename)
+
+
+def server_command(params, args):   # type: (KeeperParams, str) -> None
+    try:
+        opts = server_parser.parse_args(shlex.split(args))
+    except ParseError as e:
+        if e.args and e.args[0]:
+            logging.error(e)
+        return
+
+    set_key = opts.key_id is not None or opts.public_key or opts.clear_key
+    if (opts.server or set_key) and params.session_token:
+        logging.warning('Cannot change the Keeper server or its key while logged in')
+        return
+
+    if opts.server:
+        params.server = resolve_server(opts.server)
+        logging.info('Keeper server is set to %s', params.server)
+
+    host = rest_api.server_host(params.server)
+    if set_key:
+        if rest_api.is_keeper_cloud_host(host):
+            logging.error('%s is a Keeper cloud host. It uses Keeper\'s own server keys.', host)
+            return
+        server_keys = params.config.setdefault('server_keys', {})
+        if opts.clear_key:
+            rest_api.clear_server_public_key(host)
+            server_keys.pop(host, None)
+            logging.info('Server key of %s is cleared. It will be fetched from the server.', host)
+        else:
+            if opts.key_id is None or not opts.public_key:
+                logging.error('Use both --key-id and --public-key')
+                return
+            try:
+                key = rest_api.set_server_public_key(host, opts.key_id, opts.public_key)
+            except ValueError as e:
+                logging.error(e)
+                return
+            server_keys[host] = {'key_id': key.key_id, 'public_key': key.public_key}
+            logging.info('Server key of %s is set: key ID %d, %s',
+                         host, key.key_id, rest_api.server_key_fingerprint(key.public_key))
+        if not server_keys:
+            params.config.pop('server_keys', None)
+        try:
+            save_server_keys(params)
+        except Exception as e:
+            logging.warning('The server key is set for this session, but could not be saved to %s: %s',
+                            params.config_filename, e)
+    elif not opts.server:
+        print(params.server)
+
+
 def do_command(params, command_line):
     # Block control characters to prevent newline-injection at the shell boundary.
     if isinstance(command_line, str) and any(ch in command_line for ch in _DISALLOWED_COMMAND_CHARS):
@@ -272,41 +359,8 @@ def do_command(params, command_line):
         return
 
     if command_line.lower().startswith('server'):
-        _, sp, server = command_line.partition(' ')
-        server = server.strip() if server else ''
-
-        # Handle help flag
-        if server in ('-h', '--help'):
-            print('Usage: server [REGION]')
-            print()
-            print('Set or display the current Keeper region.')
-            print()
-            print('Valid regions:')
-            print(f'  Production: US, EU, AU, CA, JP, GOV')
-            print(f'  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV')
-            print(f'  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA')
-            return
-
-        if server:
-            if not params.session_token:
-                # Look up server in KEEPER_SERVERS (case insensitive)
-                server_upper = server.upper()
-                if server_upper in KEEPER_SERVERS:
-                    params.server = KEEPER_SERVERS[server_upper]
-                    logging.info('Keeper region is set to %s', server_upper)
-                else:
-                    # Check if it matches a valid hostname directly
-                    server_lower = server.lower()
-                    if server_lower in KEEPER_SERVERS.values():
-                        params.server = server_lower
-                        logging.info('Keeper server is set to %s', params.server)
-                    else:
-                        logging.error('Invalid region: %s', server)
-                        print(f'Valid regions: {", ".join(sorted(KEEPER_SERVERS.keys()))}')
-            else:
-                logging.warning('Cannot change Keeper region while logged in')
-        else:
-            print(params.server)
+        _, sp, args = command_line.partition(' ')
+        server_command(params, args)
         return
 
     if command_line.startswith('ksm'):

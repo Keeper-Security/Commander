@@ -904,7 +904,7 @@ def get_config_uid_via_pam_link(params, record_uid):
 
 def get_keeper_tokens(params):
     transmission_key = generate_random_bytes(32)
-    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+    server_public_key = rest_api.get_server_public_key(params.rest_context)
 
     if params.rest_context.server_key_id < 7:
         encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
