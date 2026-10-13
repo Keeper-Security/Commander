@@ -18,6 +18,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from ... import crypto, constants, utils, api, vault
+from ...display import bcolors
 from ...params import KeeperParams
 from ...pedm import admin_plugin, pedm_shared, admin_types, admin_storage
 from ...proto import NotificationCenter_pb2, pedm_pb2
@@ -230,6 +231,13 @@ class PedmScimCommand(base.ArgparseCommand):
         subparsers = parser.add_subparsers(title='Directory Type', dest='auth_type', required=True, help='Authentication method')
         record_parser = subparsers.add_parser('record', help='Connection parameters from Keeper record')
         record_parser.add_argument('record_uid', help='Keeper record UID')
+        record_parser.add_argument('--insecure', dest='insecure', action='store_true',
+                                   help='Disable TLS certificate validation for Active Directory (LDAPS) connection. '
+                                        'Insecure: do not use on untrusted networks.')
+        record_parser.add_argument('--ad-ca-cert', dest='ca_cert', action='store',
+                                   help='Path to PEM file with CA certificate(s) to validate the Active Directory '
+                                        '(LDAPS) server certificate against, when it is not issued by a CA already '
+                                        'trusted by this system.')
 
         azure_parser = subparsers.add_parser('azure', help='Connect via Azure AD')
         azure_parser.add_argument('--tenant-id', dest='tenant_id', required=True)
@@ -246,6 +254,13 @@ class PedmScimCommand(base.ArgparseCommand):
                                help='AD group name or DN (repeatable). Prefix with "+" to select its direct subgroups.')
         ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
                               help='Use NetBIOS domain names (e.g., TEST) or DNS names (e.g., test.local)')
+        ad_parser.add_argument('--insecure', dest='insecure', action='store_true',
+                               help='Disable TLS certificate validation for Active Directory (LDAPS) connection. '
+                                    'Insecure: do not use on untrusted networks.')
+        ad_parser.add_argument('--ad-ca-cert', dest='ca_cert', action='store',
+                               help='Path to PEM file with CA certificate(s) to validate the Active Directory '
+                                    '(LDAPS) server certificate against, when it is not issued by a CA already '
+                                    'trusted by this system.')
 
         for subparser in subparsers.choices.values():
             subparser.exit = base.suppress_exit
@@ -372,16 +387,32 @@ class PedmScimCommand(base.ArgparseCommand):
                 scim_groups = None
 
             use_netbios_domain = ad_domain != 'dns'
+            insecure = kwargs.get('insecure') is True
+            ca_cert = kwargs.get('ca_cert')
             if not ad_url:
                 raise base.CommandError('AD source requires AD URL')
             if os.name != 'nt' and not ad_user:
                 raise base.CommandError('AD source requires AD User')
+            if ca_cert and not os.path.isfile(ca_cert):
+                raise base.CommandError(f'CA certificate file "{ca_cert}" was not found')
+            if insecure:
+                logging.warning('AD connect: TLS certificate validation is disabled (--insecure). '
+                                 'This connection is vulnerable to man-in-the-middle attacks.')
+                answer = base.user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                    '--insecure disables TLS certificate validation for the Active Directory (LDAPS) connection.\n'
+                    'This connection will be vulnerable to man-in-the-middle attacks. '
+                    'Do not use this option on untrusted networks.' +
+                    '\n\nDo you want to proceed?', 'yn', 'n')
+                if answer.lower() != 'y':
+                    raise base.CommandError('Cancelled')
             try:
                 if ad_user and not ad_password:
                     ad_password = getpass.getpass(prompt=f'{ad_user} Password: ', stream=None)
                     if not ad_password:
                         raise base.CommandError('Cancelled')
-                data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain)
+                data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain,
+                                              insecure=insecure, ca_cert=ca_cert)
                 ad_domains = data_source.resolve_domains()
             except Exception as e:
                 raise base.CommandError(f'Error connecting to Active Directory: {e}')
