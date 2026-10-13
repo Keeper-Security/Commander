@@ -800,13 +800,7 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
         linux = ''
 
         try:
-            hostname = whoami.get_hostname(context.rest_context.server_base)
-            for dc in constants.KEEPER_PUBLIC_HOSTS.values():
-                if hostname.endswith(dc):
-                    us = constants.KEEPER_PUBLIC_HOSTS['US']
-                    hostname = hostname[:-len(us)] + us
-                    break
-
+            hostname = constants.KEEPER_PUBLIC_HOSTS['US']
             manifest_url = urlunparse(('https', hostname, '/pam/pedm/package-manifest.json', None, None, None))
             rs = requests.get(manifest_url)
             manifest = rs.json()
