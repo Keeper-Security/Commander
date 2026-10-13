@@ -968,6 +968,9 @@ class ShareFolderCommand(Command):
     @staticmethod
     def _log_share_update_results(params, chunk, rss):
         for rq_item, rs in zip(chunk, rss.sharedFoldersUpdateV3Response):
+            sf_uid = utils.base64_url_encode(rq_item.sharedFolderUid)
+            sf_cached = params.shared_folder_cache.get(sf_uid)
+            folder_name = sf_cached['name'] if sf_cached else sf_uid
             user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
             team_cache = params.available_team_cache or []
             for attr in (
@@ -983,12 +986,16 @@ class ShareFolderCommand(Command):
                             exp_text = format_share_expiration_ms(team_exp.get(team_uid, 0))
                             exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
                             if status == 'success':
-                                logging.info('Team share \'%s\' %s%s', team['team_name'],
-                                             'added' if attr == 'sharedFolderAddTeamStatus' else
-                                             'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                             'removed', exp_suffix)
+                                logging.info(
+                                    'Team share \'%s\' %s on shared folder \'%s\'%s',
+                                    team['team_name'],
+                                    'added' if attr == 'sharedFolderAddTeamStatus' else
+                                    'updated' if attr == 'sharedFolderUpdateTeamStatus' else
+                                    'removed', folder_name, exp_suffix)
                             else:
-                                logging.warning('Team share \'%s\' failed', team['team_name'])
+                                logging.warning(
+                                    'Team share \'%s\' failed on shared folder \'%s\': %s',
+                                    team['team_name'], folder_name, status)
 
             for attr in (
                     'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus',
@@ -1003,22 +1010,26 @@ class ShareFolderCommand(Command):
                             if exp_text and attr in (
                                     'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus'):
                                 logging.info(
-                                    'Folder access granted to user \'%s\', expires %s',
-                                    username, exp_text)
+                                    'Folder access granted to user \'%s\' on shared folder \'%s\', expires %s',
+                                    username, folder_name, exp_text)
                             elif attr == 'sharedFolderRemoveUserStatus':
                                 logging.info(
-                                    'Folder access removed for user \'%s\'', username)
+                                    'Folder access removed for user \'%s\' on shared folder \'%s\'',
+                                    username, folder_name)
                             else:
                                 exp_suffix = f', folder access expires {exp_text}' if exp_text else ''
-                                logging.info('User share \'%s\' %s%s', username,
-                                             'added' if attr == 'sharedFolderAddUserStatus' else
-                                             'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                             'removed', exp_suffix)
+                                logging.info(
+                                    'User share \'%s\' %s on shared folder \'%s\'%s', username,
+                                    'added' if attr == 'sharedFolderAddUserStatus' else
+                                    'updated' if attr == 'sharedFolderUpdateUserStatus' else
+                                    'removed', folder_name, exp_suffix)
                         elif status == 'invited':
-                            logging.info('User \'%s\' invited', username)
+                            logging.info(
+                                'User \'%s\' invited to shared folder \'%s\'', username, folder_name)
                         else:
                             logging.warning(
-                                'User share \'%s\' failed: %s', username, status)
+                                'User share \'%s\' failed on shared folder \'%s\': %s',
+                                username, folder_name, status)
 
             for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
                          'sharedFolderRemoveRecordStatus'):
