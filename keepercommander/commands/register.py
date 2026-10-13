@@ -919,7 +919,7 @@ class ShareFolderCommand(Command):
 
         team_member_usernames = set()
         if removed_team_uids and params.enterprise:
-            user_by_id = {u.get('user_id'): u.get('username') for u in params.enterprise.get('users', [])}
+            user_by_id = {u.get('enterprise_user_id'): u.get('username') for u in params.enterprise.get('users', [])}
             for tu in params.enterprise.get('team_users', []):
                 if tu.get('team_uid') in removed_team_uids:
                     username = user_by_id.get(tu.get('enterprise_user_id'))
