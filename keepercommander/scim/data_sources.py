@@ -43,7 +43,9 @@ class ICrmDataSource(abc.ABC):
 
 
 class AdCrmDataSource(ICrmDataSource):
-    def __init__(self, ad_url, ad_user, ad_password, scim_groups, use_netbios_domain=False):  # type: (str, Optional[str], Optional[str], Optional[List[str]], bool) -> None
+    def __init__(self, ad_url, ad_user, ad_password, scim_groups,
+                 use_netbios_domain=False, insecure=False, ca_cert=None):
+        # type: (str, Optional[str], Optional[str], Optional[List[str]], bool, bool, Optional[str]) -> None
         super().__init__()
         if not ad_url.lower().startswith('ldap'):
             ad_url = 'ldaps://' + ad_url
@@ -52,6 +54,8 @@ class AdCrmDataSource(ICrmDataSource):
         self.ad_password = ad_password if self.ad_user else None
         self.scim_groups = scim_groups or []
         self.use_netbios_domain = use_netbios_domain
+        self.insecure = insecure
+        self.ca_cert = ca_cert
         self._domain_lookup = None  # type: Optional[Dict[str, str]]
 
     @staticmethod
@@ -81,14 +85,10 @@ class AdCrmDataSource(ICrmDataSource):
     @contextmanager
     def get_ldap_connection(self):
         ldap3 = AdCrmDataSource._get_ldap_module()
-        tls = None   # type: Optional[ldap3.Tls]
+        tls = ldap3.Tls(validate=ssl.CERT_NONE if self.insecure else ssl.CERT_REQUIRED, ca_certs_file=self.ca_cert)
         if self.ad_user:
+            logging.debug('AD connect: LDAP Simple login')
             auth_method = ldap3.SIMPLE
-            if self.ad_url.startswith('ldap://'):
-                logging.debug('AD connect: Request TLS login for LDAP port')
-                tls = ldap3.Tls(validate=ssl.CERT_REQUIRED)
-            else:
-                logging.debug('AD connect: LDAPS Simple login')
         else:
             logging.debug('AD connect: Kerberos auth method. Requires Windows, domain user, and domain computer')
             auth_method = ldap3.SASL
@@ -99,6 +99,9 @@ class AdCrmDataSource(ICrmDataSource):
                                       sasl_mechanism=ldap3.KERBEROS if auth_method == ldap3.SASL else None) as connection:
             try:
                 connection.open()
+                if not server.ssl and auth_method == ldap3.SIMPLE:
+                    if not connection.start_tls():
+                        raise Exception(f'Unable to start TLS on AD connection: {connection.last_error}')
                 if not connection.bind():
                     raise Exception('Invalid AD username or password')
                 yield connection

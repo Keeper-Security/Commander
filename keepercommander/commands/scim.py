@@ -68,6 +68,13 @@ scim_push_parser.add_argument('--record', '-r', dest='record', action='store',
                               help='Record UID with SCIM configuration')
 scim_push_parser.add_argument('--auto-approve', dest='auto_approve', action='store', choices=['on', 'off'],
                               default='on', help='Auto approve SCIM teams')
+scim_push_parser.add_argument('--insecure', dest='insecure', action='store_true',
+                              help='Disable TLS certificate validation for Active Directory (LDAPS) connection. '
+                                   'Insecure: do not use on untrusted networks.')
+scim_push_parser.add_argument('--ad-ca-cert', dest='ca_cert', action='store',
+                              help='Path to PEM file with CA certificate(s) to validate the Active Directory '
+                                   '(LDAPS) server certificate against, when it is not issued by a CA already '
+                                   'trusted by this system.')
 scim_push_parser.add_argument('target', help='SCIM ID')
 
 
@@ -444,7 +451,23 @@ class ScimPushCommand(EnterpriseCommand):
             if not ad_password:
                 raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "AD Password" field.\n'
                                        'This field contains AD user password.')
-            data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain=False)
+            insecure = kwargs.get('insecure') is True
+            ca_cert = kwargs.get('ca_cert')
+            if ca_cert and not os.path.isfile(ca_cert):
+                raise CommandError('', f'CA certificate file "{ca_cert}" was not found')
+            if insecure:
+                logging.warning('AD connect: TLS certificate validation is disabled (--insecure). '
+                                 'This connection is vulnerable to man-in-the-middle attacks.')
+                answer = user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                    '--insecure disables TLS certificate validation for the Active Directory (LDAPS) connection.\n'
+                    'This connection will be vulnerable to man-in-the-middle attacks. '
+                    'Do not use this option on untrusted networks.' +
+                    '\n\nDo you want to proceed?', 'yn', 'n')
+                if answer.lower() != 'y':
+                    raise CommandError('', 'Cancelled')
+            data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain=False,
+                                          insecure=insecure, ca_cert=ca_cert)
         elif source == 'record':
             json_data = record.notes
             if not json_data:
