@@ -121,12 +121,39 @@ SERVER_PUBLIC_KEYS = {
 }   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey, Dict[str, Union[ec.EllipticCurvePublicKey, bytes]]]]
 
 
+def _load_custom_server_public_key():
+    # Self-hosted/on-premise Keeper deployments (e.g. Self-Managed Keeper) generate
+    # their own transmission-key keypair at install time; it is never one of
+    # Keeper's own hardcoded ids above, so the server rejects every request with
+    # key_id=-1 regardless of hostname/TLS config. These two env vars let an
+    # operator register that deployment's actual public key so the handshake can
+    # succeed. KEEPER_SERVER_PUBLIC_KEY must be the same base64url-encoded,
+    # uncompressed EC point format used for ids 7-18 above.
+    key_id_str = os.environ.get('KEEPER_SERVER_PUBLIC_KEY_ID')
+    key_value = os.environ.get('KEEPER_SERVER_PUBLIC_KEY')
+    if not key_id_str or not key_value:
+        return
+    try:
+        key_id = int(key_id_str)
+    except ValueError:
+        logging.warning(f"KEEPER_SERVER_PUBLIC_KEY_ID='{key_id_str}' is not a valid integer; ignoring custom server public key.")
+        return
+    try:
+        SERVER_PUBLIC_KEYS[key_id] = crypto.load_ec_public_key(utils.base64_url_decode(key_value))
+    except Exception as e:
+        logging.warning(f"Failed to load KEEPER_SERVER_PUBLIC_KEY as an EC public key ({e}); ignoring custom server public key.")
+
+
+_load_custom_server_public_key()
+
+
 def encrypt_with_keeper_key(context, data: bytes) -> bytes:
     key_id = context.server_key_id
-    if 1 <= key_id <= 6:
-        return crypto.encrypt_rsa(data, SERVER_PUBLIC_KEYS[key_id])
-    elif 7 <= key_id <= 18:
-        return crypto.encrypt_ec(data, SERVER_PUBLIC_KEYS[key_id])
+    public_key = SERVER_PUBLIC_KEYS.get(key_id)
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return crypto.encrypt_rsa(data, public_key)
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        return crypto.encrypt_ec(data, public_key)
     else:
         raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
 
@@ -145,6 +172,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
     run_request = True
     throttle_retries = 0
     max_throttle_retries = 3
+    key_mismatch_retries = 0
+    max_key_mismatch_retries = 1
     while run_request:
         run_request = False
 
@@ -248,6 +277,15 @@ def execute_rest(context, endpoint, payload, timeout=None):
                         elif server_key_id != context.server_key_id:
                             # If server returns non-EC key without qrc_ec_key_id, disable QRC
                             if not (7 <= server_key_id <= 18):
+                                key_mismatch_retries += 1
+                                if key_mismatch_retries > max_key_mismatch_retries:
+                                    raise KeeperApiError(
+                                        'invalid_key_id',
+                                        f"Server rejected key id {context.server_key_id} (responded key_id={server_key_id}). "
+                                        "This usually means you're connecting to a self-hosted/on-premise Keeper server that "
+                                        "uses its own transmission-key keypair, not one of Commander's built-in keys. Set the "
+                                        "KEEPER_SERVER_PUBLIC_KEY_ID and KEEPER_SERVER_PUBLIC_KEY environment variables to that "
+                                        "deployment's key id/public key.")
                                 logging.warning(f"Server returned non-EC key_id={server_key_id} without qrc_ec_key_id. Falling back to EC-only encryption.")
                                 context.disable_qrc()
                             else:

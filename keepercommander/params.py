@@ -35,11 +35,25 @@ class RecordOwner(NamedTuple):
     account_uid: str
 
 
+def _default_server_key_id():
+    # Self-hosted/on-premise Keeper deployments mint their own transmission-key
+    # keypair at install time, so Keeper's hardcoded public key ids (1-18) won't
+    # match. KEEPER_SERVER_PUBLIC_KEY_ID (paired with KEEPER_SERVER_PUBLIC_KEY in
+    # rest_api.py) lets an operator point Commander at that deployment's key id.
+    key_id_str = os.environ.get('KEEPER_SERVER_PUBLIC_KEY_ID')
+    if key_id_str:
+        try:
+            return int(key_id_str)
+        except ValueError:
+            pass
+    return 7
+
+
 class RestApiContext:
     def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US'):
         self.server_base = server
         self.transmission_key = None
-        self.__server_key_id = 7
+        self.__server_key_id = _default_server_key_id()
         self.__qrc_key_id = -1  # -1 = not determined, None = not available
         self.locale = locale
         self.__store_server_key = False
