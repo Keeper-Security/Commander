@@ -205,6 +205,11 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 self.transfer_user_account(params, email, target_user, target_public_key)
 
         api.query_enterprise(params)
+        # A transfer can cascade brand-new NSF/KeeperDrive subtree access to the
+        # target user; force a full resync so the whole subtree is picked up
+        # instead of relying on an incremental delta from the stale token.
+        params.revision = 0
+        params.sync_down_token = b''
         params.sync_data = True
 
     @staticmethod
@@ -488,6 +493,113 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         logging.debug('Corrupted user folder key: %s: %s', user_folder_uid, e)
                         rqt['corrupted_user_folder_keys'].append(ufk)
 
+            if 'kd_folder_keys' in rs or 'kd_record_keys' in rs or 'kd_nested_record_owner_keys' in rs:
+                def decrypt_kd_key(encoded_key, key_type):
+                    kd_key = utils.base64_url_decode(encoded_key)
+                    if key_type == 1:
+                        return crypto.decrypt_aes_v1(kd_key, user_data_key)
+                    elif key_type == 2:
+                        return crypto.decrypt_rsa(kd_key, user_rsa_private_key)
+                    elif key_type == 3:
+                        return crypto.decrypt_aes_v2(kd_key, user_data_key)
+                    elif key_type == 4:
+                        return crypto.decrypt_ec(kd_key, user_ecc_private_key)
+                    else:
+                        raise Exception(f'Unsupported KeeperDrive key type')
+
+                def reencrypt_kd_key(kd_key):
+                    if params.forbid_rsa:
+                        if aes_key:
+                            return crypto.encrypt_aes_v2(kd_key, aes_key), 3
+                        elif ec_public_key:
+                            return crypto.encrypt_ec(kd_key, ec_public_key), 4
+                        else:
+                            raise Exception(f'Cannot re-encrypt KeeperDrive key')
+                    else:
+                        if aes_key:
+                            return crypto.encrypt_aes_v1(kd_key, aes_key), 1
+                        elif rsa_public_key:
+                            return crypto.encrypt_rsa(kd_key, rsa_public_key), 2
+                        else:
+                            raise Exception(f'Cannot re-encrypt KeeperDrive key')
+
+                def reencrypt_kd_owner_key(kd_key):
+                    # Owner-key copies must be recoverable from the recipient's private
+                    # key alone, with no folder/data-key in the path - data-key wraps
+                    # are not allowed here, only true public-key encryption.
+                    if ec_public_key:
+                        return crypto.encrypt_ec(kd_key, ec_public_key), 4
+                    elif not params.forbid_rsa and rsa_public_key:
+                        return crypto.encrypt_rsa(kd_key, rsa_public_key), 2
+                    else:
+                        raise Exception(f'Cannot re-encrypt KeeperDrive owner key')
+
+                rqt['kd_folder_keys'] = []
+                for kfk in rs.get('kd_folder_keys', []):
+                    folder_key = decrypt_kd_key(kfk['folder_key'], kfk.get('folder_key_type', 1))
+                    encrypted_folder_key, folder_key_type = reencrypt_kd_key(folder_key)
+                    rqt['kd_folder_keys'].append({
+                        'folder_uid': kfk['folder_uid'],
+                        'folder_key': utils.base64_url_encode(encrypted_folder_key),
+                        'folder_key_type': folder_key_type,
+                    })
+
+                rqt['kd_record_keys'] = []
+                for krk in rs.get('kd_record_keys', []):
+                    record_key = decrypt_kd_key(krk['record_key'], krk.get('record_key_type', 1))
+                    encrypted_record_key, record_key_type = reencrypt_kd_key(record_key)
+                    entry = {
+                        'record_uid': krk['record_uid'],
+                        'record_key': utils.base64_url_encode(encrypted_record_key),
+                        'record_key_type': record_key_type,
+                    }
+                    if 'record_owner_key' in krk:
+                        owner_key = decrypt_kd_key(krk['record_owner_key'], krk.get('record_owner_key_type', 1))
+                        encrypted_owner_key, owner_key_type = reencrypt_kd_owner_key(owner_key)
+                        entry['record_owner_key'] = utils.base64_url_encode(encrypted_owner_key)
+                        entry['record_owner_key_type'] = owner_key_type
+                    rqt['kd_record_keys'].append(entry)
+
+                rqt['kd_nested_record_owner_keys'] = []
+                for nrok in rs.get('kd_nested_record_owner_keys', []):
+                    owner_key = decrypt_kd_key(nrok['owner_key'], nrok.get('owner_key_type', 1))
+                    encrypted_owner_key, owner_key_type = reencrypt_kd_owner_key(owner_key)
+                    rqt['kd_nested_record_owner_keys'].append({
+                        'record_uid': nrok['record_uid'],
+                        'owner_key': utils.base64_url_encode(encrypted_owner_key),
+                        'owner_key_type': owner_key_type,
+                    })
+
+                if rqt['kd_folder_keys'] or rqt['kd_record_keys'] or rqt['kd_nested_record_owner_keys']:
+                    kd_folder_key = utils.generate_aes_key()
+                    kd_folder_data = json.dumps({'name': f'Transfer from {username}'}).encode('utf-8')
+                    kd_folder_data = crypto.encrypt_aes_v2(kd_folder_data, kd_folder_key)
+                    if params.forbid_rsa:
+                        if aes_key:
+                            encrypted_kd_folder_key = crypto.encrypt_aes_v2(kd_folder_key, aes_key)
+                            kd_folder_key_type = 'encrypted_by_data_key_gcm'
+                        elif ec_public_key:
+                            encrypted_kd_folder_key = crypto.encrypt_ec(kd_folder_key, ec_public_key)
+                            kd_folder_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            raise Exception(f'Cannot re-encrypt KeeperDrive folder transfer key')
+                    else:
+                        if aes_key:
+                            encrypted_kd_folder_key = crypto.encrypt_aes_v1(kd_folder_key, aes_key)
+                            kd_folder_key_type = 'encrypted_by_data_key'
+                        elif ec_public_key:
+                            encrypted_kd_folder_key = crypto.encrypt_ec(kd_folder_key, ec_public_key)
+                            kd_folder_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            raise Exception(f'Cannot re-encrypt KeeperDrive folder transfer key')
+
+                    rqt['kd_folder_transfer'] = {
+                        'folder_uid': utils.generate_uid(),
+                        'folder_data': utils.base64_url_encode(kd_folder_data),
+                        'folder_key': utils.base64_url_encode(encrypted_kd_folder_key),
+                        'folder_key_type': kd_folder_key_type,
+                    }
+
             api.communicate(params, rqt)
             result = True
             logging.info('%s: account is transferred', username)
@@ -499,6 +611,18 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 sf_num = len(rqt['shared_folder_keys'])
                 if sf_num > 0:
                     logging.info(f'{"SharedFolders":>16} : {sf_num}')
+            if 'kd_folder_keys' in rqt:
+                kdf_num = len(rqt['kd_folder_keys'])
+                if kdf_num > 0:
+                    logging.info(f'{"KD Folders":>16} : {kdf_num}')
+            if 'kd_record_keys' in rqt:
+                kdr_num = len(rqt['kd_record_keys'])
+                if kdr_num > 0:
+                    logging.info(f'{"KD Records":>16} : {kdr_num}')
+            if 'kd_nested_record_owner_keys' in rqt:
+                kdn_num = len(rqt['kd_nested_record_owner_keys'])
+                if kdn_num > 0:
+                    logging.info(f'{"KD Nested Owners":>16} : {kdn_num}')
 
         except Exception as e:
             result = False
