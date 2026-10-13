@@ -1572,6 +1572,23 @@ class RecordDownloadAttachmentCommand(Command):
                     subfolder_path = subfolder_path.replace(2*os.sep, os.sep)
             if subfolder_path:
                 subfolder_path = os.path.join(output_dir, subfolder_path)
+
+                # Prevent path traversal: ensure resolved path stays within output_dir
+                resolved_path = os.path.abspath(subfolder_path)
+                resolved_output_dir = os.path.abspath(output_dir)
+
+                # Check if resolved path is under output_dir
+                try:
+                    os.path.relpath(resolved_path, resolved_output_dir)
+                    if not (resolved_path == resolved_output_dir or
+                            resolved_path.startswith(resolved_output_dir + os.sep)):
+                        raise CommandError('download-attachment',
+                                         f'Path traversal detected: folder name results in path outside output directory')
+                except ValueError:
+                    # Paths on different drives on Windows
+                    raise CommandError('download-attachment',
+                                     f'Path traversal detected: folder name results in path outside output directory')
+
                 if not os.path.isdir(subfolder_path):
                     os.makedirs(subfolder_path)
             else:
