@@ -1032,9 +1032,10 @@ class KeeperResponseParser:
         """Handle commands that produce no output but are successful."""
         # These commands truly produce no output (no logs, no stdout) and should be treated as silent success
         silent_success_commands = [
-            "sync-down", "logout", "keep-alive", "set", "record-update", "append-notes", "mv", "ln"
+            "sync-down", "logout", "keep-alive", "set", "record-update", "append-notes", "mv", "ln",
+            "nsf-rmdir"
         ]
-        
+
         if any(cmd in command for cmd in silent_success_commands):
             # Command-specific success messages for truly silent commands
             if "sync-down" in command:
@@ -1053,9 +1054,11 @@ class KeeperResponseParser:
                 message = "Item moved successfully"
             elif "ln" in command:
                 message = "Link created successfully"
+            elif "nsf-rmdir" in command:
+                message = "Folder removed successfully"
             else:
                 message = "Command executed successfully"
-            
+
             return {
                 "status": "success",
                 "command": command.split()[0] if command.split() else command,
