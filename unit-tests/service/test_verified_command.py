@@ -12,10 +12,7 @@ from keepercommander.service.util.verified_command import Verifycommand
 def _tokens(command: str):
     """Same normalization CommandExecutor uses before policy checks."""
     command = unescape(command)
-    try:
-        return shlex.split(command.replace('\\', '\\\\'))
-    except ValueError:
-        return command.split()
+    return Verifycommand.tokenize_service_command(command)
 
 
 class TestServiceModeCommandPolicy(TestCase):
@@ -107,6 +104,94 @@ class TestServiceModeCommandPolicy(TestCase):
             check(_tokens('record-add --title t -rt login c.file.doc=@/etc/passwd'))
         )
         self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
+
+    def test_backslash_escaped_record_file_field_is_blocked(self):
+        """Escaped field names are checked after the same parsing as execution."""
+        check = Verifycommand.validate_service_mode_restrictions
+
+        # The HTTP JSON representation of this argument contains ``file\\=``;
+        # after JSON decoding there is one backslash, which shlex consumes and
+        # turns into the actual ``file=`` field name seen by record-add.
+        for field in (
+            r'file\=/etc/passwd',
+            r'f.file\=/etc/passwd',
+            r'fi\le=/etc/passwd',
+            r'f.fi\le.doc\=/etc/passwd',
+        ):
+            command = f'record-add -t f01 -rt login --self-destruct=1d {field}'
+            with self.subTest(field=field):
+                self.assertEqual(_tokens(command), shlex.split(command))
+                self.assertIsNotNone(check(_tokens(command)))
+
+        # The ordinary spelling remains blocked as before.
+        self.assertIsNotNone(check(_tokens(
+            'record-add -t f01 -rt login --self-destruct=1d file=/etc/passwd'
+        )))
+        self.assertIsNone(check(_tokens(
+            r'record-add -t f01 -rt login lo\gin=user'
+        )))
+
+    def test_escaped_host_path_options_are_blocked(self):
+        """Filesystem flags and parser-driven file inputs use execution tokens."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        for cmd in (
+            r'generate --out\put=/tmp/sm-write-canary.txt',
+            r'generate --out\put /tmp/sm-write-canary.txt',
+            r'import --for\mat=json /etc/passwd',
+            r'import --file\-cache=/tmp/sm-cache',
+            r'pam project import --filen\ame=/etc/passwd',
+            r'audit-report --form\at=pdf',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(ban, check(_tokens(cmd)))
+
+    def test_automator_local_file_access_is_blocked(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        host_fs_msg = 'Local filesystem access'
+        for cmd in (
+            'automator-certificate /etc/passwd',
+            'automator certificate /etc/passwd',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(host_fs_msg, check(_tokens(cmd)))
+
+    def test_automator_local_data_expansions_are_blocked(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        expansion_msg = 'Automator file and environment expansions'
+        for cmd in (
+            'automator edit TestAutomator --set debugUrl=${file:/etc/passwd}',
+            'automator edit TestAutomator --set key=${base64:/etc/shadow}',
+            'automator edit TestAutomator --set key=${env:AWS_SECRET_ACCESS_KEY}',
+            'automator edit TestAutomator --set key=${FiLe:/etc/passwd}',
+            'automator edit TestAutomator --set "debugUrl = ${file:/etc/passwd}"',
+            'automator edit TestAutomator --set "debugUrl= ${file:/etc/passwd}"',
+            'automator edit TestAutomator --set "debugUrl=${file:/etc/passwd} "',
+            'automator edit TestAutomator --set="debugUrl = ${base64:/etc/shadow}"',
+            'automator edit TestAutomator --se "debugUrl = ${file:/etc/passwd}"',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(expansion_msg, check(_tokens(cmd)))
+
+        # Ordinary Automator edits remain usable through Service Mode.
+        self.assertIsNone(check(_tokens(
+            'automator edit TestAutomator --set debugUrl=https://example.invalid'
+        )))
+        # The expansion syntax is only interpreted for --set values, not URL.
+        self.assertIsNone(check(_tokens(
+            'automator edit TestAutomator --url=${file:/tmp/canary.txt}'
+        )))
+
+    def test_quoted_backslash_path_tokens_match_executor(self):
+        # A quoted Windows-style path remains one argument with its
+        # backslashes intact under the CLI's shlex parser.
+        path = r'C:\service\files\payload.txt'
+        command = f'generate --output "{path}"'
+        self.assertEqual(
+            Verifycommand.tokenize_service_command(command),
+            shlex.split(command),
+        )
+        self.assertIn(path, _tokens(command))
 
     def test_host_filesystem_commands_blocked(self):
         check = Verifycommand.validate_service_mode_restrictions
@@ -336,11 +421,97 @@ class TestServiceModeCommandPolicy(TestCase):
 
         self.assertTrue(temp_files, 'expected a temp file to be created')
         self.assertNotIn('FILEDATA', processed_command)
+        self.assertTrue(any(token.endswith(temp_files[0]) for token in _tokens(processed_command)))
 
         request_temp_dir = os.path.dirname(temp_files[0])
         tokens = _tokens(processed_command)
         self.assertIsNone(
             Verifycommand.validate_service_mode_restrictions(tokens, request_temp_dir)
+        )
+
+    def test_filedata_positional_placeholder_is_shell_quoted(self):
+        """A generated path remains one executor token, including with spaces."""
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json FILEDATA'
+        request_temp_dir = tempfile.mkdtemp(prefix='service mode ')
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=request_temp_dir):
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_files[0]],
+        )
+
+    def test_filedata_filename_placeholder_is_shell_quoted(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'pam project import --filename=FILEDATA'
+        request_temp_dir = tempfile.mkdtemp(prefix='service mode ')
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=request_temp_dir):
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        tokens = shlex.split(processed_command)
+        self.assertEqual(tokens[-1], f'--filename={temp_files[0]}')
+        self.assertIsNone(
+            Verifycommand.validate_service_mode_restrictions(
+                tokens, request_temp_dir
+            )
+        )
+
+    def test_filedata_windows_path_survives_executor_tokenization(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import MagicMock, patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json FILEDATA'
+        temp_file_path = r'C:\service mode\payload.json'
+        temp_file = MagicMock()
+        temp_file.name = temp_file_path
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=r'C:\service mode'), patch(
+                'keepercommander.service.util.request_validation.tempfile.NamedTemporaryFile') as make_temp_file:
+            make_temp_file.return_value.__enter__.return_value = temp_file
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+
+        self.assertEqual(temp_files, [temp_file_path])
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_file_path],
+        )
+
+    def test_filedata_quoted_positional_placeholder_is_replaced(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json "FILEDATA"'
+        processed_command, temp_files = RequestValidator.process_file_data(
+            request_data, command
+        )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_files[0]],
         )
 
     def test_option_values_yields_dash_leading_values(self):

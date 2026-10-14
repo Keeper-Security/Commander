@@ -284,7 +284,8 @@ class CommandExecutor:
                 )
                 return {"status": "error", "error": error}, 403
 
-            # Same tokens the CLI will run — do not use raw HTTP split(" ")
+            # Apply every Service Mode restriction to the same tokens the
+            # CLI's Command.execute_args parser will receive.
             service_mode_error = Verifycommand.validate_service_mode_restrictions(
                 command_tokens, request_temp_dir
             )
