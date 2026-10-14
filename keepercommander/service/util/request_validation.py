@@ -16,6 +16,7 @@ from html import escape
 import tempfile
 import os
 import json
+import shlex
 import shutil
 from ..decorators.logging import logger, sanitize_command_fields
 
@@ -82,19 +83,40 @@ class RequestValidator:
                     temp_file_path = temp_file.name
                     temp_files.append(temp_file_path)
                     
-                    # Replace FILEDATA placeholder with temporary file path, but only when it's used as a file parameter
-                    # Supports: PAM import (--filename), Import (positional), Enterprise-push (positional)
-                    # Callable replacement -- a plain string would let a Windows path's backslashes be parsed as regex backreferences.
-                    file_param_pattern = r'(--filename[=\s]+["\']?)FILEDATA(["\']?)'
+                    # Replace FILEDATA in PAM --filename forms. Quote an
+                    # unquoted path so command execution's shlex parser keeps
+                    # Windows separators and paths containing spaces intact.
+                    file_param_pattern = r'(--filename[=\s]+)(["\']?)FILEDATA(["\']?)'
+
+                    def replace_filename_placeholder(match):
+                        prefix, opening_quote, closing_quote = match.groups()
+                        if opening_quote and opening_quote == closing_quote:
+                            replacement = temp_file_path
+                        else:
+                            replacement = shlex.quote(temp_file_path)
+                        return f'{prefix}{opening_quote}{replacement}{closing_quote}'
+
                     processed_command = re.sub(
                         file_param_pattern,
-                        lambda m: f'{m.group(1)}{temp_file_path}{m.group(2)}',
+                        replace_filename_placeholder,
                         processed_command,
                     )
 
-                    # Also handle standalone FILEDATA (not in quotes)
-                    standalone_pattern = r'\bFILEDATA\b(?!["\'])'
-                    processed_command = re.sub(standalone_pattern, lambda _: temp_file_path, processed_command)
+                    # Also handle positional FILEDATA (including a quoted
+                    # placeholder). Keep existing quotes, otherwise shell-quote
+                    # the generated path as one argument.
+                    standalone_pattern = r'(?P<quote>["\']?)\bFILEDATA\b(?P=quote)'
+
+                    def replace_standalone_placeholder(match):
+                        quote = match.group('quote')
+                        replacement = temp_file_path if quote else shlex.quote(temp_file_path)
+                        return f'{quote}{replacement}{quote}'
+
+                    processed_command = re.sub(
+                        standalone_pattern,
+                        replace_standalone_placeholder,
+                        processed_command,
+                    )
                     
                     logger.debug(f"Created temporary file {temp_file_path} for filedata")
                     
