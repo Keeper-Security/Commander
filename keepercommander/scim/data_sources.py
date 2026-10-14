@@ -646,7 +646,6 @@ AZURE_CLOUD_URLS = {
     AZURE_GLOBAL_CLOUD: AZURE_ENDPOINT('https://login.microsoftonline.com', 'https://graph.microsoft.com'),
     'AzureChinaCloud': AZURE_ENDPOINT('https://login.chinacloudapi.cn', 'https://microsoftgraph.chinacloudapi.cn'),
     'AzureUSGovernment': AZURE_ENDPOINT('https://login.microsoftonline.us', 'https://graph.microsoft.us'),
-    'AzureGermanCloud': AZURE_ENDPOINT('https://login.microsoftonline.de', 'https://graph.microsoft.de'),
 }
 
 
@@ -838,8 +837,6 @@ class AzureAdCrmDataSource(ICrmDataSource):
                 azure_cloud = 'AzureChinaCloud'
             elif 'usgov' in ac or 'us_gov' in ac or 'government' in ac:
                 azure_cloud = 'AzureUSGovernment'
-            elif 'german' in ac or 'de' == ac:
-                azure_cloud = 'AzureGermanCloud'
             elif 'global' in ac or 'azurecloud' == ac or ac == 'azure':
                 azure_cloud = AZURE_GLOBAL_CLOUD
 

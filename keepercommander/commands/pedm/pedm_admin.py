@@ -243,7 +243,7 @@ class PedmScimCommand(base.ArgparseCommand):
         azure_parser.add_argument('--tenant-id', dest='tenant_id', required=True)
         azure_parser.add_argument('--client-id', dest='client_id', required=True)
         azure_parser.add_argument('--client-secret', dest='client_secret')
-        azure_parser.add_argument('--azure-cloud', dest='azure_cloud', choices=['US', 'GOV', 'CN', 'EU'],
+        azure_parser.add_argument('--azure-cloud', dest='azure_cloud', choices=['US', 'GOV', 'CN'],
                                   help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
 
         ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
@@ -434,8 +434,6 @@ class PedmScimCommand(base.ArgparseCommand):
                     azure_cloud = 'AzureChinaCloud'
                 elif azure_cloud == 'GOV':
                     azure_cloud = 'AzureUSGovernment'
-                elif azure_cloud == 'EU':
-                    azure_cloud = 'AzureGermanCloud'
                 else:
                     azure_cloud = None
             else:
