@@ -10,18 +10,24 @@
 #
 
 import ipaddress
+import os
 from functools import wraps
 from flask import request, jsonify
 from ..util.config_reader import ConfigReader
+from ..config.config_validation import ConfigValidator, ValidationError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from ..decorators.logging import logger
 
+DEFAULT_RATE_LIMIT = "60/minute"
+
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["60/minute", "600 per hour", "6000/day"],
+    default_limits=[DEFAULT_RATE_LIMIT, "600 per hour", "6000/day"],
     storage_uri="memory://"
 )
+
+_cached_rate_limit = None
     
 def is_allowed_ip(ip_addr, allowed_ips_str, denied_ips_str):
     """Check if the given IP address is allowed based on allow/deny lists.
@@ -67,10 +73,65 @@ def _ip_matches(parsed_ip, pattern):
         return parsed_ip == ipaddress.ip_address(pattern)
     except ValueError:
         return False
-    
+
+
+def _validated_rate_limit(value, source):
+    """Validate and return rate limit, or None if invalid."""
+    if not value:
+        return None
+    try:
+        return ConfigValidator.validate_rate_limit(value.strip())
+    except ValidationError as e:
+        logger.warning(f"Invalid rate limit from {source} ({value!r}): {e}")
+        return None
+
+
+def _resolve_rate_limit():
+    """Resolve and validate rate limit once at startup/first call, caching the result.
+
+    Priority order:
+    1. KEEPER_RATE_LIMIT environment variable (for streamlined mode deployments)
+    2. rate_limiting from config file
+    3. Default: 60/minute
+
+    Warns at most once per process if invalid values are detected.
+    """
+    global _cached_rate_limit
+    if _cached_rate_limit is not None:
+        return _cached_rate_limit
+
+    # Check environment variable first (highest priority for streamlined mode)
+    env_limit = os.environ.get('KEEPER_RATE_LIMIT')
+    if env_limit:
+        validated = _validated_rate_limit(env_limit, "KEEPER_RATE_LIMIT env var")
+        if validated:
+            logger.debug(f"Using rate limit from KEEPER_RATE_LIMIT env var: {validated}")
+            _cached_rate_limit = validated
+            return validated
+        # Fall through to config if env var is invalid (don't use hardcoded default)
+
+    # Try reading from config file
+    config_limit = ConfigReader.read_config("rate_limiting")
+    if config_limit:
+        validated = _validated_rate_limit(config_limit, "config file")
+        if validated:
+            logger.debug(f"Using rate limit from config: {validated}")
+            _cached_rate_limit = validated
+            return validated
+
+    # Empty config is normal default; log at DEBUG, not WARNING
+    logger.debug(f"Rate limit not configured. Using default {DEFAULT_RATE_LIMIT}.")
+    _cached_rate_limit = DEFAULT_RATE_LIMIT
+    return DEFAULT_RATE_LIMIT
+
+
 def get_rate_limit():
-    """Get configured rate limit"""
-    return ConfigReader.read_config("rate_limiting") or "60/minute"
+    """Get cached rate limit for Flask-Limiter decorator.
+
+    Called on every request, but uses cached value from _resolve_rate_limit()
+    to avoid re-validating and re-logging on every call.
+    """
+    return _resolve_rate_limit()
 
 def get_rate_limit_key():
     """Generate rate limit key per IP + endpoint for separate limits per endpoint"""

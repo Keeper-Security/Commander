@@ -230,9 +230,8 @@ class FolderListCommand(Command, RecordMixin):
             dj = nsf_record_data[uid]['data_json']
             rec = vault.TypedRecord(version=3)
             rec.record_uid = uid
-            rec.title = dj.get('title', uid)
-            rec.type_name = dj.get('type', '')
             rec.load_record_data(dj, None)
+            rec.title = rec.title or uid
             return rec
         return None
 
