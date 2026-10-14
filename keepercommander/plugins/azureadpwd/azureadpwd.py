@@ -27,14 +27,12 @@ AzureEndpoint = namedtuple('AzureEndpoint', 'activeDirectory microsoftGraphResou
 AZURE_GLOBAL_CLOUD = 'AzureCloud'
 AZURE_CHINA_CLOUD = 'AzureChinaCloud'
 AZURE_US_GOV_CLOUD = 'AzureUSGovernment'
-AZURE_GERMAN_CLOUD = 'AzureGermanCloud'
 
 
 AZURE_CLOUD_URLS = {
     AZURE_GLOBAL_CLOUD: AzureEndpoint('https://login.microsoftonline.com', 'https://graph.microsoft.com'),
     AZURE_CHINA_CLOUD: AzureEndpoint('https://login.chinacloudapi.cn', 'https://microsoftgraph.chinacloudapi.cn'),
     AZURE_US_GOV_CLOUD: AzureEndpoint('https://login.microsoftonline.us', 'https://graph.microsoft.us'),
-    AZURE_GERMAN_CLOUD: AzureEndpoint('https://login.microsoftonline.de', 'https://graph.microsoft.de'),
 }   # type: Dict[str, AzureEndpoint]
 
 
@@ -53,8 +51,6 @@ def rotate(record, newpassword):   # type: (vault.KeeperRecord, str) -> bool
             azure_cloud = AZURE_CHINA_CLOUD
         elif 'usgov' in azure_cloud:
             azure_cloud = AZURE_US_GOV_CLOUD
-        elif 'german' in azure_cloud:
-            azure_cloud = AZURE_GERMAN_CLOUD
         elif 'global' in azure_cloud:
             azure_cloud = AZURE_GLOBAL_CLOUD
         elif 'azurecloud' == azure_cloud:
