@@ -103,19 +103,39 @@ def _windows_icacls_principal():     # type: () -> str
     return username
 
 
+def _path_has_link_component(file_path):     # type: (str) -> bool
+    """Return whether a path or one of its parent components is a link."""
+    drive, tail = os.path.splitdrive(os.path.abspath(file_path))
+    current_path = drive + os.sep if drive else os.sep
+    for component in tail.split(os.sep):
+        if not component:
+            continue
+        current_path = os.path.join(current_path, component)
+        file_stat = os.lstat(current_path)
+        if stat.S_ISLNK(file_stat.st_mode):
+            return True
+
+        # Windows junctions and other reparse points are not always reported
+        # as symbolic links. Avoid changing permissions through those paths too.
+        if os.name == 'nt':
+            reparse_point = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+            if getattr(file_stat, 'st_file_attributes', 0) & reparse_point:
+                return True
+    return False
+
+
 def set_file_permissions(file_path):     # type: (str) -> None
     """
     Set secure file permissions (600) for configuration files containing sensitive data.
     This ensures only the owner can read and write the file.
     """
     file_path = os.path.abspath(file_path)
-    real_path = os.path.realpath(file_path)
-    if file_path != real_path:
-        return
-    
+
     try:
-        if os.path.islink(file_path):
-            logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
+        # Check each component explicitly: realpath() can canonicalize valid
+        # Windows short paths, while following a symlink/junction is unsafe.
+        if _path_has_link_component(file_path):
+            logging.warning(f'Skipping permission setting on linked path: {file_path}')
             return
         
         if platform.system() != 'Windows':
