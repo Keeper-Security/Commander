@@ -231,6 +231,8 @@ class Verifycommand:
         for setting in settings:
             separator = setting.find('=')
             if separator <= 1:
+                # AutomatorEditCommand uses the same pos > 1 condition and
+                # returns before resolving expansions for malformed settings.
                 continue
             value = setting[separator + 1:].strip()
             if not (value.startswith('${') and value.endswith('}')):
