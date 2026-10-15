@@ -1436,7 +1436,10 @@ class CyberArkImporter(BaseImporter):
                             retry = False
                             continue
                         if response.status_code == 200:
-                            record.password = response.text.strip('"')
+                            try:
+                                record.password = response.json()
+                            except ValueError:
+                                record.password = response.text.strip('"')
                             retry = False
                             yield record
                         elif 400 <= response.status_code <= 500:
