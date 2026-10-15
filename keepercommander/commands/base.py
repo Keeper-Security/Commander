@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 from collections import OrderedDict
 from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 
@@ -366,6 +367,53 @@ def detect_column_type(values):  # type: (Iterable[Any]) -> Optional[Callable[[A
     return None
 
 
+_ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _visible_len(value):   # type: (Any) -> int
+    return len(_ANSI_ESCAPE.sub('', str(value)))
+
+
+def _truncate_visible(value, width):   # type: (str, int) -> str
+    """Truncate to width visible characters, keeping a colored value's leading color."""
+    text = _ANSI_ESCAPE.sub('', value)
+    if len(text) <= width:
+        return value
+    prefix = ''
+    match = re.match(r'(?:\x1b\[[0-9;]*m)+', value)
+    if match:
+        prefix = match.group(0)
+    return prefix + text[:max(width - 3, 1)] + '...' + ('\x1b[0m' if prefix else '')
+
+
+def _shrink_table_to_terminal(rows, headers, shrink_columns, min_width=12):
+    # type: (List[List], Sequence[str], Sequence[int], int) -> None
+    """Truncate the shrink_columns of rows, in order and in place, until a 'simple'
+    tabulate table fits the terminal. Columns never shrink below min_width or their header.
+    Color escape codes do not count towards width."""
+    column_count = max(len(row) for row in rows)
+    # tabulate pads each header by 2 and puts 2 spaces between columns
+    header_widths = [_visible_len(headers[i]) + 2 if headers and i < len(headers) else 0
+                     for i in range(column_count)]
+    widths = [max([header_widths[i]] + [_visible_len(row[i]) for row in rows if i < len(row) and row[i] is not None])
+              for i in range(column_count)]
+    # one spare column: some terminals wrap a line that exactly fills the width
+    max_width = shutil.get_terminal_size(fallback=(120, 24)).columns - 1
+    overflow = sum(widths) + 2 * (column_count - 1) - max_width
+    for index in shrink_columns:
+        if overflow <= 0:
+            break
+        if not 0 <= index < column_count:
+            continue
+        new_width = max(widths[index] - overflow, header_widths[index], min_width)
+        overflow -= widths[index] - new_width
+        widths[index] = new_width
+        for row in rows:
+            value = row[index] if index < len(row) else None
+            if isinstance(value, str):
+                row[index] = _truncate_visible(value, new_width)
+
+
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
     # type: (List[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
@@ -376,6 +424,8 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
     #           sort_by: int               - Sort by columnNo
     #           sort_desc: bool            - Descending Sort
     #           right_align: Sequence[int] - Force right align
+    #           shrink_columns: Sequence[int] - Fit the table to the terminal width by truncating
+    #                                        these columns, in order. table only
     #           footer: str                - Footer text
     # PDF format requires reportlab library to be installed
 
@@ -675,6 +725,12 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
         if kwargs.get('no_header'):
             headers = ()
             tablefmt = 'plain'
+
+        shrink_columns = kwargs.get('shrink_columns')
+        if isinstance(shrink_columns, (list, tuple)) and expanded_data:
+            if row_number:
+                shrink_columns = [x + 1 for x in shrink_columns]
+            _shrink_table_to_terminal(expanded_data, headers, shrink_columns)
 
         print(tabulate(expanded_data, headers=headers, tablefmt=tablefmt, colalign=colalign if expanded_data else None))
     return None

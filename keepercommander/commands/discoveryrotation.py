@@ -27,6 +27,7 @@ from .base import (Command, GroupCommand, user_choice, dump_report_data, report_
                    json_output_parser, field_to_title, toggle_pam_legacy_commands)
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
+from .pam.gateway_connections import PAMGatewayConnectionsCommand, PAMGatewayDisconnectCommand
 from .pam.recording_commands import PAMGetRecordingsForUsersCommand, PAMDownloadRecordingsCommand
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.vault_target import (
@@ -334,6 +335,8 @@ class PAMGatewayCommand(GroupCommand):
     def __init__(self):
         super(PAMGatewayCommand, self).__init__()
         self.register_command('list', PAMGatewayListCommand(), 'List Gateways', 'l')
+        self.register_command('connections', PAMGatewayConnectionsCommand(), 'List active connections on Gateways', 'conn')
+        self.register_command('disconnect', PAMGatewayDisconnectCommand(), 'Stop an active connection on a Gateway')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
         self.register_command('edit', PAMEditGatewayCommand(), 'Edit Gateway', 'e')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
