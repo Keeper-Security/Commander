@@ -26,6 +26,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from time import sleep
 
 from prompt_toolkit import HTML, print_formatted_text
 
@@ -176,6 +177,7 @@ class ImportRunOptions:
     strict_policies: bool = False
     use_nsf: bool = False
     raw_kwargs: dict = field(default_factory=dict)
+    add_cyberark_users: bool = False
 
 
 @dataclass
@@ -206,10 +208,15 @@ class CyberArkImportOrchestrator:
         self.client = client
         self.options = options
         self._temp = _temp_store
+        self.DELAY = 0.5
 
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
+        cyberark_users: list[dict] = None
+        if self.options.add_cyberark_users:
+            print_formatted_text(HTML("\nFetching CyberArk Users..."))
+            cyberark_users = self._prepare_users()
         safes, system_excluded = self._prepare_safes()
         if not safes:
             return
@@ -271,6 +278,9 @@ class CyberArkImportOrchestrator:
         # We still run the update path in case any records were
         # tagged as UPDATE (their data changed even though no new
         # records need to be created).
+        enterprise_users = None
+        if self.options.add_cyberark_users:
+            enterprise_users = self._cmd._create_enterprise_users(self.params, cyberark_users)
         skip_vault_import = (
             idempotency_ctx is not None
             and not mapped.pam_resources
@@ -290,8 +300,71 @@ class CyberArkImportOrchestrator:
             idempotency_ctx["update_summary"] = update_summary
         self._finalize_report(
             mapped, mapped.unmapped_items, project_result, total_accounts,
-            user_team_matcher, idempotency_ctx,
+            user_team_matcher, idempotency_ctx, enterprise_users=enterprise_users
         )
+
+    @staticmethod
+    def _extract_user_email(user):
+        internet = user.get("internet") or user.get("Internet") or {}
+        for key in ("businessEmail", "homeEmail", "otherEmail"):
+            value = internet.get(key)
+            if value and str(value).strip():
+                return str(value).strip()
+        # Some endpoints (e.g. Get logged on user) expose a flat Email field.
+        for key in ("email", "Email"):
+            value = user.get(key)
+            if value and str(value).strip():
+                return str(value).strip()
+        personal = user.get("personalDetails") or user.get("PersonalDetails") or {}
+        if isinstance(personal, dict):
+            value = personal.get("email") or personal.get("Email")
+            if value and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    def _prepare_users(self) -> list[dict]:
+        all_users = self.client.fetch_users() or []
+        result = []
+        for u in all_users:
+            if not isinstance(u, dict):
+                continue
+            username = u.get("username") or u.get("UserName") or ""
+            user_id = u.get("id") or u.get("ID")
+            user_type = u.get("userType") or u.get("UserType") or ""
+            source = u.get("source") or u.get("Source") or ""
+            email = self._extract_user_email(u)
+            groups_membership = u.get("groupsMembership") or []
+            need_detail = (not email) or not groups_membership
+            if need_detail and user_id is not None:
+                sleep(self.DELAY)
+                try:
+                    detail = self.client.fetch_user_details(user_id)
+                except Exception as e:  # noqa: BLE001
+                    logging.debug(
+                        "User detail fetch failed for %s: %s", username or user_id, type(e).__name__,
+                    )
+                    detail = None
+                if isinstance(detail, dict):
+                    detail_email = self._extract_user_email(detail)
+                    if detail_email:
+                        email = detail_email
+                    if not groups_membership:
+                        groups_membership = detail.get("groupsMembership") or []
+            result.append(
+                {
+                    "id": user_id,
+                    "username": username,
+                    "email": email,
+                    "type": user_type,
+                    "source": source,
+                    "groups_membership": groups_membership,
+                }
+            )
+        with_email = sum(1 for user in result if user.get("email"))
+        print_formatted_text(HTML(
+            f"Found <b>{len(result)}</b> CyberArk users "
+            f"(<b>{with_email}</b> with an email)"))
+        return result
 
     def _load_master_policy(self, unmapped_items: list[dict]) -> dict:
         master_policy_config = dict(MasterPolicyMapper.DEFAULTS)
@@ -1029,7 +1102,7 @@ class CyberArkImportOrchestrator:
     def _finalize_report(self, mapped: MappedImportResult, unmapped_items: list[dict],
                          project_result: Optional[dict], total_accounts: int,
                          user_team_matcher: Optional[UserTeamMatcher],
-                         idempotency_ctx: Optional[dict] = None):
+                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] = None):
         if project_result is None:
             return
         dependent_summary = self._apply_service_dependent_mappings(
@@ -1053,6 +1126,7 @@ class CyberArkImportOrchestrator:
             project_result=project_result,
             unmapped_platforms=mapped.mapper.unmapped_platforms,
             unmapped_items=unmapped_items,
+            enterprise_users=enterprise_users,
             server=self.options.server,
         )
         notes_text = report_text
@@ -2019,6 +2093,9 @@ Examples:
                         help="Fail the import when a platform's rotation policy "
                              "is inaccessible instead of inheriting the master "
                              "policy default")
+    parser.add_argument("--add-cyberark-users", required=False, dest="add_cyberark_users",
+                        action="store_true", default=False,
+                        help="Create CybeArk Users in Keeper Admin Console")
 
     def get_parser(self):
         return CyberArkPAMImportCommand.parser
@@ -2044,6 +2121,7 @@ Examples:
         batch_delay = float(kwargs.get("batch_delay") or 0.5)
         platform_map_file = kwargs.get("platform_map", "")
         state_filter_str = kwargs.get("state_filter", "")
+        add_cyberark_users = kwargs.get("add_cyberark_users", False)
 
         # Validate batch parameters
         if batch_size < 1:
@@ -2150,6 +2228,7 @@ Examples:
                 strict_policies=bool(kwargs.get("strict_policies", False)),
                 use_nsf=kwargs.get("use_nsf", False) is True,
                 raw_kwargs=kwargs,
+                add_cyberark_users=add_cyberark_users
             )
             CyberArkImportOrchestrator(self, params, client, options).run()
         finally:
@@ -2177,6 +2256,101 @@ Examples:
                 params, import_data, project_name, config_uid,
                 resources, users, batch_size, batch_delay, use_nsf=use_nsf,
             )
+
+    @staticmethod
+    def _enterprise_data_loaded(enterprise) -> bool:
+        if not isinstance(enterprise, dict) or not enterprise:
+            return False
+        return any(
+            key in enterprise
+            for key in ("users", "unencrypted_tree_key", "enterprise_name", "nodes")
+        )
+
+
+    def _load_existing_keeper_users(self, params) -> tuple[dict, str]:
+        cached = getattr(params, "enterprise", None)
+        try:
+            api.query_enterprise(params)
+        except Exception as e:
+            logging.warning("Could not refresh enterprise users: %s", e)
+        enterprise = getattr(params, "enterprise", None)
+        if not self._enterprise_data_loaded(enterprise):
+            enterprise = cached if self._enterprise_data_loaded(cached) else None
+        if not self._enterprise_data_loaded(enterprise):
+            return {}, (
+                "Enterprise users could not be loaded. "
+                "Confirm this session is an enterprise admin, then retry."
+            )
+        existing: dict[str, dict] = {}
+        for user in enterprise.get("users") or []:
+            if not isinstance(user, dict):
+                continue
+            email = str(user.get("username") or user.get("email") or "").strip().lower()
+            if email:
+                existing[email] = user
+        return existing, ""
+
+
+    def _create_enterprise_users(self, params, enterprise_users: list[dict]) -> dict:
+        """Provision Keeper users. Each row is flagged created, existing, skipped, or failed."""
+        from ...constants import EMAIL_PATTERN
+        from ..enterprise_create_user import CreateEnterpriseUserCommand
+
+
+        def row(user, flag, **extra):
+            item = {
+                "username": str(user.get("username") or ""),
+                "email": str(user.get("email") or "").strip(),
+                "flag": flag,
+            }
+            item.update(extra)
+            return item
+
+
+        existing, load_error = self._load_existing_keeper_users(params)
+        users = [u for u in (enterprise_users or []) if isinstance(u, dict)]
+        if load_error:
+            logging.warning(load_error)
+            return {
+                "users": [row(u, "failed", reason="enterprise users could not be loaded") for u in users],
+                "error": load_error,
+            }
+
+
+        creator = CreateEnterpriseUserCommand()
+        email_ok = re.compile(EMAIL_PATTERN).match
+        seen: set[str] = set()
+        outcomes = []
+        for user in users:
+            email = str(user.get("email") or "").strip()
+            key = email.lower()
+            if not email or not email_ok(email):
+                outcomes.append(row(user, "skipped", reason="no email" if not email else "invalid email"))
+            elif key in seen:
+                outcomes.append(row(user, "skipped", reason="duplicate email"))
+            elif key in existing:
+                seen.add(key)
+                outcomes.append(row(user, "existing", status=existing[key].get("status") or "active"))
+            else:
+                seen.add(key)
+                try:
+                    created = creator.execute(params, email=email, name=user.get("username") or email)
+                except Exception as e:  # noqa: BLE001
+                    logging.warning('Could not create enterprise user "%s": %s', email, e)
+                    outcomes.append(row(user, "failed", reason=str(e)))
+                    continue
+                if not created:
+                    outcomes.append(row(user, "failed", reason="user was not created"))
+                    continue
+                existing[key] = {"status": "active"}
+                outcomes.append(row(user, "created"))
+
+
+        logging.info(
+            "Enterprise users: %d created, %d existing, %d skipped, %d failed",
+            *(sum(r["flag"] == flag for r in outcomes) for flag in ("created", "existing", "skipped", "failed")),
+        )
+        return {"users": outcomes}
 
     def _single_batch_import(self, params, import_data: dict,
                              project_name: str, config_uid: str,
