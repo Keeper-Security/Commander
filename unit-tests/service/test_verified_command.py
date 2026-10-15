@@ -306,16 +306,29 @@ class TestServiceModeCommandPolicy(TestCase):
         temp_path = os.path.join(request_temp_dir, 'service_filedata_test.json')
 
         self.assertIsNone(
-            check(_tokens(f'pam project import --filename={temp_path}'), request_temp_dir)
+            check(
+                _tokens(f'pam project import --filename={shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
         )
-        self.assertIsNone(check(_tokens(f'pam project import -f {temp_path}'), request_temp_dir))
-        self.assertIsNone(check(_tokens(f'import --format=json {temp_path}'), request_temp_dir))
         self.assertIsNone(
-            check(_tokens(f'enterprise-push {temp_path} --email user@example.com'), request_temp_dir)
+            check(_tokens(f'pam project import -f {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(_tokens(f'import --format=json {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(
+                _tokens(f'enterprise-push {shlex.quote(temp_path)} --email user@example.com'),
+                request_temp_dir,
+            )
         )
         # PAM --config is a vault UID, not a host path
         self.assertIsNone(
-            check(_tokens('pam project extend --config=SOME_UID -f ' + temp_path), request_temp_dir)
+            check(
+                _tokens(f'pam project extend --config=SOME_UID -f {shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
         )
 
     def test_command_aliases_do_not_bypass_host_path_checks(self):
@@ -339,8 +352,15 @@ class TestServiceModeCommandPolicy(TestCase):
         self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
         temp_path = os.path.join(request_temp_dir, 'service_filedata_alias_test.json')
         self.assertIsNone(check(_tokens('gen --output stdout')))
-        self.assertIsNone(check(_tokens(f'pam p i -f {temp_path}'), request_temp_dir))
-        self.assertIsNone(check(_tokens(f'pam p e --filename={temp_path}'), request_temp_dir))
+        self.assertIsNone(
+            check(_tokens(f'pam p i -f {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(
+                _tokens(f'pam p e --filename={shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
+        )
 
     def test_non_request_temp_path_still_rejected(self):
         """A path under a DIFFERENT request's temp dir is not automatically safe,
@@ -355,11 +375,15 @@ class TestServiceModeCommandPolicy(TestCase):
         other_path = os.path.join(other_request_dir, 'someone_elses_file.json')
 
         self.assertIn(
-            ban, check(_tokens(f'pam project import -f {other_path}'), request_temp_dir)
+            ban,
+            check(
+                _tokens(f'pam project import -f {shlex.quote(other_path)}'),
+                request_temp_dir,
+            ),
         )
         # No request_temp_dir at all (e.g. a request with no FILEDATA) trusts nothing.
         self.assertIn(
-            ban, check(_tokens(f'pam project import -f {other_path}'))
+            ban, check(_tokens(f'pam project import -f {shlex.quote(other_path)}'))
         )
 
     def test_flag_abbreviations_do_not_bypass_host_path_checks(self):
@@ -406,7 +430,9 @@ class TestServiceModeCommandPolicy(TestCase):
         request_temp_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
         temp_path = os.path.join(request_temp_dir, 'import_data.json')
-        self.assertIsNone(check(_tokens(f'import --format=json {temp_path}'), request_temp_dir))
+        self.assertIsNone(
+            check(_tokens(f'import --format=json {shlex.quote(temp_path)}'), request_temp_dir)
+        )
 
     def test_filedata_substitution_happens_before_validation(self):
         """process_file_data must run before validate_service_mode_restrictions,
