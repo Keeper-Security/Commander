@@ -514,6 +514,20 @@ class TestServiceModeCommandPolicy(TestCase):
             ['import', '--format=json', temp_files[0]],
         )
 
+    def test_mismatched_filedata_quotes_remain_invalid_command_syntax(self):
+        """Malformed placeholder quoting must fail closed, not be repaired."""
+        from keepercommander.service.util.request_validation import RequestValidator
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'pam project import --filename="FILEDATA\''
+        processed_command, temp_files = RequestValidator.process_file_data(
+            request_data, command
+        )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        with self.assertRaises(ValueError):
+            Verifycommand.tokenize_service_command(processed_command)
+
     def test_option_values_yields_dash_leading_values(self):
         is_file = Verifycommand._option_values
         self.assertEqual(list(is_file(['generate', '--output', '-'], '--output')), ['-'])
