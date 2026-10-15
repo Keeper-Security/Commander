@@ -667,7 +667,7 @@ class LoginV3Flow:
             api_rq = APIRequest_pb2.ApiRequest()
             api_rq.locale = params.rest_context.locale or 'en_US'
 
-            server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+            server_public_key = rest_api.get_server_public_key(params.rest_context)
             if isinstance(server_public_key, rsa.RSAPublicKey):
                 api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, server_public_key)
             elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
