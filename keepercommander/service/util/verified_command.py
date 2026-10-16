@@ -2,7 +2,6 @@ import argparse
 import contextlib
 import io
 import os
-import shlex
 
 
 class Verifycommand:
@@ -131,9 +130,10 @@ class Verifycommand:
         return None
 
     @staticmethod
-    def tokenize_service_command(command):
-        """Tokenize with the same shlex semantics used by command execution."""
-        return shlex.split(command)
+    def tokenize_service_command(command, envvars=None):
+        """Tokenize with the same argument transforms used by Command.execute_args."""
+        from ...commands.base import tokenize_command_args
+        return tokenize_command_args(command, envvars)
 
     @staticmethod
     def validate_nsf_convert_command(command_tokens, request_temp_dir=None):

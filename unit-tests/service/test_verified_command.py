@@ -1,4 +1,4 @@
-from unittest import TestCase
+from unittest import TestCase, mock
 from html import unescape
 import os
 import shutil
@@ -434,6 +434,19 @@ class TestServiceModeCommandPolicy(TestCase):
             check(_tokens(f'import --format=json {shlex.quote(temp_path)}'), request_temp_dir)
         )
 
+    def test_windows_output_normalization_is_checked_as_a_file_path(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        normalized_cases = []
+        with mock.patch('sys.platform', 'win32'):
+            for output_value in Verifycommand._NON_PATH_OUTPUT_VALUES:
+                command = rf'public-api-key list --format json --output \{output_value}'
+                normalized_cases.append((output_value, _tokens(command)))
+
+        for output_value, tokens in normalized_cases:
+            with self.subTest(output_value=output_value):
+                self.assertEqual(tokens[-1], f'/{output_value}')
+                self.assertIn('Local filesystem access', check(tokens))
+
     def test_filedata_substitution_happens_before_validation(self):
         """process_file_data must run before validate_service_mode_restrictions,
         so --filename=FILEDATA resolves to a real per-request temp path by the
@@ -539,6 +552,32 @@ class TestServiceModeCommandPolicy(TestCase):
             shlex.split(processed_command),
             ['import', '--format=json', temp_files[0]],
         )
+
+    def test_quoted_filedata_placeholders_support_apostrophes_in_path(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        request_data = {'filedata': {'some': 'data'}}
+        commands = (
+            "import --format=json 'FILEDATA'",
+            "pam project import --filename='FILEDATA'",
+        )
+
+        for command in commands:
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as parent_dir:
+                request_temp_dir = os.path.join(parent_dir, "service user's files")
+                os.mkdir(request_temp_dir)
+                with mock.patch(
+                        'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                        return_value=request_temp_dir):
+                    processed_command, temp_files = RequestValidator.process_file_data(
+                        request_data, command
+                    )
+                self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+                expected_last_token = (
+                    f'--filename={temp_files[0]}'
+                    if '--filename' in command else temp_files[0]
+                )
+                self.assertEqual(_tokens(processed_command)[-1], expected_last_token)
 
     def test_mismatched_filedata_quotes_remain_invalid_command_syntax(self):
         """Malformed placeholder quoting must fail closed, not be repaired."""
