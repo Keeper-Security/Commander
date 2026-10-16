@@ -305,14 +305,14 @@ class CyberArkImportOrchestrator:
         )
 
     @staticmethod
-    def _get_case_insensitive(data, target_key):
-        # type: (dict, str) -> Optional[Any]
-        if isinstance(data, dict):
-            target_lower = target_key.lower()
-            for k, v in data.items():
-                if str(k).lower() == target_lower:
-                    return v
+    def _get_case_insensitive(data: dict, target_key: str) -> Optional[Any]:
+        if not isinstance(data, dict):
             return None
+        if target_key in data:
+            return data[target_key]
+        target_lower = target_key.lower()
+        return next((v for k, v in data.items() if str(k).lower() == target_lower), None)
+
 
     def _extract_user_email(self, user):
         """Return the best available email for a CyberArk user dict, or empty string."""
@@ -1092,7 +1092,7 @@ class CyberArkImportOrchestrator:
     def _finalize_report(self, mapped: MappedImportResult, unmapped_items: list[dict],
                          project_result: Optional[dict], total_accounts: int,
                          user_team_matcher: Optional[UserTeamMatcher],
-                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] | None = None):
+                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] = None):
         if project_result is None:
             return
         dependent_summary = self._apply_service_dependent_mappings(
@@ -2269,17 +2269,7 @@ Examples:
                 existing_users.append(user_details)
         return existing_users
 
-    def check_exisitng_user(self, params, email: str) -> dict:
-        """Check if a user exists in Keeper."""
-        existing_users = self._load_existing_keeper_users(params)
-        user_exist = next((u for u in existing_users if u.get("email") == email), None)
-        if user_exist:
-            return user_exist
-        else:
-            return None
-
     def _create_keeper_user(self, params, email: str, name: str) -> dict:
-        """Create a Keeper user."""
         from ..enterprise_create_user import CreateEnterpriseUserCommand
         try:
             creator = CreateEnterpriseUserCommand()
@@ -2290,11 +2280,7 @@ Examples:
             return None
        
     def _create_enterprise_users(self, params, cyberark_users: list[dict]) -> dict:
-        """Provision Keeper users. Each row is flagged created, existing, skipped, or failed."""
         from ...constants import EMAIL_PATTERN
-        from ..enterprise_create_user import CreateEnterpriseUserCommand
-
-
         def row(user, flag, **extra):
             item = {
                 "username": str(user.get("username") or ""),
@@ -2305,10 +2291,12 @@ Examples:
             return item
         seen: set[str] = set()
         outcomes = []
+        existing_users = self._load_existing_keeper_users(params)
         is_valid_email = re.compile(EMAIL_PATTERN).match
         for user in cyberark_users:
             email = str(user.get("email") or "").strip()
-            user_exist: dict[Any, Any] = self.check_exisitng_user(params, email)
+            # Check if email belongs to the required domain
+            user_exist: dict[Any, Any] = next((u for u in existing_users if u.get("email") == email), None)
             if user_exist:
                 seen.add(email)
                 status = user_exist.get("status") or "active"
