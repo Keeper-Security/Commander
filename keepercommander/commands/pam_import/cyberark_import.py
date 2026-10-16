@@ -25,7 +25,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from prompt_toolkit import HTML, print_formatted_text
 
@@ -176,6 +176,7 @@ class ImportRunOptions:
     strict_policies: bool = False
     use_nsf: bool = False
     raw_kwargs: dict = field(default_factory=dict)
+    add_cyberark_users: bool = False
 
 
 @dataclass
@@ -198,6 +199,7 @@ class MappedImportResult:
 
 class CyberArkImportOrchestrator:
     """Coordinates CyberArk PVWA fetch → map → vault import phases (SRP)."""
+    DELAY = 0.5  # seconds between CyberArk API calls to avoid throttling
 
     def __init__(self, command: 'CyberArkPAMImportCommand', params, client: CyberArkPVWAClient,
                  options: ImportRunOptions):
@@ -271,6 +273,9 @@ class CyberArkImportOrchestrator:
         # We still run the update path in case any records were
         # tagged as UPDATE (their data changed even though no new
         # records need to be created).
+        enterprise_users = None
+        if self.options.add_cyberark_users:
+            enterprise_users = self._provision_cyberark_users()
         skip_vault_import = (
             idempotency_ctx is not None
             and not mapped.pam_resources
@@ -290,8 +295,79 @@ class CyberArkImportOrchestrator:
             idempotency_ctx["update_summary"] = update_summary
         self._finalize_report(
             mapped, mapped.unmapped_items, project_result, total_accounts,
-            user_team_matcher, idempotency_ctx,
+            user_team_matcher, idempotency_ctx, enterprise_users=enterprise_users
         )
+
+    def _provision_cyberark_users(self) -> dict:
+        # Optional step: a CyberArk user-fetch failure must not abort the PAM import.
+        print_formatted_text(HTML("\nFetching CyberArk Users..."))
+        try:
+            cyberark_users = self._prepare_users()
+        except Exception as e:
+            logging.warning('Failed to fetch CyberArk users: %s', e)
+            return {"users": [], "error": "Failed to fetch CyberArk users"}
+        return self._cmd._create_enterprise_users(self.params, cyberark_users)
+
+    @staticmethod
+    def _get_case_insensitive(data: dict, target_key: str) -> Optional[Any]:
+        if not isinstance(data, dict):
+            return None
+        if target_key in data:
+            return data[target_key]
+        target_lower = target_key.lower()
+        return next((v for k, v in data.items() if str(k).lower() == target_lower), None)
+
+
+    def _extract_user_email(self, user):
+        """Return the best available email for a CyberArk user dict, or None."""
+        internet = self._get_case_insensitive(user, "internet")
+        personal = self._get_case_insensitive(user, "personaldetails")
+        sources = (
+            (internet, "businessEmail"),
+            (internet, "homeEmail"),
+            (internet, "otherEmail"),
+            (user, "email"),
+            (personal, "email"),
+        )
+        for target_dict, target_key in sources:
+            email = self._get_case_insensitive(target_dict, target_key)
+            # Edge Case :  if email = "    " --> condition checks that it is not None or empty string
+            if isinstance(email, str):
+                sanitized_email = email.strip()
+                if sanitized_email:
+                    return sanitized_email
+        return None
+
+    def _get_user_details(self, id):
+        try:
+            user_detail = self.client.fetch_user_details(id)
+            return user_detail
+        except Exception as e:
+            logging.warning('Failed to fetch user with id "%s": %s', id, e)
+            return None
+
+    def _prepare_users(self): # type: () -> list[dict]
+        all_users = self.client.fetch_users()
+        result = []
+        for u in all_users:
+            if isinstance(u, dict):
+                email = self._extract_user_email(u)
+                user_id = u.get("id")
+                if not email and user_id not in (None,""):
+                    time.sleep(self.DELAY)
+                    user_details = self._get_user_details(user_id)
+                    email = self._extract_user_email(user_details)
+                # in user_details also if we did not find the email, we will not add the user to the result
+                if email:
+                    result.append(
+                        {
+                            "id": user_id,
+                            "username": u.get("username") or "",
+                            "email": email
+                        }
+                    )
+        print_formatted_text(HTML(f"Found <b>{len(result)}</b> CyberArk users "))
+        return result
 
     def _load_master_policy(self, unmapped_items: list[dict]) -> dict:
         master_policy_config = dict(MasterPolicyMapper.DEFAULTS)
@@ -1029,7 +1105,7 @@ class CyberArkImportOrchestrator:
     def _finalize_report(self, mapped: MappedImportResult, unmapped_items: list[dict],
                          project_result: Optional[dict], total_accounts: int,
                          user_team_matcher: Optional[UserTeamMatcher],
-                         idempotency_ctx: Optional[dict] = None):
+                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] = None):
         if project_result is None:
             return
         dependent_summary = self._apply_service_dependent_mappings(
@@ -1053,6 +1129,7 @@ class CyberArkImportOrchestrator:
             project_result=project_result,
             unmapped_platforms=mapped.mapper.unmapped_platforms,
             unmapped_items=unmapped_items,
+            enterprise_users=enterprise_users,
             server=self.options.server,
         )
         notes_text = report_text
@@ -2019,6 +2096,9 @@ Examples:
                         help="Fail the import when a platform's rotation policy "
                              "is inaccessible instead of inheriting the master "
                              "policy default")
+    parser.add_argument("--add-cyberark-users", required=False, dest="add_cyberark_users",
+                        action="store_true", default=False,
+                        help="Create CybeArk Users in Keeper Admin Console")
 
     def get_parser(self):
         return CyberArkPAMImportCommand.parser
@@ -2044,6 +2124,7 @@ Examples:
         batch_delay = float(kwargs.get("batch_delay") or 0.5)
         platform_map_file = kwargs.get("platform_map", "")
         state_filter_str = kwargs.get("state_filter", "")
+        add_cyberark_users = kwargs.get("add_cyberark_users", False)
 
         # Validate batch parameters
         if batch_size < 1:
@@ -2150,6 +2231,7 @@ Examples:
                 strict_policies=bool(kwargs.get("strict_policies", False)),
                 use_nsf=kwargs.get("use_nsf", False) is True,
                 raw_kwargs=kwargs,
+                add_cyberark_users=add_cyberark_users
             )
             CyberArkImportOrchestrator(self, params, client, options).run()
         finally:
@@ -2177,6 +2259,84 @@ Examples:
                 params, import_data, project_name, config_uid,
                 resources, users, batch_size, batch_delay, use_nsf=use_nsf,
             )
+
+    def _load_existing_keeper_users(self, params) -> tuple[list, str]:
+        # Fetch the initial data
+        enterprise_data = getattr(params, "enterprise", None)
+        if not enterprise_data:
+            try:
+                api.query_enterprise(params)
+            except Exception as e:
+                logging.warning("Error loading existing keeper users: %s", e)
+                return [], "Failed to Load Existing User"
+        # After running the query_enterprise, we will have the enterprise data in the params
+        enterprise_data = getattr(params, "enterprise", None)
+        if not isinstance(enterprise_data, dict):
+            return [], "Failed to Load Existing User"
+        existing_users = []
+        for user in enterprise_data.get("users", []):
+            if isinstance(user, dict):
+                email = self._user_field(user, "email") or self._user_field(user, "username")
+                user_status = user.get("status") or "active"
+                user_details = {
+                    "email": email,
+                    "status": user_status,
+                }
+                existing_users.append(user_details)
+        return existing_users , ""
+
+    def _create_keeper_user(self, params, email: str, name: str) -> dict:
+        from ..enterprise_create_user import CreateEnterpriseUserCommand
+        try:
+            creator = CreateEnterpriseUserCommand()
+            created = creator.execute(params, email=email, name=name)
+            return created
+        except Exception as e:
+            logging.warning('Could not create enterprise user "%s": %s', email, e)
+            return None
+       
+    @staticmethod
+    def _user_field(user: dict, key: str) -> str:
+        return str(user.get(key) or "").strip()
+
+    def _create_enterprise_users(self, params, cyberark_users: list[dict]) -> dict:
+        from ...constants import EMAIL_PATTERN
+        def row(user, flag, **extra):
+            item = {
+                "username": str(user.get("username") or ""),
+                "email": self._user_field(user, "email"),
+                "flag": flag,
+            }
+            item.update(extra)
+            return item
+        seen: set[str] = set()
+        outcomes = []
+        existing_users, error = self._load_existing_keeper_users(params)
+        if error:
+            print(error)
+        is_valid_email = re.compile(EMAIL_PATTERN).match
+        for user in cyberark_users:
+            if not isinstance(user, dict):
+                continue
+            email = self._user_field(user, "email")
+            email_key = email.casefold()
+            if email_key in seen:
+                continue
+            user_exist: dict[Any, Any] = next((u for u in existing_users if (u.get("email") or "").casefold() == email_key), None)
+            if user_exist:
+                seen.add(email_key)
+                status = user_exist.get("status") or "active"
+                outcomes.append(row(user, "existing", status=status))
+            elif is_valid_email(email):
+                seen.add(email_key)
+                create_user = self._create_keeper_user(params, email, user.get("username") or email)
+                if create_user:
+                    outcomes.append(row(user, "created"))
+                else:
+                    outcomes.append(row(user, "failed", reason="user was not created"))
+            else:
+                outcomes.append(row(user, "skipped", reason="invalid email"))
+        return {"users": outcomes}
 
     def _single_batch_import(self, params, import_data: dict,
                              project_name: str, config_uid: str,
