@@ -200,6 +200,7 @@ class MappedImportResult:
 
 class CyberArkImportOrchestrator:
     """Coordinates CyberArk PVWA fetch → map → vault import phases (SRP)."""
+    DELAY = 0.5  # seconds between CyberArk API calls to avoid throttling
 
     def __init__(self, command: 'CyberArkPAMImportCommand', params, client: CyberArkPVWAClient,
                  options: ImportRunOptions):
@@ -208,7 +209,6 @@ class CyberArkImportOrchestrator:
         self.client = client
         self.options = options
         self._temp = _temp_store
-        self.DELAY = 0.5
 
     def run(self) -> None:
         unmapped_items: list[dict] = []
