@@ -142,6 +142,15 @@ def _load_custom_server_public_key():
         SERVER_PUBLIC_KEYS[key_id] = crypto.load_ec_public_key(utils.base64_url_decode(key_value))
     except Exception as e:
         logging.warning(f"Failed to load KEEPER_SERVER_PUBLIC_KEY as an EC public key ({e}); ignoring custom server public key.")
+        return
+    # The embedded KSM SDK (ksm app client add, slack-app-setup, service-mode docker
+    # setup) keeps its own copy of the key table. Without this it answers the server's
+    # key_id request with Keeper's key and gets "encrypted transmission key is invalid".
+    try:
+        from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
+        keeper_public_keys[str(key_id)] = key_value
+    except ImportError:
+        pass
 
 
 _load_custom_server_public_key()
