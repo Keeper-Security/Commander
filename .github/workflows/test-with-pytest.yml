@@ -7,7 +7,6 @@ env:
 
 jobs:
   test-with-pytest:
-    name: Unit tests (Python ${{ matrix.python-version }})
     strategy:
       matrix:
         python-version: ['3.9', '3.14']
@@ -24,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package with test dependencies
-        run: python -m pip install ".[test]"
+        run: pip install .[test]
 
       - name: Run unit tests
-        run: python -m pytest unit-tests/
+        run: pytest unit-tests/
