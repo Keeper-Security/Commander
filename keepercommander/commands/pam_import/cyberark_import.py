@@ -213,7 +213,8 @@ class CyberArkImportOrchestrator:
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
-        cyberark_users: list[dict] = None
+        cyberark_users = None
+        # type -> list[dict] | None
         if self.options.add_cyberark_users:
             print_formatted_text(HTML("\nFetching CyberArk Users..."))
             cyberark_users = self._prepare_users()
@@ -304,66 +305,55 @@ class CyberArkImportOrchestrator:
         )
 
     @staticmethod
-    def _extract_user_email(user):
-        internet = user.get("internet") or user.get("Internet") or {}
-        for key in ("businessEmail", "homeEmail", "otherEmail"):
-            value = internet.get(key)
-            if value and str(value).strip():
-                return str(value).strip()
-        # Some endpoints (e.g. Get logged on user) expose a flat Email field.
-        for key in ("email", "Email"):
-            value = user.get(key)
-            if value and str(value).strip():
-                return str(value).strip()
-        personal = user.get("personalDetails") or user.get("PersonalDetails") or {}
-        if isinstance(personal, dict):
-            value = personal.get("email") or personal.get("Email")
-            if value and str(value).strip():
-                return str(value).strip()
-        return ""
+    def _get_case_insensitive(data, target_key):
+        # type: (dict, str) -> Optional[Any]
+        if isinstance(data, dict):
+            target_lower = target_key.lower()
+            for k, v in data.items():
+                if str(k).lower() == target_lower:
+                    return v
+            return None
 
-    def _prepare_users(self) -> list[dict]:
-        all_users = self.client.fetch_users() or []
+    def _extract_user_email(self, user):
+        """Return the best available email for a CyberArk user dict, or empty string."""
+        internet = self._get_case_insensitive(user, "internet")
+        personal = self._get_case_insensitive(user, "personaldetails")
+        sources = (
+            (internet, "businessEmail"),
+            (internet, "homeEmail"),
+            (internet, "otherEmail"),
+            (user, "email"),
+            (personal, "email"),
+        )
+        for target_dict, target_key in sources:
+            email = self._get_case_insensitive(target_dict, target_key)
+            # Edge Case :  if email = "    " --> condition checks that it is not None or empty string
+            # Therefore, used email.strip() 2 times to ensure it is not None or empty string
+            if email and isinstance(email, str) and email.strip():
+                return email.strip()
+        return None
+
+    def _prepare_users(self):
+        # type: () -> list[dict]
+        all_users = self.client.fetch_users()
         result = []
         for u in all_users:
-            if not isinstance(u, dict):
-                continue
-            username = u.get("username") or u.get("UserName") or ""
-            user_id = u.get("id") or u.get("ID")
-            user_type = u.get("userType") or u.get("UserType") or ""
-            source = u.get("source") or u.get("Source") or ""
-            email = self._extract_user_email(u)
-            groups_membership = u.get("groupsMembership") or []
-            need_detail = (not email) or not groups_membership
-            if need_detail and user_id is not None:
-                sleep(self.DELAY)
-                try:
-                    detail = self.client.fetch_user_details(user_id)
-                except Exception as e:  # noqa: BLE001
-                    logging.debug(
-                        "User detail fetch failed for %s: %s", username or user_id, type(e).__name__,
+            if isinstance(u, dict):
+                email = self._extract_user_email(u)
+                if not email:
+                    sleep(self.DELAY)
+                    user_details = self.client.fetch_user_details(u.get("id"))
+                    email = self._extract_user_email(user_details)
+                # in user_details also if we did not find the email, we will not add the user to the result
+                if email:
+                    result.append(
+                        {
+                            "id": u.get("id"),
+                            "username": u.get("username"),
+                            "email": email
+                        }
                     )
-                    detail = None
-                if isinstance(detail, dict):
-                    detail_email = self._extract_user_email(detail)
-                    if detail_email:
-                        email = detail_email
-                    if not groups_membership:
-                        groups_membership = detail.get("groupsMembership") or []
-            result.append(
-                {
-                    "id": user_id,
-                    "username": username,
-                    "email": email,
-                    "type": user_type,
-                    "source": source,
-                    "groups_membership": groups_membership,
-                }
-            )
-        with_email = sum(1 for user in result if user.get("email"))
-        print_formatted_text(HTML(
-            f"Found <b>{len(result)}</b> CyberArk users "
-            f"(<b>{with_email}</b> with an email)"))
+        print_formatted_text(HTML(f"Found <b>{len(result)}</b> CyberArk users "))
         return result
 
     def _load_master_policy(self, unmapped_items: list[dict]) -> dict:
@@ -1102,7 +1092,7 @@ class CyberArkImportOrchestrator:
     def _finalize_report(self, mapped: MappedImportResult, unmapped_items: list[dict],
                          project_result: Optional[dict], total_accounts: int,
                          user_team_matcher: Optional[UserTeamMatcher],
-                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] = None):
+                         idempotency_ctx: Optional[dict] = None, enterprise_users: Optional[list] | None = None):
         if project_result is None:
             return
         dependent_summary = self._apply_service_dependent_mappings(
@@ -2257,41 +2247,49 @@ Examples:
                 resources, users, batch_size, batch_delay, use_nsf=use_nsf,
             )
 
-    @staticmethod
-    def _enterprise_data_loaded(enterprise) -> bool:
-        if not isinstance(enterprise, dict) or not enterprise:
-            return False
-        return any(
-            key in enterprise
-            for key in ("users", "unencrypted_tree_key", "enterprise_name", "nodes")
-        )
-
-
     def _load_existing_keeper_users(self, params) -> tuple[dict, str]:
-        cached = getattr(params, "enterprise", None)
+        # Fetch the initial data
+        enterprise_data = getattr(params, "enterprise", None)
+        if not enterprise_data:
+            try:
+                api.query_enterprise(params)
+            except Exception as e:
+                logging.error(f"Error loading existing keeper users: {e}")
+        # After running the query_enterprise, we will have the enterprise data in the params
+        enterprise_data = getattr(params, "enterprise", None)
+        existing_users = []
+        for user in enterprise_data.get("users", []):
+            if isinstance(user, dict):
+                email = str(user.get("email") or "").strip() or str(user.get("username") or "").strip()
+                user_status = user.get("status") or "active"
+                user_details = {
+                    "email": email,
+                    "status": user_status,
+                }
+                existing_users.append(user_details)
+        return existing_users
+
+    def check_exisitng_user(self, params, email: str) -> dict:
+        """Check if a user exists in Keeper."""
+        existing_users = self._load_existing_keeper_users(params)
+        user_exist = next((u for u in existing_users if u.get("email") == email), None)
+        if user_exist:
+            return user_exist
+        else:
+            return None
+
+    def _create_keeper_user(self, params, email: str, name: str) -> dict:
+        """Create a Keeper user."""
+        from ..enterprise_create_user import CreateEnterpriseUserCommand
         try:
-            api.query_enterprise(params)
+            creator = CreateEnterpriseUserCommand()
+            created = creator.execute(params, email=email, name=name)
+            return created
         except Exception as e:
-            logging.warning("Could not refresh enterprise users: %s", e)
-        enterprise = getattr(params, "enterprise", None)
-        if not self._enterprise_data_loaded(enterprise):
-            enterprise = cached if self._enterprise_data_loaded(cached) else None
-        if not self._enterprise_data_loaded(enterprise):
-            return {}, (
-                "Enterprise users could not be loaded. "
-                "Confirm this session is an enterprise admin, then retry."
-            )
-        existing: dict[str, dict] = {}
-        for user in enterprise.get("users") or []:
-            if not isinstance(user, dict):
-                continue
-            email = str(user.get("username") or user.get("email") or "").strip().lower()
-            if email:
-                existing[email] = user
-        return existing, ""
-
-
-    def _create_enterprise_users(self, params, enterprise_users: list[dict]) -> dict:
+            logging.warning('Could not create enterprise user "%s": %s', email, e)
+            return None
+       
+    def _create_enterprise_users(self, params, cyberark_users: list[dict]) -> dict:
         """Provision Keeper users. Each row is flagged created, existing, skipped, or failed."""
         from ...constants import EMAIL_PATTERN
         from ..enterprise_create_user import CreateEnterpriseUserCommand
@@ -2305,51 +2303,24 @@ Examples:
             }
             item.update(extra)
             return item
-
-
-        existing, load_error = self._load_existing_keeper_users(params)
-        users = [u for u in (enterprise_users or []) if isinstance(u, dict)]
-        if load_error:
-            logging.warning(load_error)
-            return {
-                "users": [row(u, "failed", reason="enterprise users could not be loaded") for u in users],
-                "error": load_error,
-            }
-
-
-        creator = CreateEnterpriseUserCommand()
-        email_ok = re.compile(EMAIL_PATTERN).match
         seen: set[str] = set()
         outcomes = []
-        for user in users:
+        is_valid_email = re.compile(EMAIL_PATTERN).match
+        for user in cyberark_users:
             email = str(user.get("email") or "").strip()
-            key = email.lower()
-            if not email or not email_ok(email):
-                outcomes.append(row(user, "skipped", reason="no email" if not email else "invalid email"))
-            elif key in seen:
-                outcomes.append(row(user, "skipped", reason="duplicate email"))
-            elif key in existing:
-                seen.add(key)
-                outcomes.append(row(user, "existing", status=existing[key].get("status") or "active"))
-            else:
-                seen.add(key)
-                try:
-                    created = creator.execute(params, email=email, name=user.get("username") or email)
-                except Exception as e:  # noqa: BLE001
-                    logging.warning('Could not create enterprise user "%s": %s', email, e)
-                    outcomes.append(row(user, "failed", reason=str(e)))
-                    continue
-                if not created:
+            user_exist: dict[Any, Any] = self.check_exisitng_user(params, email)
+            if user_exist:
+                seen.add(email)
+                status = user_exist.get("status") or "active"
+                outcomes.append(row(user, "existing", status=status))
+            elif is_valid_email(email):
+                create_user = self._create_keeper_user(params, email, user.get("username") or email)
+                if create_user:
+                    outcomes.append(row(user, "created"))
+                else:
                     outcomes.append(row(user, "failed", reason="user was not created"))
-                    continue
-                existing[key] = {"status": "active"}
-                outcomes.append(row(user, "created"))
-
-
-        logging.info(
-            "Enterprise users: %d created, %d existing, %d skipped, %d failed",
-            *(sum(r["flag"] == flag for r in outcomes) for flag in ("created", "existing", "skipped", "failed")),
-        )
+            else:
+                outcomes.append(row(user, "skipped", reason="invalid email"))
         return {"users": outcomes}
 
     def _single_batch_import(self, params, import_data: dict,

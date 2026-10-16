@@ -1297,7 +1297,11 @@ class CyberArkPVWAClient:
     def fetch_user_details(self, user_id: str) -> Optional[dict]:
         """Fetch details of a vault user."""
         base = self._get_url('safes').rsplit('/Safes', 1)[0]
-        return self._get(f"{base}/Users/{user_id}").json()
+        response = self._get(f"{base}/Users/{user_id}")
+        if response:
+            return response.json()
+        return None
+
    
     def fetch_user_groups(self) -> List[dict]:
         """Fetch all vault user groups."""
