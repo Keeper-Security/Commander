@@ -212,10 +212,6 @@ class CyberArkImportOrchestrator:
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
-        cyberark_users = None # type: Optional[List[Dict]]
-        if self.options.add_cyberark_users:
-            print_formatted_text(HTML("\nFetching CyberArk Users..."))
-            cyberark_users = self._prepare_users()
         safes, system_excluded = self._prepare_safes()
         if not safes:
             return
@@ -279,7 +275,7 @@ class CyberArkImportOrchestrator:
         # records need to be created).
         enterprise_users = None
         if self.options.add_cyberark_users:
-            enterprise_users = self._cmd._create_enterprise_users(self.params, cyberark_users)
+            enterprise_users = self._provision_cyberark_users()
         skip_vault_import = (
             idempotency_ctx is not None
             and not mapped.pam_resources
@@ -302,6 +298,16 @@ class CyberArkImportOrchestrator:
             user_team_matcher, idempotency_ctx, enterprise_users=enterprise_users
         )
 
+    def _provision_cyberark_users(self) -> dict:
+        # Optional step: a CyberArk user-fetch failure must not abort the PAM import.
+        print_formatted_text(HTML("\nFetching CyberArk Users..."))
+        try:
+            cyberark_users = self._prepare_users()
+        except Exception as e:
+            logging.warning('Failed to fetch CyberArk users: %s', e)
+            return {"users": [], "error": "Failed to fetch CyberArk users"}
+        return self._cmd._create_enterprise_users(self.params, cyberark_users)
+
     @staticmethod
     def _get_case_insensitive(data: dict, target_key: str) -> Optional[Any]:
         if not isinstance(data, dict):
@@ -313,7 +319,7 @@ class CyberArkImportOrchestrator:
 
 
     def _extract_user_email(self, user):
-        """Return the best available email for a CyberArk user dict, or empty string."""
+        """Return the best available email for a CyberArk user dict, or None."""
         internet = self._get_case_insensitive(user, "internet")
         personal = self._get_case_insensitive(user, "personaldetails")
         sources = (
@@ -2310,17 +2316,19 @@ Examples:
             print(error)
         is_valid_email = re.compile(EMAIL_PATTERN).match
         for user in cyberark_users:
-            email = self._user_field(user, "email")
-            if email in seen:
+            if not isinstance(user, dict):
                 continue
-            # Check if email belongs to the required domain
-            user_exist: dict[Any, Any] = next((u for u in existing_users if u.get("email").casefold() == email), None)
+            email = self._user_field(user, "email")
+            email_key = email.casefold()
+            if email_key in seen:
+                continue
+            user_exist: dict[Any, Any] = next((u for u in existing_users if (u.get("email") or "").casefold() == email_key), None)
             if user_exist:
-                seen.add(email)
+                seen.add(email_key)
                 status = user_exist.get("status") or "active"
                 outcomes.append(row(user, "existing", status=status))
             elif is_valid_email(email):
-                seen.add(email)
+                seen.add(email_key)
                 create_user = self._create_keeper_user(params, email, user.get("username") or email)
                 if create_user:
                     outcomes.append(row(user, "created"))
