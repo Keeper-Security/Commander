@@ -1,37 +1,23 @@
-"""Strict tests for CyberArk user preparation helpers.
-
-
-Value checks use ``assertEqual`` (``==``). ``assertIs`` is used only when the
-test is specifically about object identity.
-"""
+import copy
 import unittest
 from collections import UserDict
 from types import SimpleNamespace
 from unittest import mock
 
-
 from keepercommander.commands.pam_import.cyberark_import import (
     CyberArkImportOrchestrator,
     CyberArkPAMImportCommand,
 )
-
-
-
+from keepercommander.error import CommandError
 
 def _orchestrator(client=None):
     orch = CyberArkImportOrchestrator.__new__(CyberArkImportOrchestrator)
     orch.client = client if client is not None else mock.MagicMock()
     return orch
 
-
-
-
 class _BadKey:
     def __str__(self):
         raise RuntimeError("key stringification failed")
-
-
-
 
 class TestGetCaseInsensitive(unittest.TestCase):
     def test_exact_key(self):
@@ -40,7 +26,6 @@ class TestGetCaseInsensitive(unittest.TestCase):
         )
         self.assertEqual(found, "a@b.com")
 
-
     def test_match_is_case_insensitive(self):
         data = {"BusinessEmail": "a@b.com"}
         lower = CyberArkImportOrchestrator._get_case_insensitive(data, "businessemail")
@@ -48,18 +33,15 @@ class TestGetCaseInsensitive(unittest.TestCase):
         self.assertEqual(lower, "a@b.com")
         self.assertEqual(upper, "a@b.com")
 
-
     def test_missing_key_returns_none(self):
         found = CyberArkImportOrchestrator._get_case_insensitive(
             {"username": "bob"}, "email",
         )
         self.assertIsNone(found)
 
-
     def test_empty_dict_returns_none(self):
         found = CyberArkImportOrchestrator._get_case_insensitive({}, "email")
         self.assertIsNone(found)
-
 
     def test_non_dict_returns_none(self):
         samples = [None, [], (), "email", 0, 1.5, b"email", True]
@@ -68,14 +50,12 @@ class TestGetCaseInsensitive(unittest.TestCase):
                 found = CyberArkImportOrchestrator._get_case_insensitive(data, "email")
                 self.assertIsNone(found)
 
-
     def test_mapping_that_is_not_a_dict_returns_none(self):
         # UserDict is a Mapping, not a dict. The helper does not walk it.
         found = CyberArkImportOrchestrator._get_case_insensitive(
             UserDict({"email": "a@b.com"}), "email",
         )
         self.assertIsNone(found)
-
 
     def test_falsy_values_are_returned_unchanged(self):
         samples = ["", 0, False, None, [], {}]
@@ -86,7 +66,6 @@ class TestGetCaseInsensitive(unittest.TestCase):
                 )
                 self.assertEqual(found, stored)
 
-
     def test_returned_container_is_the_same_object(self):
         nested = {"businessEmail": "a@b.com"}
         found = CyberArkImportOrchestrator._get_case_insensitive(
@@ -95,12 +74,10 @@ class TestGetCaseInsensitive(unittest.TestCase):
         self.assertEqual(found, nested)
         self.assertIs(found, nested)
 
-
     def test_first_case_variant_wins(self):
         data = {"Email": "first@b.com", "email": "second@b.com"}
         found = CyberArkImportOrchestrator._get_case_insensitive(data, "EMAIL")
         self.assertEqual(found, "first@b.com")
-
 
     def test_does_not_match_substring_or_padded_key(self):
         data = {"email": "exact@b.com", "email ": "pad@b.com", "e-mail": "dash@b.com"}
@@ -109,13 +86,11 @@ class TestGetCaseInsensitive(unittest.TestCase):
         self.assertEqual(exact, "exact@b.com")
         self.assertIsNone(padded)
 
-
     def test_empty_target_matches_only_empty_key(self):
         blank = CyberArkImportOrchestrator._get_case_insensitive({"": "blank"}, "")
         missing = CyberArkImportOrchestrator._get_case_insensitive({"email": "a@b.com"}, "")
         self.assertEqual(blank, "blank")
         self.assertIsNone(missing)
-
 
     def test_non_string_key_matches_via_str(self):
         one = CyberArkImportOrchestrator._get_case_insensitive({1: "one"}, "1")
@@ -125,14 +100,12 @@ class TestGetCaseInsensitive(unittest.TestCase):
         self.assertEqual(nada, "nada")
         self.assertEqual(yes, "yes")
 
-
     def test_bytes_key_does_not_match_its_text(self):
         # str(b"email") is "b'email'", not "email".
         found = CyberArkImportOrchestrator._get_case_insensitive(
             {b"email": "a@b.com"}, "email",
         )
         self.assertIsNone(found)
-
 
     def test_lower_is_not_casefold(self):
         # "ß".lower() stays "ß"; casefold() would be "ss".
@@ -144,33 +117,25 @@ class TestGetCaseInsensitive(unittest.TestCase):
         self.assertIsNone(folded)
         self.assertIsNone(turkish)
 
-
     def test_non_string_target_raises(self):
         with self.assertRaises(AttributeError):
             CyberArkImportOrchestrator._get_case_insensitive({"email": "a@b.com"}, None)
-
-
+            
     def test_key_whose_string_conversion_raises_propagates(self):
         with self.assertRaisesRegex(RuntimeError, "key stringification failed"):
             CyberArkImportOrchestrator._get_case_insensitive({_BadKey(): 1}, "email")
 
-
     def test_dict_subclass_is_accepted(self):
         class Payload(dict):
             pass
-
-
         found = CyberArkImportOrchestrator._get_case_insensitive(
             Payload({"Email": "a@b.com"}), "email",
         )
         self.assertEqual(found, "a@b.com")
 
-
 class TestExtractUserEmail(unittest.TestCase):
     def setUp(self):
         self.orch = _orchestrator()
-
-
     def test_extract_user_email(self):
         cases = [
             # 1. Source priority hierarchy (internet -> email -> personalDetails)
@@ -263,19 +228,15 @@ class TestExtractUserEmail(unittest.TestCase):
                 "Non-dict nested objects and non-string values return None",
             ),
         ]
-
-
         for user, expected, msg in cases:
             with self.subTest(msg=msg):
                 found = self.orch._extract_user_email(user)
                 self.assertEqual(found, expected)
 
-
     def test_invalid_input_types_return_none(self):
         for sample in [{}, None, [], "not-a-user", 5]:
             with self.subTest(sample=type(sample).__name__):
                 self.assertIsNone(self.orch._extract_user_email(sample))
-
 
     def test_does_not_mutate_input_user(self):
         user = {
@@ -288,7 +249,6 @@ class TestExtractUserEmail(unittest.TestCase):
         }
         self.orch._extract_user_email(user)
         self.assertEqual(user, snapshot)
-
 
 class TestPrepareUsers(unittest.TestCase):
     def setUp(self):
@@ -311,13 +271,11 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_users.return_value = []
         self.orch = _orchestrator(self.client)
 
-
     def tearDown(self):
         self.builtin_print_patcher.stop()
         self.html_patcher.stop()
         self.print_patcher.stop()
         self.sleep_patcher.stop()
-
 
     def test_empty_list(self):
         found = self.orch._prepare_users()
@@ -326,7 +284,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_not_called()
         self.sleep_mock.assert_not_called()
         self.assertEqual(self.printed.call_args.args[0], "Found <b>0</b> CyberArk users ")
-
 
     def test_list_address_skips_detail_fetch(self):
         self.client.fetch_users.return_value = [{
@@ -344,7 +301,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.sleep_mock.assert_not_called()
         self.assertEqual(self.printed.call_args.args[0], "Found <b>1</b> CyberArk users ")
 
-
     def test_detail_fetch_when_list_payload_has_no_address(self):
         self.client.fetch_users.return_value = [{"id": "12", "username": "bob", "email": ""}]
         self.client.fetch_user_details.return_value = {
@@ -359,13 +315,10 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_called_once_with("12")
         self.sleep_mock.assert_called_once_with(CyberArkImportOrchestrator.DELAY)
 
-
     def test_detail_fetch_is_ordered_before_the_request(self):
         order = []
         self.sleep_mock.side_effect = lambda delay: order.append(("sleep", delay))
         self.client.fetch_users.return_value = [{"id": 1, "username": "bob"}]
-
-
         def _details(user_id):
             order.append(("details", user_id))
             return {"email": "bob@e.com"}
@@ -377,7 +330,6 @@ class TestPrepareUsers(unittest.TestCase):
             order, [("sleep", CyberArkImportOrchestrator.DELAY), ("details", 1)],
         )
 
-
     def test_user_without_any_address_is_omitted(self):
         self.client.fetch_users.return_value = [{"id": 3, "username": "cara"}]
         self.client.fetch_user_details.return_value = {"username": "cara"}
@@ -386,7 +338,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_called_once_with(3)
         self.sleep_mock.assert_called_once_with(0.5)
         self.assertEqual(self.printed.call_args.args[0], "Found <b>0</b> CyberArk users ")
-
 
     def test_unusable_detail_payload_omits_the_user(self):
         samples = [None, [], "user", 0, {"email": "   "}]
@@ -398,7 +349,6 @@ class TestPrepareUsers(unittest.TestCase):
                 self.client.fetch_user_details.return_value = details
                 found = self.orch._prepare_users()
                 self.assertEqual(found, [])
-
 
     def test_non_dict_rows_are_skipped(self):
         self.client.fetch_users.return_value = [
@@ -415,7 +365,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_not_called()
         self.sleep_mock.assert_not_called()
         self.assertEqual(self.printed.call_args.args[0], "Found <b>1</b> CyberArk users ")
-
 
     def test_mixed_users_keep_input_order(self):
         self.client.fetch_users.return_value = [
@@ -439,13 +388,11 @@ class TestPrepareUsers(unittest.TestCase):
         self.assertEqual(self.client.fetch_user_details.call_args_list[1].args, (3,))
         self.assertEqual(self.sleep_mock.call_count, 2)
 
-
     def test_duplicate_rows_are_not_collapsed(self):
         row = {"id": 1, "username": "alice", "email": "a@e.com"}
         self.client.fetch_users.return_value = [row, dict(row)]
         found = self.orch._prepare_users()
         self.assertEqual(found, [row, row])
-
 
     def test_id_zero_is_a_real_id(self):
         self.client.fetch_users.return_value = [{"id": 0, "username": "root"}]
@@ -456,12 +403,10 @@ class TestPrepareUsers(unittest.TestCase):
         }])
         self.client.fetch_user_details.assert_called_once_with(0)
 
-
     def test_missing_username_is_preserved_as_none(self):
         self.client.fetch_users.return_value = [{"id": 8, "email": "a@e.com"}]
         found = self.orch._prepare_users()
         self.assertEqual(found, [{"id": 8, "username": None, "email": "a@e.com"}])
-
 
     def test_result_rows_have_only_id_username_email(self):
         self.client.fetch_users.return_value = [{
@@ -475,7 +420,6 @@ class TestPrepareUsers(unittest.TestCase):
         found = self.orch._prepare_users()
         self.assertEqual(list(found[0]), ["id", "username", "email"])
 
-
     def test_component_users_are_not_filtered_here(self):
         self.client.fetch_users.return_value = [{
             "id": 9, "username": "CPM", "componentUser": True, "email": "cpm@e.com",
@@ -484,7 +428,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.assertEqual(found, [{
             "id": 9, "username": "CPM", "email": "cpm@e.com",
         }])
-
 
     def test_list_payload_address_wins_over_details(self):
         self.client.fetch_users.return_value = [{
@@ -496,7 +439,6 @@ class TestPrepareUsers(unittest.TestCase):
             "id": 1, "username": "alice", "email": "list@e.com",
         }])
         self.client.fetch_user_details.assert_not_called()
-
 
     def test_whitespace_only_list_address_still_uses_a_later_source(self):
         self.client.fetch_users.return_value = [{
@@ -511,7 +453,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_not_called()
         self.sleep_mock.assert_not_called()
 
-
     def test_address_without_id_is_kept(self):
         self.client.fetch_users.return_value = [{"username": "bob", "email": "bob@e.com"}]
         found = self.orch._prepare_users()
@@ -521,7 +462,6 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_not_called()
         self.sleep_mock.assert_not_called()
 
-
     def test_tuple_of_users_is_accepted(self):
         self.client.fetch_users.return_value = (
             {"id": 1, "username": "a", "email": "a@e.com"},
@@ -529,9 +469,7 @@ class TestPrepareUsers(unittest.TestCase):
         found = self.orch._prepare_users()
         self.assertEqual(found, [{"id": 1, "username": "a", "email": "a@e.com"}])
 
-
     def test_dict_payload_is_not_a_user_list(self):
-        # Iterating a dict yields keys. Those strings are not user records.
         self.client.fetch_users.return_value = {"id": 1, "username": "a", "email": "a@e.com"}
         found = self.orch._prepare_users()
         self.assertEqual(found, [])
@@ -539,18 +477,15 @@ class TestPrepareUsers(unittest.TestCase):
         self.sleep_mock.assert_not_called()
         self.assertEqual(self.printed.call_args.args[0], "Found <b>0</b> CyberArk users ")
 
-
     def test_none_user_list_raises(self):
         self.client.fetch_users.return_value = None
         with self.assertRaises(TypeError):
             self.orch._prepare_users()
 
-
     def test_fetch_users_error_propagates(self):
         self.client.fetch_users.side_effect = RuntimeError("pvwa down")
         with self.assertRaisesRegex(RuntimeError, "pvwa down"):
             self.orch._prepare_users()
-
 
     def test_detail_fetch_error_propagates(self):
         self.client.fetch_users.return_value = [
@@ -561,7 +496,6 @@ class TestPrepareUsers(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "detail failed"):
             self.orch._prepare_users()
 
-
     def test_does_not_mutate_source_rows(self):
         row = {"id": 1, "username": "alice", "email": "  a@e.com  ", "source": "CyberArk"}
         self.client.fetch_users.return_value = [row]
@@ -570,293 +504,560 @@ class TestPrepareUsers(unittest.TestCase):
             "id": 1, "username": "alice", "email": "  a@e.com  ", "source": "CyberArk",
         })
 
+_MODULE = "keepercommander.commands.pam_import.cyberark_import"
+_CREATE_USER_COMMAND = (
+    "keepercommander.commands.enterprise_create_user.CreateEnterpriseUserCommand"
+)
 
+def _enterprise_params(users):
+    return SimpleNamespace(enterprise={"users": users})
 
-
-class TestLoadExistingKeeperUsers(unittest.TestCase):
+class _OfflineCommandTestCase(unittest.TestCase):
     def setUp(self):
         self.command = CyberArkPAMImportCommand.__new__(CyberArkPAMImportCommand)
+        patchers = {
+            "query_enterprise": mock.patch(f"{_MODULE}.api.query_enterprise"),
+            "create_command": mock.patch(_CREATE_USER_COMMAND),
+            "log_error": mock.patch(f"{_MODULE}.logging.error"),
+            "log_warning": mock.patch(f"{_MODULE}.logging.warning"),
+            "printed": mock.patch("builtins.print"),
+        }
+        for name, patcher in patchers.items():
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
 
+class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
+    def _populate_on_query(self, users):
+        def populate(params):
+            params.enterprise = {"users": users}
+        self.query_enterprise.side_effect = populate
 
-    @mock.patch(
-        "keepercommander.commands.pam_import.cyberark_import.api.query_enterprise",
-    )
-    def test_uses_preloaded_enterprise_and_normalizes_rows(self, query_enterprise):
-        params = SimpleNamespace(enterprise={"users": [
-            {"email": "  alice@example.com  ", "status": "invited"},
-            {"email": "", "username": "  bob@example.com  ", "status": ""},
-            {"username": "cara@example.com"},
+    def test_cached_enterprise_is_used_without_query(self):
+        params = _enterprise_params([
+            {"email": "alice@example.com", "status": "active"},
+        ])
+        found = self.command._load_existing_keeper_users(params)
+        self.assertEqual(found, [{"email": "alice@example.com", "status": "active"}])
+        self.query_enterprise.assert_not_called()
+
+    def test_missing_or_falsy_enterprise_triggers_query(self):
+        samples = {
+            "attribute missing": SimpleNamespace,
+            "None": lambda: SimpleNamespace(enterprise=None),
+            "empty dict": lambda: SimpleNamespace(enterprise={}),
+            "empty list": lambda: SimpleNamespace(enterprise=[]),
+            "empty string": lambda: SimpleNamespace(enterprise=""),
+            "zero": lambda: SimpleNamespace(enterprise=0),
+        }
+        self._populate_on_query([{"email": "loaded@example.com"}])
+        for label, make_params in samples.items():
+            with self.subTest(enterprise=label):
+                self.query_enterprise.reset_mock()
+                params = make_params()
+                found = self.command._load_existing_keeper_users(params)
+                self.assertEqual(found, [{"email": "loaded@example.com", "status": "active"}])
+                self.query_enterprise.assert_called_once_with(params)
+
+    def test_query_failure_is_logged_then_unloaded_enterprise_raises(self):
+        self.query_enterprise.side_effect = RuntimeError("network down")
+        with self.assertRaises(AttributeError):
+            self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+        self.log_error.assert_called_once_with(
+            "Error loading existing keeper users: network down",
+        )
+
+    def test_query_failure_with_empty_dict_returns_empty_list(self):
+        self.query_enterprise.side_effect = RuntimeError("network down")
+        found = self.command._load_existing_keeper_users(SimpleNamespace(enterprise={}))
+        self.assertEqual(found, [])
+        self.log_error.assert_called_once()
+
+    def test_query_that_does_not_populate_enterprise_raises(self):
+        with self.assertRaises(AttributeError):
+            self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+        self.log_error.assert_not_called()
+
+    def test_base_exceptions_from_query_are_not_swallowed(self):
+        for error in (KeyboardInterrupt, SystemExit):
+            with self.subTest(error=error.__name__):
+                self.query_enterprise.side_effect = error
+                with self.assertRaises(error):
+                    self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+
+    def test_missing_users_key_returns_empty_list(self):
+        params = SimpleNamespace(enterprise={"nodes": [{"node_id": 1}]})
+        self.assertEqual(self.command._load_existing_keeper_users(params), [])
+        self.query_enterprise.assert_not_called()
+
+    def test_users_none_raises(self):
+        with self.assertRaises(TypeError):
+            self.command._load_existing_keeper_users(_enterprise_params(None))
+
+    def test_non_iterable_users_raises(self):
+        for users in (5, 1.5, True):
+            with self.subTest(users=users):
+                with self.assertRaises(TypeError):
+                    self.command._load_existing_keeper_users(_enterprise_params(users))
+
+    def test_non_dict_enterprise_raises(self):
+        for enterprise in (["users"], "users", 1):
+            with self.subTest(enterprise=enterprise):
+                with self.assertRaises(AttributeError):
+                    self.command._load_existing_keeper_users(
+                        SimpleNamespace(enterprise=enterprise),
+                    )
+        self.query_enterprise.assert_not_called()
+
+    def test_string_or_dict_users_container_yields_no_rows(self):
+        # Iterating a string gives characters; iterating a dict gives keys.
+        samples = ["alice@example.com", {"alice": {"email": "alice@example.com"}}]
+        for users in samples:
+            with self.subTest(users=type(users).__name__):
+                found = self.command._load_existing_keeper_users(_enterprise_params(users))
+                self.assertEqual(found, [])
+
+    def test_tuple_and_generator_users_are_accepted(self):
+        row = {"email": "a@example.com", "status": "active"}
+        for users in ((row,), (r for r in [row])):
+            with self.subTest(users=type(users).__name__):
+                found = self.command._load_existing_keeper_users(_enterprise_params(users))
+                self.assertEqual(found, [row])
+
+    def test_non_dict_rows_are_skipped(self):
+        class Row(dict):
+            pass
+        users = [
+            None, "a@example.com", 1, ["a@example.com"], ("email", "a@example.com"),
+            UserDict({"email": "userdict@example.com"}),
+            Row(email="subclass@example.com"),
+        ]
+        found = self.command._load_existing_keeper_users(_enterprise_params(users))
+        self.assertEqual(found, [{"email": "subclass@example.com", "status": "active"}])
+
+    def test_email_normalization_and_username_fallback(self):
+        cases = [
+            ({"email": "  A@Example.com\n"}, "A@Example.com", "trimmed, case kept"),
+            ({"email": "a@example.com", "username": "other"}, "a@example.com", "email wins"),
+            ({"email": None, "username": "u@example.com"}, "u@example.com", "None email"),
+            ({"email": "", "username": "u"}, "u", "empty email"),
+            ({"email": "   ", "username": " u "}, "u", "blank email"),
+            ({"email": 0, "username": "u"}, "u", "zero email"),
+            ({"email": False, "username": "u"}, "u", "False email"),
+            ({"username": "u"}, "u", "missing email key"),
+            ({"email": 123}, "123", "non-string email"),
+            ({"email": None, "username": None}, "", "both None"),
+            ({"email": "  ", "username": "  "}, "", "both blank"),
+            ({}, "", "empty row"),
+        ]
+        for user, expected, msg in cases:
+            with self.subTest(msg=msg):
+                found = self.command._load_existing_keeper_users(_enterprise_params([user]))
+                self.assertEqual(found, [{"email": expected, "status": "active"}])
+
+    def test_status_defaults_to_active_for_falsy_values(self):
+        for status in (None, "", 0, False):
+            with self.subTest(status=status):
+                found = self.command._load_existing_keeper_users(
+                    _enterprise_params([{"email": "a@example.com", "status": status}]),
+                )
+                self.assertEqual(found[0]["status"], "active")
+        found = self.command._load_existing_keeper_users(
+            _enterprise_params([{"email": "a@example.com"}]),
+        )
+        self.assertEqual(found[0]["status"], "active")
+
+    def test_status_values_are_kept_as_is(self):
+        for status in ("invited", "locked", "inactive", "ACTIVE", 1):
+            with self.subTest(status=status):
+                found = self.command._load_existing_keeper_users(
+                    _enterprise_params([{"email": "a@example.com", "status": status}]),
+                )
+                self.assertEqual(found[0]["status"], status)
+
+    def test_rows_keep_order_duplicates_and_only_two_keys(self):
+        users = [
+            {"email": "b@example.com", "status": "invited", "node_id": 7, "lock": 1},
+            {"email": "a@example.com"},
+            {"email": "b@example.com", "status": "active"},
+        ]
+        found = self.command._load_existing_keeper_users(_enterprise_params(users))
+        self.assertEqual(found, [
+            {"email": "b@example.com", "status": "invited"},
+            {"email": "a@example.com", "status": "active"},
+            {"email": "b@example.com", "status": "active"},
+        ])
+        for row in found:
+            self.assertEqual(list(row), ["email", "status"])
+
+    def test_does_not_mutate_enterprise_data(self):
+        users = [{"email": "  a@example.com ", "status": None, "extra": [1]}, None]
+        params = _enterprise_params(users)
+        snapshot = copy.deepcopy(params.enterprise)
+        self.command._load_existing_keeper_users(params)
+        self.assertEqual(params.enterprise, snapshot)
+
+    def test_value_whose_string_conversion_raises_propagates(self):
+        with self.assertRaisesRegex(RuntimeError, "key stringification failed"):
+            self.command._load_existing_keeper_users(
+                _enterprise_params([{"email": _BadKey()}]),
+            )
+
+class TestCheckExistingUser(_OfflineCommandTestCase):
+    def setUp(self):
+        super().setUp()
+        self.params = _enterprise_params([
+            {"email": "  alice@example.com  ", "status": "active", "node_id": 1},
+            {"email": "", "username": " bob@example.com ", "status": "invited"},
+            {"email": "Carol@Example.com", "status": None},
             "not-a-user",
             None,
-        ]})
-
-
-        found = self.command._load_existing_keeper_users(params)
-
-
-        self.assertEqual(found, [
-            {"email": "alice@example.com", "status": "invited"},
-            {"email": "bob@example.com", "status": "active"},
-            {"email": "cara@example.com", "status": "active"},
-        ])
-        query_enterprise.assert_not_called()
-
-
-    @mock.patch(
-        "keepercommander.commands.pam_import.cyberark_import.api.query_enterprise",
-    )
-    def test_queries_enterprise_when_cache_is_missing(self, query_enterprise):
-        params = SimpleNamespace(enterprise=None)
-
-
-        def populate_enterprise(arg):
-            self.assertIs(arg, params)
-            arg.enterprise = {
-                "users": [{"email": "loaded@example.com", "status": "active"}],
-            }
-
-
-        query_enterprise.side_effect = populate_enterprise
-
-
-        found = self.command._load_existing_keeper_users(params)
-
-
-        self.assertEqual(found, [
-            {"email": "loaded@example.com", "status": "active"},
-        ])
-        query_enterprise.assert_called_once_with(params)
-
-
-    @mock.patch(
-        "keepercommander.commands.pam_import.cyberark_import.api.query_enterprise",
-    )
-    def test_empty_preloaded_enterprise_is_refreshed(self, query_enterprise):
-        params = SimpleNamespace(enterprise={})
-        query_enterprise.side_effect = lambda arg: setattr(
-            arg, "enterprise", {"users": []},
-        )
-
-
-        self.assertEqual(self.command._load_existing_keeper_users(params), [])
-        query_enterprise.assert_called_once_with(params)
-
-
-
-
-class TestCheckExistingKeeperUser(unittest.TestCase):
-    def setUp(self):
-        self.command = CyberArkPAMImportCommand.__new__(CyberArkPAMImportCommand)
-        self.command._load_existing_keeper_users = mock.MagicMock(return_value=[
-            {"email": "alice@example.com", "status": "active"},
-            {"email": "Bob@example.com", "status": "invited"},
         ])
 
+    def test_returns_normalized_row_for_exact_email(self):
+        found = self.command.check_exisitng_user(self.params, "alice@example.com")
+        self.assertEqual(found, {"email": "alice@example.com", "status": "active"})
+        self.query_enterprise.assert_not_called()
 
-    @mock.patch("builtins.print")
-    def test_returns_exact_email_match(self, printed):
-        params = object()
+    def test_username_fallback_is_matchable(self):
+        found = self.command.check_exisitng_user(self.params, "bob@example.com")
+        self.assertEqual(found, {"email": "bob@example.com", "status": "invited"})
 
+    def test_missing_status_is_reported_as_active(self):
+        found = self.command.check_exisitng_user(self.params, "Carol@Example.com")
+        self.assertEqual(found, {"email": "Carol@Example.com", "status": "active"})
 
-        found = self.command.check_exisitng_user(params, "Bob@example.com")
+    def test_first_match_wins_for_duplicates(self):
+        params = _enterprise_params([
+            {"email": "dup@example.com", "status": "locked"},
+            {"email": "dup@example.com", "status": "active"},
+        ])
+        found = self.command.check_exisitng_user(params, "dup@example.com")
+        self.assertEqual(found, {"email": "dup@example.com", "status": "locked"})
 
-
-        self.assertEqual(found, {
-            "email": "Bob@example.com", "status": "invited",
-        })
-        self.command._load_existing_keeper_users.assert_called_once_with(params)
-        self.assertEqual(printed.call_count, 2)
-
-
-    @mock.patch("builtins.print")
-    def test_returns_none_when_email_is_absent_or_case_differs(self, printed):
+    def test_unknown_email_returns_none(self):
         self.assertIsNone(
-            self.command.check_exisitng_user(object(), "bob@example.com"),
+            self.command.check_exisitng_user(self.params, "missing@example.com"),
         )
-        self.assertEqual(printed.call_count, 2)
 
+    def test_lookup_is_exact_not_normalized(self):
+        lookups = [
+            "ALICE@example.com",
+            " alice@example.com",
+            "alice@example.com ",
+            "carol@example.com",
+            "alice",
+            "alice@example.co",
+        ]
+        for email in lookups:
+            with self.subTest(email=email):
+                self.assertIsNone(self.command.check_exisitng_user(self.params, email))
 
+    def test_null_and_non_string_lookups_return_none(self):
+        for email in (None, 0, 123, False, b"alice@example.com", [], {}, ("alice@example.com",)):
+            with self.subTest(email=email):
+                self.assertIsNone(self.command.check_exisitng_user(self.params, email))
 
+    def test_empty_lookup_matches_row_without_identity(self):
+        self.assertIsNone(self.command.check_exisitng_user(self.params, ""))
+        params = _enterprise_params([{"email": None, "username": None}])
+        found = self.command.check_exisitng_user(params, "")
+        self.assertEqual(found, {"email": "", "status": "active"})
 
-class TestCreateKeeperUser(unittest.TestCase):
+    def test_empty_or_missing_user_list_returns_none(self):
+        for params in (_enterprise_params([]), SimpleNamespace(enterprise={"nodes": []})):
+            with self.subTest(enterprise=params.enterprise):
+                self.assertIsNone(
+                    self.command.check_exisitng_user(params, "alice@example.com"),
+                )
+
+    def test_loads_users_on_every_call(self):
+        with mock.patch.object(
+            self.command, "_load_existing_keeper_users", return_value=[],
+        ) as loader:
+            self.command.check_exisitng_user(self.params, "a@example.com")
+            self.command.check_exisitng_user(self.params, "a@example.com")
+        self.assertEqual(loader.call_args_list, [mock.call(self.params)] * 2)
+
+    def test_returns_the_loader_row_object(self):
+        row = {"email": "a@example.com", "status": "active"}
+        with mock.patch.object(self.command, "_load_existing_keeper_users", return_value=[row]):
+            found = self.command.check_exisitng_user(self.params, "a@example.com")
+        self.assertIs(found, row)
+
+    def test_rows_without_email_key_do_not_match(self):
+        with mock.patch.object(
+            self.command, "_load_existing_keeper_users", return_value=[{"status": "active"}],
+        ):
+            self.assertIsNone(self.command.check_exisitng_user(self.params, "a@example.com"))
+
+    def test_invalid_loader_output_raises(self):
+        cases = [(None, TypeError), (5, TypeError), ([None], AttributeError), (["a"], AttributeError)]
+        for loaded, error in cases:
+            with self.subTest(loaded=loaded):
+                with mock.patch.object(
+                    self.command, "_load_existing_keeper_users", return_value=loaded,
+                ):
+                    with self.assertRaises(error):
+                        self.command.check_exisitng_user(self.params, "a@example.com")
+
+    def test_loader_errors_propagate(self):
+        self.query_enterprise.side_effect = RuntimeError("network down")
+        with self.assertRaises(AttributeError):
+            self.command.check_exisitng_user(SimpleNamespace(enterprise=None), "a@example.com")
+        with mock.patch.object(
+            self.command, "_load_existing_keeper_users", side_effect=RuntimeError("boom"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                self.command.check_exisitng_user(self.params, "a@example.com")
+
+    def test_fetches_enterprise_when_not_cached(self):
+        def populate(params):
+            params.enterprise = {"users": [{"email": "a@example.com"}]}
+        self.query_enterprise.side_effect = populate
+        params = SimpleNamespace(enterprise=None)
+        found = self.command.check_exisitng_user(params, "a@example.com")
+        self.assertEqual(found, {"email": "a@example.com", "status": "active"})
+        self.query_enterprise.assert_called_once_with(params)
+
+class TestCreateKeeperUser(_OfflineCommandTestCase):
+    EMAIL = "alice@example.com"
+
     def setUp(self):
-        self.command = CyberArkPAMImportCommand.__new__(CyberArkPAMImportCommand)
-
-
-    @mock.patch(
-        "keepercommander.commands.enterprise_create_user.CreateEnterpriseUserCommand",
-    )
-    def test_executes_create_command_and_returns_result(self, create_command):
-        params = object()
-        created_user = {"email": "alice@norvaledynamics.com"}
-        create_command.return_value.execute.return_value = created_user
-
-
-        found = self.command._create_keeper_user(
-            params, "alice@norvaledynamics.com", "Alice",
-        )
-
-
-        self.assertIs(found, created_user)
-        create_command.assert_called_once_with()
-        create_command.return_value.execute.assert_called_once_with(
-            params, email="alice@norvaledynamics.com", name="Alice",
-        )
-
-
-    @mock.patch(
-        "keepercommander.commands.pam_import.cyberark_import.logging.warning",
-    )
-    @mock.patch(
-        "keepercommander.commands.enterprise_create_user.CreateEnterpriseUserCommand",
-    )
-    def test_returns_none_and_logs_when_creation_fails(
-        self, create_command, warning,
-    ):
-        create_command.return_value.execute.side_effect = RuntimeError("denied")
-
-
-        found = self.command._create_keeper_user(
-            object(), "alice@norvaledynamics.com", "Alice",
-        )
-
-
-        self.assertIsNone(found)
-        warning.assert_called_once_with(
-            'Could not create enterprise user "%s": %s',
-            "alice@norvaledynamics.com",
-            create_command.return_value.execute.side_effect,
-        )
-
-
-
-
-class TestCreateEnterpriseUsers(unittest.TestCase):
-    def setUp(self):
-        self.command = CyberArkPAMImportCommand.__new__(CyberArkPAMImportCommand)
-        self.command.check_exisitng_user = mock.MagicMock()
-        self.command._create_keeper_user = mock.MagicMock()
+        super().setUp()
+        self.execute = self.create_command.return_value.execute
         self.params = object()
 
+    def test_forwards_arguments_and_returns_result(self):
+        created = {"email": self.EMAIL}
+        self.execute.return_value = created
+        found = self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
+        self.assertIs(found, created)
+        self.create_command.assert_called_once_with()
+        self.execute.assert_called_once_with(self.params, email=self.EMAIL, name="Alice")
+        self.log_warning.assert_not_called()
 
-    def test_reports_existing_created_failed_and_invalid_users(self):
-        users = [
-            {"username": "existing", "email": "existing@norvaledynamics.com"},
-            {"username": "new", "email": "new@norvaledynamics.com"},
-            {"username": "failed", "email": "failed@norvaledynamics.com"},
-            {"username": "invalid", "email": "bad name@norvaledynamics.com"},
-        ]
-        self.command.check_exisitng_user.side_effect = [
-            {"email": users[0]["email"], "status": "invited"},
-            None,
-            None,
-            None,
-        ]
-        self.command._create_keeper_user.side_effect = [
-            {"email": users[1]["email"]},
-            None,
-        ]
-
-
-        found = self.command._create_enterprise_users(self.params, users)
-
-
-        self.assertEqual(found, {"users": [
-            {
-                "username": "existing",
-                "email": "existing@norvaledynamics.com",
-                "flag": "existing",
-                "status": "invited",
-            },
-            {
-                "username": "new",
-                "email": "new@norvaledynamics.com",
-                "flag": "created",
-            },
-            {
-                "username": "failed",
-                "email": "failed@norvaledynamics.com",
-                "flag": "failed",
-                "reason": "user was not created",
-            },
-            {
-                "username": "invalid",
-                "email": "bad name@norvaledynamics.com",
-                "flag": "skipped",
-                "reason": "invalid email",
-            },
-        ]})
-        self.assertEqual(self.command.check_exisitng_user.call_count, 4)
-        self.assertEqual(self.command._create_keeper_user.call_args_list, [
-            mock.call(self.params, "new@norvaledynamics.com", "new"),
-            mock.call(self.params, "failed@norvaledynamics.com", "failed"),
+    def test_new_command_instance_per_call(self):
+        self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
+        self.command._create_keeper_user(self.params, "bob@example.com", "Bob")
+        self.assertEqual(self.create_command.call_count, 2)
+        self.assertEqual(self.execute.call_args_list, [
+            mock.call(self.params, email=self.EMAIL, name="Alice"),
+            mock.call(self.params, email="bob@example.com", name="Bob"),
         ])
 
+    def test_falsy_results_are_returned_unchanged(self):
+        for result in (None, "", {}, [], False, 0):
+            with self.subTest(result=result):
+                self.execute.return_value = result
+                found = self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
+                self.assertIs(found, result)
+        self.log_warning.assert_not_called()
 
-    def test_ignores_blank_foreign_and_case_mismatched_domains(self):
-        users = [
-            {"username": "blank", "email": ""},
-            {"username": "foreign", "email": "user@example.com"},
-            {"username": "upper", "email": "user@NORVALEDYNAMICS.COM"},
-            {"username": "missing"},
+    def test_null_and_odd_arguments_are_forwarded_unchanged(self):
+        cases = [(None, None, None), ("", "", ""), (self.EMAIL, 42, None)]
+        for params, email, name in cases:
+            with self.subTest(email=email, name=name):
+                self.execute.reset_mock()
+                self.command._create_keeper_user(params, email, name)
+                self.execute.assert_called_once_with(params, email=email, name=name)
+
+    def test_execute_errors_return_none_and_log_warning(self):
+        errors = [
+            RuntimeError("denied"),
+            CommandError("enterprise-user", "user already invited"),
+            ValueError("bad email"),
+            KeyError("enterprise"),
+            AttributeError("no enterprise loaded"),
         ]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.log_warning.reset_mock()
+                self.execute.side_effect = error
+                found = self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
+                self.assertIsNone(found)
+                self.log_warning.assert_called_once_with(
+                    'Could not create enterprise user "%s": %s', self.EMAIL, error,
+                )
 
-
-        found = self.command._create_enterprise_users(self.params, users)
-
-
-        self.assertEqual(found, {"users": []})
-        self.command.check_exisitng_user.assert_not_called()
-        self.command._create_keeper_user.assert_not_called()
-
-
-    def test_trims_email_and_uses_it_when_username_is_missing(self):
-        self.command.check_exisitng_user.return_value = None
-        self.command._create_keeper_user.return_value = {"created": True}
-
-
-        found = self.command._create_enterprise_users(self.params, [{
-            "email": "  alice@norvaledynamics.com  ",
-        }])
-
-
-        self.assertEqual(found, {"users": [{
-            "username": "",
-            "email": "alice@norvaledynamics.com",
-            "flag": "created",
-        }]})
-        self.command._create_keeper_user.assert_called_once_with(
-            self.params,
-            "alice@norvaledynamics.com",
-            "alice@norvaledynamics.com",
+    def test_constructor_error_returns_none_and_logs_warning(self):
+        error = RuntimeError("cannot build command")
+        self.create_command.side_effect = error
+        found = self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
+        self.assertIsNone(found)
+        self.log_warning.assert_called_once_with(
+            'Could not create enterprise user "%s": %s', self.EMAIL, error,
         )
 
+    def test_base_exceptions_propagate(self):
+        for error in (KeyboardInterrupt, SystemExit):
+            with self.subTest(error=error.__name__):
+                self.execute.side_effect = error
+                with self.assertRaises(error):
+                    self.command._create_keeper_user(self.params, self.EMAIL, "Alice")
 
-    def test_existing_user_without_status_defaults_to_active(self):
-        self.command.check_exisitng_user.return_value = {
-            "email": "alice@norvaledynamics.com",
-        }
+class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
+    def setUp(self):
+        super().setUp()
+        self.check = mock.MagicMock(return_value=None)
+        self.create = mock.MagicMock(return_value={"created": True})
+        self.command.check_exisitng_user = self.check
+        self.command._create_keeper_user = self.create
+        self.params = object()
 
+    def _run(self, users):
+        return self.command._create_enterprise_users(self.params, users)
 
-        found = self.command._create_enterprise_users(self.params, [{
-            "username": "alice",
-            "email": "alice@norvaledynamics.com",
-        }])
+    def test_reports_each_flag_in_input_order(self):
+        users = [
+            {"username": "existing", "email": "existing@example.com"},
+            {"username": "new", "email": "new@example.com"},
+            {"username": "failed", "email": "failed@example.com"},
+            {"username": "invalid", "email": "bad name@example.com"},
+        ]
+        self.check.side_effect = [{"email": "existing@example.com", "status": "invited"}, None, None, None]
+        self.create.side_effect = [{"created": True}, None]
+        found = self._run(users)
+        self.assertEqual(found, {"users": [
+            {"username": "existing", "email": "existing@example.com",
+             "flag": "existing", "status": "invited"},
+            {"username": "new", "email": "new@example.com", "flag": "created"},
+            {"username": "failed", "email": "failed@example.com",
+             "flag": "failed", "reason": "user was not created"},
+            {"username": "invalid", "email": "bad name@example.com",
+             "flag": "skipped", "reason": "invalid email"},
+        ]})
+        self.assertEqual(self.check.call_args_list, [mock.call(self.params, u["email"]) for u in users])
+        self.assertEqual(self.create.call_args_list, [
+            mock.call(self.params, "new@example.com", "new"),
+            mock.call(self.params, "failed@example.com", "failed"),
+        ])
 
+    def test_existing_status_defaults_to_active(self):
+        for existing in ({"email": "a@example.com"},
+                         {"email": "a@example.com", "status": None},
+                         {"email": "a@example.com", "status": ""}):
+            with self.subTest(existing=existing):
+                self.check.return_value = existing
+                found = self._run([{"username": "a", "email": "a@example.com"}])
+                self.assertEqual(found["users"][0]["status"], "active")
+        self.create.assert_not_called()
 
-        self.assertEqual(found["users"][0]["status"], "active")
-        self.command._create_keeper_user.assert_not_called()
+    def test_empty_dict_from_check_is_treated_as_not_existing(self):
+        self.check.return_value = {}
+        found = self._run([{"username": "a", "email": "a@example.com"}])
+        self.assertEqual(found["users"][0]["flag"], "created")
+        self.create.assert_called_once()
 
+    def test_falsy_create_result_is_reported_failed(self):
+        for result in (None, "", {}, [], False, 0):
+            with self.subTest(result=result):
+                self.create.return_value = result
+                found = self._run([{"username": "a", "email": "a@example.com"}])
+                self.assertEqual(found["users"], [{
+                    "username": "a", "email": "a@example.com",
+                    "flag": "failed", "reason": "user was not created",
+                }])
 
-    def test_empty_input_returns_empty_report(self):
-        self.assertEqual(
-            self.command._create_enterprise_users(self.params, []),
-            {"users": []},
-        )
-        self.command.check_exisitng_user.assert_not_called()
-        self.command._create_keeper_user.assert_not_called()
+    def test_invalid_address_already_in_keeper_is_reported_existing(self):
+        self.check.return_value = {"email": "bad name@example.com", "status": "active"}
+        found = self._run([{"username": "u", "email": "bad name@example.com"}])
+        self.assertEqual(found["users"][0]["flag"], "existing")
+        self.create.assert_not_called()
 
+    def test_email_is_trimmed_everywhere(self):
+        found = self._run([{"username": "a", "email": "  a@example.com\n"}])
+        self.check.assert_called_once_with(self.params, "a@example.com")
+        self.create.assert_called_once_with(self.params, "a@example.com", "a")
+        self.assertEqual(found["users"][0]["email"], "a@example.com")
 
+    def test_missing_or_falsy_username_falls_back_to_email(self):
+        email = "a@example.com"
+        for user in ({"email": email}, {"email": email, "username": None},
+                     {"email": email, "username": ""}, {"email": email, "username": 0}):
+            with self.subTest(user=user):
+                self.create.reset_mock()
+                found = self._run([user])
+                self.assertEqual(found["users"][0]["username"], "")
+                self.create.assert_called_once_with(self.params, email, email)
+
+    def test_non_string_username_is_stringified_in_report_only(self):
+        found = self._run([{"username": 42, "email": "a@example.com"}])
+        self.assertEqual(found["users"][0]["username"], "42")
+        self.create.assert_called_once_with(self.params, "a@example.com", 42)
+
+    def test_empty_inputs_return_empty_report(self):
+        for users in ([], (), {}, iter([])):
+            with self.subTest(users=type(users).__name__):
+                self.assertEqual(self._run(users), {"users": []})
+        self.check.assert_not_called()
+
+    def test_tuple_and_generator_inputs_are_accepted(self):
+        row = {"username": "a", "email": "a@example.com"}
+        for users in ((row,), (r for r in [row])):
+            with self.subTest(users=type(users).__name__):
+                self.assertEqual(self._run(users)["users"][0]["flag"], "created")
+
+    def test_null_or_non_iterable_input_raises(self):
+        for users in (None, 5, 1.5):
+            with self.subTest(users=users):
+                with self.assertRaises(TypeError):
+                    self._run(users)
+
+    def test_non_dict_rows_raise(self):
+        for bad in (None, "a@example.com", 5, ["a@example.com"]):
+            with self.subTest(row=bad):
+                with self.assertRaises(AttributeError):
+                    self._run([bad])
+
+    def test_dict_payload_iterates_keys_and_raises(self):
+        with self.assertRaises(AttributeError):
+            self._run({"email": "a@example.com"})
+
+    def test_bad_row_after_good_row_aborts_without_partial_report(self):
+        with self.assertRaises(AttributeError):
+            self._run([{"username": "a", "email": "a@example.com"}, None])
+        self.create.assert_called_once()
+
+    def test_duplicate_emails_are_processed_each_time(self):
+        row = {"username": "a", "email": "a@example.com"}
+        found = self._run([row, dict(row)])
+        self.assertEqual([u["flag"] for u in found["users"]], ["created", "created"])
+        self.assertEqual(self.create.call_count, 2)
+
+    def test_check_error_propagates_and_stops_processing(self):
+        self.check.side_effect = [None, RuntimeError("lookup failed")]
+        users = [{"username": n, "email": f"{n}@example.com"} for n in ("a", "b", "c")]
+        with self.assertRaisesRegex(RuntimeError, "lookup failed"):
+            self._run(users)
+        self.assertEqual(self.check.call_count, 2)
+        self.create.assert_called_once_with(self.params, "a@example.com", "a")
+
+    def test_create_error_propagates(self):
+        self.create.side_effect = RuntimeError("create failed")
+        with self.assertRaisesRegex(RuntimeError, "create failed"):
+            self._run([{"username": "a", "email": "a@example.com"}])
+
+    def test_report_rows_have_fixed_keys(self):
+        self.check.side_effect = [{"status": "active"}, None, None]
+        self.create.side_effect = [{"ok": 1}, None]
+        users = [
+            {"username": "e", "email": "e@example.com", "id": 1, "source": "x"},
+            {"username": "c", "email": "c@example.com", "id": 2},
+            {"username": "f", "email": "f@example.com", "id": 3},
+        ]
+        found = self._run(users)
+        self.assertEqual(list(found), ["users"])
+        self.assertEqual([list(r) for r in found["users"]], [
+            ["username", "email", "flag", "status"],
+            ["username", "email", "flag"],
+            ["username", "email", "flag", "reason"],
+        ])
+
+    def test_does_not_mutate_input(self):
+        users = [{"username": None, "email": "  a@example.com ", "id": 1}]
+        snapshot = copy.deepcopy(users)
+        self._run(users)
+        self.assertEqual(users, snapshot)
 
 
 if __name__ == "__main__":
