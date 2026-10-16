@@ -25,7 +25,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from prompt_toolkit import HTML, print_formatted_text
 
@@ -212,7 +212,7 @@ class CyberArkImportOrchestrator:
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
-        cyberark_users = None # type -> list[dict]
+        cyberark_users = None # type: Optional[List[Dict]]
         if self.options.add_cyberark_users:
             print_formatted_text(HTML("\nFetching CyberArk Users..."))
             cyberark_users = self._prepare_users()
@@ -326,9 +326,10 @@ class CyberArkImportOrchestrator:
         for target_dict, target_key in sources:
             email = self._get_case_insensitive(target_dict, target_key)
             # Edge Case :  if email = "    " --> condition checks that it is not None or empty string
-            # Therefore, used email.strip() 2 times to ensure it is not None or empty string
-            if isinstance(email, str) and email.strip():
-                return email.strip()
+            if isinstance(email, str):
+                sanitized_email = email.strip()
+                if sanitized_email:
+                    return sanitized_email
         return None
 
     def _get_user_details(self, id):
@@ -2262,9 +2263,12 @@ Examples:
             try:
                 api.query_enterprise(params)
             except Exception as e:
+                logging.warning("Error loading existing keeper users: %s", e)
                 return [], "Failed to Load Existing User"
         # After running the query_enterprise, we will have the enterprise data in the params
         enterprise_data = getattr(params, "enterprise", None)
+        if not isinstance(enterprise_data, dict):
+            return [], "Failed to Load Existing User"
         existing_users = []
         for user in enterprise_data.get("users", []):
             if isinstance(user, dict):

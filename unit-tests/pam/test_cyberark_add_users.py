@@ -571,11 +571,15 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
                     SimpleNamespace(enterprise=enterprise),
                 )
                 self.assertEqual(found, ([], "Failed to Load Existing User"))
+                self.log_warning.assert_called_with(
+                    "Error loading existing keeper users: %s",
+                    self.query_enterprise.side_effect,
+                )
 
-    def test_query_that_does_not_populate_enterprise_raises(self):
-        with self.assertRaises(AttributeError):
-            self._load(SimpleNamespace(enterprise=None))
-        self.log_error.assert_not_called()
+    def test_query_that_does_not_populate_enterprise_returns_error(self):
+        found = self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+        self.assertEqual(found, ([], "Failed to Load Existing User"))
+        self.query_enterprise.assert_called_once()
 
     def test_base_exceptions_from_query_are_not_swallowed(self):
         for error in (KeyboardInterrupt, SystemExit):
@@ -599,13 +603,13 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
                 with self.assertRaises(TypeError):
                     self._load(_enterprise_params(users))
 
-    def test_non_dict_enterprise_raises(self):
+    def test_non_dict_enterprise_returns_error(self):
         for enterprise in (["users"], "users", 1):
             with self.subTest(enterprise=enterprise):
-                with self.assertRaises(AttributeError):
-                    self._load(
-                        SimpleNamespace(enterprise=enterprise),
-                    )
+                found = self.command._load_existing_keeper_users(
+                    SimpleNamespace(enterprise=enterprise),
+                )
+                self.assertEqual(found, ([], "Failed to Load Existing User"))
         self.query_enterprise.assert_not_called()
 
     def test_string_or_dict_users_container_yields_no_rows(self):
