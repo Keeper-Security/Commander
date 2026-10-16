@@ -7,18 +7,42 @@ from unittest import TestCase, mock
 from keepercommander import utils
 
 
-class TestPathLinkDetection(TestCase):
-    def test_detects_link_in_parent_component(self):
+class TestSetFilePermissionsSymlinks(TestCase):
+    def test_hardens_file_through_symlinked_parent(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            link_dir = os.path.join(tmp_dir, 'linked-dir')
-            file_path = os.path.join(link_dir, 'config.json')
+            if os.name == 'nt':
+                self.skipTest('Creating a Windows symlink may require elevated privileges')
 
-            def fake_lstat(path):
-                mode = stat.S_IFLNK if path == link_dir else stat.S_IFDIR
-                return SimpleNamespace(st_mode=mode)
+            target_dir = os.path.join(tmp_dir, 'target-dir')
+            os.mkdir(target_dir)
+            real_path = os.path.join(target_dir, 'config.json')
+            with open(real_path, 'w') as config_file:
+                config_file.write('secret')
+            os.chmod(real_path, 0o644)
 
-            with mock.patch('keepercommander.utils.os.lstat', side_effect=fake_lstat):
-                self.assertTrue(utils._path_has_link_component(file_path))
+            alias_dir = os.path.join(tmp_dir, 'linked-dir')
+            os.symlink(target_dir, alias_dir)
+            alias_path = os.path.join(alias_dir, 'config.json')
+
+            utils.set_file_permissions(alias_path)
+
+            self.assertEqual(os.stat(real_path).st_mode & 0o777, 0o600)
+
+    def test_skips_final_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            if os.name == 'nt':
+                self.skipTest('Creating a Windows symlink may require elevated privileges')
+
+            target_path = os.path.join(tmp_dir, 'config.json')
+            with open(target_path, 'w') as config_file:
+                config_file.write('secret')
+            os.chmod(target_path, 0o644)
+            symlink_path = os.path.join(tmp_dir, 'config-link.json')
+            os.symlink(target_path, symlink_path)
+
+            utils.set_file_permissions(symlink_path)
+
+            self.assertEqual(os.stat(target_path).st_mode & 0o777, 0o644)
 
 
 class TestWindowsIcaclsPrincipal(TestCase):

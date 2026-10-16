@@ -103,24 +103,13 @@ def _windows_icacls_principal():     # type: () -> str
     return username
 
 
-def _path_has_link_component(file_path):     # type: (str) -> bool
-    """Return whether a path or one of its parent components is a link."""
-    drive, tail = os.path.splitdrive(os.path.abspath(file_path))
-    current_path = drive + os.sep if drive else os.sep
-    for component in tail.split(os.sep):
-        if not component:
-            continue
-        current_path = os.path.join(current_path, component)
-        file_stat = os.lstat(current_path)
-        if stat.S_ISLNK(file_stat.st_mode):
-            return True
-
-        # Windows junctions and other reparse points are not always reported
-        # as symbolic links. Avoid changing permissions through those paths too.
-        if os.name == 'nt':
-            reparse_point = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
-            if getattr(file_stat, 'st_file_attributes', 0) & reparse_point:
-                return True
+def _is_link_or_reparse_point(file_stat):     # type: (os.stat_result) -> bool
+    """Return whether the final path component is a link or Windows reparse point."""
+    if stat.S_ISLNK(file_stat.st_mode):
+        return True
+    if os.name == 'nt':
+        reparse_point = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+        return bool(getattr(file_stat, 'st_file_attributes', 0) & reparse_point)
     return False
 
 
@@ -132,19 +121,31 @@ def set_file_permissions(file_path):     # type: (str) -> None
     file_path = os.path.abspath(file_path)
 
     try:
-        # Check each component explicitly: realpath() can canonicalize valid
-        # Windows short paths, while following a symlink/junction is unsafe.
-        if _path_has_link_component(file_path):
-            logging.warning(f'Skipping permission setting on linked path: {file_path}')
+        # Inspect only the file itself. Parent-directory aliases should not
+        # prevent permission hardening of an otherwise regular file.
+        file_stat = os.lstat(file_path)
+        if _is_link_or_reparse_point(file_stat):
+            logging.warning(f'Skipping permission setting on linked file: {file_path}')
             return
         
         if platform.system() != 'Windows':
-            file_stat = os.stat(file_path)
             if file_stat.st_uid != os.getuid():
                 logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
                 return
             
-            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+            permissions = stat.S_IRUSR | stat.S_IWUSR
+            if os.chmod in os.supports_follow_symlinks:
+                os.chmod(file_path, permissions, follow_symlinks=False)
+            elif hasattr(os, 'O_NOFOLLOW') and hasattr(os, 'fchmod'):
+                fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    os.fchmod(fd, permissions)
+                finally:
+                    os.close(fd)
+            else:
+                raise NotImplementedError(
+                    'Platform does not support safe permission changes without following symlinks'
+                )
             logging.debug(f'Set secure permissions (600) for file: {file_path}')
         else:
             principal = _windows_icacls_principal()

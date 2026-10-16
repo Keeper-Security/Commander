@@ -713,6 +713,14 @@ def normalize_output_param(args: str) -> str:
     return args
 
 
+def tokenize_command_args(args, envvars=None):
+    """Tokenize command arguments using the same transforms as Command.execute_args."""
+    args = '' if args is None else args
+    if envvars is not None:
+        args = expand_cmd_args(args, envvars)
+    return shlex.split(normalize_output_param(args))
+
+
 def as_boolean(value, default=None):  # type: (Any, Optional[bool]) -> bool
     if isinstance(value, bool):
         return value
@@ -769,14 +777,13 @@ class Command(CliCommand):
                 alias_cmd = d.get('command')
                 if alias_cmd and alias_cmd != parser.prog:
                     parser.prog = alias_cmd
-                args = expand_cmd_args(args, envvars)
-                args = normalize_output_param(args)
+                command_tokens = tokenize_command_args(args, envvars)
                 if self.support_extra_parameters():
-                    opts, extra_args = parser.parse_known_args(shlex.split(args))
+                    opts, extra_args = parser.parse_known_args(command_tokens)
                     if extra_args:
                         self.extra_parameters = ' '.join(extra_args)
                 else:
-                    opts = parser.parse_args(shlex.split(args))
+                    opts = parser.parse_args(command_tokens)
                 d.update(opts.__dict__)
 
             return self.execute(params, **d)

@@ -83,18 +83,16 @@ class RequestValidator:
                     temp_file_path = temp_file.name
                     temp_files.append(temp_file_path)
                     
-                    # Replace FILEDATA in PAM --filename forms. Quote an
-                    # unquoted path so command execution's shlex parser keeps
-                    # Windows separators and paths containing spaces intact.
-                    file_param_pattern = r'(--filename[=\s]+)(["\']?)FILEDATA(["\']?)'
+                    # Replace the entire FILEDATA token with a quoted path.
+                    # Reusing the caller's quotes would break when the
+                    # generated path itself contains a single quote.
+                    file_param_pattern = (
+                        r'(--filename[=\s]+)(?P<quote>["\']?)FILEDATA(?P=quote)'
+                    )
 
                     def replace_filename_placeholder(match):
-                        prefix, opening_quote, closing_quote = match.groups()
-                        if opening_quote and opening_quote == closing_quote:
-                            replacement = temp_file_path
-                        else:
-                            replacement = shlex.quote(temp_file_path)
-                        return f'{prefix}{opening_quote}{replacement}{closing_quote}'
+                        prefix = match.group(1)
+                        return f'{prefix}{shlex.quote(temp_file_path)}'
 
                     processed_command = re.sub(
                         file_param_pattern,
@@ -103,14 +101,11 @@ class RequestValidator:
                     )
 
                     # Also handle positional FILEDATA (including a quoted
-                    # placeholder). Keep existing quotes, otherwise shell-quote
-                    # the generated path as one argument.
+                    # placeholder), replacing its original quoting entirely.
                     standalone_pattern = r'(?P<quote>["\']?)\bFILEDATA\b(?P=quote)'
 
                     def replace_standalone_placeholder(match):
-                        quote = match.group('quote')
-                        replacement = temp_file_path if quote else shlex.quote(temp_file_path)
-                        return f'{quote}{replacement}{quote}'
+                        return shlex.quote(temp_file_path)
 
                     processed_command = re.sub(
                         standalone_pattern,
