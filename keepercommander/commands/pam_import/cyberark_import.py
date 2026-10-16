@@ -213,8 +213,7 @@ class CyberArkImportOrchestrator:
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
-        cyberark_users = None
-        # type -> list[dict] | None
+        cyberark_users = None # type -> list[dict] | None
         if self.options.add_cyberark_users:
             print_formatted_text(HTML("\nFetching CyberArk Users..."))
             cyberark_users = self._prepare_users()
@@ -333,8 +332,7 @@ class CyberArkImportOrchestrator:
                 return email.strip()
         return None
 
-    def _prepare_users(self):
-        # type: () -> list[dict]
+    def _prepare_users(self): # type: () -> list[dict]
         all_users = self.client.fetch_users()
         result = []
         for u in all_users:
