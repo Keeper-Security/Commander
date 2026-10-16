@@ -312,6 +312,37 @@ def format_unmapped_section(unmapped_items: Optional[List[dict]]) -> str:
         lines.append('')
     return "\n".join(lines)
 
+def _format_enterprise_users(enterprise_users: dict) -> List[str]:
+    """Render Keeper user provisioning with a status flag on each row."""
+    users = enterprise_users.get("users") or []
+    counts = {"created": 0, "existing": 0, "skipped": 0, "failed": 0}
+    for user in users:
+        flag = str((user or {}).get("flag") or "skipped")
+        if flag in counts:
+            counts[flag] += 1
+    lines = [
+        ' ENTERPRISE USERS',
+        ' ' + '-' * 40,
+        (
+            f'   created {counts["created"]:>4d}   existing {counts["existing"]:>4d}   '
+            f'skipped {counts["skipped"]:>4d}   failed {counts["failed"]:>4d}'
+        ),
+    ]
+    error = enterprise_users.get("error") or ""
+    if error:
+        lines.append(f'   {error}')
+    for user in users:
+        if not isinstance(user, dict):
+            continue
+        flag = str(user.get("flag") or "skipped")
+        label = user.get("email") or user.get("username") or "(no email)"
+        detail = user.get("reason") or ""
+        if not detail and flag == "existing" and user.get("status"):
+            detail = str(user.get("status"))
+        suffix = f'  {detail}' if detail else ''
+        lines.append(f'   [{flag}] {label}{suffix}')
+    lines.append('')
+    return lines
 
 def build_report(project_name: str, safes_processed: int, total_accounts: int,
                  resource_counts: Dict[str, Dict[str, int]],
@@ -320,6 +351,7 @@ def build_report(project_name: str, safes_processed: int, total_accounts: int,
                  duration: float, project_result: Optional[dict] = None,
                  unmapped_platforms: Optional[Dict[str, int]] = None,
                  unmapped_items: Optional[List[dict]] = None,
+                 enterprise_users: Optional[List[dict]] = None,
                  server: str = '') -> str:
     """Build structured post-import report matching the spec."""
     lines = []
@@ -396,6 +428,8 @@ def build_report(project_name: str, safes_processed: int, total_accounts: int,
     lines.append(f'   Duration:   {format_duration(duration)}')
     lines.append('')
 
+    if enterprise_users:
+        lines.extend(_format_enterprise_users(enterprise_users))
     # Platform mapping
     if platform_counts:
         lines.append(' PLATFORM MAPPING')
