@@ -18,7 +18,7 @@ import ssl
 import time
 import sys
 
-from typing import Union, Dict, Optional
+from typing import Union, Dict, Optional, Set
 
 from .params import RestApiContext
 from .error import KeeperApiError, Error
@@ -121,6 +121,20 @@ SERVER_PUBLIC_KEYS = {
 }   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey, Dict[str, Union[ec.EllipticCurvePublicKey, bytes]]]]
 
 
+def _register_server_public_key(key_id, key_value):
+    # type: (int, str) -> None
+    """Use key_value (base64url uncompressed EC point) for key_id, in Commander and in the KSM SDK."""
+    SERVER_PUBLIC_KEYS[key_id] = crypto.load_ec_public_key(utils.base64_url_decode(key_value))
+    # The embedded KSM SDK (ksm app client add, slack-app-setup, service-mode docker
+    # setup) keeps its own copy of the key table. Without this it answers the server's
+    # key_id request with Keeper's key and gets "encrypted transmission key is invalid".
+    try:
+        from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
+        keeper_public_keys[str(key_id)] = key_value
+    except ImportError:
+        pass
+
+
 def _load_custom_server_public_key():
     # Self-hosted/on-premise Keeper deployments (e.g. Self-Managed Keeper) generate
     # their own transmission-key keypair at install time; it is never one of
@@ -139,18 +153,47 @@ def _load_custom_server_public_key():
         logging.warning(f"KEEPER_SERVER_PUBLIC_KEY_ID='{key_id_str}' is not a valid integer; ignoring custom server public key.")
         return
     try:
-        SERVER_PUBLIC_KEYS[key_id] = crypto.load_ec_public_key(utils.base64_url_decode(key_value))
+        _register_server_public_key(key_id, key_value)
     except Exception as e:
         logging.warning(f"Failed to load KEEPER_SERVER_PUBLIC_KEY as an EC public key ({e}); ignoring custom server public key.")
-        return
-    # The embedded KSM SDK (ksm app client add, slack-app-setup, service-mode docker
-    # setup) keeps its own copy of the key table. Without this it answers the server's
-    # key_id request with Keeper's key and gets "encrypted transmission key is invalid".
+
+
+# Servers already asked for their key, so each is asked at most once per process.
+_server_key_fetch_attempted = set()   # type: Set[str]
+
+
+def _fetch_server_public_key(context):
+    # type: (RestApiContext) -> Optional[int]
+    """Learn a self-managed server's transmission key from GET <server>/api/rest/server_public_key.
+
+    Self-Managed Keeper serves {"serverPublicKeyId", "serverPublicKey", "fingerprint"} there.
+    Keeper's regions do not have the endpoint; this is only called after a server has
+    rejected the built-in keys, and any failure returns None so the caller keeps its
+    existing behaviour. TLS verification (context.certificate_check) is what makes the
+    answer trustworthy, exactly as for every other request to the same server.
+    """
+    url = context.server_base + 'server_public_key'
+    if url in _server_key_fetch_attempted:
+        return None
+    _server_key_fetch_attempted.add(url)
     try:
-        from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
-        keeper_public_keys[str(key_id)] = key_value
-    except ImportError:
-        pass
+        rs = requests.get(url, proxies=context.proxies, verify=context.certificate_check, timeout=(5, 10))
+        if rs.status_code != 200:
+            logging.debug('Server public key endpoint %s answered HTTP %d', url, rs.status_code)
+            return None
+        body = rs.json()
+        key_id = int(body['serverPublicKeyId'])
+        key_value = body['serverPublicKey']
+        if not (7 <= key_id <= 18) or not isinstance(key_value, str):
+            logging.debug('Server public key endpoint %s returned an unusable key id %s', url, key_id)
+            return None
+        _register_server_public_key(key_id, key_value)
+    except Exception as e:
+        logging.debug('Could not fetch server public key from %s: %s', url, e)
+        return None
+    logging.info('Using the server public key published by %s (key id %d, %s)',
+                 context.server_base, key_id, body.get('fingerprint') or 'no fingerprint')
+    return key_id
 
 
 _load_custom_server_public_key()
@@ -286,6 +329,14 @@ def execute_rest(context, endpoint, payload, timeout=None):
                         elif server_key_id != context.server_key_id:
                             # If server returns non-EC key without qrc_ec_key_id, disable QRC
                             if not (7 <= server_key_id <= 18):
+                                # A self-managed server rejects Keeper's built-in keys. Ask it for its
+                                # own key once; servers without the endpoint fall through unchanged.
+                                fetched_key_id = _fetch_server_public_key(context)
+                                if fetched_key_id is not None:
+                                    context.disable_qrc()
+                                    context.server_key_id = fetched_key_id
+                                    run_request = True
+                                    continue
                                 key_mismatch_retries += 1
                                 if key_mismatch_retries > max_key_mismatch_retries:
                                     raise KeeperApiError(
@@ -294,7 +345,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
                                         "This usually means you're connecting to a self-hosted/on-premise Keeper server that "
                                         "uses its own transmission-key keypair, not one of Commander's built-in keys. Set the "
                                         "KEEPER_SERVER_PUBLIC_KEY_ID and KEEPER_SERVER_PUBLIC_KEY environment variables to that "
-                                        "deployment's key id/public key.")
+                                        "deployment's key id/public key, or use a server that publishes it at "
+                                        "/api/rest/server_public_key.")
                                 logging.warning(f"Server returned non-EC key_id={server_key_id} without qrc_ec_key_id. Falling back to EC-only encryption.")
                                 context.disable_qrc()
                             else:
