@@ -753,7 +753,7 @@ class _AccessElevationSocket:
     relays its terminal response over the caller's own open socket instead of the HTTP response --
     krouter rejects the request outright if streamResponse=true but no socket is open."""
 
-    def __init__(self, params, router_tokens, cookie_header):
+    def __init__(self, params, router_tokens, cookie_header, frame_parser=None):
         from ..tunnel.port_forward.tunnel_helpers import WEBSOCKETS_VERSION, websockets_connect
         if WEBSOCKETS_VERSION is None:
             raise CommandError('', 'The websockets library is required for this action.')
@@ -761,6 +761,7 @@ class _AccessElevationSocket:
         encrypted_session_token, encrypted_transmission_key, _ = router_tokens
         self._connect = websockets_connect
         self._version = WEBSOCKETS_VERSION
+        self._frame_parser = frame_parser or _parse_access_elevation_frame
         self.url = get_router_ws_url(params) + '/api/user/client'
         self.headers = {
             'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
@@ -804,7 +805,7 @@ class _AccessElevationSocket:
                     continue
                 except Exception:
                     break
-                data = _parse_access_elevation_frame(msg)
+                data = self._frame_parser(msg)
                 if data is not None:
                     self._data = data
                     self._done.set()
@@ -823,14 +824,15 @@ class _AccessElevationSocket:
         return self._data if self._done.wait(timeout=timeout) else None
 
 
-def dispatch_streamed_access_elevation_action(params, gateway_action, destination_gateway_uid_str=None, timeout=90):
-    """Dispatch an ACCESS_ELEVATION gateway action that requires streamResponse=true (currently
-    only rm-grant-temporary-access-token) and return the parsed terminal frame's `data` dict.
+def dispatch_streamed_gateway_action(params, gateway_action, message_type, frame_parser=None,
+                                     destination_gateway_uid_str=None, timeout=90):
+    """Dispatch a gateway action with streamResponse=true and return the terminal frame's `data` dict
+    (as extracted by `frame_parser`), or None if no terminal frame arrived within `timeout` seconds.
 
     Opens a short-lived socket to /api/user/client first (see _AccessElevationSocket), binds the
     HTTP dispatch to the same krouter worker for ALB stickiness, then sends the action with
     is_streaming=True and waits for the result to arrive over the socket. Raises CommandError on
-    missing/ambiguous gateway, transport failure, or timeout.
+    missing/ambiguous gateway or transport failure.
     """
     from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 
@@ -860,13 +862,13 @@ def dispatch_streamed_access_elevation_action(params, gateway_action, destinatio
     cookie_header = ('; '.join(f'{c.name}={c.value}' for c in http_session.cookies)
                      if http_session.cookies else None)
 
-    socket = _AccessElevationSocket(params, router_tokens, cookie_header)
+    socket = _AccessElevationSocket(params, router_tokens, cookie_header, frame_parser=frame_parser)
     socket.start()
     try:
         response = router_send_action_to_gateway(
             params=params,
             gateway_action=gateway_action,
-            message_type=pam_pb2.CMT_WORKFLOW_ACCESS_ELEVATION,
+            message_type=message_type,
             is_streaming=True,
             destination_gateway_uid_str=destination_gateway_uid_str,
             gateway_timeout=timeout * 1000,
@@ -877,10 +879,73 @@ def dispatch_streamed_access_elevation_action(params, gateway_action, destinatio
         )
         if response is None:
             raise CommandError('', 'The Gateway did not respond.')
-        data = socket.drain_terminal_response(timeout=timeout)
+        return socket.drain_terminal_response(timeout=timeout)
     finally:
         socket.stop()
 
+
+def dispatch_streamed_access_elevation_action(params, gateway_action, destination_gateway_uid_str=None, timeout=90):
+    """Dispatch an ACCESS_ELEVATION gateway action that requires streamResponse=true (currently
+    only rm-grant-temporary-access-token) and return the parsed terminal frame's `data` dict.
+    Raises CommandError on missing/ambiguous gateway, transport failure, or timeout."""
+    data = dispatch_streamed_gateway_action(
+        params, gateway_action, pam_pb2.CMT_WORKFLOW_ACCESS_ELEVATION,
+        destination_gateway_uid_str=destination_gateway_uid_str, timeout=timeout)
     if data is None:
         raise CommandError('', 'Timed out waiting for the Gateway response.')
     return data
+
+
+def make_uss_frame_parser(conversation_id):
+    """Build a WebSocket frame parser that returns the `data` dict of the terminal Universal Secrets Sync
+    response for `conversation_id`. The router may send a single frame object or a JSON array of them. The
+    "Queued" ack (data has only Response/jobId) and frames belonging to other conversations are ignored."""
+    def norm(value):
+        # Tolerate padding and url-safe vs. standard base64 differences between the router and Commander
+        if not isinstance(value, str):
+            return None
+        return value.rstrip('=').replace('+', '-').replace('/', '_')
+
+    wanted = norm(conversation_id)
+    ack_keys = {'response', 'jobid'}
+
+    def load(value):
+        if isinstance(value, (str, bytes)):
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+        return value
+
+    def parse_one(obj):
+        if not isinstance(obj, dict):
+            return None
+        payload = load(obj.get('payload'))
+        if not isinstance(payload, dict):
+            payload = obj
+        frame_id = norm(obj.get('conversationId')) or norm(payload.get('conversation_id')) \
+            or norm(payload.get('conversationId'))
+        if frame_id != wanted:
+            return None
+        if payload.get('is_ok') is False:
+            return {'error': json.dumps(payload.get('errors') or payload.get('data') or payload, default=str)}
+        data = load(payload.get('data'))
+        if isinstance(data, dict):
+            if {str(k).lower() for k in data} <= ack_keys:
+                return None
+            return data
+        return None
+
+    def parse(raw):
+        logging.debug('Router WebSocket frame: %.500s', raw)
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            return None
+        for item in obj if isinstance(obj, list) else [obj]:
+            data = parse_one(item)
+            if data is not None:
+                return data
+        return None
+
+    return parse

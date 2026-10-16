@@ -951,7 +951,7 @@ class PAMUniversalSyncRunCommand(Command):
     def execute(self, params, **kwargs):
         from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
         from .pam.config_helper import configuration_controller_get
-        from .pam.router_helper import router_get_connected_gateways, print_router_response
+        from .pam.router_helper import router_get_connected_gateways
 
         network_name = kwargs.get('network')
         if not network_name:
@@ -984,7 +984,120 @@ class PAMUniversalSyncRunCommand(Command):
             print(f'{bcolors.WARNING}There are no connected gateways.{bcolors.ENDC}')
             return
 
-        action_inputs = GatewayActionUniversalSyncRunInputs(network_uid=network.record_uid)
+        if not self._is_dry_run_enabled(params, network):
+            self._run_real_sync(params, gateway_uid, network.record_uid)
+            return
+
+        data = self._run_dry_run(params, gateway_uid, network.record_uid)
+        if data is None:
+            return
+
+        self._print_dry_run_results(data)
+
+        if getattr(params, 'service_mode', False):
+            # No interactive user to confirm; report the dry run results only.
+            return
+
+        try:
+            answer = input('Sync now? (default: yes) ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if answer in ('', 'y', 'yes'):
+            self._run_real_sync(params, gateway_uid, network.record_uid)
+
+    @staticmethod
+    def _find_dry_run_result(value, depth=0):
+        """Locate the dict holding new_secrets/updated_secrets/unchanged_secrets anywhere in the response."""
+        import ast
+        keys = ('new_secrets', 'updated_secrets', 'unchanged_secrets')
+        if isinstance(value, (str, bytes)) and depth < 6:
+            for loader in (json.loads, ast.literal_eval):
+                try:
+                    value = loader(value)
+                    break
+                except (ValueError, SyntaxError):
+                    continue
+        if isinstance(value, dict):
+            if any(k in value for k in keys):
+                return value
+            children = value.values()
+        elif isinstance(value, list):
+            children = value
+        else:
+            return None
+        if depth >= 6:
+            return None
+        for child in children:
+            found = PAMUniversalSyncRunCommand._find_dry_run_result(child, depth + 1)
+            if found is not None:
+                return found
+        return None
+
+    @staticmethod
+    def _is_dry_run_enabled(params, network):
+        from ..keeper_dag import DAG
+        from ..keeper_dag.connection.commander import Connection
+
+        try:
+            conn = Connection(params=params)
+            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1)
+            dag.load(sync_point=0)
+            root = dag.get_root
+            for edge in root.edges:
+                if edge.path == 'universal_sync' and edge.head_uid == root.uid:
+                    return bool((edge.content_as_dict or {}).get('dryRunEnabled', False))
+        except Exception as e:
+            logging.debug(f'Failed to read dry run setting for {network.record_uid}: {e}')
+        return False
+
+    @staticmethod
+    def _run_dry_run(params, gateway_uid, network_uid):
+        """Run a dry run and return the sync result dict, or None (after reporting why) if there isn't one.
+
+        The gateway queues the job and replies over HTTP with only an ack; the result arrives later as a
+        frame on the router WebSocket, so wait for it there (as the Vault web UI does).
+        """
+        from ..display import Spinner
+        from .pam.router_helper import dispatch_streamed_gateway_action, make_uss_frame_parser
+
+        timeout = 120
+        conversation_id = GatewayAction.generate_conversation_id()
+        action = GatewayActionUniversalSyncRun(
+            inputs=GatewayActionUniversalSyncRunInputs(network_uid=network_uid, dry_run=True),
+            conversation_id=conversation_id, gateway_destination=gateway_uid, is_scheduled=False)
+
+        spinner = Spinner('Running dry run...')
+        spinner.start()
+        try:
+            frame = dispatch_streamed_gateway_action(
+                params, action, pam_pb2.CMT_USS, frame_parser=make_uss_frame_parser(conversation_id),
+                destination_gateway_uid_str=gateway_uid, timeout=timeout)
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error running universal sync dry run: {e}{bcolors.ENDC}')
+        finally:
+            spinner.stop()
+
+        if frame is None:
+            print(f'{bcolors.FAIL}Timed out after {timeout}s waiting for the dry run result. No changes were made '
+                  f'by Commander; use "pam action job-info <job id> --gateway={gateway_uid}" to check the job.'
+                  f'{bcolors.ENDC}')
+            return None
+        if frame.get('error') or frame.get('success') is False:
+            print(f'{bcolors.FAIL}Dry run failed: {frame.get("error") or json.dumps(frame, default=str)}'
+                  f'{bcolors.ENDC}')
+            return None
+
+        data = PAMUniversalSyncRunCommand._find_dry_run_result(frame)
+        if data is None:
+            logging.debug('Unrecognized dry run response: %r', frame)
+            print(f'{bcolors.FAIL}Dry run response did not contain results. Gateway response:{bcolors.ENDC}')
+            print(json.dumps(frame, indent=4, default=str))
+        return data
+
+    @staticmethod
+    def _send_sync(params, gateway_uid, network_uid):
+        action_inputs = GatewayActionUniversalSyncRunInputs(network_uid=network_uid)
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
@@ -1003,11 +1116,36 @@ class PAMUniversalSyncRunCommand(Command):
             )
         except Exception as e:
             raise CommandError('', f'{bcolors.FAIL}Error running universal sync: {e}{bcolors.ENDC}')
+        return router_response, conversation_id
+
+    @staticmethod
+    def _run_real_sync(params, gateway_uid, network_uid):
+        from .pam.router_helper import print_router_response
+
+        router_response, conversation_id = PAMUniversalSyncRunCommand._send_sync(
+            params, gateway_uid, network_uid)
 
         if router_response is None:
             print(f'{bcolors.FAIL}The router returned a failure.{bcolors.ENDC}')
             return
 
         print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
-        print(f"\nAfter action is finished, use: '{bcolors.OKGREEN}pam usc list -n {network.record_uid}{bcolors.ENDC}, to view sync results'")
+        print(f"\nAfter action is finished, use: '{bcolors.OKGREEN}pam usc list -n {network_uid}{bcolors.ENDC}, to view sync results'")
 
+    @staticmethod
+    def _print_dry_run_results(data):
+        def names(key):
+            return ', '.join(str(e.get('secret_name')) for e in data.get(key) or [] if isinstance(e, dict)) or 'none'
+
+        print('Dry Run Results:')
+        print(f'NEW: {names("new_secrets")}')
+        print(f'UPDATE: {names("updated_secrets")}')
+        print(f'UNCHANGED: {names("unchanged_secrets")}')
+
+        failures = [r for region in (data.get('results_by_region') or {}).values()
+                    for r in region.get('results') or [] if not r.get('success', True)]
+        if data.get('total_error_count') or failures:
+            print(f'{bcolors.WARNING}Errors: {data.get("total_error_count", len(failures))}{bcolors.ENDC}')
+            for r in failures:
+                print(f'{bcolors.WARNING}  {r.get("aws_secret_name") or r.get("record_title")}: '
+                      f'{r.get("error")}{bcolors.ENDC}')
