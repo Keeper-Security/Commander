@@ -235,6 +235,29 @@ def process_ksm_config(ksm_config_input):
 # KSM SECRETS MANAGER OPERATIONS
 # =============================================================================
 
+def _register_custom_server_public_key():
+    """
+    Register KEEPER_SERVER_PUBLIC_KEY_ID / KEEPER_SERVER_PUBLIC_KEY with the KSM SDK.
+
+    Self-hosted deployments (e.g. Self-Managed Keeper) use their own transmission-key
+    keypair. Without this the SDK answers the server's key_id request with Keeper's
+    hard-coded key and fails with "encrypted transmission key is invalid".
+    Mirrors _load_custom_server_public_key() in keepercommander/rest_api.py.
+    """
+    key_id_str = os.environ.get('KEEPER_SERVER_PUBLIC_KEY_ID')
+    key_value = os.environ.get('KEEPER_SERVER_PUBLIC_KEY')
+    if not key_id_str or not key_value:
+        return
+    try:
+        key_id = int(key_id_str)
+    except ValueError:
+        print(f"WARNING: KEEPER_SERVER_PUBLIC_KEY_ID='{key_id_str}' is not a valid integer; "
+              f"ignoring custom server public key.")
+        return
+    from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
+    keeper_public_keys[str(key_id)] = key_value
+
+
 def _initialize_secrets_manager(ksm_config_path, ksm_token):
     """
     Initialize SecretsManager with proper error handling.
@@ -248,7 +271,9 @@ def _initialize_secrets_manager(ksm_config_path, ksm_token):
     """
     from keeper_secrets_manager_core import SecretsManager
     from keeper_secrets_manager_core.storage import FileKeyValueStorage
-    
+
+    _register_custom_server_public_key()
+
     try:
         if ksm_config_path:
             if not os.path.exists(ksm_config_path):
@@ -278,9 +303,9 @@ def _get_secret_by_uid_or_title(secrets_manager, record_identifier):
         secrets = secrets_manager.get_secrets([record_identifier])
         if secrets and len(secrets) > 0:
             return secrets[0]
-    except Exception:
+    except Exception as e:
         # UID lookup failed, continue to title lookup
-        pass
+        print(f"WARNING: Record lookup by UID failed: {e}")
     
     try:
         # Try to get by title as fallback
