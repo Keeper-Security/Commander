@@ -347,9 +347,7 @@ class CyberArkImportOrchestrator:
             if isinstance(u, dict):
                 email = self._extract_user_email(u)
                 user_id = u.get("id")
-                if not email:
-                    if user_id in (None, ""):
-                        continue
+                if not email and user_id not in (None,""):
                     time.sleep(self.DELAY)
                     user_details = self._get_user_details(user_id)
                     email = self._extract_user_email(user_details)
@@ -2316,7 +2314,7 @@ Examples:
             if email in seen:
                 continue
             # Check if email belongs to the required domain
-            user_exist: dict[Any, Any] = next((u for u in existing_users if u.get("email") == email), None)
+            user_exist: dict[Any, Any] = next((u for u in existing_users if u.get("email").casefold() == email), None)
             if user_exist:
                 seen.add(email)
                 status = user_exist.get("status") or "active"
