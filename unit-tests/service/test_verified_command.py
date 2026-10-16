@@ -6,6 +6,7 @@ import tempfile
 
 import shlex
 
+from keepercommander.commands.base import normalize_output_param
 from keepercommander.service.util.verified_command import Verifycommand
 
 
@@ -183,15 +184,17 @@ class TestServiceModeCommandPolicy(TestCase):
         )))
 
     def test_quoted_backslash_path_tokens_match_executor(self):
-        # A quoted Windows-style path remains one argument with its
-        # backslashes intact under the CLI's shlex parser.
+        # The CLI normalizes --output before shlex on Windows; Service Mode
+        # must apply the same sequence and keep the path as one argument.
         path = r'C:\service\files\payload.txt'
         command = f'generate --output "{path}"'
-        self.assertEqual(
-            Verifycommand.tokenize_service_command(command),
-            shlex.split(command),
-        )
-        self.assertIn(path, _tokens(command))
+        with mock.patch('sys.platform', 'win32'):
+            expected_tokens = shlex.split(normalize_output_param(command))
+            actual_tokens = Verifycommand.tokenize_service_command(command)
+
+        self.assertEqual(actual_tokens, expected_tokens)
+        self.assertEqual(actual_tokens[-1], r'C:/service/files/payload.txt')
+        self.assertEqual(len(actual_tokens), 3)
 
     def test_host_filesystem_commands_blocked(self):
         check = Verifycommand.validate_service_mode_restrictions
