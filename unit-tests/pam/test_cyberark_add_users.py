@@ -241,30 +241,28 @@ class TestExtractUserEmail(unittest.TestCase):
 
 class TestPrepareUsers(unittest.TestCase):
     def setUp(self):
-        self.sleep_patcher = mock.patch(
-            "keepercommander.commands.pam_import.cyberark_import.sleep",
-        )
-        self.print_patcher = mock.patch(
+        self.sleep_mock = self._start_patch(mock.patch(
+            "keepercommander.commands.pam_import.cyberark_import.time.sleep",
+        ))
+        self.printed = self._start_patch(mock.patch(
             "keepercommander.commands.pam_import.cyberark_import.print_formatted_text",
-        )
-        self.html_patcher = mock.patch(
+        ))
+        self._start_patch(mock.patch(
             "keepercommander.commands.pam_import.cyberark_import.HTML",
             side_effect=lambda text: text,
-        )
-        self.builtin_print_patcher = mock.patch("builtins.print")
-        self.sleep_mock = self.sleep_patcher.start()
-        self.printed = self.print_patcher.start()
-        self.html_patcher.start()
-        self.builtin_print_patcher.start()
+        ))
+        self._start_patch(mock.patch("builtins.print"))
+        self.log_warning = self._start_patch(mock.patch(
+            "keepercommander.commands.pam_import.cyberark_import.logging.warning",
+        ))
         self.client = mock.MagicMock()
         self.client.fetch_users.return_value = []
         self.orch = _orchestrator(self.client)
 
-    def tearDown(self):
-        self.builtin_print_patcher.stop()
-        self.html_patcher.stop()
-        self.print_patcher.stop()
-        self.sleep_patcher.stop()
+    def _start_patch(self, patcher):
+        started = patcher.start()
+        self.addCleanup(patcher.stop)
+        return started
 
     def test_empty_list(self):
         found = self.orch._prepare_users()
@@ -390,10 +388,10 @@ class TestPrepareUsers(unittest.TestCase):
         }])
         self.client.fetch_user_details.assert_called_once_with(0)
 
-    def test_missing_username_is_preserved_as_none(self):
+    def test_missing_username_becomes_empty_string(self):
         self.client.fetch_users.return_value = [{"id": 8, "email": "a@e.com"}]
         found = self.orch._prepare_users()
-        self.assertEqual(found, [{"id": 8, "username": None, "email": "a@e.com"}])
+        self.assertEqual(found, [{"id": 8, "username": "", "email": "a@e.com"}])
 
     def test_result_rows_have_only_id_username_email(self):
         self.client.fetch_users.return_value = [{
@@ -449,6 +447,17 @@ class TestPrepareUsers(unittest.TestCase):
         self.client.fetch_user_details.assert_not_called()
         self.sleep_mock.assert_not_called()
 
+    def test_no_address_and_no_id_is_skipped_without_detail_fetch(self):
+        for user_id in (None, ""):
+            with self.subTest(user_id=user_id):
+                self.client.fetch_users.return_value = [{"id": user_id, "username": "bob"}]
+                found = self.orch._prepare_users()
+                self.assertEqual(found, [])
+        self.client.fetch_users.return_value = [{"username": "bob"}]
+        self.assertEqual(self.orch._prepare_users(), [])
+        self.client.fetch_user_details.assert_not_called()
+        self.sleep_mock.assert_not_called()
+
     def test_tuple_of_users_is_accepted(self):
         self.client.fetch_users.return_value = (
             {"id": 1, "username": "a", "email": "a@e.com"},
@@ -474,14 +483,18 @@ class TestPrepareUsers(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "pvwa down"):
             self.orch._prepare_users()
 
-    def test_detail_fetch_error_propagates(self):
+    def test_detail_fetch_error_is_logged_and_user_omitted(self):
+        error = RuntimeError("detail failed")
         self.client.fetch_users.return_value = [
             {"id": 1, "username": "ok", "email": "ok@e.com"},
             {"id": 2, "username": "bad"},
         ]
-        self.client.fetch_user_details.side_effect = RuntimeError("detail failed")
-        with self.assertRaisesRegex(RuntimeError, "detail failed"):
-            self.orch._prepare_users()
+        self.client.fetch_user_details.side_effect = error
+        found = self.orch._prepare_users()
+        self.assertEqual(found, [{"id": 1, "username": "ok", "email": "ok@e.com"}])
+        self.log_warning.assert_called_once_with(
+            'Failed to fetch user with id "%s": %s', 2, error,
+        )
 
     def test_does_not_mutate_source_rows(self):
         row = {"id": 1, "username": "alice", "email": "  a@e.com  ", "source": "CyberArk"}
@@ -519,11 +532,16 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
             params.enterprise = {"users": users}
         self.query_enterprise.side_effect = populate
 
+    def _load(self, params):
+        users, error = self.command._load_existing_keeper_users(params)
+        self.assertEqual(error, "")
+        return users
+
     def test_cached_enterprise_is_used_without_query(self):
         params = _enterprise_params([
             {"email": "alice@example.com", "status": "active"},
         ])
-        found = self.command._load_existing_keeper_users(params)
+        found = self._load(params)
         self.assertEqual(found, [{"email": "alice@example.com", "status": "active"}])
         self.query_enterprise.assert_not_called()
 
@@ -541,27 +559,22 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
             with self.subTest(enterprise=label):
                 self.query_enterprise.reset_mock()
                 params = make_params()
-                found = self.command._load_existing_keeper_users(params)
+                found = self._load(params)
                 self.assertEqual(found, [{"email": "loaded@example.com", "status": "active"}])
                 self.query_enterprise.assert_called_once_with(params)
 
-    def test_query_failure_is_logged_then_unloaded_enterprise_raises(self):
-        self.query_enterprise.side_effect = RuntimeError("network down")
-        with self.assertRaises(AttributeError):
-            self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
-        self.log_error.assert_called_once_with(
-            "Error loading existing keeper users: network down",
-        )
-
-    def test_query_failure_with_empty_dict_returns_empty_list(self):
-        self.query_enterprise.side_effect = RuntimeError("network down")
-        found = self.command._load_existing_keeper_users(SimpleNamespace(enterprise={}))
-        self.assertEqual(found, [])
-        self.log_error.assert_called_once()
+    def test_query_failure_returns_empty_list_and_error(self):
+        for enterprise in (None, {}):
+            with self.subTest(enterprise=enterprise):
+                self.query_enterprise.side_effect = RuntimeError("network down")
+                found = self.command._load_existing_keeper_users(
+                    SimpleNamespace(enterprise=enterprise),
+                )
+                self.assertEqual(found, ([], "Failed to Load Existing User"))
 
     def test_query_that_does_not_populate_enterprise_raises(self):
         with self.assertRaises(AttributeError):
-            self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+            self._load(SimpleNamespace(enterprise=None))
         self.log_error.assert_not_called()
 
     def test_base_exceptions_from_query_are_not_swallowed(self):
@@ -569,28 +582,28 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
             with self.subTest(error=error.__name__):
                 self.query_enterprise.side_effect = error
                 with self.assertRaises(error):
-                    self.command._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+                    self._load(SimpleNamespace(enterprise=None))
 
     def test_missing_users_key_returns_empty_list(self):
         params = SimpleNamespace(enterprise={"nodes": [{"node_id": 1}]})
-        self.assertEqual(self.command._load_existing_keeper_users(params), [])
+        self.assertEqual(self._load(params), [])
         self.query_enterprise.assert_not_called()
 
     def test_users_none_raises(self):
         with self.assertRaises(TypeError):
-            self.command._load_existing_keeper_users(_enterprise_params(None))
+            self._load(_enterprise_params(None))
 
     def test_non_iterable_users_raises(self):
         for users in (5, 1.5, True):
             with self.subTest(users=users):
                 with self.assertRaises(TypeError):
-                    self.command._load_existing_keeper_users(_enterprise_params(users))
+                    self._load(_enterprise_params(users))
 
     def test_non_dict_enterprise_raises(self):
         for enterprise in (["users"], "users", 1):
             with self.subTest(enterprise=enterprise):
                 with self.assertRaises(AttributeError):
-                    self.command._load_existing_keeper_users(
+                    self._load(
                         SimpleNamespace(enterprise=enterprise),
                     )
         self.query_enterprise.assert_not_called()
@@ -599,14 +612,14 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
         samples = ["alice@example.com", {"alice": {"email": "alice@example.com"}}]
         for users in samples:
             with self.subTest(users=type(users).__name__):
-                found = self.command._load_existing_keeper_users(_enterprise_params(users))
+                found = self._load(_enterprise_params(users))
                 self.assertEqual(found, [])
 
     def test_tuple_and_generator_users_are_accepted(self):
         row = {"email": "a@example.com", "status": "active"}
         for users in ((row,), (r for r in [row])):
             with self.subTest(users=type(users).__name__):
-                found = self.command._load_existing_keeper_users(_enterprise_params(users))
+                found = self._load(_enterprise_params(users))
                 self.assertEqual(found, [row])
 
     def test_non_dict_rows_are_skipped(self):
@@ -617,7 +630,7 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
             UserDict({"email": "userdict@example.com"}),
             Row(email="subclass@example.com"),
         ]
-        found = self.command._load_existing_keeper_users(_enterprise_params(users))
+        found = self._load(_enterprise_params(users))
         self.assertEqual(found, [{"email": "subclass@example.com", "status": "active"}])
 
     def test_email_normalization_and_username_fallback(self):
@@ -637,17 +650,17 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
         ]
         for user, expected, msg in cases:
             with self.subTest(msg=msg):
-                found = self.command._load_existing_keeper_users(_enterprise_params([user]))
+                found = self._load(_enterprise_params([user]))
                 self.assertEqual(found, [{"email": expected, "status": "active"}])
 
     def test_status_defaults_to_active_for_falsy_values(self):
         for status in (None, "", 0, False):
             with self.subTest(status=status):
-                found = self.command._load_existing_keeper_users(
+                found = self._load(
                     _enterprise_params([{"email": "a@example.com", "status": status}]),
                 )
                 self.assertEqual(found[0]["status"], "active")
-        found = self.command._load_existing_keeper_users(
+        found = self._load(
             _enterprise_params([{"email": "a@example.com"}]),
         )
         self.assertEqual(found[0]["status"], "active")
@@ -655,7 +668,7 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
     def test_status_values_are_kept_as_is(self):
         for status in ("invited", "locked", "inactive", "ACTIVE", 1):
             with self.subTest(status=status):
-                found = self.command._load_existing_keeper_users(
+                found = self._load(
                     _enterprise_params([{"email": "a@example.com", "status": status}]),
                 )
                 self.assertEqual(found[0]["status"], status)
@@ -669,7 +682,7 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
             {"username": ""},
             {"email": "   ", "username": "   "},
         ]
-        found = self.command._load_existing_keeper_users(_enterprise_params(users))
+        found = self._load(_enterprise_params(users))
         self.assertEqual(found, [
             {"email": "b@example.com", "status": "invited"},
             {"email": "a@example.com", "status": "active"},
@@ -685,12 +698,12 @@ class TestLoadExistingKeeperUsers(_OfflineCommandTestCase):
         users = [{"email": "  a@example.com ", "status": None, "extra": [1]}, None]
         params = _enterprise_params(users)
         snapshot = copy.deepcopy(params.enterprise)
-        self.command._load_existing_keeper_users(params)
+        self._load(params)
         self.assertEqual(params.enterprise, snapshot)
 
     def test_value_whose_string_conversion_raises_propagates(self):
         with self.assertRaisesRegex(RuntimeError, "key stringification failed"):
-            self.command._load_existing_keeper_users(
+            self._load(
                 _enterprise_params([{"email": _BadKey()}]),
             )
 
@@ -772,7 +785,7 @@ class TestCreateKeeperUser(_OfflineCommandTestCase):
 class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
     def setUp(self):
         super().setUp()
-        self.load_existing = mock.MagicMock(return_value=[])
+        self.load_existing = mock.MagicMock(return_value=([], ""))
         self.create = mock.MagicMock(return_value={"created": True})
         self.command._load_existing_keeper_users = self.load_existing
         self.command._create_keeper_user = self.create
@@ -791,9 +804,9 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
             {"username": "", "email": ""},
             {}
         ]
-        self.load_existing.return_value = [
+        self.load_existing.return_value = ([
             {"email": "existing@example.com", "status": "invited"},
-        ]
+        ], "")
         self.create.side_effect = [{"created": True}, None]
         found = self._run(users)
         self.assertEqual(found, {"users": [
@@ -821,7 +834,7 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
                          {"email": "a@example.com", "status": 0},
                          {"email": "a@example.com", "status": False}):
             with self.subTest(existing=existing):
-                self.load_existing.return_value = [existing]
+                self.load_existing.return_value = ([existing], "")
                 found = self._run([{"username": "a", "email": "a@example.com"}])
                 self.assertEqual(found["users"][0]["status"], "active")
         self.create.assert_not_called()
@@ -830,7 +843,7 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
         for loaded in ([{}], [{"email": ""}], [{"email": None}], [{}, {"email": ""}]):
             with self.subTest(loaded=loaded):
                 self.create.reset_mock()
-                self.load_existing.return_value = loaded
+                self.load_existing.return_value = (loaded, "")
                 found = self._run([{"username": "a", "email": "a@example.com"}])
                 self.assertEqual(found["users"][0]["flag"], "created")
                 self.create.assert_called_once()
@@ -865,17 +878,14 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
         self.assertEqual(self.create.call_count, 5)
 
     def test_invalid_address_already_in_keeper_is_reported_existing(self):
-        self.load_existing.return_value = [
+        self.load_existing.return_value = ([
             {"email": "bad name@example.com", "status": "active"},
-        ]
+        ], "")
         found = self._run([
             {"username": "u", "email": "bad name@example.com"},
             {"email": "bad name@example.com"},
         ])
-        self.assertEqual(
-            [row["flag"] for row in found["users"]], ["existing", "existing"],
-        )
-        self.assertEqual(found["users"][1]["username"], "")
+        self.assertEqual([row["flag"] for row in found["users"]], ["existing"])
         self.create.assert_not_called()
 
     def test_email_is_trimmed_everywhere(self):
@@ -946,12 +956,40 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
             self._run([None, {"username": "a", "email": "a@example.com"}])
         self.create.assert_not_called()
 
-    def test_duplicate_emails_are_processed_each_time(self):
+    def test_duplicate_new_emails_are_created_once(self):
         row = {"username": "a", "email": "a@example.com"}
-        other_username = {"username": "b", "email": "a@example.com"}
+        other_username = {"username": "b", "email": " a@example.com "}
         found = self._run([row, dict(row), other_username])
-        self.assertEqual([u["flag"] for u in found["users"]], ["created"] * 3)
-        self.assertEqual(self.create.call_count, 3)
+        self.assertEqual([u["flag"] for u in found["users"]], ["created"])
+        self.create.assert_called_once_with(self.params, "a@example.com", "a")
+
+    def test_duplicate_failed_emails_are_attempted_once(self):
+        self.create.return_value = None
+        row = {"username": "a", "email": "a@example.com"}
+        found = self._run([row, dict(row)])
+        self.assertEqual([u["flag"] for u in found["users"]], ["failed"])
+        self.create.assert_called_once()
+
+    def test_duplicate_invalid_emails_are_each_reported(self):
+        found = self._run([{"email": "bad"}, {"email": "bad"}])
+        self.assertEqual([u["flag"] for u in found["users"]], ["skipped", "skipped"])
+
+    def test_duplicate_existing_emails_are_reported_once(self):
+        self.load_existing.return_value = ([{"email": "a@example.com", "status": "active"}], "")
+        found = self._run([
+            {"username": "a", "email": "a@example.com"},
+            {"username": "b", "email": " a@example.com "},
+        ])
+        self.assertEqual(found["users"], [{
+            "username": "a", "email": "a@example.com", "flag": "existing", "status": "active",
+        }])
+        self.create.assert_not_called()
+
+    def test_loader_error_message_is_printed_and_processing_continues(self):
+        self.load_existing.return_value = ([], "Failed to Load Existing User")
+        found = self._run([{"username": "a", "email": "a@example.com"}])
+        self.printed.assert_called_once_with("Failed to Load Existing User")
+        self.assertEqual(found["users"][0]["flag"], "created")
 
     def test_loader_error_propagates_before_processing(self):
         for error in (RuntimeError("load failed"), ValueError("bad data"), KeyError("x")):
@@ -972,7 +1010,7 @@ class TestCreateEnterpriseUsers(_OfflineCommandTestCase):
         self.create.side_effect = None
 
     def test_report_rows_have_fixed_keys(self):
-        self.load_existing.return_value = [{"email": "e@example.com", "status": "active"}]
+        self.load_existing.return_value = ([{"email": "e@example.com", "status": "active"}], "")
         self.create.side_effect = [{"ok": 1}, None, {"created": True}]
         users = [
             {"username": "e", "email": "e@example.com", "id": 1, "source": "x"},

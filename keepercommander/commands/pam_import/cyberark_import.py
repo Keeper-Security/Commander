@@ -26,7 +26,6 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from time import sleep
 
 from prompt_toolkit import HTML, print_formatted_text
 
@@ -213,7 +212,7 @@ class CyberArkImportOrchestrator:
     def run(self) -> None:
         unmapped_items: list[dict] = []
         master_policy_config = self._load_master_policy(unmapped_items)
-        cyberark_users = None # type -> list[dict] | None
+        cyberark_users = None # type -> list[dict]
         if self.options.add_cyberark_users:
             print_formatted_text(HTML("\nFetching CyberArk Users..."))
             cyberark_users = self._prepare_users()
@@ -328,9 +327,17 @@ class CyberArkImportOrchestrator:
             email = self._get_case_insensitive(target_dict, target_key)
             # Edge Case :  if email = "    " --> condition checks that it is not None or empty string
             # Therefore, used email.strip() 2 times to ensure it is not None or empty string
-            if email and isinstance(email, str) and email.strip():
+            if isinstance(email, str) and email.strip():
                 return email.strip()
         return None
+
+    def _get_user_details(self, id):
+        try:
+            user_detail = self.client.fetch_user_details(id)
+            return user_detail
+        except Exception as e:
+            logging.warning('Failed to fetch user with id "%s": %s', id, e)
+            return None
 
     def _prepare_users(self): # type: () -> list[dict]
         all_users = self.client.fetch_users()
@@ -338,16 +345,19 @@ class CyberArkImportOrchestrator:
         for u in all_users:
             if isinstance(u, dict):
                 email = self._extract_user_email(u)
+                user_id = u.get("id")
                 if not email:
-                    sleep(self.DELAY)
-                    user_details = self.client.fetch_user_details(u.get("id"))
+                    if user_id in (None, ""):
+                        continue
+                    time.sleep(self.DELAY)
+                    user_details = self._get_user_details(user_id)
                     email = self._extract_user_email(user_details)
                 # in user_details also if we did not find the email, we will not add the user to the result
                 if email:
                     result.append(
                         {
-                            "id": u.get("id"),
-                            "username": u.get("username"),
+                            "id": user_id,
+                            "username": u.get("username") or "",
                             "email": email
                         }
                     )
@@ -2245,27 +2255,27 @@ Examples:
                 resources, users, batch_size, batch_delay, use_nsf=use_nsf,
             )
 
-    def _load_existing_keeper_users(self, params) -> tuple[dict, str]:
+    def _load_existing_keeper_users(self, params) -> tuple[list, str]:
         # Fetch the initial data
         enterprise_data = getattr(params, "enterprise", None)
         if not enterprise_data:
             try:
                 api.query_enterprise(params)
             except Exception as e:
-                logging.error(f"Error loading existing keeper users: {e}")
+                return [], "Failed to Load Existing User"
         # After running the query_enterprise, we will have the enterprise data in the params
         enterprise_data = getattr(params, "enterprise", None)
         existing_users = []
         for user in enterprise_data.get("users", []):
             if isinstance(user, dict):
-                email = str(user.get("email") or "").strip() or str(user.get("username") or "").strip()
+                email = self._user_field(user, "email") or self._user_field(user, "username")
                 user_status = user.get("status") or "active"
                 user_details = {
                     "email": email,
                     "status": user_status,
                 }
                 existing_users.append(user_details)
-        return existing_users
+        return existing_users , ""
 
     def _create_keeper_user(self, params, email: str, name: str) -> dict:
         from ..enterprise_create_user import CreateEnterpriseUserCommand
@@ -2277,22 +2287,30 @@ Examples:
             logging.warning('Could not create enterprise user "%s": %s', email, e)
             return None
        
+    @staticmethod
+    def _user_field(user: dict, key: str) -> str:
+        return str(user.get(key) or "").strip()
+
     def _create_enterprise_users(self, params, cyberark_users: list[dict]) -> dict:
         from ...constants import EMAIL_PATTERN
         def row(user, flag, **extra):
             item = {
                 "username": str(user.get("username") or ""),
-                "email": str(user.get("email") or "").strip(),
+                "email": self._user_field(user, "email"),
                 "flag": flag,
             }
             item.update(extra)
             return item
         seen: set[str] = set()
         outcomes = []
-        existing_users = self._load_existing_keeper_users(params)
+        existing_users, error = self._load_existing_keeper_users(params)
+        if error:
+            print(error)
         is_valid_email = re.compile(EMAIL_PATTERN).match
         for user in cyberark_users:
-            email = str(user.get("email") or "").strip()
+            email = self._user_field(user, "email")
+            if email in seen:
+                continue
             # Check if email belongs to the required domain
             user_exist: dict[Any, Any] = next((u for u in existing_users if u.get("email") == email), None)
             if user_exist:
@@ -2300,6 +2318,7 @@ Examples:
                 status = user_exist.get("status") or "active"
                 outcomes.append(row(user, "existing", status=status))
             elif is_valid_email(email):
+                seen.add(email)
                 create_user = self._create_keeper_user(params, email, user.get("username") or email)
                 if create_user:
                     outcomes.append(row(user, "created"))

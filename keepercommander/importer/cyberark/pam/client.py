@@ -1298,9 +1298,9 @@ class CyberArkPVWAClient:
         """Fetch details of a vault user."""
         base = self._get_url('safes').rsplit('/Safes', 1)[0]
         response = self._get(f"{base}/Users/{user_id}")
-        if response:
+        if response is not None:
+            response.raise_for_status()
             return response.json()
-        return None
 
    
     def fetch_user_groups(self) -> List[dict]:
