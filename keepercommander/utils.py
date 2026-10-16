@@ -103,28 +103,49 @@ def _windows_icacls_principal():     # type: () -> str
     return username
 
 
+def _is_link_or_reparse_point(file_stat):     # type: (os.stat_result) -> bool
+    """Return whether the final path component is a link or Windows reparse point."""
+    if stat.S_ISLNK(file_stat.st_mode):
+        return True
+    if os.name == 'nt':
+        reparse_point = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+        return bool(getattr(file_stat, 'st_file_attributes', 0) & reparse_point)
+    return False
+
+
 def set_file_permissions(file_path):     # type: (str) -> None
     """
     Set secure file permissions (600) for configuration files containing sensitive data.
     This ensures only the owner can read and write the file.
     """
     file_path = os.path.abspath(file_path)
-    real_path = os.path.realpath(file_path)
-    if file_path != real_path:
-        return
-    
+
     try:
-        if os.path.islink(file_path):
-            logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
+        # Inspect only the file itself. Parent-directory aliases should not
+        # prevent permission hardening of an otherwise regular file.
+        file_stat = os.lstat(file_path)
+        if _is_link_or_reparse_point(file_stat):
+            logging.warning(f'Skipping permission setting on linked file: {file_path}')
             return
         
         if platform.system() != 'Windows':
-            file_stat = os.stat(file_path)
             if file_stat.st_uid != os.getuid():
                 logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
                 return
             
-            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+            permissions = stat.S_IRUSR | stat.S_IWUSR
+            if os.chmod in os.supports_follow_symlinks:
+                os.chmod(file_path, permissions, follow_symlinks=False)
+            elif hasattr(os, 'O_NOFOLLOW') and hasattr(os, 'fchmod'):
+                fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    os.fchmod(fd, permissions)
+                finally:
+                    os.close(fd)
+            else:
+                raise NotImplementedError(
+                    'Platform does not support safe permission changes without following symlinks'
+                )
             logging.debug(f'Set secure permissions (600) for file: {file_path}')
         else:
             principal = _windows_icacls_principal()

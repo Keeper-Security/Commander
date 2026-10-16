@@ -270,7 +270,31 @@ class CommandExecutor:
             command = ensure_record_add_json_format(html.unescape(command))
 
             try:
-                command_tokens = Verifycommand.tokenize_service_command(command)
+                # Check the raw command before environment expansion: Service
+                # Mode explicitly forbids this syntax, and expansion must not
+                # erase evidence of it before the restriction check.
+                raw_command_tokens = Verifycommand.tokenize_service_command(command)
+            except ValueError:
+                return {"status": "error", "error": "Invalid command syntax"}, 400
+
+            blocked_command = raw_command_tokens[0] if raw_command_tokens else ''
+
+            def blocked(error):
+                logger.warning(
+                    f"Service Mode blocked command '{blocked_command}': {error}"
+                )
+                return {"status": "error", "error": error}, 403
+
+            expansion_error = Verifycommand.validate_service_mode_env_var_expansion_command(
+                raw_command_tokens
+            )
+            if expansion_error:
+                return blocked(expansion_error)
+
+            try:
+                command_tokens = Verifycommand.tokenize_service_command(
+                    command, params.environment_variables
+                )
             except ValueError:
                 return {"status": "error", "error": "Invalid command syntax"}, 400
 
@@ -278,13 +302,8 @@ class CommandExecutor:
             # Mode will treat as safe, not the whole shared OS temp root.
             request_temp_dir = os.path.dirname(temp_files[0]) if temp_files else None
 
-            def blocked(error):
-                logger.warning(
-                    f"Service Mode blocked command '{command_tokens[0] if command_tokens else ''}': {error}"
-                )
-                return {"status": "error", "error": error}, 403
-
-            # Same tokens the CLI will run — do not use raw HTTP split(" ")
+            # Apply every Service Mode restriction to the same tokens the
+            # CLI's Command.execute_args parser will receive.
             service_mode_error = Verifycommand.validate_service_mode_restrictions(
                 command_tokens, request_temp_dir
             )
