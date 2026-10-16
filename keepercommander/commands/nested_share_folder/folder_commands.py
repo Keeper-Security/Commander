@@ -21,7 +21,7 @@ import logging
 from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
-from ... import vault_extensions
+from ... import utils, vault_extensions
 from .helpers import (
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
@@ -134,6 +134,14 @@ class NestedShareFolderMkdirCommand(Command):
             'name': name,
             'parent_uid': parent_uid or '',
         }
+        # The ownership fields are normally populated by sync. Preserve them
+        # for folders created in the current session so the ownership-aware
+        # resolver can still resolve a path before the next sync.
+        if isinstance(getattr(params, 'user', None), str) and params.user:
+            entry['owner_username'] = params.user
+        if getattr(params, 'account_uid_bytes', None):
+            entry['owner_account_uid'] = utils.base64_url_encode(
+                params.account_uid_bytes)
         if folder_key:
             entry['folder_key_unencrypted'] = folder_key
         nsf[folder_uid] = entry
