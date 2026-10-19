@@ -112,7 +112,7 @@ def set_file_permissions(file_path):     # type: (str) -> None
     real_path = os.path.realpath(file_path)
     if file_path != real_path:
         return
-
+    
     try:
         if os.path.islink(file_path):
             logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
