@@ -227,6 +227,7 @@ pam project cyberark-cleanup --name "CyberArk Migration" --dry-run
 | `--user-map` | CyberArk→Keeper user mapping JSON file |
 | `--no-verify-ssl` | Disable SSL verification (self-hosted only) |
 | `--include-system-safes` | Include system safes (PSM, PasswordManager, etc.) |
+| `--add-cyberark-users` | Create CybeArk Users in Keeper Admin Console. |
 
 ---
 
