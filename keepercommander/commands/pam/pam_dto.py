@@ -396,9 +396,10 @@ class GatewayActionUniversalSyncRunInputs:
 
 class GatewayActionUniversalSyncRun(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionUniversalSyncRunInputs, conversation_id=None, gateway_destination=None):
+    def __init__(self, inputs: GatewayActionUniversalSyncRunInputs, conversation_id=None, gateway_destination=None,
+                 is_scheduled=True):
         super().__init__('universal-secrets-sync', inputs=inputs, conversation_id=conversation_id,
-                         gateway_destination=gateway_destination, is_scheduled=True)
+                         gateway_destination=gateway_destination, is_scheduled=is_scheduled)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
