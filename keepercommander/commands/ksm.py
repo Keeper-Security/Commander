@@ -1499,6 +1499,16 @@ class KSMCommand(Command):
         print('')
 
     @staticmethod
+    def _membership_entry_ok(rs, subject, hint=None):
+        """Returns True if the single app membership entry succeeded; otherwise warns and returns False."""
+        status = rs.statuses[0] if rs is not None and rs.statuses else None
+        if status is None or status.status == 'ok':
+            return True
+        logging.warning('%s: %s%s' % (subject, status.message or status.status,
+                                      ' %s' % hint if hint else ''))
+        return False
+
+    @staticmethod
     def add_app_user(params, app_name_or_uid, email, can_manage_users, can_manage_shares, can_manage_devices):
         app = KSMCommand.get_app_record(params, app_name_or_uid)
         if not app:
@@ -1536,7 +1546,9 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppUserAddRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.users.append(entry)
-        api.communicate_rest(params, rq, 'vault/app_user_add')
+        rs = api.communicate_rest(params, rq, 'vault/app_user_add', rs_type=APIRequest_pb2.AppUserAddResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'User "%s"' % email, 'Use "app-user update" to change permissions.'):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully added user "{email}" to app uid={app_uid}\n' + bcolors.ENDC)
         KSMCommand._auto_share_app_folders(params, app_uid, users=[email])
 
@@ -1568,7 +1580,9 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppUserUpdateRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.users.append(entry)
-        api.communicate_rest(params, rq, 'vault/app_user_update')
+        rs = api.communicate_rest(params, rq, 'vault/app_user_update', rs_type=APIRequest_pb2.AppUserUpdateResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'User "%s"' % email):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully updated user "{email}" on app uid={app_uid}\n' + bcolors.ENDC)
 
     @staticmethod
@@ -1587,7 +1601,9 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppUserRemoveRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.userIds.append(user_id)
-        api.communicate_rest(params, rq, 'vault/app_user_remove')
+        rs = api.communicate_rest(params, rq, 'vault/app_user_remove', rs_type=APIRequest_pb2.AppUserRemoveResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'User "%s"' % email):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully removed user "{email}" from app uid={app_uid}\n' + bcolors.ENDC)
 
     @staticmethod
@@ -1619,7 +1635,10 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppTeamAddRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.teams.append(entry)
-        api.communicate_rest(params, rq, 'vault/app_team_add')
+        rs = api.communicate_rest(params, rq, 'vault/app_team_add', rs_type=APIRequest_pb2.AppTeamAddResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'Team "%s"' % team_name_or_uid,
+                                               'Use "app-team update" to change permissions.'):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully added team "{team_name_or_uid}" to app uid={app_uid}\n' + bcolors.ENDC)
         KSMCommand._auto_share_app_folders(params, app_uid, teams=[team_uid])
 
@@ -1651,7 +1670,9 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppTeamUpdateRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.teams.append(entry)
-        api.communicate_rest(params, rq, 'vault/app_team_update')
+        rs = api.communicate_rest(params, rq, 'vault/app_team_update', rs_type=APIRequest_pb2.AppTeamUpdateResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'Team "%s"' % team_name_or_uid):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully updated team "{team_name_or_uid}" on app uid={app_uid}\n' + bcolors.ENDC)
 
     @staticmethod
@@ -1670,7 +1691,9 @@ class KSMCommand(Command):
         rq = APIRequest_pb2.AppTeamRemoveRequest()
         rq.appRecordUid = utils.base64_url_decode(app_uid)
         rq.teamUids.append(utils.base64_url_decode(team_uid))
-        api.communicate_rest(params, rq, 'vault/app_team_remove')
+        rs = api.communicate_rest(params, rq, 'vault/app_team_remove', rs_type=APIRequest_pb2.AppTeamRemoveResponse)
+        if not KSMCommand._membership_entry_ok(rs, 'Team "%s"' % team_name_or_uid):
+            return
         print(bcolors.OKGREEN + f'\nSuccessfully removed team "{team_name_or_uid}" from app uid={app_uid}\n' + bcolors.ENDC)
 
     @staticmethod
