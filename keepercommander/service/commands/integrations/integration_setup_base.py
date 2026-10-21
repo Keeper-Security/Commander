@@ -242,7 +242,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         print(f"\n{bcolors.BOLD}Phase 2: {display_name} App Integration Setup{bcolors.ENDC}")
         record_name = kwargs.get('integration_record_name', self.get_default_record_name())
         record_uid, config = self._run_integration_setup(
-            params, setup_result, service_config, record_name
+            params, setup_result, service_config, record_name,
+            self._docker_ca_bundle_path
         )
 
         # Consolidated success output
@@ -303,6 +304,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
 
+        self._docker_ca_bundle_path = self._prompt_for_docker_ca_bundle()
+
         return ServiceConfig(
             port=port,
             commands=self.get_service_commands(),
@@ -321,7 +324,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def _run_integration_setup(self, params, setup_result: SetupResult,
                                service_config: ServiceConfig,
-                               record_name: str) -> Tuple[str, Any]:
+                               record_name: str,
+                               ca_bundle_path: str = None) -> Tuple[str, Any]:
         display_name = self.get_integration_display_name()
 
         DockerSetupPrinter.print_header(f"{display_name} App Configuration")
@@ -332,7 +336,9 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         record_uid = self._create_integration_record(params, record_name, setup_result.folder_uid, custom_fields)
 
         DockerSetupPrinter.print_step(2, 2, f"Updating docker-compose.yml with {display_name} App service...")
-        self._update_docker_compose(setup_result, service_config, record_uid, config)
+        self._update_docker_compose(
+            setup_result, service_config, record_uid, config, ca_bundle_path
+        )
 
         return record_uid, config
 
@@ -453,7 +459,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def _update_docker_compose(self, setup_result: SetupResult,
                                service_config: ServiceConfig,
-                               record_uid: str, config=None) -> None:
+                               record_uid: str, config=None,
+                               ca_bundle_path: str = None) -> None:
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         service_name = self.get_docker_service_name()
         compose_exists = os.path.exists(compose_file)
@@ -473,6 +480,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 commander_service_name=self.get_commander_service_name(),
                 commander_container_name=self.get_commander_container_name(),
                 commander_environment={self.get_record_env_key(): record_uid},
+                ca_bundle_path=ca_bundle_path,
             )
             yaml_content = builder.add_integration_service(
                 service_name=service_name,

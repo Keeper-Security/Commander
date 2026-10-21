@@ -111,6 +111,7 @@ class TestTerraformAppSetupCommand(TestCase):
             TerraformAppSetupCommand().execute(mock.Mock())
         mock_setup.assert_not_called()
 
+    @mock.patch.object(TerraformAppSetupCommand, '_prompt_for_docker_ca_bundle', return_value=None)
     @mock.patch.object(TerraformAppSetupCommand, '_get_advanced_security_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_cloudflare_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_ngrok_config')
@@ -127,6 +128,7 @@ class TestTerraformAppSetupCommand(TestCase):
         mock_ngrok,
         mock_cf,
         mock_security,
+        _mock_ca_prompt,
     ):
         mock_ngrok.return_value = {
             'ngrok_enabled': False,
@@ -149,6 +151,23 @@ class TestTerraformAppSetupCommand(TestCase):
             'token_expiration': '',
         }
 
+        call_order = []
+        mock_cf.side_effect = lambda: (call_order.append('cloudflare') or {
+            'cloudflare_enabled': False,
+            'cloudflare_tunnel_token': '',
+            'cloudflare_custom_domain': '',
+            'cloudflare_public_url': '',
+        })
+        _mock_ca_prompt.side_effect = lambda: (call_order.append('ca_certificate') or None)
+        mock_security.side_effect = lambda: (call_order.append('security') or {
+            'allowed_ip': '0.0.0.0/0,::/0',
+            'denied_ip': '',
+            'rate_limit': '',
+            'encryption_enabled': False,
+            'encryption_key': '',
+            'token_expiration': '',
+        })
+
         cmd = TerraformAppSetupCommand()
         config = cmd.get_service_configuration(params=mock.Mock())
 
@@ -157,6 +176,8 @@ class TestTerraformAppSetupCommand(TestCase):
         self.assertEqual(config.commands, TerraformSetupConstants.SERVICE_COMMANDS)
         self.assertEqual(config.port, 8900)
         mock_security.assert_called_once()
+        self.assertLess(call_order.index('cloudflare'), call_order.index('ca_certificate'))
+        self.assertLess(call_order.index('ca_certificate'), call_order.index('security'))
 
 
 class TestTerraformSetupConstants(TestCase):

@@ -150,7 +150,8 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
 
     def _run_integration_setup(self, params, setup_result: SetupResult,
                                service_config: ServiceConfig,
-                               record_name: str):
+                               record_name: str,
+                               ca_bundle_path: str = None):
         """Create/update dedicated SailPoint config record (not the Docker config record)."""
         DockerSetupPrinter.print_header('SailPoint Configuration')
         existing_uid = self._find_record_in_folder(params, setup_result.folder_uid, record_name)
@@ -166,7 +167,9 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
         )
 
         DockerSetupPrinter.print_step(2, 2, 'Updating docker-compose.yml (Commander service only)...')
-        self._update_docker_compose(setup_result, service_config, record_uid, config)
+        self._update_docker_compose(
+            setup_result, service_config, record_uid, config, ca_bundle_path
+        )
         return record_uid, config
 
     def _update_record_custom_fields(self, params, record_uid: str, custom_fields) -> None:
@@ -179,7 +182,8 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
             ] + [vault.TypedField.new_field('text', payload, PENDING_ENTITLEMENTS_FIELD)]
         super()._update_record_custom_fields(params, record_uid, custom_fields)
 
-    def _update_docker_compose(self, setup_result, service_config, record_uid, config=None):
+    def _update_docker_compose(self, setup_result, service_config, record_uid, config=None,
+                               ca_bundle_path: str = None):
         """Commander-only compose: COMMANDER_RECORD + SAILPOINT_RECORD (no SailPoint app container)."""
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         compose_exists = os.path.exists(compose_file)
@@ -200,6 +204,7 @@ class SailPointAppSetupCommand(IntegrationSetupCommand):
                     DOCKER_RECORD_ENV: setup_result.record_uid,
                     self.get_record_env_key(): record_uid,
                 },
+                ca_bundle_path=ca_bundle_path,
             )
             with open(compose_file, 'w') as f:
                 f.write(builder.build())

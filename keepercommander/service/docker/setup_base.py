@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ...commands.ksm import KSMCommand
 from ... import api, vault, utils, crypto, attachment, record_management, loginv3
@@ -37,6 +37,42 @@ from ..config.record_handler import RecordHandler
 
 class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
+
+    @staticmethod
+    def _prompt_for_docker_ca_bundle() -> Optional[str]:
+        """Optionally collect a CA bundle path to mount in generated containers.
+
+        The path must exist on the host that will run Docker Compose, which can
+        differ from the computer running Commander. It is intentionally not
+        checked on this machine, since Compose files may be generated on a Mac
+        and run later on an EC2 host.
+        """
+        print(f"\n{bcolors.BOLD}SMK CA Certificate (optional){bcolors.ENDC}")
+        while True:
+            answer = input(
+                f"{bcolors.OKBLUE}Add SMK CA certificate for Docker? "
+                f"[Press Enter for No] (y/n):{bcolors.ENDC} "
+            ).strip().lower()
+            if answer in ('', 'n', 'no'):
+                return None
+            if answer in ('y', 'yes'):
+                break
+            print(f"{bcolors.FAIL}Please answer y or n.{bcolors.ENDC}")
+
+        while True:
+            configured_path = input(
+                f"{bcolors.OKBLUE}SMK CA certificate path on Docker host:{bcolors.ENDC} "
+            ).strip().strip('"').strip("'")
+            if not configured_path:
+                print(f"{bcolors.FAIL}A CA bundle path is required when selecting yes.{bcolors.ENDC}")
+                continue
+
+            path = os.path.normpath(configured_path)
+            print(
+                f"  CA bundle will be mounted read-only from {bcolors.OKBLUE}{path}{bcolors.ENDC}. "
+                "Ensure that file exists and is readable on the Docker host."
+            )
+            return path
 
     @staticmethod
     def _is_owned_record(params, record_uid: str) -> bool:

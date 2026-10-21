@@ -91,7 +91,9 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
         service_config = self.get_service_configuration(params)
 
-        self.generate_and_save_docker_compose(setup_result, service_config)
+        self.generate_and_save_docker_compose(
+            setup_result, service_config, self._docker_ca_bundle_path
+        )
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
         self.print_standalone_success_message(setup_result, service_config, config_path)
 
@@ -118,6 +120,8 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
                 'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
+
+        self._docker_ca_bundle_path = self._prompt_for_docker_ca_bundle()
         
         # Advanced security options
         security_config = self._get_advanced_security_config()
@@ -142,15 +146,19 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             token_expiration=security_config['token_expiration']
         )
 
-    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: ServiceConfig) -> str:
+    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: ServiceConfig,
+                                    ca_bundle_path: str = None) -> str:
         """Generate docker-compose.yml content for Commander service"""
-        builder = DockerComposeBuilder(setup_result, asdict(config))
+        builder = DockerComposeBuilder(
+            setup_result, asdict(config), ca_bundle_path=ca_bundle_path
+        )
         return builder.build()
 
-    def generate_and_save_docker_compose(self, setup_result: SetupResult, config: ServiceConfig) -> str:
+    def generate_and_save_docker_compose(self, setup_result: SetupResult, config: ServiceConfig,
+                                         ca_bundle_path: str = None) -> str:
         """Generate and save docker-compose.yml file"""
         print(f"\n{bcolors.BOLD}Generating docker-compose.yml...{bcolors.ENDC}")
-        yaml_content = self.generate_docker_compose_yaml(setup_result, config)
+        yaml_content = self.generate_docker_compose_yaml(setup_result, config, ca_bundle_path)
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         
         with open(compose_file, 'w') as f:

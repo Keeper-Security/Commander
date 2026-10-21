@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from . import cli, rest_api, utils
+from . import cli, utils
 from .params import KeeperParams
 from .config_storage import loader
 from .constants import resolve_server
@@ -58,7 +58,6 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False, d
                 with open(params.config_filename) as config_file:
                     params.config = json.load(config_file)
                     loader.load_config_properties(params)
-                    rest_api.load_server_keys(params.config)
                     if 'fail_on_throttle' in params.config:
                         params.rest_context.fail_on_throttle = params.config['fail_on_throttle'] is True
                     if 'certificate_check' in params.config:

@@ -2364,15 +2364,16 @@ class KSMCommand(Command):
 
         ksm_conf_storage = InMemoryKeyValueStorage()
 
-        # A self-managed server has its own key, which the Secrets Manager SDK cannot know.
-        # Pass it, so that the SDK can talk to the server and so that the configuration
-        # written below carries it for the Gateway or application that uses it.
-        server_key = rest_api.get_self_managed_server_key(params.rest_context)
+        # The embedded SDK needs the fetched key for this setup process, and the
+        # generated config must carry it for consumers running in another process
+        # (for example, the Docker KSM utility).
+        server_key = rest_api.get_fetched_server_public_key(params.rest_context)
         server_key_args = {}
         if server_key:
+            server_key_id, server_public_key = server_key
             server_key_args = {
-                'server_public_key': server_key.public_key,
-                'server_public_key_id': str(server_key.key_id),
+                'server_public_key': server_public_key,
+                'server_public_key_id': str(server_key_id),
             }
 
         try:
@@ -2400,7 +2401,7 @@ class KSMCommand(Command):
         }
 
         if server_key:
-            config_dict[ConfigKeys.KEY_SERVER_PUBLIC_KEY.value] = server_key.public_key
+            config_dict[ConfigKeys.KEY_SERVER_PUBLIC_KEY.value] = server_key[1]
 
         # if the SDK version is below 16.2.0 then this key won't be present
         if 'KEY_OWNER_PUBLIC_KEY' in ConfigKeys.__members__ and ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):

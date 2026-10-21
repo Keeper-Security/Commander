@@ -130,13 +130,15 @@ class TerraformAppSetupCommand(ServiceDockerSetupCommand):
     def _get_queue_config(self) -> bool:
         return True
 
-    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: DockerServiceConfig) -> str:
+    def generate_docker_compose_yaml(self, setup_result: SetupResult, config: DockerServiceConfig,
+                                    ca_bundle_path: str = None) -> str:
         builder = DockerComposeBuilder(
             setup_result,
             asdict(config),
             commander_service_name=TerraformSetupConstants.COMMANDER_SERVICE_NAME,
             commander_container_name=TerraformSetupConstants.COMMANDER_CONTAINER_NAME,
             commander_environment={TERRAFORM_DOCKER_ENV: setup_result.record_uid},
+            ca_bundle_path=ca_bundle_path,
         )
         return builder.build()
 

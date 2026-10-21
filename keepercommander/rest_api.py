@@ -9,8 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import base64
-import hashlib
 import re
 import requests
 import os
@@ -20,8 +18,7 @@ import ssl
 import time
 import sys
 
-from typing import Union, Dict, NamedTuple, Optional
-from urllib.parse import urlparse
+from typing import Union, Dict, Optional, Set, Tuple
 
 from .params import RestApiContext
 from .error import KeeperApiError, Error
@@ -124,193 +121,118 @@ SERVER_PUBLIC_KEYS = {
 }   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey, Dict[str, Union[ec.EllipticCurvePublicKey, bytes]]]]
 
 
+def _register_server_public_key(key_id, key_value, server_base=None):
+    # type: (int, str, Optional[str]) -> None
+    """Register a key, keeping fetched keys scoped to their server."""
+    public_key = crypto.load_ec_public_key(utils.base64_url_decode(key_value))
+    if server_base:
+        # A self-managed server may reuse a Keeper key ID (usually 7). Do not
+        # overwrite the built-in table: Commander can switch servers in-process.
+        _fetched_server_public_keys[server_base] = (key_id, key_value, public_key)
+        return
+
+    SERVER_PUBLIC_KEYS[key_id] = public_key
+    # This branch is for an explicitly configured process-wide fallback key.
+    # The fetched key is passed to KSM per server through SecretsManager instead.
+    try:
+        from keeper_secrets_manager_core.keeper_globals import keeper_public_keys
+        keeper_public_keys[str(key_id)] = key_value
+    except ImportError:
+        pass
+
+
+def _load_custom_server_public_key():
+    # Self-hosted/on-premise Keeper deployments (e.g. Self-Managed Keeper) generate
+    # their own transmission-key keypair at install time; it is never one of
+    # Keeper's own hardcoded ids above, so the server rejects every request with
+    # key_id=-1 regardless of hostname/TLS config. These two env vars let an
+    # operator register that deployment's actual public key so the handshake can
+    # succeed. KEEPER_SERVER_PUBLIC_KEY must be the same base64url-encoded,
+    # uncompressed EC point format used for ids 7-18 above.
+    key_id_str = os.environ.get('KEEPER_SERVER_PUBLIC_KEY_ID')
+    key_value = os.environ.get('KEEPER_SERVER_PUBLIC_KEY')
+    if not key_id_str or not key_value:
+        return
+    try:
+        key_id = int(key_id_str)
+    except ValueError:
+        logging.warning(f"KEEPER_SERVER_PUBLIC_KEY_ID='{key_id_str}' is not a valid integer; ignoring custom server public key.")
+        return
+    try:
+        _register_server_public_key(key_id, key_value)
+    except Exception as e:
+        logging.warning(f"Failed to load KEEPER_SERVER_PUBLIC_KEY as an EC public key ({e}); ignoring custom server public key.")
+
+
+# Servers already asked for their key, so each is asked at most once per process.
+_server_key_fetch_attempted = set()   # type: Set[str]
+_fetched_server_public_keys = {}   # type: Dict[str, Tuple[int, str]]
+
+
+def _fetch_server_public_key(context):
+    # type: (RestApiContext) -> Optional[int]
+    """Learn a self-managed server's transmission key from GET <server>/api/rest/server_public_key.
+
+    Self-Managed Keeper serves {"serverPublicKeyId", "serverPublicKey", "fingerprint"} there.
+    Keeper's regions do not have the endpoint; this is only called after a server has
+    rejected the built-in keys, and any failure returns None so the caller keeps its
+    existing behaviour. TLS verification (context.certificate_check) is what makes the
+    answer trustworthy, exactly as for every other request to the same server.
+    """
+    url = context.server_base + 'server_public_key'
+    if url in _server_key_fetch_attempted:
+        return None
+    _server_key_fetch_attempted.add(url)
+    try:
+        rs = requests.get(url, proxies=context.proxies, verify=context.certificate_check, timeout=(5, 10))
+        if rs.status_code != 200:
+            logging.debug('Server public key endpoint %s answered HTTP %d', url, rs.status_code)
+            return None
+        body = rs.json()
+        key_id = int(body['serverPublicKeyId'])
+        key_value = body['serverPublicKey']
+        if not (7 <= key_id <= 18) or not isinstance(key_value, str):
+            logging.debug('Server public key endpoint %s returned an unusable key id %s', url, key_id)
+            return None
+        _register_server_public_key(key_id, key_value, context.server_base)
+    except Exception as e:
+        logging.debug('Could not fetch server public key from %s: %s', url, e)
+        return None
+    logging.info('Using the server public key published by %s (key id %d, %s)',
+                 context.server_base, key_id, body.get('fingerprint') or 'no fingerprint')
+    return key_id
+
+
+def get_fetched_server_public_key(context):
+    # type: (RestApiContext) -> Optional[Tuple[int, str]]
+    """Return a public key fetched for this server, for exporting KSM client config."""
+    server_key = _fetched_server_public_keys.get(context.server_base)
+    return server_key[:2] if server_key else None
+
+
+def get_server_public_key(context):
+    # type: (RestApiContext) -> Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]
+    """Return this server's fetched key or its built-in key, synchronizing the key ID."""
+    server_key = _fetched_server_public_keys.get(context.server_base)
+    if server_key:
+        if server_key[0] != context.server_key_id:
+            context.server_key_id = server_key[0]
+        return server_key[2]
+    return SERVER_PUBLIC_KEYS[context.server_key_id]
+
+
+_load_custom_server_public_key()
+
+
 def encrypt_with_keeper_key(context, data: bytes) -> bytes:
-    server_public_key = get_server_public_key(context)
     key_id = context.server_key_id
-    if 1 <= key_id <= 6:
-        return crypto.encrypt_rsa(data, server_public_key)
-    elif 7 <= key_id <= 18:
-        return crypto.encrypt_ec(data, server_public_key)
+    public_key = SERVER_PUBLIC_KEYS.get(key_id)
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return crypto.encrypt_rsa(data, public_key)
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        return crypto.encrypt_ec(data, public_key)
     else:
         raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
-
-
-# Self-managed Keeper deployments generate their own transmission key pair at install
-# time. None of SERVER_PUBLIC_KEYS belongs to them, and they normally use key id 7,
-# which SERVER_PUBLIC_KEYS also defines, so the id alone cannot tell the keys apart.
-# A host that is not a Keeper cloud host therefore gets its key from, in order:
-#   1. `server <host> --key-id <id> --public-key <key>`, saved as "server_keys" in config.json
-#   2. the KEEPER_SERVER_PUBLIC_KEY (and KEEPER_SERVER_KEY_ID) environment variables
-#   3. the deployment itself: GET <host>/status/api/connect
-# and falls back to SERVER_PUBLIC_KEYS only when none of these is available.
-KEEPER_CLOUD_DOMAINS = ('keepersecurity.com', 'keepersecurity.eu', 'keepersecurity.com.au',
-                        'keepersecurity.ca', 'keepersecurity.jp', 'keepersecurity.us')
-SERVER_KEY_PATH = '/status/api/connect'
-
-
-class SelfManagedServerKey(NamedTuple):
-    key_id: int
-    public_key: str        # base64url, 65-byte uncompressed P-256 point
-    source: str            # where the key came from, for messages
-    verified: bool = True  # False: fetched without TLS verification
-
-
-_configured_server_keys = {}   # type: Dict[str, SelfManagedServerKey]
-_resolved_server_keys = {}     # type: Dict[str, Optional[SelfManagedServerKey]]
-_server_key_errors = {}        # type: Dict[str, str]
-
-
-def server_host(server):   # type: (str) -> str
-    """Lower-case host[:port] of a server name or URL."""
-    if '://' not in server:
-        server = 'https://' + server
-    return urlparse(server).netloc.lower()
-
-
-def is_keeper_cloud_host(server):   # type: (str) -> bool
-    hostname = server_host(server).split(':')[0]
-    return any(hostname == d or hostname.endswith('.' + d) for d in KEEPER_CLOUD_DOMAINS)
-
-
-def server_key_fingerprint(public_key):   # type: (str) -> str
-    """SSH-style SHA256 fingerprint, the same value a self-managed deployment prints at install."""
-    digest = hashlib.sha256(utils.base64_url_decode(public_key)).digest()
-    return 'SHA256:' + base64.b64encode(digest).decode().rstrip('=')
-
-
-def _make_server_key(key_id, public_key, source, verified=True):
-    key_id = int(key_id)
-    if not 7 <= key_id <= 18:
-        raise ValueError(f'Server key ID {key_id} is not valid. A self-managed server uses an EC key, ID 7 to 18.')
-    try:
-        crypto.load_ec_public_key(utils.base64_url_decode(public_key))
-    except Exception:
-        raise ValueError('Server public key is not a base64url encoded EC P-256 public key.')
-    return SelfManagedServerKey(key_id, public_key, source, verified)
-
-
-def set_server_public_key(server, key_id, public_key):   # type: (str, int, str) -> SelfManagedServerKey
-    """Use this key for this host. Raises ValueError if the key is not usable."""
-    host = server_host(server)
-    key = _make_server_key(key_id, public_key, 'from config.json')
-    _configured_server_keys[host] = key
-    _resolved_server_keys.pop(host, None)
-    _server_key_errors.pop(host, None)
-    return key
-
-
-def clear_server_public_key(server):   # type: (str) -> None
-    host = server_host(server)
-    _configured_server_keys.pop(host, None)
-    _resolved_server_keys.pop(host, None)
-    _server_key_errors.pop(host, None)
-
-
-def load_server_keys(config):   # type: (dict) -> None
-    """Load the "server_keys" property of config.json: {"<host>": {"key_id": 7, "public_key": "..."}}"""
-    server_keys = config.get('server_keys') if isinstance(config, dict) else None
-    if not isinstance(server_keys, dict):
-        return
-    for host, entry in server_keys.items():
-        try:
-            set_server_public_key(host, entry['key_id'], entry['public_key'])
-        except Exception as e:
-            logging.warning('config.json: server key for "%s" is ignored: %s', host, e)
-
-
-def _fetch_server_key(context, host):   # type: (RestApiContext, str) -> SelfManagedServerKey
-    scheme = urlparse(context.server_base).scheme or 'https'
-    url = f'{scheme}://{host}{SERVER_KEY_PATH}'
-    verify = context.certificate_check
-    rs = requests.get(url, proxies=context.proxies, verify=verify, timeout=(10, 30))
-    rs.raise_for_status()
-    try:
-        server_key = rs.json()
-    except ValueError:
-        raise ValueError(f'{url} did not return JSON')
-    if not isinstance(server_key, dict):
-        raise ValueError(f'{url} did not return a server key')
-    public_key = server_key.get('serverPublicKey')
-    key_id = server_key.get('serverPublicKeyId')
-    if not public_key or not key_id:
-        raise ValueError(f'{url} has no server key: {server_key.get("error") or "serverPublicKey is missing"}')
-    verified = scheme == 'https' and verify is not False
-    key = _make_server_key(key_id, public_key, f'fetched from {url}', verified)
-    fingerprint = server_key_fingerprint(public_key)
-    if verified:
-        logging.info('Server key of %s: key ID %d, %s', host, key.key_id, fingerprint)
-    else:
-        reason = 'plain HTTP' if scheme != 'https' else 'TLS certificate verification is off'
-        logging.warning(
-            '\n'
-            '******************************************************************************\n'
-            '  WARNING: THE SERVER KEY OF %s WAS FETCHED OVER AN UNVERIFIED CONNECTION\n'
-            '  (%s).\n'
-            '  Anyone between you and this server could have replaced the key, and could\n'
-            '  then read and change everything this session sends to the server.\n'
-            '  Fetched key: key ID %d, %s\n'
-            '  Compare this fingerprint with the one the deployment printed at install.\n'
-            '  To fix: make Commander trust the server certificate (KEEPER_SSL_CERT_FILE),\n'
-            '  or set the key yourself: server %s --key-id <ID> --public-key <KEY>\n'
-            '******************************************************************************',
-            host, reason, key.key_id, fingerprint, host)
-    return key
-
-
-def get_self_managed_server_key(context):   # type: (RestApiContext) -> Optional[SelfManagedServerKey]
-    """This host's own server key, or None for a Keeper cloud host or when it cannot be found."""
-    server_base = getattr(context, 'server_base', None)
-    if not isinstance(server_base, str):
-        return None
-    host = server_host(server_base)
-    if is_keeper_cloud_host(host):
-        return None
-    if host in _resolved_server_keys:
-        return _resolved_server_keys[host]
-
-    key = _configured_server_keys.get(host)
-    if key is None:
-        env_key = os.environ.get('KEEPER_SERVER_PUBLIC_KEY')
-        if env_key:
-            try:
-                key = _make_server_key(os.environ.get('KEEPER_SERVER_KEY_ID') or 7, env_key,
-                                       'from KEEPER_SERVER_PUBLIC_KEY')
-            except ValueError as e:
-                raise KeeperApiError('invalid_server_key', f'KEEPER_SERVER_PUBLIC_KEY: {e}')
-    if key is None:
-        try:
-            key = _fetch_server_key(context, host)
-        except Exception as e:
-            # Not a self-managed deployment, or not reachable. Keep the built-in keys,
-            # and explain if the server rejects them.
-            _server_key_errors[host] = str(e)
-            logging.debug('Server key of %s could not be fetched: %s', host, e)
-    _resolved_server_keys[host] = key
-    return key
-
-
-def get_server_public_key(context):   # type: (RestApiContext) -> Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]
-    """The public key to encrypt a transmission key to. Also sets context.server_key_id to its ID."""
-    key = get_self_managed_server_key(context)
-    if key is None:
-        return SERVER_PUBLIC_KEYS[context.server_key_id]
-    if context.server_key_id != key.key_id:
-        context.server_key_id = key.key_id
-    return crypto.load_ec_public_key(utils.base64_url_decode(key.public_key))
-
-
-def self_managed_key_error(context):   # type: (RestApiContext) -> str
-    """Why a host that is not a Keeper cloud host rejected the transmission key."""
-    host = server_host(context.server_base)
-    key = _resolved_server_keys.get(host)
-    if key:
-        return (f'{host} rejected the server key {key.source} (key ID {key.key_id}, '
-                f'{server_key_fingerprint(key.public_key)}). Compare this fingerprint with the one the '
-                f'deployment shows, or set the key: server {host} --key-id <ID> --public-key <KEY>')
-    reason = _server_key_errors.get(host) or 'not found'
-    return (f'{host} is not a Keeper cloud host and does not accept Keeper\'s server keys. Its own key '
-            f'could not be fetched from {SERVER_KEY_PATH} ({reason}). '
-            f'Set it: server {host} --key-id <ID> --public-key <KEY>')
 
 
 DEFAULT_TIMEOUT = (15, 300)
@@ -327,6 +249,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
     run_request = True
     throttle_retries = 0
     max_throttle_retries = 3
+    key_mismatch_retries = 0
+    max_key_mismatch_retries = 1
     while run_request:
         run_request = False
 
@@ -414,12 +338,6 @@ def execute_rest(context, endpoint, payload, timeout=None):
                 logging.debug('<<< Response Error: [%s]', failure)
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
-                        if not is_keeper_cloud_host(context.server_base) and (
-                                get_self_managed_server_key(context) is not None
-                                or failure.get('key_id') not in SERVER_PUBLIC_KEYS):
-                            # A self-managed server has one key, and it was not the one
-                            # used. Retrying with another built-in key cannot help.
-                            raise KeeperApiError('key', self_managed_key_error(context))
                         server_key_id = failure['key_id']
                         if 'qrc_ec_key_id' in failure:
                             qrc_ec_key_id = failure['qrc_ec_key_id']
@@ -436,6 +354,24 @@ def execute_rest(context, endpoint, payload, timeout=None):
                         elif server_key_id != context.server_key_id:
                             # If server returns non-EC key without qrc_ec_key_id, disable QRC
                             if not (7 <= server_key_id <= 18):
+                                # A self-managed server rejects Keeper's built-in keys. Ask it for its
+                                # own key once; servers without the endpoint fall through unchanged.
+                                fetched_key_id = _fetch_server_public_key(context)
+                                if fetched_key_id is not None:
+                                    context.disable_qrc()
+                                    context.server_key_id = fetched_key_id
+                                    run_request = True
+                                    continue
+                                key_mismatch_retries += 1
+                                if key_mismatch_retries > max_key_mismatch_retries:
+                                    raise KeeperApiError(
+                                        'invalid_key_id',
+                                        f"Server rejected key id {context.server_key_id} (responded key_id={server_key_id}). "
+                                        "This usually means you're connecting to a self-hosted/on-premise Keeper server that "
+                                        "uses its own transmission-key keypair, not one of Commander's built-in keys. Set the "
+                                        "KEEPER_SERVER_PUBLIC_KEY_ID and KEEPER_SERVER_PUBLIC_KEY environment variables to that "
+                                        "deployment's key id/public key, or use a server that publishes it at "
+                                        "/api/rest/server_public_key.")
                                 logging.warning(f"Server returned non-EC key_id={server_key_id} without qrc_ec_key_id. Falling back to EC-only encryption.")
                                 context.disable_qrc()
                             else:
