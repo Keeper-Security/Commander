@@ -78,14 +78,29 @@ def user_has_privilege(params, privilege):  # type: (KeeperParams, str) -> bool
         return False
 
     # Check role-derived privileges
-    username = params.user
-    users = enterprise.get('users')
-    e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
-    role_users = enterprise.get('role_users')
-    r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
-    r_privileges = enterprise.get('role_privileges')
-    p_key = 'privilege'
-    return any(rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == privilege)
+    username = (params.user or '').casefold()
+    users = enterprise.get('users') or []
+    e_user_id = next(
+        (u.get('enterprise_user_id') for u in users
+         if (u.get('username') or '').casefold() == username),
+        None
+    )
+    if e_user_id is None:
+        return False
+
+    role_users = enterprise.get('role_users') or []
+    r_ids = {
+        ru.get('role_id') for ru in role_users
+        if ru.get('enterprise_user_id') == e_user_id
+    }
+    if not r_ids:
+        return False
+
+    r_privileges = enterprise.get('role_privileges') or []
+    return any(
+        rp.get('role_id') in r_ids and rp.get('privilege') == privilege
+        for rp in r_privileges
+    )
 
 def get_enterprise_key(params, is_rsa=False):
     keys = params.enterprise.get('keys', {})
