@@ -297,6 +297,13 @@ class TestKSMUsage(unittest.TestCase):
         self.assertEqual(headers, ['Application Owner', 'Count'])
         self.assertEqual(table, [['a@x.com', 15], ['b@x.com', 3]])
 
+    def test_usage_metrics_uses_secrets_manager_command_label(self):
+        params = self._make_params()
+        with patch('keepercommander.commands.aram.fetch_audit_events', return_value=[]) as mock_fetch, \
+                patch('keepercommander.commands.ksm.dump_report_data'):
+            KSMCommand._usage_metrics(params, format='json')
+        self.assertEqual(mock_fetch.call_args.kwargs.get('cmd'), 'secrets-manager usage')
+
     def test_by_device_no_exist_column_by_default(self):
         # Without --exists there is NO Exist column - just Device/Count. Names shared by multiple apps
         # are still split with a UID suffix so each row maps to one app.
@@ -429,6 +436,7 @@ class TestKSMUsage(unittest.TestCase):
         _fargs, fkwargs = mock_fetch.call_args
         self.assertEqual(_fargs[1]['audit_event_type'], KSM_EVENT_TYPES)
         self.assertEqual(fkwargs.get('report_type'), 'day')
+        self.assertEqual(fkwargs.get('cmd'), 'secrets-manager usage')
         _args, kwargs = mock_dump.call_args
         table = _args[0]
         headers = kwargs.get('headers')
