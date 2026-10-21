@@ -3,7 +3,7 @@
 Verifies:
 - Keeper cloud hosts keep using the built-in SERVER_PUBLIC_KEYS, and fetch nothing
 - Any other host uses, in order: a configured key, KEEPER_SERVER_PUBLIC_KEY, the key fetched from
-  <host>/status/api/connect, and the built-in keys only when none of these is available
+  GET https://<host>/api/rest/server_public_key, and the built-in keys only when none of these is available
 - A key set for one host is never used for another
 - execute_rest encrypts the transmission key to the self-managed key, and stops with a clear error
   instead of retrying when the server rejects it
@@ -11,6 +11,7 @@ Verifies:
 - The server command sets, saves and clears a key
 """
 
+import base64
 import json
 import os
 import sys
@@ -122,7 +123,8 @@ class TestResolve(SelfManagedKeyTestCase):
         key = rest_api.get_server_public_key(ctx)
         self.assertEqual(crypto.unload_ec_public_key(key), utils.base64_url_decode(self.public_key))
         self.assertEqual(ctx.server_key_id, 9)
-        self.assertEqual(mock_get.call_args[0][0], 'https://keeper.example.com/status/api/connect')
+        self.assertEqual(mock_get.call_args[0][0], 'https://keeper.example.com/api/rest/server_public_key')
+        self.assertTrue(mock_get.call_args.kwargs['verify'])
 
         # Fetched once per host
         rest_api.get_server_public_key(make_context('keeper.example.com'))
@@ -206,7 +208,7 @@ class TestResolve(SelfManagedKeyTestCase):
         with self.assertLogs(level='WARNING') as logs:
             rest_api.get_server_public_key(ctx)
         self.assertIn('plain HTTP', '\n'.join(logs.output))
-        self.assertEqual(mock_get.call_args[0][0], 'http://keeper.example.com/status/api/connect')
+        self.assertEqual(mock_get.call_args[0][0], 'http://keeper.example.com/api/rest/server_public_key')
 
 
 class TestExecuteRest(SelfManagedKeyTestCase):
@@ -291,6 +293,47 @@ class TestServerCommand(SelfManagedKeyTestCase):
             with self.assertLogs(level='WARNING'):
                 cli.server_command(params, f'--key-id 7 --public-key {self.public_key}')
             self.assertEqual(rest_api._configured_server_keys, {})
+
+
+class TestKsmServerKeyExport(SelfManagedKeyTestCase):
+    def test_generated_ksm_config_includes_server_key_for_other_processes(self):
+        from keepercommander.commands.ksm import KSMCommand
+        from keeper_secrets_manager_core.configkeys import ConfigKeys
+
+        key = rest_api.SelfManagedServerKey(9, self.public_key, 'fetched from SMK')
+        params = MagicMock()
+        params.config = {'server': 'keeper.example.com'}
+        params.rest_context.server_key_id = 9
+        storage = MagicMock()
+        storage.config = {
+            ConfigKeys.KEY_HOSTNAME: 'https://keeper.example.com',
+            ConfigKeys.KEY_CLIENT_ID: base64.b64encode(b'c' * 64).decode(),
+            ConfigKeys.KEY_PRIVATE_KEY: base64.b64encode(b'private').decode(),
+            ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID: '9',
+            ConfigKeys.KEY_APP_KEY: base64.b64encode(b'app').decode(),
+        }
+        sdk_args = []
+
+        class FakeSecretsManager:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                sdk_args.append(kwargs)
+
+            def get_secrets(self, _record_uid):
+                return []
+
+        with patch('keepercommander.commands.ksm.rest_api.get_self_managed_server_key',
+                   return_value=key), \
+                patch('keeper_secrets_manager_core.SecretsManager', FakeSecretsManager), \
+                patch('keeper_secrets_manager_core.storage.InMemoryKeyValueStorage',
+                      return_value=storage):
+            config_b64 = KSMCommand.init_ksm_config(params, 'token', 'b64')
+
+        config = json.loads(base64.b64decode(config_b64))
+        self.assertEqual(sdk_args[0]['server_public_key_id'], '9')
+        self.assertEqual(sdk_args[0]['server_public_key'], self.public_key)
+        self.assertEqual(config['serverPublicKeyId'], '9')
+        self.assertEqual(config['serverPublicKey'], self.public_key)
 
 
 if __name__ == '__main__':
