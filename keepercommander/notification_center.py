@@ -21,7 +21,7 @@ from .proto import GraphSync_pb2, NotificationCenter_pb2
 NC = NotificationCenter_pb2
 
 # Notification types that carry approve/deny actions.
-ACTION_TYPES = {NC.NT_DEVICE_APPROVAL, NC.NT_SHARE_APPROVAL, NC.NT_APPROVAL_REQUEST}
+ACTION_TYPES = {NC.NT_DEVICE_APPROVAL, NC.NT_SHARE_APPROVAL, NC.NT_APPROVAL_REQUEST, NC.NT_PEDM_APPROVAL_REQUEST}
 
 # Types the Vault hides from its notification list; shown by "notification list --all".
 HIDDEN_TYPES = {NC.NT_UNSPECIFIED, NC.NT_ALERT, NC.NT_LICENSE_LIMIT_REACHED, NC.NT_SHARE_APPROVAL_DENIED,
@@ -51,10 +51,8 @@ TYPE_TITLES = {
     NC.NT_SSL_CERTIFICATE_EXPIRES_SOON: 'SSL certificate expires soon',
     NC.NT_SSL_CERTIFICATE_EXPIRED: 'SSL certificate expired',
     NC.NT_RECORD_REMINDER: 'Record reminder',
+    NC.NT_PEDM_APPROVAL_REQUEST: 'Endpoint privilege approval request',
 }
-
-# Types this client handles; other notifications are dropped on sync.
-SUPPORTED_TYPES = set(TYPE_TITLES) | HIDDEN_TYPES
 
 
 class NotificationEntry:
@@ -82,9 +80,6 @@ def process_notification_sync(params: KeeperParams, wrappers: Iterable[Notificat
         content_type = wrapper.content.WhichOneof('type')
         if content_type == 'trimmingPoint':
             _apply_trimming_point(cache, uid)
-            continue
-        if content_type == 'notification' and wrapper.content.notification.type not in SUPPORTED_TYPES:
-            cache.pop(uid, None)
             continue
         entry = cache.get(uid)
         if entry is None:
@@ -225,6 +220,26 @@ def decrypt_record_parameter(params: KeeperParams, notification: NotificationCen
         return None
 
 
+class PedmApprovalRef:
+    def __init__(self, approval_uid: bytes, audience_type: int, audience_uid: bytes):
+        self.approval_uid = approval_uid
+        self.audience_type = audience_type
+        self.audience_uid = audience_uid
+
+
+def get_pedm_approval_ref(notification: NotificationCenter_pb2.Notification) -> Optional[PedmApprovalRef]:
+    # Parameters: approvalUid (16 bytes), audienceType (1 byte, PEDM.AudienceType), audienceUid (16 bytes).
+    approval_uid = get_parameter(notification, 'approvalUid')
+    if not approval_uid:
+        ref = get_ref(notification, GraphSync_pb2.RFT_GENERAL)
+        approval_uid = ref.value if ref else None
+    audience_uid = get_parameter(notification, 'audienceUid')
+    audience_type = get_parameter(notification, 'audienceType')
+    if not approval_uid or not audience_uid or not audience_type:
+        return None
+    return PedmApprovalRef(approval_uid, int.from_bytes(audience_type, byteorder='big'), audience_uid)
+
+
 def _ref_number(value: bytes) -> int:
     return int.from_bytes(value, byteorder='big')
 
@@ -288,4 +303,11 @@ def get_message(params: KeeperParams, entry: NotificationEntry) -> str:
         return f'SSL certificate for {provider} expires in {days} day(s)' if days is not None else f'SSL certificate for {provider} expires soon'
     if t == NC.NT_RECORD_REMINDER:
         return f'Reminder for record: {rec_title or "unknown record"}'
+    if t == NC.NT_PEDM_APPROVAL_REQUEST:
+        ref = get_pedm_approval_ref(n)
+        if not ref:
+            return 'Endpoint privilege elevation request'
+        audience_uid = utils.base64_url_encode(ref.audience_uid)
+        return (f'Approval {utils.base64_url_encode(ref.approval_uid)} for team '
+                f'{team_name(params, audience_uid) or audience_uid}')
     return TYPE_TITLES.get(t) or type_name(t)

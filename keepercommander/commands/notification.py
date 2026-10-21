@@ -20,7 +20,7 @@ from .helpers import report_utils
 from .. import api, crypto, notification_center, utils
 from ..notification_center import NC, NotificationEntry
 from ..params import KeeperParams
-from ..proto import APIRequest_pb2, GraphSync_pb2, NotificationCenter_pb2, workflow_pb2
+from ..proto import APIRequest_pb2, GraphSync_pb2, NotificationCenter_pb2, pedm_pb2, workflow_pb2
 
 
 def register_commands(commands):
@@ -144,6 +144,8 @@ class NotificationViewCommand(base.ArgparseCommand):
                 value = notification_center.decrypt_record_parameter(params, n, key)
                 if value:
                     details[key] = value
+        elif n.type == NC.NT_PEDM_APPROVAL_REQUEST:
+            details['pedm_approval'] = _get_pedm_approval_details(params, n)
 
         if kwargs.get('format') == 'json':
             return json.dumps(details, indent=2, default=str)
@@ -211,6 +213,8 @@ class _NotificationActionCommand(base.ArgparseCommand):
             _act_share_approval(params, n, self.deny)
         elif n.type == NC.NT_APPROVAL_REQUEST:
             _act_workflow_approval(params, n, self.deny, kwargs.get('reason'))
+        elif n.type == NC.NT_PEDM_APPROVAL_REQUEST:
+            _act_pedm_approval(params, n, self.deny)
 
         # The server posts the approval status for the notification; a sync picks it up.
         if not entry.is_read:
@@ -281,3 +285,75 @@ def _act_workflow_approval(params: KeeperParams, n: NotificationCenter_pb2.Notif
             logging.warning('Record key is not available; the denial reason is not attached')
     _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=rq)
 
+
+def _get_audience_approval(params: KeeperParams, n: NotificationCenter_pb2.Notification):
+    ref = notification_center.get_pedm_approval_ref(n)
+    if not ref:
+        raise base.CommandError('EPM approval notification has no approval/audience reference')
+    if ref.audience_type != pedm_pb2.AUT_TEAM:
+        raise base.CommandError(f'Unsupported EPM audience type: {ref.audience_type}')
+    team_uid = utils.base64_url_encode(ref.audience_uid)
+    team = params.team_cache.get(team_uid)
+    private_key = team.get('team_ec_private_key_unencrypted') if team else None
+    if not private_key:
+        raise base.CommandError(f'EC private key for team "{team_uid}" is not available')
+
+    rq = pedm_pb2.GetAudienceApprovalsRequest()
+    aar = pedm_pb2.AudienceApprovalRef()
+    aar.approvalUid = ref.approval_uid
+    aar.audience.audienceType = ref.audience_type
+    aar.audience.audienceUid = ref.audience_uid
+    rq.refs.append(aar)
+    rs = api.execute_router(params, 'pedm/get_audience_approvals', rq, rs_type=pedm_pb2.GetAudienceApprovalsResponse)
+    node = next((x for x in rs.approvals if x.approvalUid == ref.approval_uid), None) if rs else None
+    access = next((x for x in node.access if x.audience.audienceUid == ref.audience_uid and
+                   x.audience.audienceType == ref.audience_type), None) if node else None
+    if access is None:
+        raise base.CommandError('EPM approval not found or not available to this team')
+    return ref, node, access, crypto.load_ec_private_key(private_key)
+
+
+def _get_pedm_approval_details(params: KeeperParams, n: NotificationCenter_pb2.Notification) -> Dict[str, Any]:
+    try:
+        ref, node, access, team_key = _get_audience_approval(params, n)
+    except Exception as e:
+        return {'error': str(e)}
+    from ..pedm import pedm_shared
+    details = {
+        'approval_uid': utils.base64_url_encode(node.approvalUid),
+        'approval_type': pedm_shared.approval_type_to_name(node.approvalType),
+        'status': pedm_pb2.ApprovalStatusType.Name(node.approvalStatus),
+        'created': str(_format_time(node.created // 1000)) if node.created else '',
+        'expire_in': node.expireIn,
+    }   # type: Dict[str, Any]
+    try:
+        approval_key = crypto.decrypt_ec(access.encryptedKey, team_key)
+        data = json.loads(crypto.decrypt_aes_v2(node.encryptedData, approval_key))
+        if isinstance(data, dict):
+            details.update(data)
+        else:
+            details['data'] = data
+    except Exception as e:
+        details['data_error'] = f'Cannot decrypt approval data: {e}'
+    return details
+
+
+def _act_pedm_approval(params: KeeperParams, n: NotificationCenter_pb2.Notification, deny: bool) -> None:
+    ref, node, access, team_key = _get_audience_approval(params, n)
+    try:
+        token = crypto.decrypt_ec(access.encryptedToken, team_key)
+    except Exception as e:
+        raise base.CommandError(f'Cannot decrypt approval token: {e}')
+    rq = pedm_pb2.AudienceApprovalActionRequest()
+    action = pedm_pb2.AudienceApprovalAction()
+    action.approvalUid = ref.approval_uid
+    action.audience.audienceType = ref.audience_type
+    action.audience.audienceUid = ref.audience_uid
+    action.token = token
+    action.approvalStatus = pedm_pb2.AST_DENIED if deny else pedm_pb2.AST_APPROVED
+    rq.actions.append(action)
+    rs = api.execute_router(params, 'pedm/audience_approval_action', rq, rs_type=pedm_pb2.PedmStatusResponse)
+    if rs:
+        for st in list(rs.addStatus) + list(rs.updateStatus) + list(rs.removeStatus):
+            if not st.success:
+                raise base.CommandError(f'EPM approval action failed: {st.message}')
