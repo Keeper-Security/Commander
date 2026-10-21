@@ -29,6 +29,8 @@ class StreamlineArgs:
     ngrok_custom_domain: Optional[str]
     cloudflare: Optional[str]
     cloudflare_custom_domain: Optional[str]
+    tailscale: Optional[str]
+    tailscale_advertise_tags: Optional[str]
     certfile: Optional[str]
     certpassword: Optional[str]
     fileformat: Optional[str]
@@ -72,6 +74,8 @@ class CreateService(Command):
         parser.add_argument('-cd', '--ngrok_custom_domain', type=str, help='ngrok custom domain name(optional)')
         parser.add_argument('-cf', '--cloudflare', type=str, help='cloudflare tunnel token to generate public URL (required when using cloudflare)')
         parser.add_argument('-cfd', '--cloudflare_custom_domain', type=str, help='cloudflare custom domain name (required when using cloudflare)')
+        parser.add_argument('-ts', '--tailscale', type=str, help='Tailscale auth key to generate public URL via Funnel (required when using tailscale)')
+        parser.add_argument('-tst', '--tailscale_advertise_tags', dest='tailscale_advertise_tags', type=str, help='Comma-separated ACL tags to advertise (required when the auth key is OAuth-client-derived, e.g. tag:commander-service)')
         parser.add_argument('-crtf', '--certfile', type=str, help='certificate file path')
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
@@ -95,7 +99,8 @@ class CreateService(Command):
 
             filtered_kwargs = {k: v for k, v in kwargs.items() if k in [
                 'port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain',
-                'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat',
+                'cloudflare', 'cloudflare_custom_domain', 'tailscale', 'tailscale_advertise_tags',
+                'certfile', 'certpassword', 'fileformat',
                 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption',
                 'encryption_key', 'token_expiration',
             ]}
@@ -124,7 +129,7 @@ class CreateService(Command):
                 actual_service_url = self._get_service_url(config_data)
                 write_service_metadata(params, args.update_vault_record, actual_service_url, api_key)
 
-            self._upload_and_start_service(params)
+            self._upload_and_start_service(params, args.update_vault_record, api_key)
 
         except ValidationError as e:
             print(f"Validation Error: {str(e)}")
@@ -166,27 +171,29 @@ class CreateService(Command):
         # Return the API key for Docker mode
         return record.get('api-key')
         
-    def _upload_and_start_service(self, params: KeeperParams) -> None:
+    def _upload_and_start_service(self, params: KeeperParams, vault_record_uid: Optional[str] = None,
+                                   api_key: Optional[str] = None) -> None:
         self.service_config.update_or_add_record(params)
         from ..core.service_manager import ServiceManager
-        ServiceManager.start_service()
+        ServiceManager.start_service(params=params, vault_record_uid=vault_record_uid, api_key=api_key)
     
     def _get_service_url(self, config_data: Dict[str, Any]) -> str:
-        """Determine the actual service URL (ngrok, cloudflare, or localhost) with API version path"""
-        # Determine API version based on queue_enabled
-        queue_enabled = config_data.get("queue_enabled", "y")
-        api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
-        
-        # Priority: ngrok > cloudflare > localhost
+        """Determine the actual service URL (ngrok, cloudflare, tailscale, or localhost) with API version path"""
+        from ..util.str_util import get_api_path_suffix
+        api_path = get_api_path_suffix(config_data.get("queue_enabled", "y"))
+
+        # Priority: ngrok > cloudflare > tailscale > localhost
         base_url = ""
         if config_data.get("ngrok_public_url"):
             base_url = config_data["ngrok_public_url"]
         elif config_data.get("cloudflare_public_url"):
             base_url = config_data["cloudflare_public_url"]
+        elif config_data.get("tailscale_public_url"):
+            base_url = config_data["tailscale_public_url"]
         else:
             # Fallback to localhost with correct protocol
             port = config_data.get("port", 8080)
             protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
             base_url = f"{protocol}://localhost:{port}"
-        
+
         return f"{base_url}{api_path}"

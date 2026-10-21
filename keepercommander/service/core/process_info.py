@@ -24,7 +24,9 @@ class ProcessInfo:
     is_running: bool
     ngrok_pid: Optional[int] = None
     cloudflare_pid: Optional[int] = None
-    
+    tailscale_enabled: bool = False
+    tailscale_port: Optional[int] = None
+
     _env_file = utils.get_default_path() / ".service.env"
     
     @classmethod
@@ -32,27 +34,34 @@ class ProcessInfo:
         return value.lower() in ('true', '1', 'yes', 'on')
     
     @classmethod
-    def save(cls, pid, is_running: bool, ngrok_pid: Optional[int] = None, cloudflare_pid: Optional[int] = None) -> None:
+    def save(cls, pid, is_running: bool, ngrok_pid: Optional[int] = None, cloudflare_pid: Optional[int] = None,
+              tailscale_enabled: bool = False, tailscale_port: Optional[int] = None) -> None:
         """Save current process information to .env file."""
-        
+
         env_path = str(cls._env_file)
-        
+
         # Create the file if it doesn't exist
         if not cls._env_file.exists():
             cls._env_file.touch()
-        
+
         process_info = {
             'KEEPER_SERVICE_PID': str(pid),
             'KEEPER_SERVICE_TERMINAL': TerminalHandler.get_terminal_info() or '',
             'KEEPER_SERVICE_IS_RUNNING': str(is_running).lower()
         }
-        
+
         if ngrok_pid is not None:
             process_info['KEEPER_SERVICE_NGROK_PID'] = str(ngrok_pid)
-        
+
         if cloudflare_pid is not None:
             process_info['KEEPER_SERVICE_CLOUDFLARE_PID'] = str(cloudflare_pid)
-        
+
+        if tailscale_enabled:
+            process_info['KEEPER_SERVICE_TAILSCALE_ENABLED'] = str(tailscale_enabled).lower()
+
+        if tailscale_port is not None:
+            process_info['KEEPER_SERVICE_TAILSCALE_PORT'] = str(tailscale_port)
+
         try:
             for key, value in process_info.items():
                 set_key(env_path, key, value, quote_mode='never')
@@ -84,20 +93,29 @@ class ProcessInfo:
                 
                 cloudflare_pid_str = os.getenv('KEEPER_SERVICE_CLOUDFLARE_PID')
                 cloudflare_pid = int(cloudflare_pid_str) if cloudflare_pid_str else None
-                
+
+                tailscale_enabled_str = os.getenv('KEEPER_SERVICE_TAILSCALE_ENABLED', 'false')
+                tailscale_enabled = ProcessInfo._str_to_bool(tailscale_enabled_str)
+
+                tailscale_port_str = os.getenv('KEEPER_SERVICE_TAILSCALE_PORT')
+                tailscale_port = int(tailscale_port_str) if tailscale_port_str else None
+
                 logger.debug("Process information loaded successfully from .env")
                 return ProcessInfo(
                     pid=pid,
                     terminal=terminal,
                     is_running=is_running,
                     ngrok_pid=ngrok_pid,
-                    cloudflare_pid=cloudflare_pid
+                    cloudflare_pid=cloudflare_pid,
+                    tailscale_enabled=tailscale_enabled,
+                    tailscale_port=tailscale_port
                 )
         except Exception as e:
             logger.error(f"Failed to load process information: {e}")
             pass
-        
-        return ProcessInfo(pid=None, terminal=None, is_running=False, ngrok_pid=None, cloudflare_pid=None)
+
+        return ProcessInfo(pid=None, terminal=None, is_running=False, ngrok_pid=None, cloudflare_pid=None,
+                             tailscale_enabled=False, tailscale_port=None)
     
     @classmethod
     def clear(cls) -> None:
