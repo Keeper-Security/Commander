@@ -25,6 +25,7 @@ __pycache__/
 .mcp/
 tests/*_results/
 tests/*.log
+keepercommander/service/core/logs/
 tests/compliance_test.env
 docker-compose.yml
 uv.lock
