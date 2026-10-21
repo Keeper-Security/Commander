@@ -774,7 +774,7 @@ class KSMCommand(Command):
         audit_filter = {'audit_event_type': [KSM_USAGE_EVENT_TYPE], 'created': created_filter}
         rows = fetch_audit_events(
             params, audit_filter, columns=['app_uid', 'device_name', 'username'],
-            aggregate=['occurrences'], report_type='span', limit=limit)
+            aggregate=['occurrences'], report_type='span', limit=limit, cmd='secrets-manager usage')
 
         # Aggregation maps mirror Console getSecretsManagerMetrics. The *_apps maps track which
         # application UID(s) contributed to each row so we can flag rows whose app has been deleted
@@ -928,7 +928,7 @@ class KSMCommand(Command):
         audit_filter = {'audit_event_type': KSM_EVENT_TYPES, 'created': created_filter}
         rows = fetch_audit_events(
             params, audit_filter, columns=['audit_event_type'], aggregate=['occurrences'],
-            report_type=report_type, limit=limit, order='descending')
+            report_type=report_type, limit=limit, order='descending', cmd='secrets-manager usage')
 
         def label(evt):
             return AUDIT_EVENT_STATE_MAPPING.get(evt, evt)
@@ -2474,5 +2474,4 @@ class KSMCommand(Command):
                                                        b'KEEPER_SECRETS_MANAGER_CLIENT_ID',
                                                        digest).digest())
         return one_time_token_hash
-
 

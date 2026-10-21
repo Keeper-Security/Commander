@@ -7,10 +7,11 @@ from unittest import TestCase, mock
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
 from keepercommander import api, crypto, enterprise as enterprise_data, utils, vault
 from keepercommander.params import KeeperParams, PublicKeys
-from keepercommander.error import CommandError
+from keepercommander.error import CommandError, KeeperApiError
 from keepercommander.proto import enterprise_pb2
 from data_vault import VaultEnvironment, get_connected_params
 from keepercommander.commands import enterprise, aram
+from keepercommander.commands.helpers.enterprise import user_has_privilege
 
 
 vault_env = VaultEnvironment()
@@ -755,6 +756,109 @@ class TestEnterprise(TestCase):
             mock_post.side_effect = [resp1, Exception()]
             with self.assertRaises(KeyboardInterrupt):
                 splunk.get_properties(record, props)
+
+    def test_audit_log_permission_probe_fails_before_setup_prompts(self):
+        params = get_connected_params()
+        cmd = aram.AuditLogCommand()
+        with mock.patch('keepercommander.commands.aram.api.communicate',
+                        side_effect=KeeperApiError('access_denied', 'Reports are not permitted')), \
+                mock.patch('keepercommander.commands.aram.load_syslog_templates') as load_templates, \
+                mock.patch('keepercommander.commands.aram.user_choice') as user_choice:
+            with self.assertRaises(CommandError) as context:
+                cmd.execute(params, target='json')
+
+        self.assertEqual(context.exception.command, 'audit-log')
+        self.assertEqual(context.exception.message, 'Reports are not permitted')
+        load_templates.assert_not_called()
+        user_choice.assert_not_called()
+
+    def test_audit_log_server_authorization_allows_flow_to_continue(self):
+        params = get_connected_params()
+        cmd = aram.AuditLogCommand()
+        with mock.patch('keepercommander.commands.aram.api.communicate',
+                        return_value={'result': 'success'}), \
+                mock.patch('keepercommander.commands.aram.load_syslog_templates') as load_templates, \
+                mock.patch('keepercommander.commands.aram.user_choice', return_value='n') as user_choice:
+            with self.assertRaises(CommandError) as context:
+                cmd.execute(params, target='json')
+
+        self.assertEqual(context.exception.message, 'Record not found')
+        load_templates.assert_called_once_with(params)
+        user_choice.assert_called_once()
+
+    def test_user_has_privilege_is_case_insensitive_and_fails_closed(self):
+        params = mock.Mock()
+        params.msp_tree_key = None
+        params.user = 'First.Last@Corp.com'
+        params.enterprise = {
+            'users': [{'username': 'first.last@corp.com', 'enterprise_user_id': 17}],
+            'role_users': [{'role_id': 23, 'enterprise_user_id': 17}],
+            'role_privileges': [{'role_id': 23, 'privilege': 'run_reports'}],
+        }
+        self.assertTrue(user_has_privilege(params, 'run_reports'))
+
+        params.enterprise.pop('role_privileges')
+        self.assertFalse(user_has_privilege(params, 'run_reports'))
+        params.enterprise.pop('role_users')
+        self.assertFalse(user_has_privilege(params, 'run_reports'))
+        params.enterprise.pop('users')
+        self.assertFalse(user_has_privilege(params, 'run_reports'))
+
+    def test_fetch_audit_events_raises_backend_failure(self):
+        params = get_connected_params()
+        with mock.patch('keepercommander.commands.aram.api.execute_batch', return_value=[{
+            'result': 'fail',
+            'result_code': 'access_denied',
+            'message': 'Reports are not permitted'
+        }]):
+            with self.assertRaises(CommandError) as context:
+                aram.fetch_audit_events(params, {}, cmd='action-report')
+
+        self.assertEqual(context.exception.command, 'action-report')
+        self.assertEqual(context.exception.message, 'Reports are not permitted')
+
+    def test_fetch_audit_events_later_page_failure_discards_partial_results(self):
+        params = get_connected_params()
+        first_page = {
+            'result': 'success',
+            'audit_event_overview_report_rows': [
+                {'last_created': i, 'username': f'user{i}@example.com'}
+                for i in range(aram.API_EVENT_SUMMARY_ROW_LIMIT)
+            ]
+        }
+        failed_page = {
+            'result': 'fail',
+            'result_code': 'access_denied',
+            'message': 'Reports are not permitted'
+        }
+        with mock.patch('keepercommander.commands.aram.api.execute_batch',
+                        side_effect=[[first_page], [failed_page]]):
+            with self.assertRaises(CommandError) as context:
+                aram.fetch_audit_events(
+                    params,
+                    {'created': {'min': 0, 'max': 10_000}},
+                    report_type='span',
+                    limit=aram.API_EVENT_SUMMARY_ROW_LIMIT + 1,
+                    cmd='action-report'
+                )
+
+        self.assertEqual(context.exception.command, 'action-report')
+
+    def test_audit_report_raw_response_failure_is_reported(self):
+        params = get_connected_params()
+        params.enterprise = {'licenses': []}
+        failed_response = {
+            'result': 'fail',
+            'result_code': 'access_denied',
+            'message': 'Reports are not permitted'
+        }
+        with mock.patch('keepercommander.commands.aram.load_syslog_templates'), \
+                mock.patch('keepercommander.commands.aram.api.execute_batch', return_value=[failed_response]):
+            with self.assertRaises(CommandError) as context:
+                aram.AuditReportCommand().execute(params, report_type='raw')
+
+        self.assertEqual(context.exception.command, 'audit-report')
+        self.assertEqual(context.exception.message, 'Reports are not permitted')
 
     def test_audit_log_splunk_convert_event(self):
         splunk = aram.AuditLogSplunkExport()

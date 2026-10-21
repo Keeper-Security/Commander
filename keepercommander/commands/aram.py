@@ -39,7 +39,7 @@ from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
 from ..constants import EMAIL_PATTERN
 from ..display import bcolors
-from ..error import CommandError
+from ..error import CommandError, Error
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
@@ -177,8 +177,25 @@ API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
 
 
-def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None):
-    # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str]) -> List[Dict[str, Any]]
+def raise_if_audit_report_failed(response, cmd):
+    # type: (dict, str) -> None
+    if isinstance(response, dict) and response.get('result') == 'fail':
+        raise CommandError(cmd, response.get('message') or 'Request failed')
+
+
+def communicate_audit_report(params, request, cmd):
+    # type: (KeeperParams, Dict[str, Any], str) -> Dict[str, Any]
+    try:
+        response = api.communicate(params, request)
+    except Error as e:
+        raise CommandError(cmd, e.message) from e
+    raise_if_audit_report_failed(response, cmd)
+    return response
+
+
+def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, report_type='span', limit=None, order=None,
+                       cmd='audit-report'):
+    # type: (KeeperParams, Dict[str, Any], Optional[List[str]], Optional[List[str]], str, Optional[int], Optional[str], str) -> List[Dict[str, Any]]
     """
     Fetch audit events with pagination support.
 
@@ -235,7 +252,8 @@ def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, repor
         should_stop = False
 
         for idx, rs in enumerate(rss):
-            batch_events = rs.get('audit_event_overview_report_rows', [])
+            raise_if_audit_report_failed(rs, cmd)
+            batch_events = rs.get('audit_event_overview_report_rows') or []
             if not batch_events or not isinstance(batch_events, list):
                 continue
 
@@ -283,8 +301,8 @@ def fetch_audit_events(params, audit_filter, columns=None, aggregate=None, repor
                             reverse = 'descending' if asc else 'ascending'
                             last_rq['order'] = reverse
                             last_rq['limit'] = 1
-                            rs_last = api.communicate(params, last_rq)
-                            last_row_events = rs_last.get('audit_event_overview_report_rows')
+                            rs_last = communicate_audit_report(params, last_rq, cmd)
+                            last_row_events = rs_last.get('audit_event_overview_report_rows') or []
                             if last_row_events:
                                 last_row = last_row_events[0]
                                 last_timestamp = last_row.get(timestamp_field, last_row.get('created', 0))
@@ -930,9 +948,20 @@ class AuditLogCommand(EnterpriseCommand):
             uid = cache.get(uname)
         return uid
 
-    def execute(self, params, **kwargs):
-        load_syslog_templates(params)
+    @staticmethod
+    def validate_reporting_access(params):
+        """Ask the server to authorize audit reporting before prompting or creating records."""
+        now_ts = int(datetime.datetime.now().timestamp())
+        request = {
+            'command': 'get_audit_event_reports',
+            'report_type': 'span',
+            'scope': 'enterprise',
+            'limit': 1,
+            'filter': {'created': {'min': 0, 'max': now_ts}}
+        }
+        communicate_audit_report(params, request, 'audit-log')
 
+    def execute(self, params, **kwargs):
         target = kwargs.get('target')
 
         log_export = None        # type: Optional[AuditLogBaseExport]
@@ -950,6 +979,9 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
             raise CommandError('audit-log', 'Audit log export: unsupported target')
+
+        self.validate_reporting_access(params)
+        load_syslog_templates(params)
 
         self.log_export = log_export
         record = None   # type: Union[vault.PasswordRecord, vault.TypedRecord, None]
@@ -1064,13 +1096,9 @@ class AuditLogCommand(EnterpriseCommand):
         filter_copy = {**rq_filter, 'created': created_filter_copy}
         total_events_rq = {**rq, 'filter': filter_copy, 'report_type': 'span'}
         total_events = 0
-        try:
-            total_events_rs = api.communicate(params, total_events_rq)
-            rows = total_events_rs['audit_event_overview_report_rows']
-            total_events = rows[0].get('occurrences', 0) if rows else 0
-        except:
-            logging.info('No events to export')
-            return
+        total_events_rs = communicate_audit_report(params, total_events_rq, 'audit-log')
+        rows = total_events_rs.get('audit_event_overview_report_rows') or []
+        total_events = rows[0].get('occurrences', 0) if rows else 0
 
         while not finished:
             finished = True
@@ -1078,10 +1106,10 @@ class AuditLogCommand(EnterpriseCommand):
             if last_event_time > 0:
                 created_filter['min'] = last_event_time
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
+            rs = communicate_audit_report(params, rq, 'audit-log')
+            if rs.get('result') == 'success':
                 finished = True
-                if 'audit_event_overview_report_rows' in rs:
+                if rs.get('audit_event_overview_report_rows'):
                     audit_events = rs['audit_event_overview_report_rows']
                     event_count = len(audit_events)
                     last_event_time = int(audit_events[-1]['created']) if event_count else now_ts
@@ -1753,7 +1781,8 @@ class AuditReportCommand(Command):
             while reqs:
                 reqs = []
                 for rs in rss:
-                    events = rs.get('audit_event_overview_report_rows')
+                    raise_if_audit_report_failed(rs, 'audit-report')
+                    events = rs.get('audit_event_overview_report_rows') or []
                     for event in events:
                         if misc_fields:
                             lenf = len(fields)
@@ -1826,7 +1855,8 @@ class AuditReportCommand(Command):
                     aggregate=req.get('aggregate'),
                     report_type=report_type,
                     limit=user_limit,
-                    order=req.get('order')
+                    order=req.get('order'),
+                    cmd='audit-report'
                 )
                 all_events.extend(events)
 
@@ -2168,7 +2198,8 @@ class ActionReportCommand(EnterpriseCommand):
                 columns=cols,
                 aggregate=['last_created'],
                 report_type='span',
-                limit=None  # Get all matching events
+                limit=None,  # Get all matching events
+                cmd='action-report'
             )
 
             # Extract usernames from events that match the candidate usernames
@@ -2221,7 +2252,8 @@ class ActionReportCommand(EnterpriseCommand):
                     columns=['to_username'],
                     aggregate=['last_created'],
                     report_type='span',
-                    limit=API_EVENT_SUMMARY_ROW_LIMIT
+                    limit=API_EVENT_SUMMARY_ROW_LIMIT,
+                    cmd='action-report'
                 )
                 for event in events:
                     username = (event.get('to_username') or '').lower()
