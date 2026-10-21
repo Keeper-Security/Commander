@@ -123,6 +123,18 @@ class ConfigValidator:
         return token
 
     @staticmethod
+    def validate_tailscale_auth_key(auth_key: str) -> str:
+        """Check presence only; Tailscale's servers are authoritative on key validity at `tailscale up` time."""
+        logger.debug("Validating Tailscale auth key")
+
+        if not auth_key or not auth_key.strip():
+            msg = "Tailscale auth key cannot be empty"
+            raise ValidationError(msg)
+
+        logger.debug("Tailscale auth key validation successful")
+        return auth_key
+
+    @staticmethod
     def validate_domain(domain: str, require_tld: bool = True) -> str:
         """
         Validate domain name format.
