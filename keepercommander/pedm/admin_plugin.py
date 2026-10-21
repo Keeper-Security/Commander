@@ -701,7 +701,10 @@ class PedmPlugin(IPedmAdmin):
                 cv = pedm_pb2.CollectionValue()
                 cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
                 cv.collectionType = coll.collection_type
-                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                if 1000 <= coll.collection_type < 2000:
+                    cv.encryptedData = coll.collection_data.encode('utf-8')
+                else:
+                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
                 to_add.append(cv)
 
         if update_collections is not None:
@@ -711,7 +714,10 @@ class PedmPlugin(IPedmAdmin):
                 cv = pedm_pb2.CollectionValue()
                 cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
                 cv.collectionType = coll.collection_type
-                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                if 1000 <= coll.collection_type < 2000:
+                    cv.encryptedData = coll.collection_data.encode('utf-8')
+                else:
+                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
                 to_update.append(cv)
         to_remove: List[bytes] = []
         if remove_collections is not None:
