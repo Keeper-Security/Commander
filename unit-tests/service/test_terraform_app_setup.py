@@ -112,6 +112,7 @@ class TestTerraformAppSetupCommand(TestCase):
         mock_setup.assert_not_called()
 
     @mock.patch.object(TerraformAppSetupCommand, '_get_advanced_security_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_tailscale_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_cloudflare_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_ngrok_config')
     @mock.patch.object(TerraformAppSetupCommand, '_get_port_config', return_value=8900)
@@ -126,6 +127,7 @@ class TestTerraformAppSetupCommand(TestCase):
         _mock_port,
         mock_ngrok,
         mock_cf,
+        mock_ts,
         mock_security,
     ):
         mock_ngrok.return_value = {
@@ -139,6 +141,12 @@ class TestTerraformAppSetupCommand(TestCase):
             'cloudflare_tunnel_token': '',
             'cloudflare_custom_domain': '',
             'cloudflare_public_url': '',
+        }
+        mock_ts.return_value = {
+            'tailscale_enabled': False,
+            'tailscale_auth_key': '',
+            'tailscale_advertise_tags': '',
+            'tailscale_public_url': '',
         }
         mock_security.return_value = {
             'allowed_ip': '0.0.0.0/0,::/0',
@@ -157,6 +165,106 @@ class TestTerraformAppSetupCommand(TestCase):
         self.assertEqual(config.commands, TerraformSetupConstants.SERVICE_COMMANDS)
         self.assertEqual(config.port, 8900)
         mock_security.assert_called_once()
+
+    @mock.patch.object(TerraformAppSetupCommand, '_get_advanced_security_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_tailscale_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_cloudflare_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_ngrok_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_port_config', return_value=8900)
+    @mock.patch.object(
+        TerraformAppSetupCommand,
+        '_get_commands_config',
+        return_value=TerraformSetupConstants.SERVICE_COMMANDS,
+    )
+    def test_ngrok_enabled_skips_cloudflare_and_tailscale_prompts(
+        self,
+        _mock_commands,
+        _mock_port,
+        mock_ngrok,
+        mock_cf,
+        mock_ts,
+        mock_security,
+    ):
+        """Ngrok/Cloudflare/Tailscale are mutually exclusive - enabling Ngrok
+        must never prompt for the other two, matching pre-existing behavior."""
+        mock_ngrok.return_value = {
+            'ngrok_enabled': True,
+            'ngrok_auth_token': 'tok',
+            'ngrok_custom_domain': '',
+            'ngrok_public_url': '',
+        }
+        mock_security.return_value = {
+            'allowed_ip': '0.0.0.0/0,::/0',
+            'denied_ip': '',
+            'rate_limit': '',
+            'encryption_enabled': False,
+            'encryption_key': '',
+            'token_expiration': '',
+        }
+
+        cmd = TerraformAppSetupCommand()
+        config = cmd.get_service_configuration(params=mock.Mock())
+
+        mock_cf.assert_not_called()
+        mock_ts.assert_not_called()
+        self.assertTrue(config.ngrok_enabled)
+        self.assertFalse(config.cloudflare_enabled)
+        self.assertFalse(config.tailscale_enabled)
+
+    @mock.patch.object(TerraformAppSetupCommand, '_get_advanced_security_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_tailscale_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_cloudflare_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_ngrok_config')
+    @mock.patch.object(TerraformAppSetupCommand, '_get_port_config', return_value=8900)
+    @mock.patch.object(
+        TerraformAppSetupCommand,
+        '_get_commands_config',
+        return_value=TerraformSetupConstants.SERVICE_COMMANDS,
+    )
+    def test_tailscale_enabled_populates_service_config(
+        self,
+        _mock_commands,
+        _mock_port,
+        mock_ngrok,
+        mock_cf,
+        mock_ts,
+        mock_security,
+    ):
+        mock_ngrok.return_value = {
+            'ngrok_enabled': False,
+            'ngrok_auth_token': '',
+            'ngrok_custom_domain': '',
+            'ngrok_public_url': '',
+        }
+        mock_cf.return_value = {
+            'cloudflare_enabled': False,
+            'cloudflare_tunnel_token': '',
+            'cloudflare_custom_domain': '',
+            'cloudflare_public_url': '',
+        }
+        mock_ts.return_value = {
+            'tailscale_enabled': True,
+            'tailscale_auth_key': 'tskey-auth-xxx',
+            'tailscale_advertise_tags': 'tag:commander-service',
+            'tailscale_public_url': '',
+        }
+        mock_security.return_value = {
+            'allowed_ip': '0.0.0.0/0,::/0',
+            'denied_ip': '',
+            'rate_limit': '',
+            'encryption_enabled': False,
+            'encryption_key': '',
+            'token_expiration': '',
+        }
+
+        cmd = TerraformAppSetupCommand()
+        config = cmd.get_service_configuration(params=mock.Mock())
+
+        self.assertTrue(config.tailscale_enabled)
+        self.assertEqual(config.tailscale_auth_key, 'tskey-auth-xxx')
+        self.assertEqual(config.tailscale_advertise_tags, 'tag:commander-service')
+        self.assertFalse(config.ngrok_enabled)
+        self.assertFalse(config.cloudflare_enabled)
 
 
 class TestTerraformSetupConstants(TestCase):
