@@ -6,6 +6,7 @@ Tests the new CLI arguments added to expose RBI settings:
 - URL Filtering: --allowed-urls, --allowed-resource-urls (multi-value)
 - Autofill: --autofill-targets (multi-value)
 - Clipboard: --allow-copy, --allow-paste (on/off/default)
+- Supply user / clipboard size: --allow-supply-user (on/off/default), --clipboard-buffer-size (256kb/1mb/10mb/50mb/default)
 - Audio: --disable-audio (on/off/default), --audio-channels, --audio-bit-depth, --audio-sample-rate
 
 Note: Tests require Python 3.8+ due to pydantic dependency in tunnel_and_connections imports.
@@ -224,6 +225,42 @@ class TestPamRbiEditArguments(unittest.TestCase):
         self.assertEqual(args.allow_url_navigation, 'on')
         self.assertEqual(args.allowed_urls, ['*.example.com'])
 
+    def test_allow_supply_user_choices(self):
+        for v in ('on', 'off', 'default'):
+            args = self.parser.parse_args(['--record', 'test-record', '--allow-supply-user', v])
+            self.assertEqual(args.allow_supply_user, v)
+
+    def test_allow_supply_user_invalid(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(['--record', 'test-record', '--allow-supply-user', 'invalid'])
+
+    def test_allow_supply_user_not_provided(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--key-events', 'on'])
+        self.assertIsNone(args.allow_supply_user)
+
+    def test_clipboard_buffer_size_allowed_values(self):
+        for v in ('256kb', '1mb', '10mb', '50mb'):
+            args = self.parser.parse_args(['--record', 'test-record', '--clipboard-buffer-size', v])
+            self.assertEqual(args.clipboard_buffer_size, v)
+
+    def test_clipboard_buffer_size_case_insensitive(self):
+        for v, expected in (('256KB', '256kb'), ('1Mb', '1mb'), ('10MB', '10mb'), ('DEFAULT', 'default')):
+            args = self.parser.parse_args(['--record', 'test-record', '--clipboard-buffer-size', v])
+            self.assertEqual(args.clipboard_buffer_size, expected)
+
+    def test_clipboard_buffer_size_default(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--clipboard-buffer-size', 'default'])
+        self.assertEqual(args.clipboard_buffer_size, 'default')
+
+    def test_clipboard_buffer_size_rejects_other_values(self):
+        for v in ('12345', '10485760', '0', '-1', '2mb', '100mb', 'abc'):
+            with self.assertRaises(SystemExit, msg=v):
+                self.parser.parse_args(['--record', 'test-record', '--clipboard-buffer-size', v])
+
+    def test_clipboard_buffer_size_not_provided(self):
+        args = self.parser.parse_args(['--record', 'test-record', '--key-events', 'on'])
+        self.assertIsNone(args.clipboard_buffer_size)
+
     def test_session_persistence_none(self):
         args = self.parser.parse_args(['--record', 'test-record', '--session-persistence', 'none'])
         self.assertEqual(args.session_persistence, 'none')
@@ -404,6 +441,61 @@ class TestPamRbiEditExecute(unittest.TestCase):
         self.pam_settings['connection']['sessionPersistence'] = None
         self.command.execute(self.mock_params, record='test-record', session_persistence='default')
         self.assertNotIn('sessionPersistence', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_supply_user_on_sets_true(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_supply_user='on')
+        self.assertIs(self.pam_settings['connection'].get('allowSupplyUser'), True)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_supply_user_off_sets_false(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', allow_supply_user='off')
+        self.assertIs(self.pam_settings['connection'].get('allowSupplyUser'), False)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_allow_supply_user_default_removes_field(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['allowSupplyUser'] = True
+        self.command.execute(self.mock_params, record='test-record', allow_supply_user='default')
+        self.assertNotIn('allowSupplyUser', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_buffer_size_sets_value(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.command.execute(self.mock_params, record='test-record', clipboard_buffer_size='10mb')
+        self.assertEqual(self.pam_settings['connection'].get('clipboardBufferSize'), 10485760)
+        mock_update.assert_called_once()
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_buffer_size_converts_all_names_to_bytes(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        for name, size in (('256KB', 262144), ('1MB', 1048576), ('10mb', 10485760), ('50Mb', 52428800)):
+            self.command.execute(self.mock_params, record='test-record', clipboard_buffer_size=name)
+            self.assertEqual(self.pam_settings['connection'].get('clipboardBufferSize'), size)
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_buffer_size_default_removes_field(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        self.pam_settings['connection']['clipboardBufferSize'] = 1048576
+        self.command.execute(self.mock_params, record='test-record', clipboard_buffer_size='default')
+        self.assertNotIn('clipboardBufferSize', self.pam_settings['connection'])
+
+    @mock.patch('keepercommander.commands.tunnel_and_connections.RecordMixin.resolve_single_record')
+    @mock.patch('keepercommander.commands.tunnel_and_connections.update_pam_record')
+    def test_clipboard_buffer_size_invalid_raises(self, mock_update, mock_resolve):
+        mock_resolve.return_value = self.mock_record
+        with self.assertRaises(CommandError):
+            self.command.execute(self.mock_params, record='test-record', clipboard_buffer_size='12345')
+        self.assertNotIn('clipboardBufferSize', self.pam_settings['connection'])
+        mock_update.assert_not_called()
 
 
 @mock_sync_decorator
