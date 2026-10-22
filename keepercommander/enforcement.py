@@ -15,6 +15,7 @@ import logging
 import getpass
 import re
 import threading
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict, Any, Set
 from urllib.parse import urlsplit
@@ -608,18 +609,27 @@ class PasswordComplexityEnforcer:
                     password, policy, allow_passphrase_fallback=False))
         return failures
 
-    @staticmethod
-    def _looks_like_passphrase(password, policy):   # type: (Any, Dict[str, Any]) -> bool
+    @classmethod
+    def _looks_like_passphrase(cls, password, policy):   # type: (Any, Dict[str, Any]) -> bool
         if not isinstance(password, str) or not password:
             return False
-        separators = PasswordComplexityEnforcer._normalize_passphrase_separators(policy)
+        separators = cls._normalize_passphrase_separators(policy)
         if not separators:
             return False
         separator = next((char for char in separators if char in password), None)
         if separator is None:
             return False
         words = password.split(separator)
-        return bool(words) and all(re.fullmatch(r'[A-Za-z]{3,}[0-9]?', word) for word in words)
+        return bool(words) and all(cls._passphrase_word_letters(word, allow_trailing_number=True)
+                                   for word in words)
+
+    @staticmethod
+    def _passphrase_word_letters(word, allow_trailing_number=False):
+        # type: (str, bool) -> Optional[str]
+        word = unicodedata.normalize('NFC', word)
+        if allow_trailing_number and word and word[-1] in '0123456789':
+            word = word[:-1]
+        return word if len(word) >= 3 and word.isalpha() else None
 
     @classmethod
     def _normalize_passphrase_separators(cls, policy):   # type: (Dict[str, Any]) -> Optional[str]
@@ -669,22 +679,25 @@ class PasswordComplexityEnforcer:
         capitalize = bool(policy.get('passphrase-capitalize', DEFAULT_PASSPHRASE_CAPITALIZE))
         append_number = bool(policy.get('passphrase-number', DEFAULT_PASSPHRASE_NUMBER))
 
-        if capitalize:
-            word_re = re.compile(r'^[A-Z][a-z]{2,}$')
-            if append_number:
-                first_re = re.compile(r'^[A-Z][a-z]{2,}[0-9]$')
-            else:
-                first_re = re.compile(r'^[A-Z][a-z]{2,}[0-9]?$')
-        else:
-            word_re = re.compile(r'^[A-Za-z]{3,}$')
-            if append_number:
-                first_re = re.compile(r'^[A-Za-z]{3,}[0-9]$')
-            else:
-                first_re = re.compile(r'^[A-Za-z]{3,}[0-9]?$')
-
         for index, word in enumerate(words):
-            pattern = first_re if index == 0 else word_re
-            if not pattern.match(word):
+            normalized_word = unicodedata.normalize('NFC', word)
+            is_first = index == 0
+            has_number = bool(normalized_word and normalized_word[-1] in '0123456789')
+            if is_first and append_number:
+                if not has_number:
+                    failures.append('First passphrase word must end with a digit (0-9).')
+                    break
+                normalized_word = normalized_word[:-1]
+            elif is_first and has_number:
+                normalized_word = normalized_word[:-1]
+
+            letters = cls._passphrase_word_letters(normalized_word)
+            correctly_capitalized = (
+                not capitalize or
+                (bool(letters) and letters[0].isupper()
+                 and all(char.islower() for char in letters[1:]))
+            )
+            if not letters or not correctly_capitalized:
                 if index == 0 and append_number:
                     failures.append('First passphrase word must end with a digit (0-9).')
                 elif capitalize:

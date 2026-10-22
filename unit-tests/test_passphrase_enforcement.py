@@ -257,6 +257,26 @@ class TestDomainPasswordPolicy(TestCase):
 
         self.assertEqual(failures, [])
 
+    def test_manual_passphrase_accepts_unicode_words(self):
+        for passphrase, capitalize in (
+                ('élan-café-über', False),
+                ('Élan-Café-Über', True)):
+            with self.subTest(passphrase=passphrase):
+                params = self._params([{
+                    'domains': ['example.com'],
+                    'passphrase-allow': True,
+                    'passphrase-length': 3,
+                    'passphrase-capitalize': capitalize,
+                    'passphrase-number': False,
+                    'passphrase-separator': '-',
+                }])
+
+                failures = PasswordComplexityEnforcer.validate_manual_passwords(
+                    params,
+                    self._record('https://example.com', passphrase))
+
+                self.assertEqual(failures, [])
+
     def test_manual_password_with_dollar_and_digit_is_not_mistaken_for_passphrase(self):
         params = self._params([{
             'domains': ['google.com'],
