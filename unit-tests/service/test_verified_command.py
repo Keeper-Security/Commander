@@ -1,4 +1,4 @@
-from unittest import TestCase
+from unittest import TestCase, mock
 from html import unescape
 import os
 import shutil
@@ -6,16 +6,14 @@ import tempfile
 
 import shlex
 
+from keepercommander.commands.base import normalize_output_param
 from keepercommander.service.util.verified_command import Verifycommand
 
 
 def _tokens(command: str):
     """Same normalization CommandExecutor uses before policy checks."""
     command = unescape(command)
-    try:
-        return shlex.split(command.replace('\\', '\\\\'))
-    except ValueError:
-        return command.split()
+    return Verifycommand.tokenize_service_command(command)
 
 
 class TestServiceModeCommandPolicy(TestCase):
@@ -107,6 +105,96 @@ class TestServiceModeCommandPolicy(TestCase):
             check(_tokens('record-add --title t -rt login c.file.doc=@/etc/passwd'))
         )
         self.assertIsNone(check(_tokens('record-add --title t -rt login login=user')))
+
+    def test_backslash_escaped_record_file_field_is_blocked(self):
+        """Escaped field names are checked after the same parsing as execution."""
+        check = Verifycommand.validate_service_mode_restrictions
+
+        # The HTTP JSON representation of this argument contains ``file\\=``;
+        # after JSON decoding there is one backslash, which shlex consumes and
+        # turns into the actual ``file=`` field name seen by record-add.
+        for field in (
+            r'file\=/etc/passwd',
+            r'f.file\=/etc/passwd',
+            r'fi\le=/etc/passwd',
+            r'f.fi\le.doc\=/etc/passwd',
+        ):
+            command = f'record-add -t f01 -rt login --self-destruct=1d {field}'
+            with self.subTest(field=field):
+                self.assertEqual(_tokens(command), shlex.split(command))
+                self.assertIsNotNone(check(_tokens(command)))
+
+        # The ordinary spelling remains blocked as before.
+        self.assertIsNotNone(check(_tokens(
+            'record-add -t f01 -rt login --self-destruct=1d file=/etc/passwd'
+        )))
+        self.assertIsNone(check(_tokens(
+            r'record-add -t f01 -rt login lo\gin=user'
+        )))
+
+    def test_escaped_host_path_options_are_blocked(self):
+        """Filesystem flags and parser-driven file inputs use execution tokens."""
+        check = Verifycommand.validate_service_mode_restrictions
+        ban = 'Local filesystem access'
+        for cmd in (
+            r'generate --out\put=/tmp/sm-write-canary.txt',
+            r'generate --out\put /tmp/sm-write-canary.txt',
+            r'import --for\mat=json /etc/passwd',
+            r'import --file\-cache=/tmp/sm-cache',
+            r'pam project import --filen\ame=/etc/passwd',
+            r'audit-report --form\at=pdf',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(ban, check(_tokens(cmd)))
+
+    def test_automator_local_file_access_is_blocked(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        host_fs_msg = 'Local filesystem access'
+        for cmd in (
+            'automator-certificate /etc/passwd',
+            'automator certificate /etc/passwd',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(host_fs_msg, check(_tokens(cmd)))
+
+    def test_automator_local_data_expansions_are_blocked(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        expansion_msg = 'Automator file and environment expansions'
+        for cmd in (
+            'automator edit TestAutomator --set debugUrl=${file:/etc/passwd}',
+            'automator edit TestAutomator --set key=${base64:/etc/shadow}',
+            'automator edit TestAutomator --set key=${env:AWS_SECRET_ACCESS_KEY}',
+            'automator edit TestAutomator --set key=${FiLe:/etc/passwd}',
+            'automator edit TestAutomator --set "debugUrl = ${file:/etc/passwd}"',
+            'automator edit TestAutomator --set "debugUrl= ${file:/etc/passwd}"',
+            'automator edit TestAutomator --set "debugUrl=${file:/etc/passwd} "',
+            'automator edit TestAutomator --set="debugUrl = ${base64:/etc/shadow}"',
+            'automator edit TestAutomator --se "debugUrl = ${file:/etc/passwd}"',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertIn(expansion_msg, check(_tokens(cmd)))
+
+        # Ordinary Automator edits remain usable through Service Mode.
+        self.assertIsNone(check(_tokens(
+            'automator edit TestAutomator --set debugUrl=https://example.invalid'
+        )))
+        # The expansion syntax is only interpreted for --set values, not URL.
+        self.assertIsNone(check(_tokens(
+            'automator edit TestAutomator --url=${file:/tmp/canary.txt}'
+        )))
+
+    def test_quoted_backslash_path_tokens_match_executor(self):
+        # The CLI normalizes --output before shlex on Windows; Service Mode
+        # must apply the same sequence and keep the path as one argument.
+        path = r'C:\service\files\payload.txt'
+        command = f'generate --output "{path}"'
+        with mock.patch('sys.platform', 'win32'):
+            expected_tokens = shlex.split(normalize_output_param(command))
+            actual_tokens = Verifycommand.tokenize_service_command(command)
+
+        self.assertEqual(actual_tokens, expected_tokens)
+        self.assertEqual(actual_tokens[-1], r'C:/service/files/payload.txt')
+        self.assertEqual(len(actual_tokens), 3)
 
     def test_host_filesystem_commands_blocked(self):
         check = Verifycommand.validate_service_mode_restrictions
@@ -221,16 +309,29 @@ class TestServiceModeCommandPolicy(TestCase):
         temp_path = os.path.join(request_temp_dir, 'service_filedata_test.json')
 
         self.assertIsNone(
-            check(_tokens(f'pam project import --filename={temp_path}'), request_temp_dir)
+            check(
+                _tokens(f'pam project import --filename={shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
         )
-        self.assertIsNone(check(_tokens(f'pam project import -f {temp_path}'), request_temp_dir))
-        self.assertIsNone(check(_tokens(f'import --format=json {temp_path}'), request_temp_dir))
         self.assertIsNone(
-            check(_tokens(f'enterprise-push {temp_path} --email user@example.com'), request_temp_dir)
+            check(_tokens(f'pam project import -f {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(_tokens(f'import --format=json {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(
+                _tokens(f'enterprise-push {shlex.quote(temp_path)} --email user@example.com'),
+                request_temp_dir,
+            )
         )
         # PAM --config is a vault UID, not a host path
         self.assertIsNone(
-            check(_tokens('pam project extend --config=SOME_UID -f ' + temp_path), request_temp_dir)
+            check(
+                _tokens(f'pam project extend --config=SOME_UID -f {shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
         )
 
     def test_command_aliases_do_not_bypass_host_path_checks(self):
@@ -254,8 +355,15 @@ class TestServiceModeCommandPolicy(TestCase):
         self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
         temp_path = os.path.join(request_temp_dir, 'service_filedata_alias_test.json')
         self.assertIsNone(check(_tokens('gen --output stdout')))
-        self.assertIsNone(check(_tokens(f'pam p i -f {temp_path}'), request_temp_dir))
-        self.assertIsNone(check(_tokens(f'pam p e --filename={temp_path}'), request_temp_dir))
+        self.assertIsNone(
+            check(_tokens(f'pam p i -f {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+        self.assertIsNone(
+            check(
+                _tokens(f'pam p e --filename={shlex.quote(temp_path)}'),
+                request_temp_dir,
+            )
+        )
 
     def test_non_request_temp_path_still_rejected(self):
         """A path under a DIFFERENT request's temp dir is not automatically safe,
@@ -270,11 +378,15 @@ class TestServiceModeCommandPolicy(TestCase):
         other_path = os.path.join(other_request_dir, 'someone_elses_file.json')
 
         self.assertIn(
-            ban, check(_tokens(f'pam project import -f {other_path}'), request_temp_dir)
+            ban,
+            check(
+                _tokens(f'pam project import -f {shlex.quote(other_path)}'),
+                request_temp_dir,
+            ),
         )
         # No request_temp_dir at all (e.g. a request with no FILEDATA) trusts nothing.
         self.assertIn(
-            ban, check(_tokens(f'pam project import -f {other_path}'))
+            ban, check(_tokens(f'pam project import -f {shlex.quote(other_path)}'))
         )
 
     def test_flag_abbreviations_do_not_bypass_host_path_checks(self):
@@ -321,7 +433,22 @@ class TestServiceModeCommandPolicy(TestCase):
         request_temp_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
         temp_path = os.path.join(request_temp_dir, 'import_data.json')
-        self.assertIsNone(check(_tokens(f'import --format=json {temp_path}'), request_temp_dir))
+        self.assertIsNone(
+            check(_tokens(f'import --format=json {shlex.quote(temp_path)}'), request_temp_dir)
+        )
+
+    def test_windows_output_normalization_is_checked_as_a_file_path(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        normalized_cases = []
+        with mock.patch('sys.platform', 'win32'):
+            for output_value in Verifycommand._NON_PATH_OUTPUT_VALUES:
+                command = rf'public-api-key list --format json --output \{output_value}'
+                normalized_cases.append((output_value, _tokens(command)))
+
+        for output_value, tokens in normalized_cases:
+            with self.subTest(output_value=output_value):
+                self.assertEqual(tokens[-1], f'/{output_value}')
+                self.assertIn('Local filesystem access', check(tokens))
 
     def test_filedata_substitution_happens_before_validation(self):
         """process_file_data must run before validate_service_mode_restrictions,
@@ -336,12 +463,138 @@ class TestServiceModeCommandPolicy(TestCase):
 
         self.assertTrue(temp_files, 'expected a temp file to be created')
         self.assertNotIn('FILEDATA', processed_command)
+        self.assertTrue(any(token.endswith(temp_files[0]) for token in _tokens(processed_command)))
 
         request_temp_dir = os.path.dirname(temp_files[0])
         tokens = _tokens(processed_command)
         self.assertIsNone(
             Verifycommand.validate_service_mode_restrictions(tokens, request_temp_dir)
         )
+
+    def test_filedata_positional_placeholder_is_shell_quoted(self):
+        """A generated path remains one executor token, including with spaces."""
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json FILEDATA'
+        request_temp_dir = tempfile.mkdtemp(prefix='service mode ')
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=request_temp_dir):
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_files[0]],
+        )
+
+    def test_filedata_filename_placeholder_is_shell_quoted(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'pam project import --filename=FILEDATA'
+        request_temp_dir = tempfile.mkdtemp(prefix='service mode ')
+        self.addCleanup(shutil.rmtree, request_temp_dir, ignore_errors=True)
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=request_temp_dir):
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        tokens = shlex.split(processed_command)
+        self.assertEqual(tokens[-1], f'--filename={temp_files[0]}')
+        self.assertIsNone(
+            Verifycommand.validate_service_mode_restrictions(
+                tokens, request_temp_dir
+            )
+        )
+
+    def test_filedata_windows_path_survives_executor_tokenization(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        from unittest.mock import MagicMock, patch
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json FILEDATA'
+        temp_file_path = r'C:\service mode\payload.json'
+        temp_file = MagicMock()
+        temp_file.name = temp_file_path
+        with patch(
+                'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                return_value=r'C:\service mode'), patch(
+                'keepercommander.service.util.request_validation.tempfile.NamedTemporaryFile') as make_temp_file:
+            make_temp_file.return_value.__enter__.return_value = temp_file
+            processed_command, temp_files = RequestValidator.process_file_data(
+                request_data, command
+            )
+
+        self.assertEqual(temp_files, [temp_file_path])
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_file_path],
+        )
+
+    def test_filedata_quoted_positional_placeholder_is_replaced(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'import --format=json "FILEDATA"'
+        processed_command, temp_files = RequestValidator.process_file_data(
+            request_data, command
+        )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        self.assertEqual(
+            shlex.split(processed_command),
+            ['import', '--format=json', temp_files[0]],
+        )
+
+    def test_quoted_filedata_placeholders_support_apostrophes_in_path(self):
+        from keepercommander.service.util.request_validation import RequestValidator
+        request_data = {'filedata': {'some': 'data'}}
+        commands = (
+            "import --format=json 'FILEDATA'",
+            "pam project import --filename='FILEDATA'",
+        )
+
+        for command in commands:
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as parent_dir:
+                request_temp_dir = os.path.join(parent_dir, "service user's files")
+                os.mkdir(request_temp_dir)
+                with mock.patch(
+                        'keepercommander.service.util.request_validation.tempfile.mkdtemp',
+                        return_value=request_temp_dir):
+                    processed_command, temp_files = RequestValidator.process_file_data(
+                        request_data, command
+                    )
+                self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+                expected_last_token = (
+                    f'--filename={temp_files[0]}'
+                    if '--filename' in command else temp_files[0]
+                )
+                self.assertEqual(_tokens(processed_command)[-1], expected_last_token)
+
+    def test_mismatched_filedata_quotes_remain_invalid_command_syntax(self):
+        """Malformed placeholder quoting must fail closed, not be repaired."""
+        from keepercommander.service.util.request_validation import RequestValidator
+
+        request_data = {'filedata': {'some': 'data'}}
+        command = 'pam project import --filename="FILEDATA\''
+        processed_command, temp_files = RequestValidator.process_file_data(
+            request_data, command
+        )
+        self.addCleanup(RequestValidator.cleanup_temp_files, temp_files)
+
+        with self.assertRaises(ValueError):
+            Verifycommand.tokenize_service_command(processed_command)
 
     def test_option_values_yields_dash_leading_values(self):
         is_file = Verifycommand._option_values
