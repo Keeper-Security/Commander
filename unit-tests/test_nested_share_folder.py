@@ -136,6 +136,45 @@ class TestCommandHelpers(TestCase):
 
         self.assertIsNone(resolve_folder_identifier(params, 'Clients/Acme'))
 
+    def test_folder_path_does_not_use_unowned_nsf_folder_cache(self):
+        from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
+        from keepercommander.subfolder import (
+            NestedShareFolderNode, RootFolderNode,
+        )
+
+        parent_uid, parent_obj = _make_folder(name='Clients')
+        child_uid, child_obj = _make_folder(name='Acme', parent_uid=parent_uid)
+        parent_obj['owner_username'] = 'attacker@example.com'
+        child_obj['owner_username'] = 'attacker@example.com'
+
+        root = RootFolderNode()
+        parent = NestedShareFolderNode()
+        parent.uid = parent_uid
+        parent.parent_uid = None
+        parent.name = 'Clients'
+        parent.subfolders = [child_uid]
+        child = NestedShareFolderNode()
+        child.uid = child_uid
+        child.parent_uid = parent_uid
+        child.name = 'Acme'
+        root.subfolders = [parent_uid]
+
+        params = _make_params(
+            user='victim@example.com',
+            root_folder=root,
+            current_folder='',
+            nested_share_folders={
+                parent_uid: parent_obj,
+                child_uid: child_obj,
+            },
+            folder_cache={
+                parent_uid: parent,
+                child_uid: child,
+            },
+        )
+
+        self.assertIsNone(resolve_folder_identifier(params, 'Clients/Acme'))
+
     def test_flat_folder_name_requires_current_account_ownership(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
 

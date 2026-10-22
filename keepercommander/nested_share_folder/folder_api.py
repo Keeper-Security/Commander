@@ -172,17 +172,18 @@ def resolve_folder_identifier(params, folder_identifier):
     # folder named "Clients/Acme" from shadowing the user's own Clients/Acme
     # hierarchy.
     if '/' in folder_identifier or '\\' in folder_identifier:
+        nsf_uid = _resolve_owned_nsf_path(params, folder_identifier)
+        if nsf_uid:
+            return nsf_uid
+
         folder_cache = getattr(params, 'folder_cache', {})
         if isinstance(folder_cache, dict) and folder_cache:
             rs = try_resolve_path(params, folder_identifier.replace('\\', '/'))
             if rs is not None:
                 folder, pattern = rs
-                if folder and not pattern:
+                if (folder and not pattern and
+                        _is_safe_path_folder(params, folder)):
                     return folder.uid
-
-        nsf_uid = _resolve_owned_nsf_path(params, folder_identifier)
-        if nsf_uid:
-            return nsf_uid
         return None
 
     # Flat-name matching is intentionally limited to folders owned by the
@@ -283,6 +284,32 @@ def _resolve_owned_nsf_path(params, folder_identifier):
         current = matches[0]
 
     return current
+
+
+def _is_safe_path_folder(params, folder):
+    """Return whether a legacy path result contains no unowned NSF folder."""
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    folder_cache = getattr(params, 'folder_cache', {})
+    visited = set()
+    current = folder
+
+    while current is not None:
+        folder_uid = getattr(current, 'uid', None)
+        if not folder_uid or folder_uid in visited:
+            break
+        visited.add(folder_uid)
+
+        if (folder_uid in nsf_folders and
+                not _is_current_account_folder_owner(
+                    params, nsf_folders[folder_uid])):
+            return False
+
+        parent_uid = getattr(current, 'parent_uid', None)
+        if not parent_uid or not isinstance(folder_cache, dict):
+            break
+        current = folder_cache.get(parent_uid)
+
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════
