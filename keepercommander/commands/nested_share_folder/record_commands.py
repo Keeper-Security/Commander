@@ -97,7 +97,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-add')
 
         self.warnings.clear()
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         notes = kwargs.get('notes')
         record_fields, add_attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-add')
@@ -107,6 +107,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             params, record_type, title, notes, record_fields)
         if self.abort_if_errors():
             return
+        self.apply_manual_password_policy_warnings(params, data)
         if self.warnings:
             for w in self.warnings:
                 logging.warning(w)
@@ -250,7 +251,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             raise CommandError('nsf-record-update', 'Record UID is required (use -r or --record)')
 
         self.warnings.clear()
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         record_type = kwargs.get('record_type')
         rt_fields = None
@@ -279,6 +280,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                 for identifier in record_uids:
                     self.warnings.clear()
                     self.errors.clear()
+                    self._manual_password_values = []
+                    self._generated_password_values = []
                     record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
                     if not record_uid:
                         raise CommandError('nsf-record-update',
@@ -294,6 +297,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
 
                     if self.abort_if_errors():
                         continue
+
+                    self.apply_manual_password_policy_warnings(params, record)
 
                     if self.warnings:
                         for w in self.warnings:

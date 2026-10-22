@@ -17,6 +17,7 @@ import re
 import threading
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict, Any, Set
+from urllib.parse import urlsplit
 
 from . import api, utils, crypto
 from .proto import APIRequest_pb2, record_pb2
@@ -65,6 +66,9 @@ def _coerce_int(value):
             except ValueError:
                 return None
     return None
+
+
+_DOMAIN_URL_UNSET = object()
 
 
 class MasterPasswordReentryEnforcer:
@@ -412,22 +416,210 @@ class PasswordComplexityEnforcer:
     )
 
     @classmethod
-    def get_policy(cls, params):   # type: (KeeperParams) -> Optional[Dict[str, Any]]
+    def get_policies(cls, params):   # type: (KeeperParams) -> List[Dict[str, Any]]
         if not params or not params.enforcements:
-            return None
+            return []
         raw = _find_enforcement_value(params.enforcements, cls._POLICY_KEY)
         if raw is None:
-            return None
+            return []
         try:
             rules = json.loads(raw) if isinstance(raw, str) else raw
         except (json.JSONDecodeError, TypeError):
             logging.debug('Failed to parse %s enforcement', cls._POLICY_KEY)
-            return None
-        if isinstance(rules, list) and rules and isinstance(rules[0], dict):
-            return rules[0]
+            return []
+        if isinstance(rules, list):
+            return [x for x in rules if isinstance(x, dict)]
         if isinstance(rules, dict):
-            return rules
+            return [rules]
+        return []
+
+    @classmethod
+    def _default_policy(cls, policies):   # type: (List[Dict[str, Any]]) -> Optional[Dict[str, Any]]
+        if not policies:
+            return None
+        for policy in policies:
+            domains = policy.get('domains')
+            if isinstance(domains, list) and any(
+                    isinstance(x, str) and x.strip().lower() == '_default_' for x in domains):
+                return policy
+        for policy in policies:
+            if not isinstance(policy.get('domains'), list):
+                return policy
         return None
+
+    @classmethod
+    def get_policy(cls, params):   # type: (KeeperParams) -> Optional[Dict[str, Any]]
+        """Return the default password-generator policy."""
+        return cls._default_policy(cls.get_policies(params))
+
+    @classmethod
+    def _normalize_domain(cls, value):   # type: (Any) -> Optional[str]
+        if not isinstance(value, str):
+            return None
+        value = value.strip().lower().rstrip('.')
+        if not value or value == '_default_':
+            return None
+        if value.startswith('*.'):
+            value = value[2:]
+        try:
+            candidate = value if '://' in value else '//' + value
+            host = urlsplit(candidate).hostname
+        except ValueError:
+            return None
+        if not host:
+            return None
+        try:
+            return host.encode('idna').decode('ascii').lower().rstrip('.')
+        except (UnicodeError, ValueError):
+            return None
+
+    @classmethod
+    def _url_values(cls, source):   # type: (Any) -> List[Any]
+        urls = []
+        if source is None:
+            return urls
+
+        for attr in ('link', 'login_url', 'url'):
+            value = getattr(source, attr, None)
+            if value:
+                urls.append(value)
+
+        if hasattr(source, 'fields') or hasattr(source, 'custom'):
+            for field in itertools.chain(
+                    getattr(source, 'fields', None) or [],
+                    getattr(source, 'custom', None) or []):
+                if getattr(field, 'type', None) == 'url':
+                    value = getattr(field, 'value', None)
+                    urls.extend(value if isinstance(value, list) else [value])
+            return urls
+
+        data = source
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                return urls
+        if isinstance(data, dict):
+            for key in ('url', 'link', 'login_url'):
+                if data.get(key):
+                    urls.append(data[key])
+            for field in itertools.chain(data.get('fields') or [], data.get('custom') or []):
+                if isinstance(field, dict) and field.get('type') == 'url':
+                    value = field.get('value')
+                    urls.extend(value if isinstance(value, list) else [value])
+        return urls
+
+    @classmethod
+    def _source_domains(cls, source, url_override=_DOMAIN_URL_UNSET):   # type: (Any, Any) -> Set[str]
+        urls = cls._url_values(source)
+        if url_override is not _DOMAIN_URL_UNSET:
+            urls = [url_override] if url_override else []
+        domains = set()
+        for value in urls:
+            if isinstance(value, dict):
+                value = value.get('url') or value.get('hostName')
+            domain = cls._normalize_domain(value)
+            if domain:
+                domains.add(domain)
+        return domains
+
+    @classmethod
+    def _domain_policy_for_source(cls, policies, source, url_override=_DOMAIN_URL_UNSET):
+        # type: (List[Dict[str, Any]], Any, Any) -> Optional[Dict[str, Any]]
+        source_domains = cls._source_domains(source, url_override)
+        if not source_domains:
+            return None
+
+        matches = []
+        for policy in policies or []:
+            domains = policy.get('domains')
+            if not isinstance(domains, list):
+                continue
+            normalized_domains = [
+                cls._normalize_domain(domain)
+                for domain in domains
+                if isinstance(domain, str) and domain.strip().lower() != '_default_'
+            ]
+            normalized_domains = [x for x in normalized_domains if x]
+            matched_domains = [
+                configured for configured in normalized_domains
+                if any(host == configured or host.endswith('.' + configured)
+                       for host in source_domains)
+            ]
+            if matched_domains:
+                matches.append((max(len(x) for x in matched_domains), policy))
+        if not matches:
+            return None
+        return max(matches, key=lambda x: x[0])[1]
+
+    @classmethod
+    def get_generator_policy(cls, params, source=None, url_override=_DOMAIN_URL_UNSET):
+        # type: (KeeperParams, Any, Any) -> Optional[Dict[str, Any]]
+        policies = cls.get_policies(params)
+        default_policy = cls._default_policy(policies)
+        domain_policy = cls._domain_policy_for_source(policies, source, url_override)
+        if not domain_policy:
+            return default_policy
+        merged = dict(default_policy or {})
+        merged.update(domain_policy)
+        return merged
+
+    @classmethod
+    def get_domain_specific_policy(cls, params, source, url_override=_DOMAIN_URL_UNSET):
+        # type: (KeeperParams, Any, Any) -> Optional[Dict[str, Any]]
+        """Return a matching explicit domain policy, excluding the generator default."""
+        return cls._domain_policy_for_source(
+            cls.get_policies(params), source, url_override)
+
+    @classmethod
+    def get_password_values(cls, source):   # type: (Any) -> List[str]
+        return cls._extract_passwords(source)
+
+    @classmethod
+    def validate_generated_password_with_policy(cls, password, policy, algorithm):
+        # type: (str, Optional[Dict[str, Any]], str) -> List[str]
+        if not policy or not password:
+            return []
+        if algorithm == 'passphrase' and policy.get('passphrase-allow') is not False:
+            return cls.validate_passphrase(password, policy)
+        return cls.validate_password(password, policy, allow_passphrase_fallback=False)
+
+    @classmethod
+    def validate_manual_passwords(cls, params, source, passwords=None):
+        # type: (KeeperParams, Any, Optional[List[str]]) -> List[str]
+        """Validate explicitly entered password values against matching domain rules only."""
+        policy = cls.get_domain_specific_policy(params, source)
+        if not policy:
+            return []
+        values = passwords if passwords is not None else cls._extract_passwords(source)
+        failures = []
+        passphrase_policy_present = any(
+            key.startswith('passphrase-') for key in policy)
+        for password in values:
+            is_passphrase = (
+                passphrase_policy_present
+                and policy.get('passphrase-allow') is not False
+                and cls._looks_like_passphrase(password, policy)
+            )
+            if is_passphrase:
+                failures.extend(cls.validate_passphrase(password, policy))
+            else:
+                failures.extend(cls.validate_password(
+                    password, policy, allow_passphrase_fallback=False))
+        return failures
+
+    @staticmethod
+    def _looks_like_passphrase(password, policy):   # type: (Any, Dict[str, Any]) -> bool
+        if not isinstance(password, str) or not password:
+            return False
+        separators = PasswordComplexityEnforcer._normalize_passphrase_separators(policy)
+        if not separators:
+            return False
+        separator = next((char for char in separators if char in password), None)
+        if separator is None:
+            return False
+        words = password.split(separator)
+        return bool(words) and all(re.fullmatch(r'[A-Za-z]{3,}[0-9]?', word) for word in words)
 
     @classmethod
     def _normalize_passphrase_separators(cls, policy):   # type: (Dict[str, Any]) -> Optional[str]
