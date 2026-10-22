@@ -678,7 +678,8 @@ def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[
             'enterprise_user_id': user_id,
         } for team_uid, user_id in users_to_remove))
     if rqs:
-        rs = api.execute_batch(params, rqs)
+        from ..commands.helpers.enterprise import execute_batch_confirming_ksm_cascade
+        rs = execute_batch_confirming_ksm_cascade(params, rqs)
         api.query_enterprise(params)
         if rs:
             users_added = 0

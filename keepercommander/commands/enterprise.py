@@ -40,7 +40,8 @@ from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
     report_output_parser
 from .enterprise_common import EnterpriseCommand
-from .helpers.enterprise import is_valid_name_length, simplify_batch_responses
+from .helpers.enterprise import execute_batch_confirming_ksm_cascade, is_valid_name_length, \
+    simplify_batch_responses
 from .automator import AutomatorListCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -150,6 +151,9 @@ enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
 enterprise_node_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
+enterprise_node_parser.add_argument('--force-remove-share', dest='force_remove_share', action='store_true',
+                         help='confirm that removing team access may lock or delete Keeper Secrets Manager '
+                              'devices (no prompt)')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -167,6 +171,9 @@ enterprise_node_parser.exit = suppress_exit
 
 enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
+enterprise_user_parser.add_argument('--force-remove-share', dest='force_remove_share', action='store_true',
+                         help='confirm that removing team access may lock or delete Keeper Secrets Manager '
+                              'devices (no prompt)')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
 enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true',
@@ -231,6 +238,9 @@ enterprise_role_parser.exit = suppress_exit
 
 enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
+enterprise_team_parser.add_argument('--force-remove-share', dest='force_remove_share', action='store_true',
+                         help='confirm that removing team access may lock or delete Keeper Secrets Manager '
+                              'devices (no prompt)')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
 enterprise_team_parser.add_argument('--approve', dest='approve', action='store_true', help='approve queued team')
@@ -1598,7 +1608,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         request_batch.append(rq)
 
         if request_batch:
-            rss = api.execute_batch(params, request_batch)
+            rss = execute_batch_confirming_ksm_cascade(
+                params, request_batch, kwargs.get('force_remove_share'))
             simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')
@@ -2068,7 +2079,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
         results = None
         if request_batch:
-            results = api.execute_batch(params, request_batch)
+            results = execute_batch_confirming_ksm_cascade(
+                params, request_batch, kwargs.get('force_remove_share'))
             simplify_batch_responses(results)
             for rq, rs in zip(request_batch, results):
                 command = rq.get('command')
@@ -3816,7 +3828,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     request_batch.append(rq)
 
         if request_batch:
-            rss = api.execute_batch(params, request_batch)
+            rss = execute_batch_confirming_ksm_cascade(
+                params, request_batch, kwargs.get('force_remove_share'))
             simplify_batch_responses(rss)
             for rq, rs in zip(request_batch, rss):
                 command = rq.get('command')

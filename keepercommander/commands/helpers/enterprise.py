@@ -52,6 +52,60 @@ def simplify_batch_responses(responses):
             rs['message'] = simplify_backend_message(rs['message'])
 
 
+KSM_CASCADE_REQUIRED = 'KSM_CASCADE_REQUIRED'
+# Server commands that remove a user's team-based access and can therefore lock or delete the user's
+# Keeper Secrets Manager devices.
+KSM_CASCADE_COMMANDS = {'team_delete', 'team_enterprise_user_remove', 'team_enterprise_user_update'}
+
+
+def _is_ksm_cascade_refusal(rq, rs):
+    return (isinstance(rs, dict) and rq.get('command') in KSM_CASCADE_COMMANDS
+            and rs.get('result') != 'success' and rs.get('result_code') == 'access_denied'
+            and rs.get('additional_info') == KSM_CASCADE_REQUIRED)
+
+
+def execute_batch_confirming_ksm_cascade(params, request_batch, force=False):
+    """Run an enterprise batch; confirm and retry requests the server refuses with KSM_CASCADE_REQUIRED.
+
+    Removing a user from a team, deleting a team, or hiding shared folders from a team member can lock
+    (or, if the user loses their last route to the application, delete) the user's Secrets Manager
+    devices. The server refuses such a request unless `force_remove_share` is set. With `force` the
+    flag is sent up front. Otherwise the user is asked once, and only the refused requests are retried
+    with the flag. If the user declines, the refused responses get a message explaining how to confirm.
+    """
+    from ... import api
+    from ..base import user_choice
+
+    if force:
+        for rq in request_batch:
+            if rq.get('command') in KSM_CASCADE_COMMANDS:
+                rq['force_remove_share'] = True
+
+    rss = api.execute_batch(params, request_batch)
+    if not rss:
+        return rss
+
+    refused = [i for i, (rq, rs) in enumerate(zip(request_batch, rss)) if _is_ksm_cascade_refusal(rq, rs)]
+    if not refused:
+        return rss
+
+    prompt = (
+        f'{len(refused)} change(s) remove access that Keeper Secrets Manager devices depend on. '
+        'Affected devices will be locked (they can be unlocked later), or deleted if the user loses their '
+        'last route to the application (this cannot be undone).\nProceed?')
+    if user_choice(prompt, 'yn', 'n').lower() in ('y', 'yes'):
+        for i in refused:
+            request_batch[i]['force_remove_share'] = True
+        retried = api.execute_batch(params, [request_batch[i] for i in refused])
+        for i, rs in zip(refused, retried or []):
+            rss[i] = rs
+    else:
+        for i in refused:
+            rss[i]['message'] = ('Not done: it would lock or delete Keeper Secrets Manager devices. '
+                                 'Re-run with --force-remove-share to confirm.')
+    return rss
+
+
 def is_addon_enabled(params, addon_name):    # type: (KeeperParams, Dict[str, ]) -> Boolean
     def is_enabled(addon):
         return addon.get('enabled') or addon.get('included_in_product')
