@@ -2,7 +2,6 @@ import argparse
 import contextlib
 import io
 import os
-import shlex
 
 
 class Verifycommand:
@@ -99,16 +98,20 @@ class Verifycommand:
     _HOST_FS_MSG = (
         'Local filesystem access is not permitted through Service Mode'
     )
+    _AUTOMATOR_DATA_EXPANSION_MSG = (
+        'Automator file and environment expansions are not permitted through Service Mode'
+    )
 
     @staticmethod
     def validate_service_mode_restrictions(command_tokens, request_temp_dir=None):
-        """Run Service Mode bans on executor tokens (shlex); error string or None."""
+        """Run Service Mode bans over the exact tokens used by the command parser."""
         if not command_tokens:
             return None
 
         for validator in (
             Verifycommand.validate_service_mode_double_dash,
             Verifycommand.validate_service_mode_env_var_expansion_command,
+            Verifycommand.validate_service_mode_automator_file_access_command,
             Verifycommand.validate_service_mode_legacy_command,
             Verifycommand.validate_nsf_convert_command,
             Verifycommand.validate_service_mode_pam_tunnel_command,
@@ -127,9 +130,10 @@ class Verifycommand:
         return None
 
     @staticmethod
-    def tokenize_service_command(command):
-        """Tokenize a command using the executor's backslash handling."""
-        return shlex.split(command.replace('\\', '\\\\'))
+    def tokenize_service_command(command, envvars=None):
+        """Tokenize with the same argument transforms used by Command.execute_args."""
+        from ...commands.base import tokenize_command_args
+        return tokenize_command_args(command, envvars)
 
     @staticmethod
     def validate_nsf_convert_command(command_tokens, request_temp_dir=None):
@@ -184,6 +188,62 @@ class Verifycommand:
         from ...commands.base import parameter_pattern
         if any(parameter_pattern.search(tok) for tok in command_tokens):
             return Verifycommand._ENV_VAR_EXPANSION_MSG
+        return None
+
+    @staticmethod
+    def validate_service_mode_automator_file_access_command(command_tokens, request_temp_dir=None):
+        """Block Automator operations that read local files or environment values."""
+        if not command_tokens:
+            return None
+
+        command = command_tokens[0].lower()
+        if command == 'automator-certificate':
+            return Verifycommand._HOST_FS_MSG
+
+        if command != 'automator' or len(command_tokens) < 2:
+            return None
+
+        action = command_tokens[1].lower()
+        if action == 'certificate':
+            # This is the registered group form in current Commander releases.
+            return Verifycommand._HOST_FS_MSG
+
+        if action != 'edit':
+            return None
+
+        # --set supports both ``--set KEY=VALUE`` and ``--set=KEY=VALUE``;
+        # argparse also accepts the unambiguous ``--se`` abbreviation.
+        # Extract only those settings instead of matching unrelated Automator
+        # arguments such as --url.
+        settings = []
+        i = 2
+        while i < len(command_tokens):
+            token = command_tokens[i]
+            option, separator, inline_value = token.partition('=')
+            if option in ('--set', '--se'):
+                if separator:
+                    settings.append(inline_value)
+                elif i + 1 < len(command_tokens):
+                    settings.append(command_tokens[i + 1])
+                    i += 1
+            i += 1
+
+        for setting in settings:
+            separator = setting.find('=')
+            if separator <= 1:
+                # AutomatorEditCommand uses the same pos > 1 condition and
+                # returns before resolving expansions for malformed settings.
+                continue
+            value = setting[separator + 1:].strip()
+            if not (value.startswith('${') and value.endswith('}')):
+                continue
+            expansion_type, colon, source = value[2:-1].partition(':')
+            if (
+                    colon
+                    and expansion_type.lower() in ('file', 'base64', 'env')
+                    and source
+                    and '}' not in source):
+                return Verifycommand._AUTOMATOR_DATA_EXPANSION_MSG
         return None
 
     @staticmethod
@@ -254,7 +314,7 @@ class Verifycommand:
 
     @staticmethod
     def _is_record_file_attachment_arg(token):
-        """True when parse_field would treat this token as a file attachment field."""
+        """True when parse_field would treat this executor token as a file field."""
         if not token or '=' not in token:
             return False
         # Mirror RecordEditMixin.parse_field field-name normalization.
