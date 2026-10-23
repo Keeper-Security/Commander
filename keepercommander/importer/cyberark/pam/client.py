@@ -1095,28 +1095,24 @@ class CyberArkPVWAClient:
 
 
     @staticmethod
-    def _resolve_next_link(base_url: str, next_link: str) -> Optional[str]:
+    def _resolve_next_link(self, next_link: str) -> Optional[str]:
         try:
-            base = urlparse(base_url)
-            parsed_link = urlparse(next_link)
-            if parsed_link.scheme or parsed_link.netloc or next_link.startswith(("?", "#")):
-                resolved = urljoin(base_url, next_link)
-            else:
-                origin_root = f"{base.scheme}://{base.netloc}/"
-                resolved = urljoin(origin_root, next_link)
-            next_page = urlparse(resolved)
+            base = f"https://{self.pvwa_host}/PasswordVault/"
+            resolved = urljoin(base, next_link)
+            base_host = urlparse(base).netloc
+            next_host = urlparse(resolved).netloc
         except ValueError:
             logging.warning('Invalid nextLink URL — stopping pagination')
             return None
         if (
-            not next_page.netloc
-            or next_page.scheme.lower() != base.scheme.lower()
-            or next_page.netloc.lower() != base.netloc.lower()
+            not next_host.netloc
+            or next_host.scheme.lower() != base.scheme.lower()
+            or next_host.netloc.lower() != base.netloc.lower()
         ):
             logging.warning(
-                'nextLink points to a different origin (%s vs %s) — '
+                'nextLink points to a different host (%s vs %s) — '
                 'stopping pagination to avoid token leakage',
-                next_page.netloc, base.netloc,
+                next_host, base_host,
             )
             return None
         return resolved
