@@ -33,7 +33,8 @@ from ..params import KeeperParams
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..proto import folder_pb2
 from ..record import Record
-from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, try_resolve_path, \
+from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, \
+    FolderPathAmbiguousError, try_resolve_path, \
     find_folders, get_contained_record_uids, get_contained_folder_uids
 
 
@@ -408,13 +409,20 @@ class FolderCdCommand(Command):
             if folder_name in params.folder_cache or folder_name in params.nested_share_folders:
                 params.current_folder = folder_name
             else:
-                rs = try_resolve_path(params, folder_name)
+                try:
+                    rs = try_resolve_path(
+                        params, folder_name, raise_on_ambiguous=True)
+                except FolderPathAmbiguousError as e:
+                    raise CommandError('cd', str(e))
                 if rs is not None:
                     folder, pattern = rs
                     if len(pattern) == 0:
                         params.current_folder = folder.uid
                     else:
                         raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
+                else:
+                    raise CommandError(
+                        'cd', 'Folder {0} not found or is ambiguous'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -483,7 +491,11 @@ class FolderRenameCommand(Command):
         if folder_name in params.folder_cache:
             folder_uid = folder_name
         else:
-            rs = try_resolve_path(params, folder_name)
+            try:
+                rs = try_resolve_path(
+                    params, folder_name, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('rndir', str(e))
             if rs is not None:
                 folder, pattern = rs
                 if len(pattern) == 0:
@@ -555,7 +567,11 @@ class FolderMakeCommand(Command):
 
         name = kwargs['folder'] if 'folder' in kwargs else None
         if name:
-            rs = try_resolve_path(params, name)
+            try:
+                rs = try_resolve_path(
+                    params, name, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mkdir', str(e))
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
@@ -833,7 +849,11 @@ class FolderMoveCommand(Command):
         if dst_path in params.folder_cache:
             dst_folder = params.folder_cache[dst_path]
         else:
-            dst = try_resolve_path(params, dst_path)
+            try:
+                dst = try_resolve_path(
+                    params, dst_path, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mv', str(e))
             if dst is None:
                 raise CommandError('mv', 'Destination path should be existing folder')
             dst_folder, name = dst
@@ -867,7 +887,11 @@ class FolderMoveCommand(Command):
                 raise CommandError('mv', 'Source and Destination folders are the same')
             source.append((src_folder, None))
         else:
-            src = try_resolve_path(params, src_path)
+            try:
+                src = try_resolve_path(
+                    params, src_path, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mv', str(e))
             if src is None:
                 raise CommandError('mv', 'Source path should be existing record or folder')
 

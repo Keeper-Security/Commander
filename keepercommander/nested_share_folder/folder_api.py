@@ -151,27 +151,165 @@ def folder_access_update_v3(params, folder_access_adds=None,
 # ══════════════════════════════════════════════════════════════════════════
 
 def resolve_folder_identifier(params, folder_identifier):
-    if folder_identifier in getattr(params, 'nested_share_folders', {}):
+    if not isinstance(folder_identifier, str):
+        return None
+
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    subfolder_cache = getattr(params, 'subfolder_cache', {})
+    folder_cache = getattr(params, 'folder_cache', {})
+
+    # UIDs are unambiguous and are the supported way to select a shared-in
+    # folder whose name is not owned by the current account.
+    if folder_identifier in nsf_folders:
         return folder_identifier
-    if folder_identifier in getattr(params, 'subfolder_cache', {}):
+    if folder_identifier in subfolder_cache:
         return folder_identifier
-    if folder_identifier in getattr(params, 'folder_cache', {}):
+    if folder_identifier in folder_cache:
         return folder_identifier
 
-    matching = [uid for uid, obj in getattr(params, 'nested_share_folders', {}).items()
-                if obj.get('name', '').lower() == folder_identifier.lower()]
+    # A slash makes the identifier a path, not a folder name. Resolve it as a
+    # path before considering any flat-name match. This prevents a shared-in
+    # folder named "Clients/Acme" from shadowing the user's own Clients/Acme
+    # hierarchy.
+    if '/' in folder_identifier or '\\' in folder_identifier:
+        nsf_uid = _resolve_owned_nsf_path(params, folder_identifier)
+        if nsf_uid:
+            return nsf_uid
+
+        folder_cache = getattr(params, 'folder_cache', {})
+        if isinstance(folder_cache, dict) and folder_cache:
+            rs = try_resolve_path(params, folder_identifier.replace('\\', '/'))
+            if rs is not None:
+                folder, pattern = rs
+                if (folder and not pattern and
+                        _is_safe_path_folder(params, folder)):
+                    return folder.uid
+        return None
+
+    # Flat-name matching is intentionally limited to folders owned by the
+    # current account. Shared-in folders can still be selected by UID.
+    matching = [
+        uid for uid, obj in nsf_folders.items()
+        if obj.get('name', '').casefold() == folder_identifier.casefold()
+        and _is_current_account_folder_owner(params, obj)
+    ]
     if len(matching) == 1:
         return matching[0]
     if len(matching) > 1:
         logging.warning("Multiple folders match '%s'. Use UID instead.", folder_identifier)
         return None
 
-    rs = try_resolve_path(params, folder_identifier)
-    if rs is not None:
-        folder, pattern = rs
-        if folder and not pattern:
-            return folder.uid
+    folder_cache = getattr(params, 'folder_cache', {})
+    if isinstance(folder_cache, dict) and folder_cache:
+        rs = try_resolve_path(params, folder_identifier)
+        if rs is not None:
+            folder, pattern = rs
+            if folder and not pattern:
+                return folder.uid
     return None
+
+
+def _is_current_account_folder_owner(params, folder_obj):
+    """Return whether *folder_obj* is owned by the current account.
+
+    Missing ownership metadata is treated as unknown, not as ownership. This
+    is important because shared-in folders are present in the same local cache
+    as folders owned by the current account.
+    """
+    owner_username = folder_obj.get('owner_username')
+    current_username = getattr(params, 'user', None)
+    if (isinstance(owner_username, str) and owner_username and
+            isinstance(current_username, str) and current_username and
+            owner_username.casefold() == current_username.casefold()):
+        return True
+
+    owner_account_uid = folder_obj.get('owner_account_uid')
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+    if owner_account_uid and account_uid_bytes:
+        try:
+            return owner_account_uid == utils.base64_url_encode(account_uid_bytes)
+        except Exception:
+            pass
+    return False
+
+
+def _resolve_owned_nsf_path(params, folder_identifier):
+    """Resolve a path through current-account-owned NSF folders.
+
+    NSF folder names may contain a literal slash, represented by ``//`` in a
+    path. The parser mirrors ``NestedShareFolderMkdirCommand._parse_path`` but
+    is kept here to avoid importing command-layer code into the API module.
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    normalized = folder_identifier.replace('\\', '/')
+    absolute = normalized.startswith('/')
+    if absolute:
+        normalized = normalized[1:]
+
+    sentinel = '\x00'
+    components = [
+        part.replace(sentinel, '/').strip()
+        for part in normalized.replace('//', sentinel).split('/')
+        if part.replace(sentinel, '/').strip()
+    ]
+    if not components:
+        return None
+
+    current = None
+    if not absolute:
+        candidate = getattr(params, 'current_folder', None)
+        if candidate in nsf_folders:
+            current = candidate
+
+    for component in components:
+        matches = []
+        for uid, folder_obj in nsf_folders.items():
+            if not _is_current_account_folder_owner(params, folder_obj):
+                continue
+            if folder_obj.get('name', '').casefold() != component.casefold():
+                continue
+
+            parent_uid = folder_obj.get('parent_uid') or ''
+            if current:
+                if parent_uid == current:
+                    matches.append(uid)
+            else:
+                # Missing parents and server root sentinels represent the
+                # Nested Share Folder root.
+                if not parent_uid or parent_uid not in nsf_folders:
+                    matches.append(uid)
+
+        if len(matches) != 1:
+            return None
+        current = matches[0]
+
+    return current
+
+
+def _is_safe_path_folder(params, folder):
+    """Return whether a legacy path result contains no unowned NSF folder."""
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    folder_cache = getattr(params, 'folder_cache', {})
+    visited = set()
+    current = folder
+
+    while current is not None:
+        folder_uid = getattr(current, 'uid', None)
+        if not folder_uid or folder_uid in visited:
+            break
+        visited.add(folder_uid)
+
+        if (folder_uid in nsf_folders and
+                not _is_current_account_folder_owner(
+                    params, nsf_folders[folder_uid])):
+            return False
+
+        parent_uid = getattr(current, 'parent_uid', None)
+        if not parent_uid or not isinstance(folder_cache, dict):
+            break
+        current = folder_cache.get(parent_uid)
+
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -101,8 +101,16 @@ def resolve_nested_share_record_uid(params, identifier):
       2. Direct UID match in record_cache (vault records)
       3. Title match from decrypted nested_share_record_data
       4. Title match from record_cache (data_unencrypted)
+
+    When a title has exactly one accessible match and no owned match, the
+    shared-in record is retained for compatibility with existing shared-record
+    workflows. Callers that require an owned record should use an explicit UID
+    or apply an owner-only check before mutating it.
     """
     import json
+
+    if not isinstance(identifier, str):
+        return None
 
     nsf = getattr(params, 'nested_share_records', {})
     if identifier in nsf:
@@ -115,14 +123,16 @@ def resolve_nested_share_record_uid(params, identifier):
     lower = identifier.casefold()
 
     nsf_data = getattr(params, 'nested_share_record_data', {})
+    nsf_matches = []
     for uid in nsf:
         rd = nsf_data.get(uid, {})
         dj = rd.get('data_json', {})
         if isinstance(dj, dict):
             t = dj.get('title', '')
             if isinstance(t, str) and t.casefold() == lower:
-                return uid
+                nsf_matches.append(uid)
 
+    classic_matches = []
     for uid, rec in rc.items():
         if uid in nsf:
             continue
@@ -132,31 +142,71 @@ def resolve_nested_share_record_uid(params, identifier):
                 dj = json.loads(data.decode('utf-8') if isinstance(data, bytes) else data)
                 t = dj.get('title', '')
                 if isinstance(t, str) and t.casefold() == lower:
-                    return uid
+                    classic_matches.append(uid)
             except Exception:
                 pass
 
+    matches = nsf_matches + classic_matches
+    if not matches:
+        return None
+
+    owned_matches = [
+        uid for uid in matches
+        if _is_current_account_record_owner(
+            params, uid,
+            nsf_data.get(uid, {}) if uid in nsf else rc.get(uid, {}),
+            rc.get(uid, {}),
+        )
+    ]
+    if len(owned_matches) == 1:
+        return owned_matches[0]
+    if len(owned_matches) > 1:
+        logging.warning("Multiple owned records match '%s'. Use UID instead.", identifier)
+        return None
+    if len(matches) == 1:
+        return matches[0]
+
+    logging.warning("Multiple records match '%s'. Use UID instead.", identifier)
     return None
+
+
+def _is_current_account_record_owner(params, record_uid, nsf_data, record_obj):
+    """Return whether cached ownership identifies the current account."""
+    current_username = getattr(params, 'user', None)
+    current_account_uid = ''
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+    if account_uid_bytes:
+        try:
+            from .. import utils
+            current_account_uid = utils.base64_url_encode(account_uid_bytes)
+        except Exception:
+            pass
+
+    for obj in (nsf_data or {}, record_obj or {},
+                getattr(params, 'meta_data_cache', {}).get(record_uid, {})):
+        owner_username = obj.get('user_username') or obj.get('owner_username')
+        if (isinstance(owner_username, str) and owner_username and
+                isinstance(current_username, str) and current_username and
+                owner_username.casefold() == current_username.casefold()):
+            return True
+
+        owner_uid = obj.get('user_account_uid') or obj.get('owner_account_uid')
+        if owner_uid and current_account_uid and owner_uid == current_account_uid:
+            return True
+
+    owner_info = getattr(params, 'record_owner_cache', {}).get(record_uid)
+    if owner_info and owner_info.owner is True:
+        return True
+    return False
 
 
 def resolve_nested_share_folder_uid(params, identifier):
     """Resolve a folder identifier (UID or name) to a Nested Share Folder UID."""
-    nsf = getattr(params, 'nested_share_folders', {})
-    if identifier in nsf:
-        return identifier
-    fc = getattr(params, 'folder_cache', {})
-    if identifier in fc:
-        return identifier
-    lower = identifier.casefold()
-    for uid, f in nsf.items():
-        name = f.get('name', '')
-        if isinstance(name, str) and name.casefold() == lower:
-            return uid
-    for uid, f in getattr(params, 'subfolder_cache', {}).items():
-        name = f.get('name', '')
-        if isinstance(name, str) and name.casefold() == lower:
-            return uid
-    return None
+    # Keep all NSF folder lookups behind the ownership-aware resolver. This
+    # helper is used by commands outside the main folder API, so an independent
+    # name scan here would reintroduce the shared-in shadowing vulnerability.
+    from .folder_api import resolve_folder_identifier
+    return resolve_folder_identifier(params, identifier)
 
 
 # ══════════════════════════════════════════════════════════════════════════
