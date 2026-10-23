@@ -851,6 +851,7 @@ def _import(params, file_format, filename, **kwargs):
     skip_team = kwargs.get('skip_team') is True or 'team' in cyberark_skip
     skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
     skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
+    add_thycotic_users = kwargs.get('add_thycotic_users') is True
 
     import_into_raw = kwargs.get('import_into') or ''
     import_into = import_into_raw
@@ -879,7 +880,8 @@ def _import(params, file_format, filename, **kwargs):
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
-                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user):
+                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
+                              add_thycotic_users=add_thycotic_users):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
