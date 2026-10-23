@@ -1085,28 +1085,38 @@ class CyberArkPVWAClient:
             return None
 
 
-    def _get_next_link(self, data: dict) -> Optional[str]:
+    @staticmethod
+    def _get_next_link(data: dict) -> Optional[str]:
         link = data.get("nextLink")
         if not isinstance(link, str):
             return None
         link = link.strip()
-        return link
+        return link if link else None
 
 
-    def _resolve_next_link(self, next_link: str) -> Optional[str]:
+    @staticmethod
+    def _resolve_next_link(base_url: str, next_link: str) -> Optional[str]:
         try:
-            base = f"https://{self.pvwa_host}/PasswordVault/"
-            resolved = urljoin(base, next_link)
-            base_host = urlparse(base).netloc
-            next_host = urlparse(resolved).netloc
+            base = urlparse(base_url)
+            parsed_link = urlparse(next_link)
+            if parsed_link.scheme or parsed_link.netloc or next_link.startswith(("?", "#")):
+                resolved = urljoin(base_url, next_link)
+            else:
+                origin_root = f"{base.scheme}://{base.netloc}/"
+                resolved = urljoin(origin_root, next_link)
+            next_page = urlparse(resolved)
         except ValueError:
             logging.warning('Invalid nextLink URL — stopping pagination')
             return None
-        if not next_host or next_host.lower() != base_host.lower():
+        if (
+            not next_page.netloc
+            or next_page.scheme.lower() != base.scheme.lower()
+            or next_page.netloc.lower() != base.netloc.lower()
+        ):
             logging.warning(
-                'nextLink points to a different host (%s vs %s) — '
+                'nextLink points to a different origin (%s vs %s) — '
                 'stopping pagination to avoid token leakage',
-                next_host, base_host,
+                next_page.netloc, base.netloc,
             )
             return None
         return resolved
@@ -1164,18 +1174,14 @@ class CyberArkPVWAClient:
             total_count = self._get_total_count(data)
             fetched_count += len(batch)
             if next_link:
-                resolved = self._resolve_next_link(next_link)
+                resolved = self._resolve_next_link(next_url, next_link)
                 if not resolved:
                     break
                 next_url = resolved
                 page_params = None
-            elif total_count is None:
+            elif total_count is not None and fetched_count >= total_count:
                 break
             else:
-                # No nextLink and batch smaller than limit = last page
-                if fetched_count >= total_count:
-                    break
-                # No nextLink but full page — fallback to manual offset
                 current_offset = fetched_count
                 page_params = dict(params or {}, limit=str(limit),
                                    offset=str(current_offset))
