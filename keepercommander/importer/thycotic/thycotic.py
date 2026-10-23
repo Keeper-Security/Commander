@@ -272,7 +272,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         When the user list has no email, the user detail endpoint is tried once.
         """
         all_users = auth.thycotic_search('/v1/users?filter.includeInactive=true')
-        print(f'All users: {all_users}', flush=True)
         result = []
         skipped_application = 0
         skipped_no_email = 0
