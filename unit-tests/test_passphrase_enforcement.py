@@ -238,7 +238,7 @@ class TestDomainPasswordPolicy(TestCase):
         self.assertTrue(any('special character' in failure for failure in failures))
         self.assertFalse(any('Passphrase' in failure for failure in failures))
 
-    def test_manual_passphrase_uses_matching_domain_passphrase_rules(self):
+    def test_manual_passphrase_uses_matching_domain_password_rules(self):
         params = self._params([{
             'domains': ['example.com'],
             'length': 80,
@@ -255,9 +255,11 @@ class TestDomainPasswordPolicy(TestCase):
             params,
             self._record('https://example.com', 'alpha-bravo-charlie'))
 
-        self.assertEqual(failures, [])
+        self.assertTrue(any('at least 80 characters' in failure for failure in failures))
+        self.assertTrue(any('uppercase character' in failure for failure in failures))
+        self.assertFalse(any('Passphrase' in failure for failure in failures))
 
-    def test_manual_passphrase_accepts_unicode_words(self):
+    def test_passphrase_validator_accepts_unicode_words(self):
         for passphrase, capitalize in (
                 ('élan-café-über', False),
                 ('Élan-Café-Über', True)):
@@ -271,11 +273,28 @@ class TestDomainPasswordPolicy(TestCase):
                     'passphrase-separator': '-',
                 }])
 
-                failures = PasswordComplexityEnforcer.validate_manual_passwords(
-                    params,
-                    self._record('https://example.com', passphrase))
+                policy = json.loads(params.enforcements['jsons'][0]['value'])[0]
+                failures = PasswordComplexityEnforcer.validate_passphrase(
+                    passphrase, policy)
 
                 self.assertEqual(failures, [])
+
+    def test_manual_hyphenated_password_uses_password_rules_not_passphrase_rules(self):
+        params = self._params([{
+            'domains': ['example.com'],
+            'length': 20,
+            'passphrase-allow': True,
+            'passphrase-length': 5,
+            'passphrase-capitalize': False,
+            'passphrase-number': False,
+            'passphrase-separator': '-',
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params,
+            self._record('https://example.com', 'mysecret-horse-battery'))
+
+        self.assertEqual(failures, [])
 
     def test_manual_password_with_dollar_and_digit_is_not_mistaken_for_passphrase(self):
         params = self._params([{

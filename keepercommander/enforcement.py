@@ -594,41 +594,15 @@ class PasswordComplexityEnforcer:
             return []
         values = passwords if passwords is not None else cls._extract_passwords(source)
         failures = []
-        passphrase_policy_present = any(
-            key.startswith('passphrase-') for key in policy)
         for password in values:
-            is_passphrase = (
-                passphrase_policy_present
-                and policy.get('passphrase-allow') is not False
-                and cls._looks_like_passphrase(password, policy)
-            )
-            if is_passphrase:
-                failures.extend(cls.validate_passphrase(password, policy))
-            else:
-                failures.extend(cls.validate_password(
-                    password, policy, allow_passphrase_fallback=False))
+            failures.extend(cls.validate_password(
+                password, policy, allow_passphrase_fallback=False))
         return failures
 
-    @classmethod
-    def _looks_like_passphrase(cls, password, policy):   # type: (Any, Dict[str, Any]) -> bool
-        if not isinstance(password, str) or not password:
-            return False
-        separators = cls._normalize_passphrase_separators(policy)
-        if not separators:
-            return False
-        separator = next((char for char in separators if char in password), None)
-        if separator is None:
-            return False
-        words = password.split(separator)
-        return bool(words) and all(cls._passphrase_word_letters(word, allow_trailing_number=True)
-                                   for word in words)
-
     @staticmethod
-    def _passphrase_word_letters(word, allow_trailing_number=False):
-        # type: (str, bool) -> Optional[str]
+    def _passphrase_word_letters(word):
+        # type: (str) -> Optional[str]
         word = unicodedata.normalize('NFC', word)
-        if allow_trailing_number and word and word[-1] in '0123456789':
-            word = word[:-1]
         return word if len(word) >= 3 and word.isalpha() else None
 
     @classmethod
