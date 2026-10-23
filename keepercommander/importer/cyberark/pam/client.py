@@ -1072,6 +1072,45 @@ class CyberArkPVWAClient:
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         return True
 
+    @staticmethod
+    def _get_total_count(data: dict) -> Optional[int]:
+        raw = data.get("count")
+        if raw is None:
+            raw = data.get("Total")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+
+    def _get_next_link(self, data: dict) -> Optional[str]:
+        link = data.get("nextLink")
+        if not isinstance(link, str):
+            return None
+        link = link.strip()
+        return link
+
+
+    def _resolve_next_link(self, next_link: str) -> Optional[str]:
+        try:
+            base = f"https://{self.pvwa_host}/PasswordVault/"
+            resolved = urljoin(base, next_link)
+            base_host = urlparse(base).netloc
+            next_host = urlparse(resolved).netloc
+        except ValueError:
+            logging.warning('Invalid nextLink URL — stopping pagination')
+            return None
+        if not next_host or next_host.lower() != base_host.lower():
+            logging.warning(
+                'nextLink points to a different host (%s vs %s) — '
+                'stopping pagination to avoid token leakage',
+                next_host, base_host,
+            )
+            return None
+        return resolved
+   
     def _paginate(self, url: str, params: Optional[dict] = None,
                   items_key: str = "value", limit: int = 100,
                   filter_fn=None) -> List[dict]:
@@ -1083,6 +1122,8 @@ class CyberArkPVWAClient:
         results = []
         page_params = dict(params or {}, limit=str(limit), offset="0")
         next_url = url
+        total_count = None
+        fetched_count = 0
         while True:
             time.sleep(self.DELAY)
             response = self._get(next_url, params=page_params)
@@ -1111,38 +1152,33 @@ class CyberArkPVWAClient:
                 break
             batch = data.get(items_key, [])
             if filter_fn:
-                batch = [item for item in batch if filter_fn(item)]
-            results.extend(batch)
+                processed_batch = [item for item in batch if filter_fn(item)]
+                results.extend(processed_batch)
+            else:
+                results.extend(batch)
             if len(results) >= MAX_FETCH_RECORDS:
                 logging.warning('Pagination cap reached (%d) — truncating', MAX_FETCH_RECORDS)
                 break
             # Follow nextLink if present, otherwise check batch size
-            next_link = data.get("nextLink")
+            next_link = self._get_next_link(data)
+            total_count = self._get_total_count(data)
+            fetched_count += len(batch)
             if next_link:
-               
-                try:
-                    base_host = urlparse(url).netloc
-                    next_host = urlparse(next_link).netloc
-                except ValueError:
-                    logging.warning('Invalid nextLink URL — stopping pagination')
+                resolved = self._resolve_next_link(next_link)
+                if not resolved:
                     break
-                if next_host and next_host != base_host:
-                    logging.warning('nextLink points to a different host (%s vs %s) — '
-                                    'stopping pagination to avoid token leakage',
-                                    next_host, base_host)
-                    break
-                # nextLink is a full URL — use it directly, no params needed
-                next_url = next_link
-                page_params = {}
+                next_url = resolved
+                page_params = None
+            elif total_count is None:
+                break
             else:
                 # No nextLink and batch smaller than limit = last page
-                raw_count = len(data.get(items_key, []))
-                if raw_count < limit:
+                if fetched_count >= total_count:
                     break
                 # No nextLink but full page — fallback to manual offset
-                current_offset = int(page_params.get("offset", "0"))
+                current_offset = fetched_count
                 page_params = dict(params or {}, limit=str(limit),
-                                   offset=str(current_offset + limit))
+                                   offset=str(current_offset))
                 next_url = url
         return results
 
@@ -1558,7 +1594,7 @@ class CyberArkPVWAClient:
             params = dict(base_params, filter=f"safeName eq {safe}")
             accounts = self._paginate(
                 self._get_url("accounts"), params=params,
-                limit=1000,  # CyberArk max for accounts endpoint
+                limit=500,  # CyberArk max for accounts endpoint
             )
             if not accounts:
                 print_formatted_text(HTML(f"<ansiyellow>No accounts in safe {_esc(safe)}</ansiyellow>"))
