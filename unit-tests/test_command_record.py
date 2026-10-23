@@ -97,6 +97,27 @@ class TestRecord(TestCase):
             self.assertIsNotNone(field)
             self.assertEqual(field.get_default_value(str), 'BBB')
 
+    @mock.patch('keepercommander.commands.record_edit.FolderMixin.resolve_folder',
+                return_value=None)
+    @mock.patch('keepercommander.record_management.add_record_to_folder')
+    def test_add_command_rejects_unresolvable_folder(self, mock_add, mock_resolve):
+        params = get_synced_params()
+        cmd = record_edit.RecordAddCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                folder='Work',
+                title='Ambiguous Folder POC',
+                record_type='login',
+                fields=[],
+                force=True,
+            )
+
+        self.assertIn('Folder "Work" cannot be found', str(ctx.exception))
+        mock_resolve.assert_called_once_with(params, 'Work')
+        mock_add.assert_not_called()
+
     def _run_add(self, params, **kwargs):
         """Run record-add with the API mocked; return the TypedRecord that would be saved."""
         cmd = record_edit.RecordAddCommand()

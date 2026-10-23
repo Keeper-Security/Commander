@@ -29,7 +29,7 @@ from tabulate import tabulate
 
 from .. import api, crypto, utils, vault, resources, error
 from ..params import KeeperParams
-from ..subfolder import try_resolve_path, BaseFolderNode
+from ..subfolder import try_resolve_path, FolderPathAmbiguousError, BaseFolderNode
 
 aliases = {}                 # type: Dict[str, str]
 commands = {}                # type: Dict[str, Command]
@@ -1060,7 +1060,11 @@ class FolderMixin:
         if folder_name in params.folder_cache:
             return folder_name
         else:
-            rs = try_resolve_path(params, folder_name)
+            try:
+                rs = try_resolve_path(
+                    params, folder_name, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise error.CommandError('', str(e))
             if rs is not None:
                 folder, record_name = rs
                 if folder and not record_name:
