@@ -237,6 +237,25 @@ class TestCommandHelpers(TestCase):
         self.assertIsNone(
             resolve_nested_share_record_uid(params, 'Duplicate'))
 
+    def test_record_title_allows_single_shared_record(self):
+        from keepercommander.nested_share_folder.removal_api import (
+            resolve_nested_share_record_uid)
+
+        shared_uid, shared = _make_record(title='Shared Record')
+        params = _make_params(
+            nested_share_records={shared_uid: shared},
+            nested_share_record_data={
+                shared_uid: {
+                    'data_json': {'title': 'Shared Record'},
+                    'user_username': 'owner@example.com',
+                },
+            },
+            user='victim@example.com',
+        )
+
+        self.assertEqual(
+            resolve_nested_share_record_uid(params, 'Shared Record'), shared_uid)
+
     def test_parse_expiration_none(self):
         from keepercommander.commands.nested_share_folder.helpers import parse_expiration
         self.assertIsNone(parse_expiration(None, None, 'test'))
