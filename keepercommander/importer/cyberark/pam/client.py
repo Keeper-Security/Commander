@@ -1095,28 +1095,32 @@ class CyberArkPVWAClient:
 
 
     @staticmethod
-    def _resolve_next_link(self, next_link: str) -> Optional[str]:
+    def _resolve_next_link(base_url: str, next_link: str) -> Optional[str]:
         try:
-            base = f"https://{self.pvwa_host}/PasswordVault/"
-            resolved = urljoin(base, next_link)
-            base_host = urlparse(base).netloc
-            next_host = urlparse(resolved).netloc
+            base = urlparse(base_url)
+            parsed_link = urlparse(next_link)
+            if parsed_link.scheme or parsed_link.netloc or next_link.startswith(("?", "#")):
+                resolved = urljoin(base_url, next_link)
+            else:
+                origin_root = f"{base.scheme}://{base.netloc}/"
+                resolved = urljoin(origin_root, next_link)
+            target = urlparse(resolved)
         except ValueError:
             logging.warning('Invalid nextLink URL — stopping pagination')
             return None
         if (
-            not next_host.netloc
-            or next_host.scheme.lower() != base.scheme.lower()
-            or next_host.netloc.lower() != base.netloc.lower()
+            not target.netloc
+            or target.scheme.lower() != base.scheme.lower()
+            or target.netloc.lower() != base.netloc.lower()
         ):
             logging.warning(
-                'nextLink points to a different host (%s vs %s) — '
+                'nextLink points to a different origin (%s vs %s) — '
                 'stopping pagination to avoid token leakage',
-                next_host, base_host,
+                target.netloc, base.netloc,
             )
             return None
         return resolved
-   
+
     def _paginate(self, url: str, params: Optional[dict] = None,
                   items_key: str = "value", limit: int = 100,
                   filter_fn=None) -> List[dict]:
@@ -1125,12 +1129,24 @@ class CyberArkPVWAClient:
         Follows the server's nextLink URL for subsequent pages instead of
         manually incrementing offset — more robust against API changes.
         """
+        if limit <= 0:
+            raise ValueError("Pagination limit must be greater than zero")
+
         results = []
         page_params = dict(params or {}, limit=str(limit), offset="0")
         next_url = url
-        total_count = None
         fetched_count = 0
+        visited_requests = set()
         while True:
+            request_params_key = tuple(
+                sorted((str(key), repr(value)) for key, value in (page_params or {}).items())
+            )
+            request_key = (next_url, request_params_key)
+            if request_key in visited_requests:
+                logging.warning('Repeated pagination request detected; stopping at %s', next_url)
+                break
+            visited_requests.add(request_key)
+
             time.sleep(self.DELAY)
             response = self._get(next_url, params=page_params)
             if response is None:
@@ -1155,28 +1171,49 @@ class CyberArkPVWAClient:
             try:
                 data = response.json()
             except (ValueError, KeyError):
+                logging.warning('Paginated fetch returned invalid JSON: %s', next_url)
+                break
+
+            if not isinstance(data, dict):
+                logging.warning('Paginated fetch returned a non-object JSON value: %s', next_url)
                 break
             batch = data.get(items_key, [])
+            if not isinstance(batch, list):
+                logging.warning(
+                    'Paginated fetch returned a non-list %s field: %s',
+                    items_key, next_url,
+                )
+                break
+
+            next_link = self._get_next_link(data)
+            total_count = self._get_total_count(data)
+            raw_remaining = MAX_FETCH_RECORDS - fetched_count
+            batch_to_process = batch[:raw_remaining]
+            fetched_count += len(batch_to_process)
             if filter_fn:
-                processed_batch = [item for item in batch if filter_fn(item)]
-                results.extend(processed_batch)
+                processed_batch = [item for item in batch_to_process if filter_fn(item)]
             else:
-                results.extend(batch)
+                processed_batch = batch_to_process
+            result_remaining = MAX_FETCH_RECORDS - len(results)
+            results.extend(processed_batch[:result_remaining])
             if len(results) >= MAX_FETCH_RECORDS:
                 logging.warning('Pagination cap reached (%d) — truncating', MAX_FETCH_RECORDS)
                 break
-            if not batch:
+            if fetched_count >= MAX_FETCH_RECORDS:
+                logging.warning('Pagination fetch cap reached (%d) — stopping', MAX_FETCH_RECORDS)
                 break
-            next_link = self._get_next_link(data)
-            total_count = self._get_total_count(data)
-            fetched_count += len(batch)
+
             if next_link:
                 resolved = self._resolve_next_link(next_url, next_link)
                 if not resolved:
                     break
                 next_url = resolved
                 page_params = None
+            elif not batch:
+                break
             elif total_count is not None and fetched_count >= total_count:
+                break
+            elif total_count is None and len(batch) < limit:
                 break
             else:
                 current_offset = fetched_count
