@@ -1165,7 +1165,8 @@ class CyberArkPVWAClient:
             if len(results) >= MAX_FETCH_RECORDS:
                 logging.warning('Pagination cap reached (%d) — truncating', MAX_FETCH_RECORDS)
                 break
-            # Follow nextLink if present, otherwise check batch size
+            if not batch:
+                break
             next_link = self._get_next_link(data)
             total_count = self._get_total_count(data)
             fetched_count += len(batch)
