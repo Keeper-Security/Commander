@@ -1093,17 +1093,18 @@ class CyberArkPVWAClient:
         link = link.strip()
         return link if link else None
 
-
     @staticmethod
     def _resolve_next_link(base_url: str, next_link: str) -> Optional[str]:
         try:
             base = urlparse(base_url)
-            parsed_link = urlparse(next_link)
-            if parsed_link.scheme or parsed_link.netloc or next_link.startswith(("?", "#")):
+            if next_link.startswith(("http://", "https://", "/", "?", "#")):
                 resolved = urljoin(base_url, next_link)
             else:
-                origin_root = f"{base.scheme}://{base.netloc}/"
-                resolved = urljoin(origin_root, next_link)
+                path = base.path
+                vault_path = "/PasswordVault/"
+                vault_index = path.lower().find(vault_path.lower())
+                base_path = path[:vault_index + len(vault_path)] if vault_index >= 0 else "/"
+                resolved = urljoin(f"{base.scheme}://{base.netloc}{base_path}", next_link)
             target = urlparse(resolved)
         except ValueError:
             logging.warning('Invalid nextLink URL — stopping pagination')

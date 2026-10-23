@@ -4243,6 +4243,14 @@ class TestPaginationNextLinkSsrf:
             active_url, "API/Safes?offset=100"
         ) == "https://pvwa.example.com:8443/API/Safes?offset=100"
 
+    def test_relative_api_path_preserves_password_vault_prefix(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/PasswordVault/API/Safes?offset=0"
+        assert CyberArkPVWAClient._resolve_next_link(
+            active_url, "API/Safes?offset=100"
+        ) == "https://pvwa.example.com:8443/PasswordVault/API/Safes?offset=100"
+
     def test_resolves_absolute_same_origin_next_link(self):
         from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
 
@@ -4351,6 +4359,9 @@ class TestPaginationNextLinkSsrf:
             limit=100,
         ) == [{"id": 1}]
         assert client._get.call_count == 2
+        assert client._get.call_args_list[1].args[0] == (
+            "https://pvwa.example.com/PasswordVault/API/Users?offset=100"
+        )
 
     @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
     @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
