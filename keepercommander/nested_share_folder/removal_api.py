@@ -101,6 +101,11 @@ def resolve_nested_share_record_uid(params, identifier):
       2. Direct UID match in record_cache (vault records)
       3. Title match from decrypted nested_share_record_data
       4. Title match from record_cache (data_unencrypted)
+
+    When a title has exactly one accessible match and no owned match, the
+    shared-in record is retained for compatibility with existing shared-record
+    workflows. Callers that require an owned record should use an explicit UID
+    or apply an owner-only check before mutating it.
     """
     import json
 
