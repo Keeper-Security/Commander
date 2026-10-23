@@ -19,6 +19,7 @@ from ..breachwatch import BreachWatch
 
 from .base import suppress_exit, raise_parse_exception, Command
 from .. import api, generator, utils, crypto
+from ..enforcement import PasswordComplexityEnforcer
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..record import Record
@@ -76,6 +77,25 @@ class RecordUtils(object):
         return value
 
 
+def _enforce_password_policy(params, source, password, generated, command, force=False):
+    if generated:
+        policy = PasswordComplexityEnforcer.get_generator_policy(params, source)
+        failures = PasswordComplexityEnforcer.validate_generated_password_with_policy(
+            password, policy, 'rand')
+        message = 'Password does not meet enterprise complexity policy.'
+    else:
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params, source, [password] if password else [])
+        message = 'Password does not meet the domain-specific complexity policy.'
+    if failures:
+        for failure in failures:
+            logging.warning(failure)
+        if not force:
+            if command == 'add':
+                message += ' Pass --force to bypass this policy.'
+            raise CommandError(command, message)
+
+
 class RecordAddCommand(Command, RecordUtils):
     def get_parser(self):
         return add_parser
@@ -90,7 +110,7 @@ class RecordAddCommand(Command, RecordUtils):
 
         generate = kwargs['generate'] if 'generate' in kwargs else None
         if generate:
-            password = generator.generate(16)
+            password = None
 
         force = kwargs['force'] if 'force' in kwargs else None
         if not force:
@@ -98,12 +118,21 @@ class RecordAddCommand(Command, RecordUtils):
                 title = input('...' + 'Title: '.rjust(16))
             if not login:
                 login = input('...' + 'Login: '.rjust(16))
-            if not password:
+            if not password and not generate:
                 password = input('...' + 'Password: '.rjust(16))
             if not url:
                 url = input('...' + 'Login URL: '.rjust(16))
         if not title:
             raise CommandError('add', 'Invalid title. Expected non-empty string.')
+
+        password_policy_source = {'url': url or ''}
+        if generate:
+            policy = PasswordComplexityEnforcer.get_generator_policy(
+                params, password_policy_source)
+            password = (generator.KeeperPasswordGenerator.create_from_policy(policy).generate()
+                        if policy else generator.generate(16))
+        _enforce_password_policy(
+            params, password_policy_source, password, bool(generate), 'add', force=force)
 
         custom = []
         if custom_list:
@@ -266,13 +295,14 @@ class RecordEditCommand(Command, RecordUtils):
             record.password = kwargs['password']
             password_changed = record.password != last_password
             changed = True
-        else:
-            if kwargs.get('generate'):
-                record.password = generator.generate(16)
-                changed = password_changed = True
         if kwargs.get('url') is not None:
             record.login_url = kwargs['url']
             changed = True
+        if kwargs.get('password') is None and kwargs.get('generate'):
+            policy = PasswordComplexityEnforcer.get_generator_policy(params, record)
+            record.password = (generator.KeeperPasswordGenerator.create_from_policy(policy).generate()
+                               if policy else generator.generate(16))
+            changed = password_changed = True
         if kwargs.get('notes') is not None:
             notes = kwargs['notes'] # type: str
             if notes:
@@ -326,6 +356,13 @@ class RecordEditCommand(Command, RecordUtils):
                         deleted = record.remove_field(c['name'])
                         if deleted:
                             changed = True
+
+        if kwargs.get('password') is not None:
+            _enforce_password_policy(
+                params, record, kwargs.get('password'), False, 'edit')
+        elif kwargs.get('generate'):
+            _enforce_password_policy(
+                params, record, record.password, True, 'edit')
 
         if changed:
             api.update_record(params, record)

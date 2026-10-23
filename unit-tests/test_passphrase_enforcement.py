@@ -1,10 +1,15 @@
+import json
 from types import SimpleNamespace
 from unittest import TestCase
 
-from keepercommander.commands.record_edit import RecordEditMixin
-from keepercommander.commands.recordv3 import enforce_generated_password_policy
+from keepercommander.commands.record_edit import ParsedFieldValue, RecordEditMixin
+from keepercommander.commands.recordv3 import (
+    enforce_generated_password_policy,
+    enforce_manual_password_policy,
+)
 from keepercommander.enforcement import PasswordComplexityEnforcer
 from keepercommander.error import CommandError
+from keepercommander import vault
 
 
 STRICT_RANDOM_POLICY = {
@@ -142,3 +147,269 @@ class TestV3GeneratedPasswordPolicy(TestCase):
         enforce_generated_password_policy(
             self._params(), self._record(), 'edit', generated=True,
             manual_password='explicit', force=False)
+
+
+class TestDomainPasswordPolicy(TestCase):
+
+    @staticmethod
+    def _params(policies):
+        return SimpleNamespace(enforcements={
+            'jsons': [{
+                'key': 'generated_password_complexity',
+                'value': json.dumps(policies),
+            }],
+        })
+
+    @staticmethod
+    def _record(url=None, password='weak'):
+        return {
+            'type': 'login',
+            'fields': ([{'type': 'url', 'value': [url]}] if url else []) + [
+                {'type': 'password', 'value': [password]}],
+        }
+
+    def test_generator_policy_merges_matching_domain_over_default(self):
+        params = self._params([
+            {
+                'domains': ['_default_'],
+                'length': 12,
+                'lower-use': True,
+                'lower-min': 2,
+            },
+            {
+                'domains': ['example.com'],
+                'length': 18,
+                'upper-use': True,
+                'upper-min': 2,
+            },
+        ])
+
+        policy = PasswordComplexityEnforcer.get_generator_policy(
+            params, self._record('https://login.example.com/account'))
+
+        self.assertEqual(policy['length'], 18)
+        self.assertEqual(policy['lower-min'], 2)
+        self.assertEqual(policy['upper-min'], 2)
+
+    def test_manual_password_ignores_generator_default_policy(self):
+        params = self._params([{
+            'domains': ['_default_'],
+            'length': 40,
+            'upper-use': True,
+            'upper-min': 4,
+            'passphrase-allow': True,
+            'passphrase-length': 6,
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params, self._record('https://example.com'))
+
+        self.assertEqual(failures, [])
+
+    def test_manual_password_uses_matching_domain_policy(self):
+        params = self._params([
+            {
+                'domains': ['_default_'],
+                'length': 40,
+            },
+            {
+                'domains': ['google.com'],
+                'length': 12,
+                'upper-use': True,
+                'upper-min': 1,
+                'digit-use': True,
+                'digit-min': 1,
+                'special-use': True,
+                'special-min': 1,
+                'passphrase-allow': True,
+                'passphrase-length': 5,
+                'passphrase-capitalize': False,
+                'passphrase-number': False,
+                'passphrase-separator': '-',
+            },
+        ])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params, self._record('google.com'))
+
+        self.assertTrue(any('at least 12 characters' in failure for failure in failures))
+        self.assertTrue(any('uppercase character' in failure for failure in failures))
+        self.assertTrue(any('digit character' in failure for failure in failures))
+        self.assertTrue(any('special character' in failure for failure in failures))
+        self.assertFalse(any('Passphrase' in failure for failure in failures))
+
+    def test_manual_passphrase_uses_matching_domain_password_rules(self):
+        params = self._params([{
+            'domains': ['example.com'],
+            'length': 80,
+            'upper-use': True,
+            'upper-min': 20,
+            'passphrase-allow': True,
+            'passphrase-length': 3,
+            'passphrase-capitalize': False,
+            'passphrase-number': False,
+            'passphrase-separator': '-',
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params,
+            self._record('https://example.com', 'alpha-bravo-charlie'))
+
+        self.assertTrue(any('at least 80 characters' in failure for failure in failures))
+        self.assertTrue(any('uppercase character' in failure for failure in failures))
+        self.assertFalse(any('Passphrase' in failure for failure in failures))
+
+    def test_passphrase_validator_accepts_unicode_words(self):
+        for passphrase, capitalize in (
+                ('élan-café-über', False),
+                ('Élan-Café-Über', True)):
+            with self.subTest(passphrase=passphrase):
+                params = self._params([{
+                    'domains': ['example.com'],
+                    'passphrase-allow': True,
+                    'passphrase-length': 3,
+                    'passphrase-capitalize': capitalize,
+                    'passphrase-number': False,
+                    'passphrase-separator': '-',
+                }])
+
+                policy = json.loads(params.enforcements['jsons'][0]['value'])[0]
+                failures = PasswordComplexityEnforcer.validate_passphrase(
+                    passphrase, policy)
+
+                self.assertEqual(failures, [])
+
+    def test_manual_hyphenated_password_uses_password_rules_not_passphrase_rules(self):
+        params = self._params([{
+            'domains': ['example.com'],
+            'length': 20,
+            'passphrase-allow': True,
+            'passphrase-length': 5,
+            'passphrase-capitalize': False,
+            'passphrase-number': False,
+            'passphrase-separator': '-',
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params,
+            self._record('https://example.com', 'mysecret-horse-battery'))
+
+        self.assertEqual(failures, [])
+
+    def test_manual_password_with_dollar_and_digit_is_not_mistaken_for_passphrase(self):
+        params = self._params([{
+            'domains': ['google.com'],
+            'length': 20,
+            'upper-use': True,
+            'upper-min': 1,
+            'digit-use': True,
+            'digit-min': 1,
+            'special-use': True,
+            'special-min': 1,
+            'passphrase-allow': True,
+            'passphrase-length': 5,
+            'passphrase-capitalize': False,
+            'passphrase-number': False,
+            'passphrase-separator': '-',
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params,
+            self._record('google.com', 'asd$2Egjrstkdsbtvoastasfawf'))
+
+        self.assertEqual(failures, [])
+
+    def test_manual_password_ignores_unmatched_domain_policy(self):
+        params = self._params([{
+            'domains': ['other.example'],
+            'length': 40,
+        }])
+
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params, self._record('https://example.com'))
+
+        self.assertEqual(failures, [])
+
+    def test_typed_manual_password_uses_url_supplied_in_same_update(self):
+        params = self._params([{
+            'domains': ['example.com'],
+            'length': 12,
+            'passphrase-allow': False,
+        }])
+        mixin = RecordEditMixin()
+        mixin.reset_password_policy(params)
+        record = vault.TypedRecord()
+        record.type_name = 'login'
+        record.fields.extend([
+            vault.TypedField.new_field('url', None, ''),
+            vault.TypedField.new_field('password', None, ''),
+        ])
+
+        # The password arrives before the URL; policy selection must still use
+        # the URL being written by this update.
+        mixin.assign_typed_fields(record, [
+            ParsedFieldValue('', 'password', '', 'weak'),
+            ParsedFieldValue('', 'url', '', 'https://example.com/login'),
+        ])
+        mixin.apply_manual_password_policy_warnings(params, record)
+
+        self.assertTrue(any('at least 12 characters' in warning for warning in mixin.warnings))
+
+    def test_generated_passphrase_uses_only_passphrase_rules(self):
+        policy = {
+            'length': 80,
+            'upper-use': True,
+            'upper-min': 20,
+            'passphrase-allow': True,
+            'passphrase-length': 5,
+            'passphrase-capitalize': False,
+            'passphrase-number': False,
+            'passphrase-separator': '-',
+        }
+        passphrase = 'alpha-bravo-charlie-delta-echo'
+
+        failures = PasswordComplexityEnforcer.validate_generated_password_with_policy(
+            passphrase, policy, 'passphrase')
+
+        self.assertEqual(failures, [])
+
+    def test_generated_password_does_not_fall_back_to_passphrase_rules(self):
+        policy = {
+            'length': 80,
+            'passphrase-allow': True,
+            'passphrase-length': 5,
+            'passphrase-separator': '-',
+        }
+
+        failures = PasswordComplexityEnforcer.validate_generated_password_with_policy(
+            'alpha-bravo-charlie-delta-echo', policy, 'rand')
+
+        self.assertTrue(any('at least 80 characters' in failure for failure in failures))
+
+    def test_recordv3_generated_password_uses_matching_domain_policy(self):
+        params = self._params([
+            {'domains': ['_default_'], 'length': 4},
+            {'domains': ['example.com'], 'length': 20},
+        ])
+
+        with self.assertRaises(CommandError):
+            enforce_generated_password_policy(
+                params, self._record('https://login.example.com'), 'add',
+                generated=True)
+
+    def test_recordv3_manual_password_requires_a_matching_domain_policy(self):
+        default_only = self._params([{
+            'domains': ['_default_'],
+            'length': 20,
+        }])
+        enforce_manual_password_policy(
+            default_only, self._record('https://example.com'), 'add', ['weak'])
+
+        domain_specific = self._params([{
+            'domains': ['example.com'],
+            'length': 20,
+            'passphrase-allow': False,
+        }])
+        with self.assertRaises(CommandError):
+            enforce_manual_password_policy(
+                domain_specific, self._record('https://example.com'), 'add', ['weak'])

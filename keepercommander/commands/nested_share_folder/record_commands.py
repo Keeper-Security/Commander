@@ -25,7 +25,7 @@ from ..base import Command, GroupCommand
 from ..record_edit import RecordEditMixin, record_fields_description
 from ...enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ...error import CommandError
-from ... import generator, nested_share_folder as _nsf, vault, vault_extensions
+from ... import nested_share_folder as _nsf, vault, vault_extensions
 from .helpers import (
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
@@ -97,7 +97,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
         RecordTypeEnforcer.enforce(params, record_type, 'nsf-record-add')
 
         self.warnings.clear()
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         notes = kwargs.get('notes')
         record_fields, add_attachments = _parse_field_specs(kwargs.get('fields', []), 'nsf-record-add')
@@ -107,6 +107,7 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
             params, record_type, title, notes, record_fields)
         if self.abort_if_errors():
             return
+        self.apply_manual_password_policy_warnings(params, data)
         if self.warnings:
             for w in self.warnings:
                 logging.warning(w)
@@ -212,34 +213,6 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
     def get_parser(self):
         return nested_share_record_update_parser
 
-    def _resolve_field_value(self, parsed):
-        raw = parsed.value
-        if not raw:
-            return raw
-
-        action_params = []
-        if self.is_json_value(raw, action_params):
-            return action_params[0] if action_params else None
-        action_params.clear()
-        if self.is_generate_value(raw, action_params):
-            if self.warn_wrong_password_gen_field(parsed):
-                return None
-            if parsed.type == 'password':
-                algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
-                password, gen_error = self.generate_password(action_params, policy=self._password_policy)
-                if gen_error:
-                    self.on_error(gen_error)
-                    return None
-                if password is not None:
-                    self.validate_generated_password(password, algorithm)
-                return password
-            if parsed.type in ('oneTimeCode', 'otp'):
-                return self.generate_totp_url()
-            return raw
-        action_params.clear()
-        if self.is_base64_value(raw, action_params):
-            return action_params[0] if action_params else None
-        return raw
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
             print(record_fields_description)
@@ -250,7 +223,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
             raise CommandError('nsf-record-update', 'Record UID is required (use -r or --record)')
 
         self.warnings.clear()
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         record_type = kwargs.get('record_type')
         rt_fields = None
@@ -279,6 +252,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                 for identifier in record_uids:
                     self.warnings.clear()
                     self.errors.clear()
+                    self._manual_password_values = []
+                    self._generated_password_values = []
                     record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
                     if not record_uid:
                         raise CommandError('nsf-record-update',
@@ -294,6 +269,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
 
                     if self.abort_if_errors():
                         continue
+
+                    self.apply_manual_password_policy_warnings(params, record)
 
                     if self.warnings:
                         for w in self.warnings:
