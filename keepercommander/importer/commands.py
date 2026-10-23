@@ -123,6 +123,8 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
                            help='display skipped records (always enabled for CyberArk imports)')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
+import_parser.add_argument('--add-thycotic-users', dest='add_thycotic_users', action='store_true',
+                           help='Thycotic only: provision Delinea users as pre-activated Keeper enterprise users')
 import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument('--skip', dest='skip', action='store', type=_cyberark_skip_arg,
@@ -366,6 +368,10 @@ class RecordImportCommand(ImporterCommand):
         if kwargs.get('skip') and import_format != 'cyberark':
             logging.warning('--skip is only used with --format=cyberark; ignoring')
             kwargs['skip'] = ''
+
+        if kwargs.get('add_thycotic_users') and import_format != 'thycotic':
+            logging.warning('--add-thycotic-users is only used with --format=thycotic; ignoring')
+            kwargs['add_thycotic_users'] = False
 
         logging.info('Processing... please wait.')
         folder_mapping = imp_exp._import(params, import_format, import_name, manage_users=manage_users,
