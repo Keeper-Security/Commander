@@ -4227,6 +4227,207 @@ class TestPaginationNextLinkSsrf:
             assert "attacker.example.com" not in u, \
                 f"pagination followed attacker nextLink: {u}"
 
+    def test_resolves_next_link_using_active_url_and_port(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/PasswordVault/API/Users?offset=0"
+        assert CyberArkPVWAClient._resolve_next_link(
+            active_url, "?offset=100"
+        ) == "https://pvwa.example.com:8443/PasswordVault/API/Users?offset=100"
+
+    def test_resolves_root_relative_api_path_without_duplicating_endpoint_path(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/API/Safes"
+        assert CyberArkPVWAClient._resolve_next_link(
+            active_url, "API/Safes?offset=100"
+        ) == "https://pvwa.example.com:8443/API/Safes?offset=100"
+
+    def test_relative_api_path_preserves_password_vault_prefix(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/PasswordVault/API/Safes?offset=0"
+        assert CyberArkPVWAClient._resolve_next_link(
+            active_url, "API/Safes?offset=100"
+        ) == "https://pvwa.example.com:8443/PasswordVault/API/Safes?offset=100"
+
+    def test_resolves_absolute_same_origin_next_link(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/API/Safes"
+        next_link = "https://pvwa.example.com:8443/API/Safes?offset=100"
+        assert CyberArkPVWAClient._resolve_next_link(active_url, next_link) == next_link
+
+    def test_rejects_same_host_http_next_link(self):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        active_url = "https://pvwa.example.com:8443/PasswordVault/API/Users"
+        assert CyberArkPVWAClient._resolve_next_link(
+            active_url, "http://pvwa.example.com:8443/PasswordVault/API/Users?offset=100"
+        ) is None
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_empty_batch_without_next_link_stops_pagination(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"Users": [], "Total": 100}
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(return_value=response)
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+            limit=100,
+        ) == []
+        client._get.assert_called_once()
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_full_page_without_total_count_falls_back_to_offset(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        first_page = MagicMock()
+        first_page.status_code = 200
+        first_page.json.return_value = {"Users": [{"id": 1}, {"id": 2}]}
+        last_page = MagicMock()
+        last_page.status_code = 200
+        last_page.json.return_value = {"Users": []}
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(side_effect=[first_page, last_page])
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+            limit=2,
+        ) == [{"id": 1}, {"id": 2}]
+        assert client._get.call_count == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_short_batches_continue_when_total_count_indicates_more(
+        self, mock_dns, mock_sleep
+    ):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        responses = []
+        for user_id in (1, 2, 3):
+            response = MagicMock()
+            response.status_code = 200
+            response.json.return_value = {"Users": [{"id": user_id}], "Total": 3}
+            responses.append(response)
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(side_effect=responses)
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+            limit=2,
+        ) == [{"id": 1}, {"id": 2}, {"id": 3}]
+        assert client._get.call_count == 3
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_empty_batch_follows_next_link(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        first_page = MagicMock()
+        first_page.status_code = 200
+        first_page.json.return_value = {
+            "Users": [],
+            "nextLink": "API/Users?offset=100",
+        }
+        second_page = MagicMock()
+        second_page.status_code = 200
+        second_page.json.return_value = {"Users": [{"id": 1}]}
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(side_effect=[first_page, second_page])
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+            limit=100,
+        ) == [{"id": 1}]
+        assert client._get.call_count == 2
+        assert client._get.call_args_list[1].args[0] == (
+            "https://pvwa.example.com/PasswordVault/API/Users?offset=100"
+        )
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_repeated_next_link_stops_pagination(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "Users": [{"id": 1}],
+            "nextLink": "API/Users",
+        }
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(return_value=response)
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+            limit=100,
+        ) == [{"id": 1}, {"id": 1}]
+        assert client._get.call_count == 2
+
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_invalid_response_shapes_stop_pagination(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"Users": {"unexpected": "object"}}
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(return_value=response)
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+        ) == []
+        client._get.assert_called_once()
+
+    @patch("keepercommander.importer.cyberark.pam.client.MAX_FETCH_RECORDS", 3)
+    @patch("keepercommander.importer.cyberark.cyberark_pam.time.sleep")
+    @patch("keepercommander.importer.cyberark.cyberark_pam.socket.getaddrinfo",
+           return_value=[(2, 1, 6, '', ('93.184.216.34', 0))])
+    def test_fetch_cap_truncates_batch_and_stops(self, mock_dns, mock_sleep):
+        from keepercommander.importer.cyberark.cyberark_pam import CyberArkPVWAClient
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "Users": [{"id": i} for i in range(5)],
+            "nextLink": "API/Users?offset=5",
+        }
+
+        client = CyberArkPVWAClient("pvwa.example.com")
+        client._get = MagicMock(return_value=response)
+
+        assert client._paginate(
+            "https://pvwa.example.com/PasswordVault/API/Users",
+            items_key="Users",
+        ) == [{"id": 0}, {"id": 1}, {"id": 2}]
+        client._get.assert_called_once()
+
 
 class TestGetRetry429:
     """Tests for _get() HTTP 429 retry logic."""
@@ -5645,4 +5846,3 @@ class TestClassicCyberArkRecordTypeOverride:
 
         assert captured["filename"] == "https://pvwa.example.com"
         assert captured["kwargs"]["record_type"] == "test custom"
-
