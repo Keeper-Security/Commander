@@ -152,6 +152,10 @@ def register_commands(commands, aliases, command_info):
     device_management.register_commands(commands)
     device_management.register_command_info(aliases, command_info)
 
+    from . import notification
+    notification.register_commands(commands)
+    notification.register_command_info(aliases, command_info)
+
     from . import nested_share_folder
     nested_share_folder.register_commands(commands)
     nested_share_folder.register_command_info(aliases, command_info)

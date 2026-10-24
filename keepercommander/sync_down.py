@@ -15,7 +15,7 @@ from typing import Any, List, Dict, Optional
 
 import google
 
-from . import api, utils, crypto, convert_keys
+from . import api, utils, crypto, convert_keys, notification_center
 from .nested_share_folder import sync as nested_share_folder_sync
 from .display import bcolors, Spinner
 from .params import KeeperParams, RecordOwner
@@ -116,8 +116,12 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
             params.security_score_data.clear()
+            notification_center.clear_cache(params)
             if nsf_enabled:
                 nested_share_folder_sync.clear_caches(params)
+
+        if len(response.notificationSync) > 0:
+            notification_center.process_notification_sync(params, response.notificationSync)
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
