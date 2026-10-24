@@ -16,12 +16,13 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from . import crypto, utils
 from .params import KeeperParams
-from .proto import GraphSync_pb2, NotificationCenter_pb2
+from .pedm import pedm_shared
+from .proto import GraphSync_pb2, NotificationCenter_pb2, pedm_pb2
 
 NC = NotificationCenter_pb2
 
 # Notification types that carry approve/deny actions.
-ACTION_TYPES = {NC.NT_DEVICE_APPROVAL, NC.NT_SHARE_APPROVAL, NC.NT_APPROVAL_REQUEST}
+ACTION_TYPES = {NC.NT_DEVICE_APPROVAL, NC.NT_SHARE_APPROVAL, NC.NT_APPROVAL_REQUEST, NC.NT_PEDM_APPROVAL_REQUEST}
 
 # Types the Vault hides from its notification list; shown by "notification list --all".
 HIDDEN_TYPES = {NC.NT_UNSPECIFIED, NC.NT_ALERT, NC.NT_LICENSE_LIMIT_REACHED, NC.NT_SHARE_APPROVAL_DENIED,
@@ -51,6 +52,7 @@ TYPE_TITLES = {
     NC.NT_SSL_CERTIFICATE_EXPIRES_SOON: 'SSL certificate expires soon',
     NC.NT_SSL_CERTIFICATE_EXPIRED: 'SSL certificate expired',
     NC.NT_RECORD_REMINDER: 'Record reminder',
+    NC.NT_PEDM_APPROVAL_REQUEST: 'Endpoint privilege approval request',
 }
 
 # Types this client handles; other notifications are dropped on sync.
@@ -225,6 +227,19 @@ def decrypt_record_parameter(params: KeeperParams, notification: NotificationCen
         return None
 
 
+def get_pedm_approval(notification: NotificationCenter_pb2.Notification) -> Optional[pedm_pb2.ApprovalEnvelope]:
+    # encryptedData.data holds a plain ApprovalEnvelope; the approval fields inside are encrypted with the MC agent key.
+    if not notification.encryptedData.data:
+        return None
+    try:
+        envelope = pedm_pb2.ApprovalEnvelope()
+        envelope.ParseFromString(notification.encryptedData.data)
+        return envelope
+    except Exception as e:
+        logging.debug('Parse EPM approval notification error: %s', e)
+        return None
+
+
 def _ref_number(value: bytes) -> int:
     return int.from_bytes(value, byteorder='big')
 
@@ -288,4 +303,10 @@ def get_message(params: KeeperParams, entry: NotificationEntry) -> str:
         return f'SSL certificate for {provider} expires in {days} day(s)' if days is not None else f'SSL certificate for {provider} expires soon'
     if t == NC.NT_RECORD_REMINDER:
         return f'Reminder for record: {rec_title or "unknown record"}'
+    if t == NC.NT_PEDM_APPROVAL_REQUEST:
+        envelope = get_pedm_approval(n)
+        if not envelope:
+            return f'{sender} requests endpoint privilege elevation'
+        return (f'{sender} requests {pedm_shared.approval_type_to_name(envelope.approval.approvalType)} approval '
+                f'{utils.base64_url_encode(envelope.approval.approvalUid)}')
     return TYPE_TITLES.get(t) or type_name(t)

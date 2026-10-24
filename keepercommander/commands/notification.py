@@ -13,14 +13,14 @@ import argparse
 import datetime
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from . import base
 from .helpers import report_utils
 from .. import api, crypto, notification_center, utils
 from ..notification_center import NC, NotificationEntry
 from ..params import KeeperParams
-from ..proto import APIRequest_pb2, GraphSync_pb2, NotificationCenter_pb2, workflow_pb2
+from ..proto import APIRequest_pb2, GraphSync_pb2, NotificationCenter_pb2, enterprise_pb2, pedm_pb2, workflow_pb2
 
 
 def register_commands(commands):
@@ -92,10 +92,18 @@ class NotificationListCommand(base.ArgparseCommand):
         fmt = kwargs.get('format')
         headers = ['notification_uid', 'created', 'type', 'title', 'from', 'message', 'read', 'status']
         table = []   # type: List[List[Any]]
+        accessible_mcs = None   # type: Optional[Set[int]]
         for entry in notification_center.get_notifications(params):
             n = entry.notification
             if not kwargs.get('all') and n.type in notification_center.HIDDEN_TYPES:
                 continue
+            if n.type == NC.NT_PEDM_APPROVAL_REQUEST:
+                # Skip approvals of managed companies this admin cannot manage.
+                if accessible_mcs is None:
+                    accessible_mcs = _get_accessible_mcs(params)
+                envelope = notification_center.get_pedm_approval(n)
+                if not envelope or envelope.enterprise_id not in accessible_mcs:
+                    continue
             if kwargs.get('unread') and entry.is_read:
                 continue
             if kwargs.get('pending') and not notification_center.is_actionable(entry):
@@ -144,6 +152,8 @@ class NotificationViewCommand(base.ArgparseCommand):
                 value = notification_center.decrypt_record_parameter(params, n, key)
                 if value:
                     details[key] = value
+        elif n.type == NC.NT_PEDM_APPROVAL_REQUEST:
+            details['pedm_approval'] = _get_pedm_approval_details(params, n)
 
         if kwargs.get('format') == 'json':
             return json.dumps(details, indent=2, default=str)
@@ -211,6 +221,8 @@ class _NotificationActionCommand(base.ArgparseCommand):
             _act_share_approval(params, n, self.deny)
         elif n.type == NC.NT_APPROVAL_REQUEST:
             _act_workflow_approval(params, n, self.deny, kwargs.get('reason'))
+        elif n.type == NC.NT_PEDM_APPROVAL_REQUEST:
+            _act_pedm_approval(params, n, self.deny)
 
         # The server posts the approval status for the notification; a sync picks it up.
         if not entry.is_read:
@@ -281,3 +293,77 @@ def _act_workflow_approval(params: KeeperParams, n: NotificationCenter_pb2.Notif
             logging.warning('Record key is not available; the denial reason is not attached')
     _post_request_to_router(params, 'approve_or_deny_workflow_access', rq_proto=rq)
 
+
+def _get_mcs_info(params: KeeperParams, enterprise_ids: List[int], include_keys: bool) -> enterprise_pb2.GetMCsInfoResponse:
+    rq = enterprise_pb2.GetMCsInfoRequest(mcEnterpriseId=enterprise_ids, includePrivateKeys=include_keys)
+    rs = api.communicate_rest(params, rq, 'enterprise/get_mcs_info', rs_type=enterprise_pb2.GetMCsInfoResponse)
+    if rs is None:
+        raise base.CommandError('KeeperApp did not return managed company information')
+    return rs
+
+
+def _get_accessible_mcs(params: KeeperParams) -> Set[int]:
+    # An empty list asks for every managed company this admin can manage.
+    from .enterprise_common import EnterpriseCommand
+    if not EnterpriseCommand.is_msp(params):
+        return set()
+    try:
+        return {int(x.enterpriseId) for x in _get_mcs_info(params, [], False).mcInfo}
+    except Exception as e:
+        logging.debug('Get managed companies error: %s', e)
+        return set()
+
+
+def _get_pedm_approval(params: KeeperParams, n: NotificationCenter_pb2.Notification) -> Tuple[pedm_pb2.ApprovalEnvelope, bytes]:
+    envelope = notification_center.get_pedm_approval(n)
+    if not envelope:
+        raise base.CommandError('EPM approval notification has no approval data')
+    from ..pedm import admin_plugin
+    plugin = admin_plugin.get_pedm_plugin(params, skip_sync=True)
+    plugin.load_mc_agent_keys(_get_mcs_info(params, [envelope.enterprise_id], True).mcInfo)
+    agent_key = plugin.get_mc_agent_key(envelope.enterprise_id)
+    if agent_key is None:
+        raise base.CommandError(f'Managed company {envelope.enterprise_id} is not accessible')
+    return envelope, agent_key
+
+
+def _get_pedm_approval_details(params: KeeperParams, n: NotificationCenter_pb2.Notification) -> Dict[str, Any]:
+    try:
+        envelope, agent_key = _get_pedm_approval(params, n)
+    except Exception as e:
+        return {'error': str(e)}
+    from ..pedm import pedm_shared
+    from .pedm.msp_approvals import decrypt_approval
+    approval = envelope.approval
+    details = {
+        'enterprise_id': envelope.enterprise_id,
+        'approval_uid': utils.base64_url_encode(approval.approvalUid),
+        'approval_type': pedm_shared.approval_type_to_name(approval.approvalType),
+        'agent_uid': utils.base64_url_encode(approval.agentUid),
+        'created': str(_format_time(approval.created // 1000)) if approval.created else '',
+        'expire_in': approval.expireIn,
+    }   # type: Dict[str, Any]
+    try:
+        account_info, application_info, justification = decrypt_approval(approval, agent_key)
+        details['account_info'] = account_info
+        details['application_info'] = application_info
+        details['justification'] = justification
+    except Exception as e:
+        details['data_error'] = f'Cannot decrypt approval data: {e}'
+    return details
+
+
+def _act_pedm_approval(params: KeeperParams, n: NotificationCenter_pb2.Notification, deny: bool) -> None:
+    envelope = notification_center.get_pedm_approval(n)
+    if not envelope:
+        raise base.CommandError('EPM approval notification has no approval data')
+    rq = pedm_pb2.MspApprovalActionRequest()
+    ref = rq.deny.add() if deny else rq.approve.add()
+    ref.enterprise_id = envelope.enterprise_id
+    ref.approval_uid = envelope.approval.approvalUid
+    rs = api.execute_router(params, 'pedm/msp_approval_action', rq, rs_type=pedm_pb2.PedmStatusResponse)
+    if rs is None:
+        raise base.CommandError('Router did not return the approval action status')
+    for st in list(rs.addStatus) + list(rs.updateStatus) + list(rs.removeStatus):
+        if not st.success:
+            raise base.CommandError(f'EPM approval action failed: {st.message}')
