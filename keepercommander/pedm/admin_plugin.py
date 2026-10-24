@@ -9,7 +9,7 @@ from typing import List, Optional, Set, Iterable, Tuple, Dict, Any, cast, Union
 from ..params import KeeperParams
 from . import admin_storage, admin_types
 from .. import crypto, utils, api
-from ..proto import pedm_pb2, folder_pb2
+from ..proto import pedm_pb2, folder_pb2, enterprise_pb2
 from ..storage import types as storage_types, in_memory
 from ..pedm import pedm_shared
 
@@ -111,6 +111,7 @@ class PedmPlugin(IPedmAdmin):
         self.device_uid = utils.generate_uid()
         self._populate_data = True
         self._agent_key: Optional[bytes] = None
+        self._mc_agent_keys: Dict[int, bytes] = {}
         self._all_agents: Optional[bytes] = None
 
         self._deployments = in_memory.InMemoryEntityStorage[admin_types.PedmDeployment, str]()
@@ -200,13 +201,56 @@ class PedmPlugin(IPedmAdmin):
             enterprise = self.params.enterprise
             tree_key = enterprise['unencrypted_tree_key']
             encrypted_ec_private_key = utils.base64_url_decode(enterprise['keys']['ecc_encrypted_private_key'])
-            ec_private_key = crypto.decrypt_aes_v2(encrypted_ec_private_key, tree_key)
-
-            x1 = int.from_bytes(tree_key[:16], byteorder='big', signed=False)
-            x2 = int.from_bytes(tree_key[16:], byteorder='big', signed=False)
-            salt = (x1 ^ x2).to_bytes(length=16, byteorder='big', signed=False)
-            self._agent_key = crypto.derive_key_v1(utils.base64_url_encode(ec_private_key), salt, 1_000_000)
+            self._agent_key = self.derive_agent_key(tree_key, encrypted_ec_private_key)
         return self._agent_key
+
+    @staticmethod
+    def derive_agent_key(tree_key: bytes, encrypted_ec_private_key: bytes) -> bytes:
+        if len(tree_key) != 32 or not encrypted_ec_private_key:
+            raise ValueError('Missing or invalid enterprise tree/EC private key')
+        ec_private_key = crypto.decrypt_aes_v2(encrypted_ec_private_key, tree_key)
+        x1 = int.from_bytes(tree_key[:16], byteorder='big', signed=False)
+        x2 = int.from_bytes(tree_key[16:], byteorder='big', signed=False)
+        salt = (x1 ^ x2).to_bytes(length=16, byteorder='big', signed=False)
+        return crypto.derive_key_v1(utils.base64_url_encode(ec_private_key), salt, 1_000_000)
+
+    def load_mc_agent_keys(self, mc_infos: Iterable[enterprise_pb2.MCInfo]) -> Set[int]:
+        enterprise = self.params.enterprise or {}
+        msp_tree_key = enterprise['unencrypted_tree_key']
+        managed_companies = {mc['mc_enterprise_id']: mc for mc in enterprise.get('managed_companies', [])}
+        # Do not retain stale keys if MC access or key material changes between calls.
+        self._mc_agent_keys = {}
+        mc_agent_keys: Dict[int, bytes] = {}
+        for mc_info in mc_infos:
+            enterprise_id = int(mc_info.enterpriseId)
+            mc = managed_companies.get(enterprise_id)
+            if mc is None or not mc.get('tree_key') or not mc_info.eccEncryptedPrivateKey:
+                self.logger.warning('Skipping managed company %d: missing approval key material', enterprise_id)
+                continue
+            try:
+                encrypted_tree_key = utils.base64_url_decode(mc['tree_key'])
+                key_type_id = mc.get('tree_key_type_id', 0)
+                if key_type_id == 1 or len(encrypted_tree_key) > 200:
+                    encrypted_msp_private_key = utils.base64_url_decode(enterprise['keys']['rsa_encrypted_private_key'])
+                    msp_private_key = crypto.load_rsa_private_key(crypto.decrypt_aes_v2(encrypted_msp_private_key, msp_tree_key))
+                    mc_tree_key = crypto.decrypt_rsa(encrypted_tree_key, msp_private_key)
+                elif key_type_id == 4 or len(encrypted_tree_key) == 125:
+                    encrypted_msp_private_key = utils.base64_url_decode(enterprise['keys']['ecc_encrypted_private_key'])
+                    msp_private_key = crypto.load_ec_private_key(crypto.decrypt_aes_v2(encrypted_msp_private_key, msp_tree_key))
+                    mc_tree_key = crypto.decrypt_ec(encrypted_tree_key, msp_private_key)
+                elif len(encrypted_tree_key) == 60:
+                    mc_tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, msp_tree_key)
+                else:
+                    raise ValueError('Unsupported managed company tree key type')
+                mc_agent_keys[enterprise_id] = self.derive_agent_key(mc_tree_key, mc_info.eccEncryptedPrivateKey)
+            except Exception as e:
+                self.logger.warning('Skipping managed company %d: unable to derive approval key (%s)',
+                                    enterprise_id, type(e).__name__)
+        self._mc_agent_keys = mc_agent_keys
+        return set(mc_agent_keys)
+
+    def get_mc_agent_key(self, enterprise_id: int) -> Optional[bytes]:
+        return self._mc_agent_keys.get(enterprise_id)
 
     @property
     def all_agents(self) -> bytes:
@@ -701,7 +745,10 @@ class PedmPlugin(IPedmAdmin):
                 cv = pedm_pb2.CollectionValue()
                 cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
                 cv.collectionType = coll.collection_type
-                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                if 1000 <= coll.collection_type < 2000:
+                    cv.encryptedData = coll.collection_data.encode('utf-8')
+                else:
+                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
                 to_add.append(cv)
 
         if update_collections is not None:
@@ -711,7 +758,10 @@ class PedmPlugin(IPedmAdmin):
                 cv = pedm_pb2.CollectionValue()
                 cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
                 cv.collectionType = coll.collection_type
-                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                if 1000 <= coll.collection_type < 2000:
+                    cv.encryptedData = coll.collection_data.encode('utf-8')
+                else:
+                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
                 to_update.append(cv)
         to_remove: List[bytes] = []
         if remove_collections is not None:

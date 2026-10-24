@@ -25,6 +25,7 @@ from ...proto import NotificationCenter_pb2, pedm_pb2
 from .. import base
 from ..helpers import report_utils, prompt_utils, whoami
 from . import pedm_aram
+from .msp_approvals import MspApprovalsCommand
 from ...scim.data_sources import AdCrmDataSource, AzureAdCrmDataSource
 from ...scim.models import ScimUser, ScimGroup
 
@@ -219,6 +220,7 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
+        self.register_command_new(MspApprovalsCommand(), 'msp-approvals')
         self.register_command_new(PedmOfflineCommand(), 'offline')
         self.register_command_new(PedmScimCommand(), 'scim')
         self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
@@ -1851,6 +1853,7 @@ class PedmCollectionCommand(base.GroupCommandNew):
         self.register_command_new(PedmCollectionViewCommand(), 'view', 'v')
         self.register_command_new(PedmCollectionAddCommand(), 'add', 'a')
         self.register_command_new(PedmCollectionUpdateCommand(), 'update', 'u')
+        self.register_command_new(PedmCollectionApprovalCommand(), 'approval', 'ap')
         self.register_command_new(PedmCollectionDeleteCommand(), 'delete')
         self.register_command_new(PedmCollectionConnectCommand(), 'connect')
         self.register_command_new(PedmCollectionDisconnectCommand(), 'disconnect')
@@ -1959,6 +1962,90 @@ class PedmCollectionUpdateCommand(base.ArgparseCommand):
                 for st in status.update:
                     if isinstance(st, admin_types.EntityStatus) and not st.success:
                         raise base.CommandError(f'Failed to update collection "{st.entity_uid}": {st.message}')
+
+
+class PedmCollectionApprovalCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='approval', description='Set approver teams on an approval-preference collection')
+        parser.add_argument('--policy-type', dest='policy_type', action='store', required=True,
+                            help='Policy type name (elevation, file_access, command) or numeric policy-type id')
+        parser.add_argument('--approving-teams', dest='approving_teams', action='append', default=None,
+                            help='Team name(s)/UID(s), repeatable or comma-separated. Replaces the whole list. Pass "" to clear.')
+        parser.add_argument('--escalated-teams', dest='escalated_teams', action='append', default=None,
+                            help='Team name(s)/UID(s), repeatable or comma-separated. Replaces the whole list. Pass "" to clear.')
+        parser.add_argument('--approval-time', dest='approval_time', action='store', type=int, default=None,
+                            help='Approval time in minutes (non-negative integer)')
+        parser.add_argument('--escalation-time', dest='escalation_time', action='store', type=int, default=None,
+                            help='Escalation time in minutes (non-negative integer)')
+        super().__init__(parser)
+
+    @staticmethod
+    def _resolve_teams(params: KeeperParams, values: Optional[List[str]]) -> Optional[List[str]]:
+        if values is None:
+            return None
+        from ...nested_share_folder.common import resolve_team_identifier
+        teams: List[str] = []
+        for entry in (x for value in values for x in value.split(',')):
+            entry = entry.strip()
+            if not entry:
+                continue
+            resolved = resolve_team_identifier(params, entry)
+            if not resolved:
+                raise base.CommandError(f'Team "{entry}" not found')
+            team_uid, _ = resolved
+            if team_uid not in teams:
+                teams.append(team_uid)
+        return teams
+
+    def execute(self, context: KeeperParams, **kwargs) -> None:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        policy_type_value = kwargs.get('policy_type')
+        try:
+            policy_type_id = pedm_shared.resolve_policy_type_id(policy_type_value)
+        except ValueError as err:
+            raise base.CommandError(str(err))
+
+        new_approving = self._resolve_teams(context, kwargs.get('approving_teams'))
+        new_escalated = self._resolve_teams(context, kwargs.get('escalated_teams'))
+        approval_time = kwargs.get('approval_time')
+        escalation_time = kwargs.get('escalation_time')
+        for opt, value in (('--approval-time', approval_time), ('--escalation-time', escalation_time)):
+            if value is not None and value < 0:
+                raise base.CommandError(f'{opt} must be a non-negative number of minutes')
+        if new_approving is None and new_escalated is None and approval_time is None and escalation_time is None:
+            raise base.CommandError(
+                'Nothing to update: specify --approving-teams, --escalated-teams, --approval-time and/or --escalation-time')
+
+        matches = [c for c in plugin.collections.get_all_entities() if c.collection_type == policy_type_id]
+        if len(matches) == 0:
+            raise base.CommandError(f'No approval collection provisioned for policy type {policy_type_value}')
+        if len(matches) > 1:
+            raise base.CommandError(
+                f'Multiple approval collections found for policy type {policy_type_value}; cannot determine which to update')
+        coll = matches[0]
+
+        collection_data = coll.collection_data
+        approving_teams = new_approving if new_approving is not None else (collection_data.get('approvingTeams') or [])
+        escalated_teams = new_escalated if new_escalated is not None else (collection_data.get('escalatedApprovers') or [])
+
+        collection_data['approvingTeams'] = approving_teams
+        collection_data['escalatedApprovers'] = escalated_teams
+        collection_data.pop('teamKeys', None)
+        if approval_time is not None:
+            collection_data['approvalTime'] = approval_time * 60
+        if escalation_time is not None:
+            collection_data['escalationTime'] = escalation_time * 60
+
+        updated = admin_types.CollectionData(
+            collection_uid=coll.collection_uid, collection_type=coll.collection_type,
+            collection_data=json.dumps(collection_data))
+
+        status = plugin.modify_collections(update_collections=[updated])
+        if len(status.update) > 0:
+            for st in status.update:
+                if isinstance(st, admin_types.EntityStatus) and not st.success:
+                    raise base.CommandError(f'Failed to update collection "{st.entity_uid}": {st.message}')
 
 
 class PedmCollectionDeleteCommand(base.ArgparseCommand):
@@ -2452,19 +2539,19 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
             for uid in to_remove:
                 if uid == '@approved':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_APPROVED))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == pedm_pb2.AST_APPROVED))
                 elif uid == '@denied':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == pedm_pb2.AST_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == pedm_pb2.AST_UNSPECIFIED))
                 elif uid == '@expired':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == pedm_pb2.AST_EXPIRED))
                 elif uid == '@escalated':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_ESCALATED))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == pedm_pb2.AST_ESCALATED))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
