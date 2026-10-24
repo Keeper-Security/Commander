@@ -153,3 +153,23 @@ def get_collection_required_fields(collection_type: Optional[int]) -> Optional[C
     if collection_type == CollectionType.OsVersion:
         return CollectionRequiredFields(['Name'])
     return None
+
+
+POLICY_TYPE_IDS = {
+    'elevation': 1000,
+    'file_access': 1001,
+    'command': 1003,
+}
+
+
+def resolve_policy_type_id(value: str) -> int:
+    name = value.strip().lower()
+    if name in POLICY_TYPE_IDS:
+        return POLICY_TYPE_IDS[name]
+    try:
+        n = int(value)
+    except ValueError:
+        raise ValueError(f'Unknown policy type "{value}"')
+    if not (1000 <= n < 2000):
+        raise ValueError(f'Unknown policy type "{value}"')
+    return n

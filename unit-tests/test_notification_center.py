@@ -1,9 +1,11 @@
 import json
 import unittest
+from unittest import mock
 
 from keepercommander import crypto, notification_center, utils
+from keepercommander.commands import notification
 from keepercommander.params import KeeperParams
-from keepercommander.proto import GraphSync_pb2, NotificationCenter_pb2 as NC
+from keepercommander.proto import GraphSync_pb2, NotificationCenter_pb2 as NC, enterprise_pb2, pedm_pb2
 
 
 def _wrapper(uid: bytes, timestamp: int, **content):
@@ -116,3 +118,60 @@ class TestNotificationPayloads(unittest.TestCase):
                           parameters={'reason': crypto.encrypt_aes_v2(b'need access', r_key)},
                           refs=[(GraphSync_pb2.RFT_REC, utils.base64_url_decode(record_uid))])
         self.assertEqual('need access', notification_center.decrypt_record_parameter(self.params, n, 'reason'))
+
+
+class TestPedmApprovalNotification(unittest.TestCase):
+    def setUp(self):
+        self.params = KeeperParams()
+        self.agent_key = utils.generate_aes_key()
+        self.approval_uid = bytes([7]) * 16
+        envelope = pedm_pb2.ApprovalEnvelope()
+        envelope.enterprise_id = 42
+        envelope.approval.approvalUid = self.approval_uid
+        envelope.approval.approvalType = 1
+        envelope.approval.accountInfo = crypto.encrypt_aes_v2(json.dumps({'user': 'bob'}).encode(), self.agent_key)
+        envelope.approval.applicationInfo = crypto.encrypt_aes_v2(json.dumps({'app': 'cmd.exe'}).encode(), self.agent_key)
+        self.notification = _notification(NC.NT_PEDM_APPROVAL_REQUEST, sender='Acme Corp',
+                                          refs=[(GraphSync_pb2.RFT_GENERAL, self.approval_uid)])
+        self.notification.encryptedData.data = envelope.SerializeToString()
+        self.plugin = mock.Mock()
+        self.plugin.get_mc_agent_key.side_effect = lambda x: self.agent_key if x == 42 else None
+        self.action = None
+
+    def _communicate_rest(self, params, rq, endpoint, rs_type=None):
+        self.assertEqual('enterprise/get_mcs_info', endpoint)
+        rs = enterprise_pb2.GetMCsInfoResponse()
+        rs.mcInfo.add().enterpriseId = 42
+        return rs
+
+    def _execute_router(self, params, endpoint, rq, rs_type=None):
+        self.assertEqual('pedm/msp_approval_action', endpoint)
+        self.action = rq
+        return pedm_pb2.PedmStatusResponse()
+
+    def test_envelope_is_parsed(self):
+        envelope = notification_center.get_pedm_approval(self.notification)
+        self.assertEqual(42, envelope.enterprise_id)
+        self.assertEqual(self.approval_uid, envelope.approval.approvalUid)
+
+    def test_details_decrypt_with_mc_agent_key(self):
+        with mock.patch('keepercommander.api.communicate_rest', side_effect=self._communicate_rest), \
+                mock.patch('keepercommander.pedm.admin_plugin.get_pedm_plugin', return_value=self.plugin):
+            details = notification._get_pedm_approval_details(self.params, self.notification)
+        self.assertEqual({'user': 'bob'}, details['account_info'])
+        self.assertEqual({'app': 'cmd.exe'}, details['application_info'])
+        self.assertEqual(42, details['enterprise_id'])
+
+    def test_inaccessible_mc_is_reported(self):
+        self.plugin.get_mc_agent_key.side_effect = lambda x: None
+        with mock.patch('keepercommander.api.communicate_rest', side_effect=self._communicate_rest), \
+                mock.patch('keepercommander.pedm.admin_plugin.get_pedm_plugin', return_value=self.plugin):
+            details = notification._get_pedm_approval_details(self.params, self.notification)
+        self.assertIn('not accessible', details['error'])
+
+    def test_deny_sends_msp_approval_action(self):
+        with mock.patch('keepercommander.api.execute_router', side_effect=self._execute_router):
+            notification._act_pedm_approval(self.params, self.notification, deny=True)
+        self.assertEqual(0, len(self.action.approve))
+        self.assertEqual(42, self.action.deny[0].enterprise_id)
+        self.assertEqual(self.approval_uid, self.action.deny[0].approval_uid)

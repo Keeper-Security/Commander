@@ -1,10 +1,9 @@
-import folder_pb2 as _folder_pb2
+from . import folder_pb2 as _folder_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -23,6 +22,12 @@ class ApprovalStatusType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     AST_DENIED: _ClassVar[ApprovalStatusType]
     AST_EXPIRED: _ClassVar[ApprovalStatusType]
     AST_ESCALATED: _ClassVar[ApprovalStatusType]
+
+class NavigationDirection(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    NAVIGATION_DIRECTION_UNSPECIFIED: _ClassVar[NavigationDirection]
+    NAVIGATION_DIRECTION_BACKWARD: _ClassVar[NavigationDirection]
+    NAVIGATION_DIRECTION_FORWARD: _ClassVar[NavigationDirection]
 CLT_OTHER: CollectionLinkType
 CLT_AGENT: CollectionLinkType
 CLT_POLICY: CollectionLinkType
@@ -33,6 +38,9 @@ AST_APPROVED: ApprovalStatusType
 AST_DENIED: ApprovalStatusType
 AST_EXPIRED: ApprovalStatusType
 AST_ESCALATED: ApprovalStatusType
+NAVIGATION_DIRECTION_UNSPECIFIED: NavigationDirection
+NAVIGATION_DIRECTION_BACKWARD: NavigationDirection
+NAVIGATION_DIRECTION_FORWARD: NavigationDirection
 
 class PEDMTOTPValidateRequest(_message.Message):
     __slots__ = ("username", "enterpriseId", "code")
@@ -52,7 +60,7 @@ class PedmStatus(_message.Message):
     key: _containers.RepeatedScalarFieldContainer[bytes]
     success: bool
     message: str
-    def __init__(self, key: _Optional[_Iterable[bytes]] = ..., success: _Optional[bool] = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, key: _Optional[_Iterable[bytes]] = ..., success: bool = ..., message: _Optional[str] = ...) -> None: ...
 
 class PedmStatusResponse(_message.Message):
     __slots__ = ("addStatus", "updateStatus", "removeStatus")
@@ -140,7 +148,7 @@ class PolicyAdd(_message.Message):
     encryptedData: bytes
     encryptedKey: bytes
     disabled: bool
-    def __init__(self, policyUid: _Optional[bytes] = ..., plainData: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., encryptedKey: _Optional[bytes] = ..., disabled: _Optional[bool] = ...) -> None: ...
+    def __init__(self, policyUid: _Optional[bytes] = ..., plainData: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., encryptedKey: _Optional[bytes] = ..., disabled: bool = ...) -> None: ...
 
 class PolicyUpdate(_message.Message):
     __slots__ = ("policyUid", "plainData", "encryptedData", "disabled")
@@ -260,7 +268,7 @@ class DeploymentNode(_message.Message):
     agentData: bytes
     created: int
     modified: int
-    def __init__(self, deploymentUid: _Optional[bytes] = ..., disabled: _Optional[bool] = ..., aesKey: _Optional[bytes] = ..., ecPublicKey: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., agentData: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
+    def __init__(self, deploymentUid: _Optional[bytes] = ..., disabled: bool = ..., aesKey: _Optional[bytes] = ..., ecPublicKey: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., agentData: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
 
 class AgentNode(_message.Message):
     __slots__ = ("agentUid", "machineId", "deploymentUid", "ecPublicKey", "disabled", "encryptedData", "created", "modified")
@@ -280,7 +288,7 @@ class AgentNode(_message.Message):
     encryptedData: bytes
     created: int
     modified: int
-    def __init__(self, agentUid: _Optional[bytes] = ..., machineId: _Optional[str] = ..., deploymentUid: _Optional[bytes] = ..., ecPublicKey: _Optional[bytes] = ..., disabled: _Optional[bool] = ..., encryptedData: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
+    def __init__(self, agentUid: _Optional[bytes] = ..., machineId: _Optional[str] = ..., deploymentUid: _Optional[bytes] = ..., ecPublicKey: _Optional[bytes] = ..., disabled: bool = ..., encryptedData: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ...) -> None: ...
 
 class PolicyNode(_message.Message):
     __slots__ = ("policyUid", "plainData", "encryptedData", "encryptedKey", "created", "modified", "disabled")
@@ -298,7 +306,7 @@ class PolicyNode(_message.Message):
     created: int
     modified: int
     disabled: bool
-    def __init__(self, policyUid: _Optional[bytes] = ..., plainData: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., encryptedKey: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ..., disabled: _Optional[bool] = ...) -> None: ...
+    def __init__(self, policyUid: _Optional[bytes] = ..., plainData: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., encryptedKey: _Optional[bytes] = ..., created: _Optional[int] = ..., modified: _Optional[int] = ..., disabled: bool = ...) -> None: ...
 
 class CollectionNode(_message.Message):
     __slots__ = ("collectionUid", "collectionType", "encryptedData", "created")
@@ -420,7 +428,7 @@ class GetPedmDataResponse(_message.Message):
     collectionLink: _containers.RepeatedCompositeFieldContainer[CollectionLink]
     approvals: _containers.RepeatedCompositeFieldContainer[ApprovalNode]
     approvalStatus: _containers.RepeatedCompositeFieldContainer[ApprovalStatusNode]
-    def __init__(self, continuationToken: _Optional[bytes] = ..., resetCache: _Optional[bool] = ..., hasMore: _Optional[bool] = ..., removedDeployments: _Optional[_Iterable[bytes]] = ..., removedAgents: _Optional[_Iterable[bytes]] = ..., removedPolicies: _Optional[_Iterable[bytes]] = ..., removedCollection: _Optional[_Iterable[bytes]] = ..., removedCollectionLink: _Optional[_Iterable[_Union[CollectionLink, _Mapping]]] = ..., removedApprovals: _Optional[_Iterable[bytes]] = ..., deployments: _Optional[_Iterable[_Union[DeploymentNode, _Mapping]]] = ..., agents: _Optional[_Iterable[_Union[AgentNode, _Mapping]]] = ..., policies: _Optional[_Iterable[_Union[PolicyNode, _Mapping]]] = ..., collections: _Optional[_Iterable[_Union[CollectionNode, _Mapping]]] = ..., collectionLink: _Optional[_Iterable[_Union[CollectionLink, _Mapping]]] = ..., approvals: _Optional[_Iterable[_Union[ApprovalNode, _Mapping]]] = ..., approvalStatus: _Optional[_Iterable[_Union[ApprovalStatusNode, _Mapping]]] = ...) -> None: ...
+    def __init__(self, continuationToken: _Optional[bytes] = ..., resetCache: bool = ..., hasMore: bool = ..., removedDeployments: _Optional[_Iterable[bytes]] = ..., removedAgents: _Optional[_Iterable[bytes]] = ..., removedPolicies: _Optional[_Iterable[bytes]] = ..., removedCollection: _Optional[_Iterable[bytes]] = ..., removedCollectionLink: _Optional[_Iterable[_Union[CollectionLink, _Mapping]]] = ..., removedApprovals: _Optional[_Iterable[bytes]] = ..., deployments: _Optional[_Iterable[_Union[DeploymentNode, _Mapping]]] = ..., agents: _Optional[_Iterable[_Union[AgentNode, _Mapping]]] = ..., policies: _Optional[_Iterable[_Union[PolicyNode, _Mapping]]] = ..., collections: _Optional[_Iterable[_Union[CollectionNode, _Mapping]]] = ..., collectionLink: _Optional[_Iterable[_Union[CollectionLink, _Mapping]]] = ..., approvals: _Optional[_Iterable[_Union[ApprovalNode, _Mapping]]] = ..., approvalStatus: _Optional[_Iterable[_Union[ApprovalStatusNode, _Mapping]]] = ...) -> None: ...
 
 class PolicyAgentRequest(_message.Message):
     __slots__ = ("policyUid", "summaryOnly")
@@ -428,7 +436,7 @@ class PolicyAgentRequest(_message.Message):
     SUMMARYONLY_FIELD_NUMBER: _ClassVar[int]
     policyUid: _containers.RepeatedScalarFieldContainer[bytes]
     summaryOnly: bool
-    def __init__(self, policyUid: _Optional[_Iterable[bytes]] = ..., summaryOnly: _Optional[bool] = ...) -> None: ...
+    def __init__(self, policyUid: _Optional[_Iterable[bytes]] = ..., summaryOnly: bool = ...) -> None: ...
 
 class PolicyAgentResponse(_message.Message):
     __slots__ = ("agentCount", "agentUid")
@@ -468,7 +476,7 @@ class AuditCollectionResponse(_message.Message):
     values: _containers.RepeatedCompositeFieldContainer[AuditCollectionValue]
     hasMore: bool
     continuationToken: bytes
-    def __init__(self, values: _Optional[_Iterable[_Union[AuditCollectionValue, _Mapping]]] = ..., hasMore: _Optional[bool] = ..., continuationToken: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, values: _Optional[_Iterable[_Union[AuditCollectionValue, _Mapping]]] = ..., hasMore: bool = ..., continuationToken: _Optional[bytes] = ...) -> None: ...
 
 class GetCollectionLinkRequest(_message.Message):
     __slots__ = ("collectionLink",)
@@ -522,7 +530,7 @@ class GetAgentLastSeenRequest(_message.Message):
     AGENTUID_FIELD_NUMBER: _ClassVar[int]
     activeOnly: bool
     agentUid: _containers.RepeatedScalarFieldContainer[bytes]
-    def __init__(self, activeOnly: _Optional[bool] = ..., agentUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+    def __init__(self, activeOnly: bool = ..., agentUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class AgentLastSeen(_message.Message):
     __slots__ = ("agentUid", "lastSeen")
@@ -639,3 +647,63 @@ class GetAgenticWorkloadCountResponse(_message.Message):
     COUNTS_FIELD_NUMBER: _ClassVar[int]
     counts: _containers.RepeatedCompositeFieldContainer[EnterpriseWorkloadCount]
     def __init__(self, counts: _Optional[_Iterable[_Union[EnterpriseWorkloadCount, _Mapping]]] = ...) -> None: ...
+
+class GetApprovalNavigationTokenRequest(_message.Message):
+    __slots__ = ("enterprise_id",)
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    enterprise_id: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, enterprise_id: _Optional[_Iterable[int]] = ...) -> None: ...
+
+class GetApprovalNavigationTokenResponse(_message.Message):
+    __slots__ = ("navigation_token",)
+    NAVIGATION_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    navigation_token: bytes
+    def __init__(self, navigation_token: _Optional[bytes] = ...) -> None: ...
+
+class ApprovalNavigationRequest(_message.Message):
+    __slots__ = ("navigation_token", "direction", "limit")
+    NAVIGATION_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    navigation_token: bytes
+    direction: NavigationDirection
+    limit: int
+    def __init__(self, navigation_token: _Optional[bytes] = ..., direction: _Optional[_Union[NavigationDirection, str]] = ..., limit: _Optional[int] = ...) -> None: ...
+
+class ApprovalEnvelope(_message.Message):
+    __slots__ = ("enterprise_id", "is_escalated", "approval")
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    IS_ESCALATED_FIELD_NUMBER: _ClassVar[int]
+    APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    enterprise_id: int
+    is_escalated: bool
+    approval: ApprovalNode
+    def __init__(self, enterprise_id: _Optional[int] = ..., is_escalated: bool = ..., approval: _Optional[_Union[ApprovalNode, _Mapping]] = ...) -> None: ...
+
+class ApprovalNavigationResponse(_message.Message):
+    __slots__ = ("next_navigation_token", "has_more", "approvals")
+    NEXT_NAVIGATION_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    APPROVALS_FIELD_NUMBER: _ClassVar[int]
+    next_navigation_token: bytes
+    has_more: bool
+    approvals: _containers.RepeatedCompositeFieldContainer[ApprovalEnvelope]
+    def __init__(self, next_navigation_token: _Optional[bytes] = ..., has_more: bool = ..., approvals: _Optional[_Iterable[_Union[ApprovalEnvelope, _Mapping]]] = ...) -> None: ...
+
+class EnterpriseApprovalRef(_message.Message):
+    __slots__ = ("enterprise_id", "approval_uid")
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    APPROVAL_UID_FIELD_NUMBER: _ClassVar[int]
+    enterprise_id: int
+    approval_uid: bytes
+    def __init__(self, enterprise_id: _Optional[int] = ..., approval_uid: _Optional[bytes] = ...) -> None: ...
+
+class MspApprovalActionRequest(_message.Message):
+    __slots__ = ("approve", "deny", "remove")
+    APPROVE_FIELD_NUMBER: _ClassVar[int]
+    DENY_FIELD_NUMBER: _ClassVar[int]
+    REMOVE_FIELD_NUMBER: _ClassVar[int]
+    approve: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
+    deny: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
+    remove: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
+    def __init__(self, approve: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ..., deny: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ..., remove: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ...) -> None: ...
