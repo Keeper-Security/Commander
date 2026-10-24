@@ -3,8 +3,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -44,6 +43,8 @@ class NotificationType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     NT_SECURITY_KEYS_DISABLED: _ClassVar[NotificationType]
     NT_SSL_CERTIFICATE_EXPIRES_SOON: _ClassVar[NotificationType]
     NT_SSL_CERTIFICATE_EXPIRED: _ClassVar[NotificationType]
+    NT_RECORD_REMINDER: _ClassVar[NotificationType]
+    NT_PEDM_APPROVAL_REQUEST: _ClassVar[NotificationType]
 
 class NotificationReadStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -59,6 +60,7 @@ class NotificationApprovalStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapp
     NAS_DENIED: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_APPROVAL_RIGHTS: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_ACCESS: _ClassVar[NotificationApprovalStatus]
+    NAS_EXPIRED: _ClassVar[NotificationApprovalStatus]
 NC_UNSPECIFIED: NotificationCategory
 NC_ACCOUNT: NotificationCategory
 NC_SHARING: NotificationCategory
@@ -90,6 +92,8 @@ NT_SECURITY_KEYS_ENABLED: NotificationType
 NT_SECURITY_KEYS_DISABLED: NotificationType
 NT_SSL_CERTIFICATE_EXPIRES_SOON: NotificationType
 NT_SSL_CERTIFICATE_EXPIRED: NotificationType
+NT_RECORD_REMINDER: NotificationType
+NT_PEDM_APPROVAL_REQUEST: NotificationType
 NRS_UNSPECIFIED: NotificationReadStatus
 NRS_LAST: NotificationReadStatus
 NRS_READ: NotificationReadStatus
@@ -99,6 +103,7 @@ NAS_APPROVED: NotificationApprovalStatus
 NAS_DENIED: NotificationApprovalStatus
 NAS_LOST_APPROVAL_RIGHTS: NotificationApprovalStatus
 NAS_LOST_ACCESS: NotificationApprovalStatus
+NAS_EXPIRED: NotificationApprovalStatus
 
 class EncryptedData(_message.Message):
     __slots__ = ("version", "data")
@@ -162,7 +167,7 @@ class NotificationContent(_message.Message):
     trimmingPoint: bool
     clientTypeIDs: _containers.RepeatedScalarFieldContainer[int]
     deviceIDs: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, notification: _Optional[_Union[Notification, _Mapping]] = ..., readStatus: _Optional[_Union[NotificationReadStatus, str]] = ..., approvalStatus: _Optional[_Union[NotificationApprovalStatus, str]] = ..., trimmingPoint: _Optional[bool] = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ...) -> None: ...
+    def __init__(self, notification: _Optional[_Union[Notification, _Mapping]] = ..., readStatus: _Optional[_Union[NotificationReadStatus, str]] = ..., approvalStatus: _Optional[_Union[NotificationApprovalStatus, str]] = ..., trimmingPoint: bool = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class NotificationWrapper(_message.Message):
     __slots__ = ("uid", "content", "timestamp")
@@ -182,7 +187,7 @@ class NotificationSync(_message.Message):
     data: _containers.RepeatedCompositeFieldContainer[NotificationWrapper]
     syncPoint: int
     hasMore: bool
-    def __init__(self, data: _Optional[_Iterable[_Union[NotificationWrapper, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: _Optional[bool] = ...) -> None: ...
+    def __init__(self, data: _Optional[_Iterable[_Union[NotificationWrapper, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: bool = ...) -> None: ...
 
 class ReadStatusUpdate(_message.Message):
     __slots__ = ("notificationUid", "status")
