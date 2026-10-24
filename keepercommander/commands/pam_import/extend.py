@@ -328,10 +328,67 @@ def _folder_uids_under_shf(shf: dict) -> set:
     return out
 
 
+_RESOURCE_RECORD_TYPES = ("pammachine", "pamdatabase", "pamdirectory", "pamremotebrowser")
+_USER_RECORD_TYPES = ("pamuser", "login")
+
+
 def _is_resource_type(obj) -> bool:
     """True if object is a PAM resource (machine, database, directory, remote browser)."""
     t = (getattr(obj, "type", None) or "").lower()
-    return t in ("pammachine", "pamdatabase", "pamdirectory", "pamremotebrowser")
+    return t in _RESOURCE_RECORD_TYPES
+
+
+def _resolve_folder_option(value: str, ksm_shared_folders: list) -> str:
+    """Resolve a --resources-folder/--users-folder value (folder UID or folder path) to the UID
+    of an existing folder under the KSM app. Returns "" if it cannot be resolved."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value in _collect_all_folder_uids_under_ksm(ksm_shared_folders):
+        return value
+    path_to_uid = {}
+    for shf in ksm_shared_folders:
+        name = shf.get("name") or ""
+        if name:
+            path_to_uid[name] = shf["uid"]
+        _collect_path_to_uid_from_tree(name, shf.get("folder_tree") or {}, path_to_uid, only_existing=True)
+    return path_to_uid.get(value, "")
+
+
+def _drop_folder_paths(pam_data: dict, drop_resources: bool, drop_users: bool) -> int:
+    """Remove folder_path from resources and/or users (incl. users nested in resources) in raw
+    pam_data so the folder given on the command line wins. Returns the number of folder_paths dropped."""
+    dropped = 0
+
+    def drop(item):
+        nonlocal dropped
+        if isinstance(item, dict) and item.get("folder_path"):
+            del item["folder_path"]
+            dropped += 1
+
+    for res in pam_data.get("resources") or []:
+        if not isinstance(res, dict):
+            continue
+        if drop_resources:
+            drop(res)
+        if drop_users:
+            for nested in res.get("users") or []:
+                drop(nested)
+    if drop_users:
+        for usr in pam_data.get("users") or []:
+            drop(usr)
+    return dropped
+
+
+def _shf_uids_holding_record_types(params, ksm_shared_folders: list, record_types: tuple) -> list:
+    """Return UIDs of the KSM app shared folders that hold (at any depth) a record of one of record_types."""
+    found = []
+    for shf in ksm_shared_folders:
+        for fuid in _folder_uids_under_shf(shf):
+            if any((rec[2] or "").lower() in record_types for rec in _get_records_in_folder(params, fuid)):
+                found.append(shf["uid"])
+                break
+    return found
 
 
 def _record_identifier(obj, fallback_login: str = "") -> str:
@@ -378,6 +435,10 @@ class PAMProjectExtendCommand(Command):
     parser = argparse.ArgumentParser(prog="pam project extend")
     parser.add_argument("--config", "-c", required=True, dest="config", action="store", help="PAM Configuration UID or Title")
     parser.add_argument("--filename", "-f", required=True, dest="file_name", action="store", help="File to load import data from.")
+    parser.add_argument("--resources-folder", required=False, dest="resources_folder", action="store", default="",
+                        help="Existing folder (UID or folder path) for new resources. Overrides folder_path of resources in the JSON.")
+    parser.add_argument("--users-folder", required=False, dest="users_folder", action="store", default="",
+                        help="Existing folder (UID or folder path) for new users. Overrides folder_path of users in the JSON.")
     parser.add_argument("--dry-run", "-d", required=False, dest="dry_run", action="store_true", default=False, help="Test import without modifying vault.")
 
     def get_parser(self):
@@ -463,12 +524,33 @@ class PAMProjectExtendCommand(Command):
         for shf in ksm_shared_folders:
             shf["folder_tree"] = build_tree_recursive(params, shf["uid"])
 
+        # Folder precedence: 1) command line options, 2) folder_path in JSON, 3) autodetect
+        folders = {}
+        drop_paths = {}
+        for opt_name, key in (("resources_folder", "resources_folder_uid"), ("users_folder", "users_folder_uid")):
+            opt_value = str(kwargs.get(opt_name) or "").strip()
+            if not opt_value:
+                continue
+            folder_uid = _resolve_folder_option(opt_value, ksm_shared_folders)
+            if not folder_uid:
+                raise CommandError("pam project extend", f"""--{opt_name.replace("_", "-")} "{opt_value}" is not an existing """
+                                   "folder shared to the KSM Application (use folder UID or folder path)")
+            folders[key] = folder_uid
+            drop_paths[opt_name] = True
+            if dry_run:
+                print(f"[DRY RUN] Will use --{opt_name.replace('_', '-')}: {folder_uid}")
+        if drop_paths:
+            dropped = _drop_folder_paths(pam_data, "resources_folder" in drop_paths, "users_folder" in drop_paths)
+            if dropped:
+                logging.warning(f"{bcolors.WARNING}WARNING: {dropped} folder_path value(s) in the import JSON are "
+                                f"ignored - overridden by --resources-folder/--users-folder{bcolors.ENDC}")
+
         project = {
             "data": {"pam_data": pam_data},
             "options": {"dry_run": dry_run},
             "ksm_app_uid": ksmapp_uid,
             "ksm_shared_folders": ksm_shared_folders,
-            "folders": {},
+            "folders": folders,
             "pam_config": {"pam_config_uid": configuration.record_uid, "pam_config_object": None},
             "error_count": 0,
         }
@@ -476,22 +558,7 @@ class PAMProjectExtendCommand(Command):
         self.process_folders(params, project)
         self.map_records(params, project)
         if project.get("error_count", 0) == 0:
-            has_new_no_path = False
-            for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
-                if getattr(o, "_extend_tag", None) == "new" and not (getattr(o, "folder_path", None) or "").strip():
-                    has_new_no_path = True
-                    break
-            if not has_new_no_path:
-                for mach in project.get("mapped_resources", []):
-                    if hasattr(mach, "users") and isinstance(mach.users, list):
-                        for u in mach.users:
-                            if getattr(u, "_extend_tag", None) == "new" and not (getattr(u, "folder_path", None) or "").strip():
-                                has_new_no_path = True
-                                break
-                    if has_new_no_path:
-                        break
-            if has_new_no_path:
-                self.autodetect_folders(params, project)
+            self.autodetect_folders(params, project)
 
         err_count = project.get("error_count", 0)
         new_count = project.get("new_record_count", 0)
@@ -1140,11 +1207,13 @@ class PAMProjectExtendCommand(Command):
         return (resources, users, step2_errors, y_count)
 
     def autodetect_folders(self, params, project: dict) -> list:
-        """Step 3: Autodetect resources_folder_uid and users_folder_uid when new records have no folder_path.
-        Call only when error_count==0 and there are records with no uid and no folder_path (tagged new).
+        """Step 3: Autodetect resources_folder_uid and users_folder_uid for new records with no folder_path.
+        Roles already set (--resources-folder/--users-folder) are left alone. Order: folders named
+        "<x> - Resources"/"<x> - Users", then where existing resource/user records live.
+        Never falls back to one folder for both roles - ambiguity is an error asking for folder_path.
         Returns list of step3 errors; updates project['folders'] with resources_folder_uid/users_folder_uid on success."""
         step3_errors = []
-        folders_out = project.get("folders") or {}
+        folders_out = project.setdefault("folders", {})
         ksm_shared_folders = project.get("ksm_shared_folders") or []
 
         new_no_path = []
@@ -1157,73 +1226,54 @@ class PAMProjectExtendCommand(Command):
                 for u in mach.users:
                     if getattr(u, "_extend_tag", None) == "new" and not (getattr(u, "folder_path", None) or "").strip():
                         new_no_path.append(u)
-        if not new_no_path:
+
+        need_res = not folders_out.get("resources_folder_uid") and any(_is_resource_type(o) for o in new_no_path)
+        need_usr = not folders_out.get("users_folder_uid") and any(not _is_resource_type(o) for o in new_no_path)
+        if not (need_res or need_usr):
             return step3_errors
 
-        shf_list = [(shf["uid"], shf.get("name") or "") for shf in ksm_shared_folders]
-        if len(shf_list) == 1:
-            folders_out["resources_folder_uid"] = shf_list[0][0]
-            folders_out["users_folder_uid"] = shf_list[0][0]
-            print("Warning: Using single shared folder for both resources and users (best practice: separate).")
-            return step3_errors
+        shf_names = {shf["uid"]: (shf.get("name") or shf["uid"]) for shf in ksm_shared_folders}
+        res_uid = usr_uid = None
 
-        if len(shf_list) == 2:
-            names = [n for _, n in shf_list]
+        if len(ksm_shared_folders) == 2:
+            names = [shf.get("name") or "" for shf in ksm_shared_folders]
             r_idx = next((i for i, n in enumerate(names) if n.endswith(" - Resources") or n.endswith("- Resources")), -1)
             u_idx = next((i for i, n in enumerate(names) if n.endswith(" - Users") or n.endswith("- Users")), -1)
             if r_idx >= 0 and u_idx >= 0 and r_idx != u_idx:
-                folders_out["resources_folder_uid"] = shf_list[r_idx][0]
-                folders_out["users_folder_uid"] = shf_list[u_idx][0]
-                return step3_errors
+                res_uid = ksm_shared_folders[r_idx]["uid"]
+                usr_uid = ksm_shared_folders[u_idx]["uid"]
 
-        non_empty = []
-        for shf in ksm_shared_folders:
-            uids = _folder_uids_under_shf(shf)
-            if any(get_folder_record_uids(params, fuid) for fuid in uids):
-                non_empty.append(shf)
-        if len(non_empty) == 0:
-            step3_errors.append("Autodetect: no folders contain records; cannot assign resources/users folders.")
+        def detect(role, label, option, record_types):
+            candidates = _shf_uids_holding_record_types(params, ksm_shared_folders, record_types)
+            if len(candidates) == 1:
+                return candidates[0]
+            if not candidates:
+                step3_errors.append(f"Autodetect: no existing {label} records found in the folders shared to the KSM "
+                                    f"Application - cannot determine the {role} folder. "
+                                    f"Add folder_path to the {role} or use {option}.")
+            else:
+                found = ", ".join(f'"{shf_names[u]}"' for u in candidates)
+                step3_errors.append(f"Autodetect: existing {label} records found in multiple folders ({found}) - "
+                                    f"cannot determine the {role} folder. Add folder_path to the {role} or use {option}.")
+            return None
+
+        if need_res:
+            res_uid = res_uid or detect("resources", "resource", "--resources-folder", _RESOURCE_RECORD_TYPES)
+            if res_uid:
+                folders_out["resources_folder_uid"] = res_uid
+        if need_usr:
+            usr_uid = usr_uid or detect("users", "user", "--users-folder", _USER_RECORD_TYPES)
+            if usr_uid:
+                folders_out["users_folder_uid"] = usr_uid
+
+        if need_res and need_usr and res_uid and res_uid == usr_uid:
+            print(f'Warning: Using the same folder "{shf_names[res_uid]}" for both resources and users '
+                  "(best practice: separate).")
+
+        if step3_errors:
             project["error_count"] = project.get("error_count", 0) + len(step3_errors)
             for e in step3_errors:
                 print(f"  {e}")
-            print(f"Total: {len(step3_errors)} errors")
-            return step3_errors
-        if len(non_empty) == 1:
-            folders_out["resources_folder_uid"] = non_empty[0]["uid"]
-            folders_out["users_folder_uid"] = non_empty[0]["uid"]
-            print("Warning: Using single non-empty folder for both resources and users.")
-            return step3_errors
-        if len(non_empty) == 2:
-            res_uid = users_uid = None
-            for shf in non_empty:
-                uids = _folder_uids_under_shf(shf)
-                for fuid in uids:
-                    recs = _get_records_in_folder(params, fuid)
-                    if not recs:
-                        continue
-                    for ruid, _title, rtype in recs:
-                        rtype = (rtype or "").lower()
-                        if rtype in ("pamuser", "login"):
-                            users_uid = shf["uid"]
-                            break
-                        if rtype in ("pammachine", "pamdatabase", "pamdirectory", "pamremotebrowser"):
-                            res_uid = shf["uid"]
-                            break
-                    if users_uid is not None or res_uid is not None:
-                        break
-                if users_uid is not None and res_uid is not None:
-                    break
-            if res_uid is not None and users_uid is not None:
-                folders_out["resources_folder_uid"] = res_uid
-                folders_out["users_folder_uid"] = users_uid
-                return step3_errors
-            step3_errors.append("Autodetect: could not determine which folder is resources vs users.")
-        else:
-            step3_errors.append("Autodetect: three or more non-empty folders; add folder_path to disambiguate.")
-        project["error_count"] = project.get("error_count", 0) + len(step3_errors)
-        for e in step3_errors:
-            print(f"  {e}")
-        if step3_errors:
             print(f"Total: {len(step3_errors)} errors")
         return step3_errors
 
