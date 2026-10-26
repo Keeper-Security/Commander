@@ -204,7 +204,8 @@ def resolve_folder_identifier(params, folder_identifier):
         rs = try_resolve_path(params, folder_identifier)
         if rs is not None:
             folder, pattern = rs
-            if folder and not pattern:
+            if (folder and not pattern and
+                    _is_safe_path_folder(params, folder)):
                 return folder.uid
     return None
 

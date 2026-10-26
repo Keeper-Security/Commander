@@ -32,6 +32,7 @@ from .helpers import (
     ensure_nested_share_folder, is_nested_share_folder,
     is_nested_share_folder_owner_email, owner_share_target_message,
 )
+from ...nested_share_folder.folder_api import _is_current_account_folder_owner
 from .parsers import (
     nested_share_folder_mkdir_parser,
     nested_share_folder_update_parser,
@@ -163,9 +164,12 @@ class NestedShareFolderMkdirCommand(Command):
         """Find an existing NSF folder named *folder_name* whose parent matches
         *parent_uid*. ``parent_uid=None`` means "root level".
         """
+
         nsf_folders = getattr(params, 'nested_share_folders', {})
         name_lower = folder_name.lower()
         looking_for_root = not parent_uid
+        owned_matches = []
+        unknown_matches = []
         for fuid, fobj in nsf_folders.items():
             if fobj.get('name', '').lower() != name_lower:
                 continue
@@ -175,12 +179,24 @@ class NestedShareFolderMkdirCommand(Command):
                 normalized in ('', 'root')
                 or (raw_parent and raw_parent not in nsf_folders)
             )
-            if looking_for_root:
-                if is_root_child:
-                    return fuid
-            else:
-                if raw_parent == parent_uid:
-                    return fuid
+            parent_matches = is_root_child if looking_for_root else raw_parent == parent_uid
+            if not parent_matches:
+                continue
+
+            if _is_current_account_folder_owner(params, fobj):
+                owned_matches.append(fuid)
+            elif not (fobj.get('owner_username') or fobj.get('owner_account_uid')):
+                
+                unknown_matches.append(fuid)
+
+        matches = owned_matches or unknown_matches
+        if len(matches) > 1:
+            raise CommandError(
+                'nsf-mkdir',
+                f'Multiple Nested Share Folders match "{folder_name}". '
+                'Use a folder UID or a more specific path.')
+        if matches:
+            return matches[0]
         return None
 
 

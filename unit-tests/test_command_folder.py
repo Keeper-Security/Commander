@@ -115,6 +115,32 @@ class TestFolder(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, folder='Invalid Name')
 
+    def test_remove_rejects_ambiguous_folder_path(self):
+        from keepercommander.subfolder import UserFolderNode
+
+        params = get_synced_params()
+        first = UserFolderNode()
+        first.uid = 'a' * 22
+        first.name = 'Ambiguous'
+        first.parent_uid = None
+        first.subfolders = []
+        second = UserFolderNode()
+        second.uid = 'b' * 22
+        second.name = 'Ambiguous'
+        second.parent_uid = None
+        second.subfolders = []
+        params.folder_cache[first.uid] = first
+        params.folder_cache[second.uid] = second
+        params.root_folder.subfolders.extend([first.uid, second.uid])
+
+        cmd = folder.FolderRemoveCommand()
+        with mock.patch(
+                'keepercommander.enforcement.MasterPasswordReentryEnforcer.check_and_enforce',
+                return_value=True):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, pattern=['Ambiguous'], force=True, quiet=True)
+        self.assertIn('Multiple folders match', str(ctx.exception))
+
     def test_delete_folders(self):
         params = get_synced_params()
         cmd = folder.FolderRemoveCommand()

@@ -504,12 +504,11 @@ class NestedShareRecordShortcutListCommand(Command):
                 raise CommandError('nsf-shortcut list', f'Record UID {target} does not have shortcuts')
             return {target}
 
-        lower = target.casefold()
-        for uid in nsf_records:
-            if cls._record_title(uid, nsf_record_data).casefold() == lower:
-                if uid not in records:
-                    raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
-                return {uid}
+        resolved_record = _nsf.resolve_nested_share_record_uid(params, target)
+        if resolved_record in nsf_records:
+            if resolved_record not in records:
+                raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
+            return {resolved_record}
 
         resolved_folder = _nsf.resolve_folder_identifier(params, target)
         if resolved_folder:
@@ -536,7 +535,7 @@ class NestedShareRecordShortcutKeepCommand(Command):
         nsf_folders = getattr(params, 'nested_share_folders', {})
 
         nsf_record_data = getattr(params, 'nested_share_record_data', {})
-        record_uid = self._resolve_record(target, nsf_records, nsf_record_data)
+        record_uid = self._resolve_record(params, target, nsf_records, nsf_record_data)
         keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), nsf_folders)
 
         records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
@@ -581,20 +580,12 @@ class NestedShareRecordShortcutKeepCommand(Command):
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(target, nsf_records, nsf_record_data=None):
+    def _resolve_record(params, target, nsf_records, nsf_record_data=None):
         if target in nsf_records:
             return target
-        lower = target.casefold()
-        if nsf_record_data:
-            for uid in nsf_records:
-                rd = nsf_record_data.get(uid) or {}
-                dj = rd.get('data_json') or {}
-                if (dj.get('title') or '').casefold() == lower:
-                    return uid
-
-        for uid, rec in nsf_records.items():
-            if rec.get('title', '').casefold() == lower:
-                return uid
+        resolved_record = _nsf.resolve_nested_share_record_uid(params, target)
+        if resolved_record in nsf_records:
+            return resolved_record
         raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in Nested Share Folder')
 
     @staticmethod

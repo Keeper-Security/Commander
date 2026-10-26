@@ -160,6 +160,46 @@ class TestKSMAppRecordResolution(unittest.TestCase):
         self.assertIsNotNone(rec)
         self.assertEqual(rec['record_uid'], app_uid)
 
+    def test_get_app_record_rejects_duplicate_classic_titles(self):
+        params = self._make_params()
+        first_uid = 'classicApp000000000001'
+        second_uid = 'classicApp000000000002'
+        app_data = lambda uid: {
+            'record_uid': uid,
+            'version': 5,
+            'data_unencrypted': b'{"type":"app","title":"Duplicate App"}',
+            'record_key_unencrypted': b'app_key',
+        }
+        params.record_cache = {
+            first_uid: app_data(first_uid),
+            second_uid: app_data(second_uid),
+        }
+        params.user = 'victim@example.com'
+        params.account_uid_bytes = None
+        params.meta_data_cache = {}
+        params.record_owner_cache = {}
+
+        self.assertIsNone(KSMCommand.get_app_record(params, 'Duplicate App'))
+
+    def test_get_app_record_rejects_duplicate_nsf_titles(self):
+        params = self._make_params()
+        first_uid = 'nsfApp00000000000001'
+        second_uid = 'nsfApp00000000000002'
+        params.nested_share_records = {
+            first_uid: {'version': 5, 'record_key_unencrypted': b'a'},
+            second_uid: {'version': 5, 'record_key_unencrypted': b'b'},
+        }
+        params.nested_share_record_data = {
+            first_uid: {'data_json': {'type': 'app', 'title': 'Duplicate App'}},
+            second_uid: {'data_json': {'type': 'app', 'title': 'Duplicate App'}},
+        }
+        params.user = 'victim@example.com'
+        params.account_uid_bytes = None
+        params.meta_data_cache = {}
+        params.record_owner_cache = {}
+
+        self.assertIsNone(KSMCommand.get_app_record(params, 'Duplicate App'))
+
     def test_get_ksm_app_display_info_from_nsf_metadata(self):
         params = self._make_params()
         app_uid = 'appUid00000000000001'

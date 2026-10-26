@@ -716,7 +716,10 @@ class FolderRemoveCommand(Command):
         folders = []
         pattern_list = kwargs.get('pattern', [])
         for pattern in pattern_list:
-            rs = try_resolve_path(params, pattern)
+            try:
+                rs = try_resolve_path(params, pattern, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('rmdir', str(e))
             if rs is None:
                 regex_pattern = pattern
             else:

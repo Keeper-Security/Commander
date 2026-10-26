@@ -1641,18 +1641,6 @@ class KSMCommand(Command):
         if nsf_rec:
             return nsf_rec
 
-        for rec_cache_val in params.record_cache.values():
-            rec = KSMCommand._app_record_from_cache_entry(rec_cache_val)
-            if not rec:
-                continue
-            r_uid = rec.get('record_uid')
-            try:
-                r_unencr_dict = json.loads(rec.get('data_unencrypted').decode('utf-8'))
-            except Exception:
-                continue
-            if r_unencr_dict.get('title') == app_name_or_uid or r_uid == app_name_or_uid:
-                return rec
-
         resolved_uid = resolve_nested_share_record_uid(params, app_name_or_uid)
         if resolved_uid:
             if resolved_uid in getattr(params, 'record_cache', {}):
