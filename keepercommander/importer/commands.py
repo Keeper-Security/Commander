@@ -19,7 +19,7 @@ from typing import Optional, List, Dict
 
 from . import imp_exp
 from .. import api, record_types
-from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
+from .importer import SharedFolder, Team, Permission, Record, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
@@ -123,6 +123,8 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
                            help='display skipped records (always enabled for CyberArk imports)')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
+import_parser.add_argument('--add-thycotic-users', dest='add_thycotic_users', action='store_true',
+                           help='Thycotic only: provision Delinea users as pre-activated Keeper enterprise users')
 import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument('--skip', dest='skip', action='store', type=_cyberark_skip_arg,
@@ -367,6 +369,10 @@ class RecordImportCommand(ImporterCommand):
             logging.warning('--skip is only used with --format=cyberark; ignoring')
             kwargs['skip'] = ''
 
+        if kwargs.get('add_thycotic_users') and import_format != 'thycotic':
+            logging.warning('--add-thycotic-users is only used with --format=thycotic; ignoring')
+            kwargs['add_thycotic_users'] = False
+
         logging.info('Processing... please wait.')
         folder_mapping = imp_exp._import(params, import_format, import_name, manage_users=manage_users,
                                          manage_records=manage_records, can_edit=can_edit, can_share=can_share,
@@ -495,6 +501,7 @@ class DownloadMembershipCommand(Command):
 
         added_folders = []  # type: List[SharedFolder]
         added_teams = []    # type: List[Team]
+        added_records = []  # type: List[Record]
 
         try:
             full_name = f'keepercommander.importer.{"json" if source == "keeper" else source}'
@@ -535,6 +542,14 @@ class DownloadMembershipCommand(Command):
                     obj.members = [replace_email_domain(x, old_domain, new_domain) for x in obj.members]
                 if obj.name:
                     added_teams.append(obj)
+            elif isinstance(obj, Record) and obj.shares:
+                if old_domain and new_domain:
+                    for share in obj.shares:
+                        share.name = replace_email_domain(share.name, old_domain, new_domain)
+                if import_into and obj.folders:
+                    obj.folders[0].path = '{0}{1}{2}'.format(
+                        import_into, PathDelimiter, obj.folders[0].path or '')
+                added_records.append(obj)
 
         # process shared sub folders
         sub_folder_action = kwargs.get('sub_folder') or 'ignore'
@@ -562,6 +577,13 @@ class DownloadMembershipCommand(Command):
 
         shared_folders = {}  # type: Dict[str, SharedFolder]
         teams = {}           # type: Dict[str, Team]
+        existing_records = []  # type: List[Record]
+
+        def _record_key(record):
+            path = ''
+            if record.folders:
+                path = record.folders[0].path or ''
+            return (path.casefold(), (record.title or '').casefold())
 
         json_importer = KeeperJsonImporter()
         if os.path.exists(file_name):
@@ -573,28 +595,36 @@ class DownloadMembershipCommand(Command):
                     elif isinstance(obj, Team):
                         if obj.uid:
                             teams[obj.uid] = obj
+                    elif isinstance(obj, Record) and obj.shares:
+                        existing_records.append(obj)
             except:
                 pass
 
-        if added_folders or added_teams:
+        if added_folders or added_teams or added_records:
             for sf in added_folders:
                 if sf.uid and sf.uid in shared_folders:
                     del shared_folders[sf.uid]
             for t in added_teams:
                 if t.uid and t.uid in teams:
                     del teams[t.uid]
+            replaced = {_record_key(record) for record in added_records}
+            existing_records = [record for record in existing_records if _record_key(record) not in replaced]
 
             memberships = []
             memberships.extend(shared_folders.values())
             memberships.extend(teams.values())
+            memberships.extend(existing_records)
             memberships.extend(added_folders)
             memberships.extend(added_teams)
+            memberships.extend(added_records)
             json_exporter = KeeperJsonExporter()
             json_exporter.do_export(file_name, memberships)
             if len(added_folders) > 0:
                 logging.info('%d shared folder memberships added.', len(added_folders))
             if len(added_teams) > 0:
                 logging.info('%d team memberships added.', len(added_teams))
+            if len(added_records) > 0:
+                logging.info('%d secret permission lists added.', len(added_records))
         else:
             logging.info('No folder memberships downloaded.')
 
@@ -611,6 +641,7 @@ class ApplyMembershipCommand(Command):
 
         shared_folders = []  # type: List[SharedFolder]
         teams = []     # type: List[Team]
+        secret_records = []  # type: List[Record]
 
         json_importer = KeeperJsonImporter()
         for obj in json_importer.do_import(file_name, users_only=True):
@@ -618,6 +649,8 @@ class ApplyMembershipCommand(Command):
                 shared_folders.append(obj)
             if isinstance(obj, Team):
                 teams.append(obj)
+            if isinstance(obj, Record) and obj.shares:
+                secret_records.append(obj)
 
         full_sync = kwargs.get('full_sync') is True
         unsafe = kwargs.get('unsafe') is True
@@ -626,6 +659,9 @@ class ApplyMembershipCommand(Command):
 
         if len(teams) > 0:
             imp_exp.import_teams(params, teams, full_sync)
+
+        if len(secret_records) > 0:
+            imp_exp.apply_secret_share_records(params, secret_records)
 
 
 class DownloadRecordTypeCommand(EnterpriseCommand):

@@ -122,6 +122,15 @@ class Permission:
         self.role = None  # NSF role name: viewer, content-manager, full-manager, …
 
 
+class RecordShare:
+    """Direct record share produced by an importer. name is an email."""
+
+    def __init__(self, name, can_edit, can_share):
+        self.name = name
+        self.can_edit = can_edit
+        self.can_share = can_share
+
+
 class SharedFolder:
     def __init__(self):
         self.uid = None
@@ -248,6 +257,7 @@ class Record:
         self.last_modified = 0
         self.fields = []         # type: List[RecordField]
         self.folders = None      # type: Optional[List[Folder]]
+        self.shares = None       # type: Optional[List[RecordShare]]
         self.attachments = None  # type: Optional[List[Attachment]]
         self.references = None   # type: Optional[List[RecordReferences]]
         self.schema = None       # type: Optional[List[RecordSchemaField]]

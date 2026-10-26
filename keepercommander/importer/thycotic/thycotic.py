@@ -16,6 +16,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import time
 import warnings
 from contextlib import contextmanager
@@ -29,20 +30,49 @@ from urllib.parse import urlparse, urlunparse
 from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
-                        RecordField, BytesAttachment, Team, BaseDownloadRecordType, RecordType, RecordTypeField)
+                        RecordField, RecordShare, BytesAttachment, Team, BaseDownloadRecordType, RecordType,
+                        RecordTypeField)
+from ...constants import EMAIL_PATTERN
 from ...params import KeeperParams
 from ... import record_types, vault, api
 
 
 class ThycoticMixin:
     @staticmethod
-    def connect_to_server(url=None):  # type: (Optional[str]) -> ThycoticAuth
+    def url_from_tenant(tenant):  # type: (Optional[str]) -> str
+        """Build a Secret Server base URL from a shell variable. Nothing is printed."""
+        tenant = (tenant or '').strip().rstrip('/')
+        if not tenant:
+            return ''
+        if tenant.startswith('https://') or tenant.startswith('http://'):
+            return tenant
+        if '.' not in tenant:
+            tenant = '{0}.secretservercloud.com'.format(tenant)
+        return 'https://{0}/'.format(tenant)
+
+    @staticmethod
+    def expand_shell_value(value, envvars):  # type: (str, Optional[dict]) -> Optional[str]
+        """Replace ${NAME} from the Commander shell. Do not print the result."""
+        from keepercommander.commands.base import expand_cmd_args, parameter_pattern
+        expanded = expand_cmd_args(value or '', envvars or {})
+        missing = parameter_pattern.findall(expanded)
+        if missing:
+            logging.warning('Shell variable is not set: %s', ', '.join(missing))
+            return None
+        return expanded
+
+    @staticmethod
+    def connect_to_server(url=None, envvars=None):  # type: (Optional[str], Optional[dict]) -> ThycoticAuth
         if not url:
             url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
             if not url:
                 logging.warning('Thycotic Host or URL is required')
                 return
 
+        url = ThycoticMixin.expand_shell_value(url, envvars)
+        if not url:
+            return
+        url = ThycoticMixin.url_from_tenant(url)
         if not url.startswith('http'):
             url = f'https://{url}'
         username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
@@ -210,6 +240,277 @@ class ThycoticMixin:
             del folders[1]
         return folders
 
+    @staticmethod
+    def _secret_role_flags(role):
+        # type: (str) -> Optional[Tuple[bool, bool]]
+        """Map a Secret Server secret role to Keeper can_edit, can_share.
+
+        List and View are both read-only. Keeper direct shares have no
+        title-only role, so List cannot be kept apart from View.
+        """
+        role = (role or '').strip().casefold()
+        if role == 'owner':
+            return True, True
+        if role == 'edit':
+            return True, False
+        if role in ('view', 'list'):
+            return False, False
+        return None
+
+    @staticmethod
+    def _remember_email(emails, user_id, email):
+        email = (email or '').strip()
+        if not email or user_id in (None, ''):
+            return
+        emails[user_id] = email
+        try:
+            emails[int(user_id)] = email
+        except (TypeError, ValueError):
+            pass
+
+    @staticmethod
+    def provisioned_emails(auth):
+        # type: (ThycoticAuth) -> Dict
+        """Map a Delinea user id to an email. No users are created.
+
+        Folder membership already resolves these ids through the user list.
+        A failed detail fetch must not throw that map away.
+        """
+        emails = {}
+        for user_id, user in (ThycoticMixin.get_user_lookup(auth) or {}).items():
+            if not isinstance(user, dict):
+                continue
+            email = (user.get('emailAddress') or '').strip()
+            if not email:
+                username = (user.get('userName') or '').strip()
+                if '@' in username:
+                    email = username
+            ThycoticMixin._remember_email(emails, user_id, email)
+        try:
+            users = ThycoticImporter()._prepare_thycotic_users(auth) or []
+        except Exception as exc:
+            logging.info('Delinea users for secret shares: %s', exc)
+            users = []
+        for user in users:
+            ThycoticMixin._remember_email(emails, user.get('id'), user.get('email'))
+        return emails
+
+    @staticmethod
+    def _email_for_user(emails, user_id):
+        email = emails.get(user_id) or ''
+        if email or user_id in (None, '', 0):
+            return email
+        try:
+            return emails.get(int(user_id)) or ''
+        except (TypeError, ValueError):
+            return ''
+
+    @staticmethod
+    def shares_from_secret_permissions(rows, emails, groups=None):
+        # type: (list, Dict, Optional[Dict]) -> List[RecordShare]
+        """Map permission rows to record shares for provisioned emails.
+
+        A group row is expanded to the member emails already provisioned.
+        A user who appears twice keeps the higher role. This does not change
+        the shared-folder membership.
+        """
+        if not isinstance(rows, list):
+            return []
+        groups = groups or {}
+        grants = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            flags = ThycoticMixin._secret_role_flags(row.get('secretAccessRoleName') or '')
+            if flags is None:
+                continue
+            user_ids = []
+            user_id = row.get('userId') or 0
+            group_id = row.get('groupId') or 0
+            direct_email = ''
+            for key in ('emailAddress', 'userName', 'knownAs'):
+                candidate = (row.get(key) or '')
+                if isinstance(candidate, str) and '@' in candidate:
+                    direct_email = candidate.strip()
+                    break
+            if user_id:
+                user_ids.append(user_id)
+            elif direct_email:
+                previous = grants.get(direct_email)
+                if previous is None:
+                    grants[direct_email] = flags
+                else:
+                    grants[direct_email] = (previous[0] or flags[0], previous[1] or flags[1])
+                continue
+            elif group_id:
+                group = groups.get(group_id) or {}
+                if not group:
+                    try:
+                        group = groups.get(int(group_id)) or {}
+                    except (TypeError, ValueError):
+                        group = {}
+                user_ids.extend(group.get('users') or [])
+            for member_id in user_ids:
+                email = ThycoticMixin._email_for_user(emails, member_id)
+                if not email and direct_email and member_id == user_id:
+                    email = direct_email
+                if not email:
+                    continue
+                previous = grants.get(email)
+                if previous is None:
+                    grants[email] = flags
+                else:
+                    grants[email] = (previous[0] or flags[0], previous[1] or flags[1])
+        return [
+            RecordShare(email, can_edit, can_share)
+            for email, (can_edit, can_share) in sorted(grants.items())
+        ]
+
+    @staticmethod
+    def folder_permission_rows(auth, folders, folder_id):
+        # type: (ThycoticAuth, Dict, int) -> list
+        """Permission rows for a secret that inherits, walking up to a folder that has them."""
+        seen = set()
+        current = folder_id
+        while current and current not in seen:
+            seen.add(current)
+            try:
+                rows = auth.thycotic_search('/v1/folder-permissions?filter.folderId={0}'.format(current))
+            except Exception as exc:
+                logging.info('folder-permissions %s: %s', current, exc)
+                rows = []
+            if isinstance(rows, list) and rows:
+                return rows
+            folder = folders.get(current) if isinstance(folders, dict) else None
+            parent = folder.get('parentFolderId') if isinstance(folder, dict) else 0
+            if not parent or parent == current:
+                break
+            current = parent
+        return []
+
+    @staticmethod
+    def permission_rows_for_secret(auth, folders, secret):
+        # type: (ThycoticAuth, Dict, dict) -> list
+        """Rows that name who can open this secret.
+
+        Secret Server often omits inheritPermissions on the secret record.
+        Some secrets then return their users from secret-permissions, and
+        others only from the folder. Keep whichever list is non-empty. A
+        secret that inherits prefers the folder's secret roles.
+        """
+        folder_id = secret.get('folderId') if isinstance(secret, dict) else None
+        secret_id = secret.get('id') if isinstance(secret, dict) else None
+        inherits = isinstance(secret, dict) and secret.get('inheritPermissions') is True
+
+        def secret_rows():
+            if not secret_id:
+                return []
+            try:
+                rows = auth.thycotic_search(
+                    '/v1/secret-permissions?filter.secretId={0}'.format(secret_id))
+            except Exception as exc:
+                logging.warning('secret-permissions %s: %s', secret_id, exc)
+                return []
+            return rows if isinstance(rows, list) else []
+
+        if inherits:
+            rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id)
+            if rows:
+                return rows
+            return secret_rows()
+        rows = secret_rows()
+        if rows:
+            return rows
+        return ThycoticMixin.folder_permission_rows(auth, folders, folder_id)
+
+    @staticmethod
+    def iter_secret_shares(auth, folders):
+        # type: (ThycoticAuth, Optional[Dict]) -> Iterable[Record]
+        """Yield one record per secret with the users who can open it.
+
+        A secret that inherits uses its folder's secret roles. Any other
+        secret uses GET /v1/secret-permissions, and falls back to the folder
+        secret roles when that list is empty. apply-membership grants the
+        resulting shares onto the Keeper record. Folder membership is not
+        changed.
+        """
+        emails = ThycoticMixin.provisioned_emails(auth)
+        groups = None
+        try:
+            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+        except Exception as exc:
+            logging.warning('secret lookup for permissions: %s', exc)
+            return
+        if not isinstance(lookup, list):
+            lookup = []
+        folders = folders or {}
+        written = 0
+        seen = 0
+        unmapped = 0
+        print('Loading secret permissions ', flush=True, end='')
+        for index, row in enumerate(lookup):
+            if index % 10 == 9:
+                print('.', flush=True, end='')
+            secret_id = row.get('id') if isinstance(row, dict) else None
+            if not secret_id:
+                continue
+            secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
+            if not isinstance(secret, dict):
+                continue
+            seen += 1
+            secret_id = secret.get('id') or secret_id
+            secret['id'] = secret_id
+            perm_rows = ThycoticMixin.permission_rows_for_secret(auth, folders, secret)
+            if groups is None and any(isinstance(item, dict) and item.get('groupId') for item in perm_rows or []):
+                groups = ThycoticMixin.get_group_lookup(auth) or {}
+            shares = ThycoticMixin.shares_from_secret_permissions(perm_rows, emails, groups)
+            if not shares:
+                if perm_rows:
+                    unmapped += 1
+                continue
+            record = Record()
+            record.title = secret.get('name') or row.get('name') or ''
+            if not record.title:
+                continue
+            folder_id = secret.get('folderId')
+            folder = folders.get(folder_id) if isinstance(folders, dict) else None
+            if not isinstance(folder, dict):
+                try:
+                    folder = folders.get(int(folder_id))
+                except (TypeError, ValueError):
+                    folder = None
+            path = folder.get('folderPath') if isinstance(folder, dict) else ''
+            if path:
+                record_folder = Folder()
+                record_folder.path = path
+                record.folders = [record_folder]
+            record.shares = shares
+            written += 1
+            yield record
+        print(' Done', flush=True)
+        if written == 0:
+            logging.warning(
+                'No secret permission lists downloaded (%d secrets, %d had permission rows with no email).',
+                seen, unmapped)
+
+
+def parse_thycotic_import_target(filename):
+    """Return (username, base_url) for an import --format=thycotic target.
+
+    user@https://host/ must not be prefixed with another scheme. Doing so
+    sends the token request to a host named https.
+    """
+    filename = (filename or '').strip()
+    if filename.startswith('https://') or filename.startswith('http://'):
+        return '', filename
+    username, sep, host = filename.partition('@')
+    if not sep or not host.strip():
+        return None
+    host = host.strip()
+    if not (host.startswith('https://') or host.startswith('http://')):
+        host = 'https://{0}'.format(host)
+    return username, host
+
 
 class ThycoticImporter(BaseImporter, ThycoticMixin):
     def __init__(self):
@@ -244,6 +545,184 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 except:
                     pass
 
+    @staticmethod
+    def _user_field(user, key):  # type: (dict, str) -> str
+        return str(user.get(key) or '').strip()
+
+    @staticmethod
+    def _extract_user_email(user):
+        """Return the user's emailAddress, or an empty string."""
+        if not isinstance(user, dict):
+            return ''
+        for key, value in user.items():
+            if str(key).lower() != 'emailaddress':
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if value:
+                    return value
+            return ''
+        return ''
+
+    def _prepare_thycotic_users(self, auth):  # type: (ThycoticAuth) -> List[dict]
+        """Fetch Delinea users that have an email address, including inactive users.
+
+        Application accounts are omitted.
+        When the user list has no email, the user detail endpoint is tried once.
+        """
+        all_users = auth.thycotic_search('/v1/users?filter.includeInactive=true')
+        result = []
+        skipped_application = 0
+        skipped_no_email = 0
+        for user in all_users or []:
+            if not isinstance(user, dict):
+                continue
+            if user.get('isApplicationAccount') is True:
+                skipped_application += 1
+                continue
+            email = self._extract_user_email(user)
+            user_id = user.get('id')
+            source = user
+            if not email and user_id not in (None, ''):
+                detail = auth.thycotic_entity(f'/v1/users/{user_id}')
+                if isinstance(detail, dict):
+                    if detail.get('isApplicationAccount') is True:
+                        skipped_application += 1
+                        continue
+                    email = self._extract_user_email(detail)
+                    source = detail
+            if not email:
+                skipped_no_email += 1
+                continue
+            username = str(source.get('userName') or user.get('userName') or '').strip()
+            display = str(source.get('displayName') or user.get('displayName') or '').strip()
+            result.append({
+                'id': user_id,
+                'username': username,
+                'name': display or username or email,
+                'email': email,
+            })
+        if skipped_application:
+            logging.info('Skipped %d Thycotic application account(s)', skipped_application)
+        if skipped_no_email:
+            logging.info('Skipped %d Thycotic user(s) with no email address', skipped_no_email)
+        print(f'Found {len(result)} Thycotic user(s) with an email address', flush=True)
+        return result
+
+    def _load_existing_keeper_users(self, params):  # type: (KeeperParams) -> Tuple[list, str]
+        enterprise_data = getattr(params, 'enterprise', None)
+        if not enterprise_data:
+            try:
+                api.query_enterprise(params)
+            except Exception as e:
+                logging.warning('Error loading existing Keeper users: %s', e)
+                return [], 'Failed to load existing Keeper users'
+        enterprise_data = getattr(params, 'enterprise', None)
+        if not isinstance(enterprise_data, dict):
+            return [], 'Failed to load existing Keeper users'
+        existing_users = []
+        for user in enterprise_data.get('users', []) or []:
+            if isinstance(user, dict):
+                email = self._user_field(user, 'email') or self._user_field(user, 'username')
+                existing_users.append({
+                    'email': email,
+                    'status': user.get('status') or 'active',
+                })
+        return existing_users, ''
+
+    def _create_keeper_user(self, params, email, name):
+        # type: (KeeperParams, str, str) -> Optional[str]
+        """Pre-activate one Keeper user."""
+        from ...commands.enterprise_create_user import CreateEnterpriseUserCommand
+        try:
+            creator = CreateEnterpriseUserCommand()
+            return creator.execute(params, email=email, name=name)
+        except Exception as e:
+            logging.warning('Could not create enterprise user "%s": %s', email, e)
+            return None
+
+    def _create_enterprise_users(self, params, thycotic_users):
+        # type: (KeeperParams, List[dict]) -> dict
+        def row(user, flag, **extra):
+            item = {
+                'username': str(user.get('username') or ''),
+                'email': self._user_field(user, 'email'),
+                'flag': flag,
+            }
+            item.update(extra)
+            return item
+
+        seen = set()
+        outcomes = []
+        existing_users, error = self._load_existing_keeper_users(params)
+        if error:
+            logging.warning(error)
+        is_valid_email = re.compile(EMAIL_PATTERN).match
+        for user in thycotic_users or []:
+            if not isinstance(user, dict):
+                continue
+            email = self._user_field(user, 'email')
+            email_key = email.casefold()
+            if email_key in seen:
+                continue
+            user_exist = next(
+                (u for u in existing_users if (u.get('email') or '').casefold() == email_key),
+                None,
+            )
+            if user_exist:
+                seen.add(email_key)
+                status = user_exist.get('status') or 'active'
+                outcomes.append(row(user, 'existing', status=status))
+            elif is_valid_email(email):
+                seen.add(email_key)
+                name = self._user_field(user, 'name') or self._user_field(user, 'username') or email
+                created = self._create_keeper_user(params, email, name)
+                if created:
+                    outcomes.append(row(user, 'created'))
+                else:
+                    outcomes.append(row(user, 'failed', reason='user was not created'))
+            else:
+                outcomes.append(row(user, 'skipped', reason='invalid email'))
+        return {'users': outcomes, 'error': error}
+
+    def _print_thycotic_user_report(self, report):  # type: (dict) -> None
+        users = report.get('users') or []
+        counts = {'created': 0, 'existing': 0, 'skipped': 0, 'failed': 0}
+        for user in users:
+            flag = str((user or {}).get('flag') or 'skipped')
+            if flag in counts:
+                counts[flag] += 1
+        print(
+            'Thycotic users: created {created}, existing {existing}, skipped {skipped}, failed {failed}'.format(**counts),
+            flush=True,
+        )
+        for user in users:
+            if not isinstance(user, dict):
+                continue
+            flag = str(user.get('flag') or 'skipped')
+            label = user.get('email') or user.get('username') or '(no email)'
+            detail = user.get('reason') or ''
+            if not detail and flag == 'existing' and user.get('status'):
+                detail = str(user.get('status'))
+            suffix = f' ({detail})' if detail else ''
+            print(f'  [{flag}] {label}{suffix}', flush=True)
+
+    def _migrate_thycotic_users(self, auth, params):
+        # type: (ThycoticAuth, KeeperParams) -> None
+        """Provision Delinea users as pre-activated Keeper users, then continue the import.
+
+        A user-fetch failure does not abort secret migration.
+        """
+        print('Migrating Thycotic users to Keeper...', flush=True)
+        try:
+            thycotic_users = self._prepare_thycotic_users(auth)
+        except Exception as e:
+            logging.warning('Failed to fetch Thycotic users: %s', e)
+            logging.warning('Continuing import without creating Keeper users.')
+            return
+        report = self._create_enterprise_users(params, thycotic_users)
+        self._print_thycotic_user_report(report)
+
     def do_import(self, filename, **kwargs):
         # type: (ThycoticImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
         loaded_record_types = {}
@@ -258,20 +737,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     except:
                         pass
 
-        if filename.startswith('https://'):
-            username = ''
-            host = filename
-        else:
-            username, sep, host = filename.partition('@')
-            if sep:
-                host = f'https://{host}/'
-            else:
-                logging.warning('Thycotic connection parameters:')
-                logging.warning('  <Username>@<Secret server host>.')
-                logging.warning('  https://<Secret server host>/<Endpoint>. Full URL')
-                raise Exception('Import canceled')
+        parsed = parse_thycotic_import_target(filename)
+        if not parsed:
+            logging.warning('Thycotic connection parameters:')
+            logging.warning('  <Username>@<Secret server host>.')
+            logging.warning('  https://<Secret server host>/<Endpoint>. Full URL')
+            raise Exception('Import canceled')
+        username, host = parsed
 
-        print('Secret Server URL: '.rjust(25) + host)
         username_prompt = 'Thycotic Username: '.rjust(25)
         if not username:
             username = input(username_prompt)
@@ -288,6 +761,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         auth = ThycoticAuth(host)
         auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
+
+        # Pre-activate users before secrets are imported so later migration steps
+        # can share data to accounts that already exist.
+        if kwargs.get('add_thycotic_users') is True:
+            if kwargs.get('dry_run') is True:
+                logging.info('--add-thycotic-users is ignored during --dry-run')
+            else:
+                self._migrate_thycotic_users(auth, params)
 
         totp_codes = {}
         csv_file = 'secrets-export.csv'
@@ -720,6 +1201,8 @@ class ThycoticAuth:
         warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
+        if isinstance(username, str):
+            username = username.strip()
         request_data = {
             'grant_type': 'password',
             'username': username,
@@ -729,18 +1212,20 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
+        logging.debug(
+            'Secret Server token request password_length=%d proxy=%s',
+            len(password or ''), 'yes' if self.proxy else 'no')
         rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
                            verify=False, proxies=self.proxy)
-        if rs.status_code != 200:
-            if rs.status_code == 400:
-                error_rs = rs.json()
-                error = error_rs['error']
-                if 'totp' in error.lower() and callable(on_totp):
-                    code = on_totp()
-                    if code:
-                        request_data['OTP'] = code
-                        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
-                                           verify=False, proxies=self.proxy)
+        if rs.status_code != 200 and rs.status_code == 400:
+            error_rs = rs.json()
+            error = str(error_rs.get('error') or '')
+            if 'totp' in error.lower() and callable(on_totp):
+                code = on_totp()
+                if code:
+                    request_data['OTP'] = code
+                    rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+                                       verify=False, proxies=self.proxy)
         if rs.status_code == 200:
             auth_rs = rs.json()
             self.access_token = auth_rs['access_token']
@@ -749,7 +1234,8 @@ class ThycoticAuth:
             self.last_login = int(datetime.datetime.now().timestamp())
         else:
             error_rs = rs.json()
-            raise Exception(error_rs['error'])
+            raise Exception(error_rs.get('error') or 'HTTP {0}'.format(rs.status_code))
+
 
     def refresh_auth_token(self):
         if not self.refresh_token:
@@ -886,7 +1372,10 @@ class ThycoticAttachment(Attachment):
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
     def download_membership(self, params, **kwargs):
-        auth = ThycoticMixin.connect_to_server()
+        envvars = getattr(params, 'environment_variables', None) if params is not None else None
+        auth = ThycoticMixin.connect_to_server(envvars=envvars)
+        if not auth:
+            return
 
         users = ThycoticMembershipDownload.get_user_lookup(auth)
 
@@ -969,10 +1458,15 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
 
                     yield team
 
+        yield from ThycoticMembershipDownload.iter_secret_shares(auth, folders)
+
 
 class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
     def download_record_type(self, params, **kwargs):
-        auth = ThycoticMixin.connect_to_server()
+        envvars = getattr(params, 'environment_variables', None) if params is not None else None
+        auth = ThycoticMixin.connect_to_server(envvars=envvars)
+        if not auth:
+            return
         templates = auth.thycotic_search('/v1/secret-templates?filter.includeInactive=false&filter.includeSecretCount=true')
         logging.debug('Loaded %d secret templates', len(templates))
         for template in templates:
