@@ -69,6 +69,22 @@ class TestPrepareThycoticUsers(_QuietTestCase):
         }])
         auth.thycotic_entity.assert_called_once_with('/v1/users/7')
 
+    def test_detail_fetch_failure_skips_only_that_user(self):
+        def details(endpoint):
+            if str(endpoint).endswith('/1'):
+                raise RuntimeError('403 Forbidden')
+            return {'emailAddress': 'ok@x.com', 'displayName': 'Ok'}
+
+        found, _ = self._prepare(
+            [
+                {'id': 1, 'userName': 'bad'},
+                {'id': 2, 'userName': 'ok', 'displayName': ''},
+            ],
+            details=details,
+        )
+        self.assertEqual([u['username'] for u in found], ['ok'])
+        self.log.warning.assert_called()
+
     def test_application_accounts_are_omitted(self):
         found, auth = self._prepare([
             {'id': 1, 'userName': 'svc', 'emailAddress': 'svc@x.com', 'isApplicationAccount': True},
@@ -139,11 +155,11 @@ class TestCreateEnterpriseUsers(_QuietTestCase):
         importer = self.importer()
         importer._load_existing_keeper_users = mock.MagicMock(return_value=(list(existing), error))
         importer._create_keeper_user = mock.MagicMock(return_value=create_result)
-        report = importer._create_enterprise_users(object(), users)
-        return report['users'], importer._create_keeper_user
+        importer._create_enterprise_users(object(), users)
+        return importer._create_keeper_user
 
-    def test_every_outcome_in_input_order(self):
-        rows, create = self._run(
+    def test_creates_only_new_valid_users(self):
+        create = self._run(
             [
                 {'username': 'new', 'name': 'New User', 'email': 'new@x.com'},
                 {'username': 'old', 'email': 'old@x.com'},
@@ -155,49 +171,39 @@ class TestCreateEnterpriseUsers(_QuietTestCase):
             ],
             existing=[{'email': 'old@x.com', 'status': 'locked'}],
         )
-        self.assertEqual([(r['email'], r['flag']) for r in rows], [
-            ('new@x.com', 'created'), ('old@x.com', 'existing'),
-            ('not-an-email', 'skipped'), ('', 'skipped'), ('', 'skipped'),
-        ])
-        self.assertEqual(rows[1]['status'], 'locked')
         create.assert_called_once_with(mock.ANY, 'new@x.com', 'New User')
 
     def test_existing_match_ignores_case(self):
-        rows, create = self._run(
+        create = self._run(
             [{'username': 'john', 'email': 'John.Doe@Corp.com'}],
             existing=[{'email': 'john.doe@corp.com', 'status': 'active'}],
         )
-        self.assertEqual(rows[0]['flag'], 'existing')
         create.assert_not_called()
 
     def test_case_variant_duplicates_are_created_once(self):
-        rows, create = self._run([
+        create = self._run([
             {'username': 'a1', 'email': 'A@corp.com'},
             {'username': 'a2', 'email': 'a@corp.com'},
         ])
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['flag'], 'created')
         create.assert_called_once()
 
     def test_email_is_trimmed_and_name_falls_back_to_email(self):
-        rows, create = self._run([{'username': None, 'email': '  c@x.com  '}])
+        create = self._run([{'username': None, 'email': '  c@x.com  '}])
         create.assert_called_once_with(mock.ANY, 'c@x.com', 'c@x.com')
-        self.assertEqual(rows[0]['email'], 'c@x.com')
 
-    def test_failed_create_is_reported_and_not_retried(self):
-        rows, create = self._run(
+    def test_failed_create_is_not_retried(self):
+        create = self._run(
             [{'username': 'f', 'email': 'f@x.com'}, {'username': 'f', 'email': 'f@x.com'}],
             create_result=None,
         )
-        self.assertEqual([r['flag'] for r in rows], ['failed'])
         create.assert_called_once()
 
     def test_loader_error_still_creates_users(self):
-        rows, _ = self._run(
+        create = self._run(
             [{'username': 'n', 'email': 'n@x.com'}],
             error='Failed to load existing Keeper users',
         )
-        self.assertEqual(rows[0]['flag'], 'created')
+        create.assert_called_once_with(mock.ANY, 'n@x.com', 'n')
         self.log.warning.assert_called()
 
 
@@ -240,22 +246,38 @@ class TestDoImportUserGate(_QuietTestCase):
                 mock.patch('keepercommander.importer.thycotic.thycotic.ThycoticAuth', return_value=auth), \
                 mock.patch.object(ThycoticImporter, 'get_folders', return_value={}), \
                 mock.patch.object(importer, '_migrate_thycotic_users') as migrate, \
+                mock.patch.object(importer, '_preview_thycotic_users') as preview, \
                 mock.patch('os.path.isfile', return_value=False):
             list(importer.do_import('user@secret.example.com', params=params, **kwargs))
-        return migrate
+        return migrate, preview
 
     def test_flag_provisions_users_before_secrets(self):
-        migrate = self._run(add_thycotic_users=True)
+        migrate, preview = self._run(add_thycotic_users=True)
         migrate.assert_called_once()
+        preview.assert_not_called()
 
     def test_flag_absent_does_not_provision(self):
-        migrate = self._run()
+        migrate, preview = self._run()
         migrate.assert_not_called()
+        preview.assert_not_called()
 
-    def test_dry_run_does_not_provision(self):
-        migrate = self._run(add_thycotic_users=True, dry_run=True)
+    def test_dry_run_prints_users_without_creating_them(self):
+        migrate, preview = self._run(add_thycotic_users=True, dry_run=True)
         migrate.assert_not_called()
-        self.log.info.assert_called()
+        preview.assert_called_once()
+
+    def test_preview_prints_fetched_users(self):
+        importer = self.importer()
+        importer._prepare_thycotic_users = mock.Mock(return_value=[
+            {'username': 'a', 'email': 'a@x.com', 'name': 'Alice'},
+        ])
+        importer._create_enterprise_users = mock.Mock()
+        importer._preview_thycotic_users(mock.Mock())
+        printed = ' '.join(str(call) for call in self._mocks['print'].call_args_list)
+        self.assertIn('Delinea users available to migrate', printed)
+        self.assertIn('a@x.com', printed)
+        self.assertIn('Alice', printed)
+        importer._create_enterprise_users.assert_not_called()
 
 
 class TestImportParser(unittest.TestCase):
