@@ -274,7 +274,7 @@ class TestDoImportUserGate(_QuietTestCase):
         importer._create_enterprise_users = mock.Mock()
         importer._preview_thycotic_users(mock.Mock())
         printed = ' '.join(str(call) for call in self._mocks['print'].call_args_list)
-        self.assertIn('Delinea users available to migrate', printed)
+        self.assertIn('Thycotic users available to migrate', printed)
         self.assertIn('a@x.com', printed)
         self.assertIn('Alice', printed)
         importer._create_enterprise_users.assert_not_called()
