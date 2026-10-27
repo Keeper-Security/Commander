@@ -75,7 +75,6 @@ class KeepassImporter(BaseFileImporter):
     def do_import(self, filename, **kwargs):
         password = 'none' if kwargs.get('kdbx_password') in ['none','','null'] else kwargs.get('kdbx_password') or False
         keyfile = 'none' if kwargs.get('kdbx_key_file') in ['none','','null'] else kwargs.get('kdbx_key_file') or False
-        print(password,keyfile)
         if password is False:
             password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
         if keyfile is False:
