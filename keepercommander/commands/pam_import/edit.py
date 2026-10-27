@@ -1759,9 +1759,11 @@ class PAMProjectImportCommand(Command):
                             args["pwd_complexity"]=user.rotation_settings.password_complexity
                         prc.execute(params, silent=True, **args)
             # Launch credentials: link for pamMachine, pamDatabase, pamDirectory (not RBI)
+            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
+            # after the JIT/AI/meta writes and after nested users are created.
             launch_uid = get_launch_credential(mach, True)
-            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))
+            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid

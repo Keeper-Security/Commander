@@ -91,3 +91,18 @@ def test_set_launch_credentials_without_admin_leaves_admin_unset():
         tdag.set_launch_credentials(RESOURCE_UID, launch_uid=SHARED_USER_UID, admin_uid=("" or None))
     assert not captured['rq'].HasField('adminUid')
     assert 'is_admin' not in _written_acl_content(user_vertex)
+
+
+def test_set_launch_credentials_admin_only_sends_admin_with_empty_connect_users():
+    """KC-1525: admin-only (no launch) must still be asserted in one request:
+    adminUid + empty connectUsers, and no local launch ACL write."""
+    tdag, _, user_vertex = _make_stale_tdag()
+    captured = {}
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False),          patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'),          patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=lambda p, rq: captured.setdefault('rq', rq)):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=None, admin_uid=SHARED_USER_UID)
+
+    rq = captured['rq']
+    assert rq.HasField('connectUsers') and len(rq.connectUsers.uids) == 0
+    assert rq.HasField('adminUid')
+    user_vertex.belongs_to.assert_not_called()
