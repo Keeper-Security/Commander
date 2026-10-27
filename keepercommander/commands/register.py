@@ -436,6 +436,15 @@ def _folder_has_full_manager_excluding(shared_folder, exclude_usernames=()):
     return False
 
 
+# Folder-level statuses from vault/shared_folder_update_v3. The server reports a missing
+# manage_users permission as NO_MANAGE_RECORDS_PRIVILEGE, so that text covers both.
+_SHARED_FOLDER_STATUS_TEXT = {
+    'NO_PERMISSION_TO_UPDATE': 'you have no access to this shared folder',
+    'NO_MANAGE_RECORDS_PRIVILEGE': 'you lack the Manage Users or Manage Records permission it requires',
+    'NO_MANAGE_USERS_PRIVILEGE': 'you lack the Manage Users permission it requires',
+}
+
+
 class ShareFolderCommand(Command):
     def get_parser(self):
         return share_folder_parser
@@ -971,6 +980,11 @@ class ShareFolderCommand(Command):
             sf_uid = utils.base64_url_encode(rq_item.sharedFolderUid)
             sf_cached = params.shared_folder_cache.get(sf_uid)
             folder_name = sf_cached['name'] if sf_cached else sf_uid
+            if rs.status and rs.status != 'success':
+                # The whole folder update was refused, so there are no per-user statuses to report.
+                logging.warning("Shared folder '%s' was not updated: %s", folder_name,
+                                _SHARED_FOLDER_STATUS_TEXT.get(rs.status, rs.status))
+                continue
             user_exp, team_exp = _folder_share_expiration_lookups(rq_item)
             team_cache = params.available_team_cache or []
             for attr in (
