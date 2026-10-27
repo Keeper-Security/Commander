@@ -519,8 +519,8 @@ class PAMTunnelEditCommand(Command):
                                 help='Enable/disable Keeper Proxy, auto-selecting the backend from the record\'s '
                                      'connection protocol: KeeperDB Proxy for database protocols '
                                      '(pamDatabase, or pamMachine set to a database protocol), KeeperRDP Proxy '
-                                     'for RDP (pamMachine). SSH is not yet supported. Records/protocols that '
-                                     'don\'t map to a proxy backend are ignored with a warning (on/off/default)')
+                                     'for RDP (pamMachine), KeeperSSH Proxy for SSH (pamMachine). Records/protocols '
+                                     'that don\'t map to a proxy backend are ignored with a warning (on/off/default)')
 
     def get_parser(self):
         return PAMTunnelEditCommand.pam_cmd_parser
