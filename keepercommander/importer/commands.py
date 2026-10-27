@@ -131,6 +131,10 @@ import_parser.add_argument(
     'name', type=str,
     help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
 )
+import_parser.add_argument('-kp', '--keepass-password', dest='kdbx_password', action='store',
+                           help='Password for the import file. Setting "none" will execute an import with no password.')
+import_parser.add_argument('-kkf', '--keepass-key-file', dest='kdbx_key_file', action='store',
+                           help='Keepass key file for the import file. Setting "none" will execute an import with no key file.')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
@@ -142,9 +146,9 @@ export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'k
 export_parser.add_argument('--max-size', dest='max_size',
                            help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
 export_parser.add_argument('-kp', '--keepass-file-password', dest='file_password', action='store',
-                           help='Password for the exported file')
+                           help='Password for the exported file. Setting "none" will execute an export with no password.')
 export_parser.add_argument('-kkf', '--keepass-key-file', dest='kbdx_key_file', action='store',
-                           help='Keepass key file for the exported file')
+                           help='Keepass key file for the exported file. Setting "none" will execute an export with no key file.')
 export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
 export_parser.add_argument('--owned-only', dest='owned_only', action='store_true',
