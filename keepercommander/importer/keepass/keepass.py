@@ -73,10 +73,15 @@ class KeepassImporter(BaseFileImporter):
         return path
 
     def do_import(self, filename, **kwargs):
-        password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
-        print('Press Enter if your Keepass file is not protected with a key file')
-        keyfile = input('...' + 'Path to Key file'.rjust(20) + ': ')
-        if keyfile:
+        password = 'none' if kwargs.get('kdbx_password') in ['none','','null'] else kwargs.get('kdbx_password') or False
+        keyfile = 'none' if kwargs.get('kdbx_key_file') in ['none','','null'] else kwargs.get('kdbx_key_file') or False
+        print(password,keyfile)
+        if password is False:
+            password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
+        if keyfile is False:
+            print('Press Enter if your Keepass file is not protected with a key file')
+            keyfile = input('...' + 'Path to Key file'.rjust(20) + ': ')
+        if keyfile and keyfile != 'none':
             keyfile = os.path.expanduser(keyfile.strip("\"'"))
         else:
             keyfile = None
