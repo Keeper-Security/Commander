@@ -558,6 +558,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "recording_include_keys": true,
             "disable_copy": true,
             "disable_paste": true,
+            "_comment_security": "any|nla|tls|vmconnect|rdp",
             "security": "any",
             "disable_authentication": true,
             "ignore_server_cert": true,
@@ -575,7 +576,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "disable_audio": true,
             "disable_dynamic_resizing": false,
             "enable_full_window_drag": true,
-            "enable_wallpaper": true
+            "enable_wallpaper": true,
+            "_comment_drive_redirection_path": "none|user|resource",
+            "drive_redirection_path": "resource"
         }
     }
 }
