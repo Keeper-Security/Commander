@@ -1539,9 +1539,11 @@ class PAMProjectExtendCommand(Command):
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
+            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
+            # after the JIT/AI/meta writes and after nested users are created.
             launch_uid = get_launch_credential(mach, True)
-            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))
+            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
 
         if new_resources:
             print(f"{len(new_resources)}/{len(new_resources)}\n")
