@@ -376,7 +376,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
     def support_folder_filter(self):
         return True
-
+    
+    def support_add_users(self):
+        return True
+    
     @staticmethod
     def pop_field(fields, key):  # type: (Dict[str, Dict[str, str]], str) -> Tuple[str, Optional[Dict[str, str]]]
         field = fields.pop(key, None)

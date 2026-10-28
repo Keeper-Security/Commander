@@ -63,9 +63,6 @@ def _cyberark_skip_arg(value):
     return ",".join(skip_targets)
 
 
-# Import formats whose importer provisions Keeper enterprise users for --add-users.
-_ADD_USERS_FORMATS = frozenset({'thycotic'})
-
 
 def _positive_int_arg(value):
     try:
@@ -372,10 +369,6 @@ class RecordImportCommand(ImporterCommand):
         if kwargs.get('skip') and import_format != 'cyberark':
             logging.warning('--skip is only used with --format=cyberark; ignoring')
             kwargs['skip'] = ''
-
-        if kwargs.get('add_users') and import_format not in _ADD_USERS_FORMATS:
-            logging.warning('--add-users is not supported for --format=%s; ignoring', import_format)
-            kwargs['add_users'] = False
 
         logging.info('Processing... please wait.')
         folder_mapping = imp_exp._import(params, import_format, import_name, manage_users=manage_users,

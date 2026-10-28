@@ -861,6 +861,9 @@ def _import(params, file_format, filename, **kwargs):
     no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
+    if add_users and not importer.support_add_users():
+        logging.warning('--add-users is not supported for --format=%s; ignoring', file_format)
+        add_users = False
     verbose_import_summary = importer.verbose_import_summary
     show_skipped = show_skipped or verbose_import_summary
 
