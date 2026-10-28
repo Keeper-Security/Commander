@@ -93,25 +93,44 @@ class NotificationListCommand(base.ArgparseCommand):
         headers = ['notification_uid', 'created', 'type', 'title', 'from', 'message', 'read', 'status']
         table = []   # type: List[List[Any]]
         accessible_mcs = None   # type: Optional[Set[int]]
+        entries = []   # type: List[NotificationEntry]
+        pedm_envelopes = {}   # type: Dict[str, pedm_pb2.ApprovalEnvelope]
         for entry in notification_center.get_notifications(params):
             n = entry.notification
             if not kwargs.get('all') and n.type in notification_center.HIDDEN_TYPES:
                 continue
             if n.type == NC.NT_PEDM_APPROVAL_REQUEST:
-                # Skip approvals of managed companies this admin cannot manage.
-                if accessible_mcs is None:
-                    accessible_mcs = _get_accessible_mcs(params)
+                # Keep approvals of the own enterprise; skip managed companies this admin cannot manage.
                 envelope = notification_center.get_pedm_approval(n)
-                if not envelope or envelope.enterprise_id not in accessible_mcs:
+                if not envelope:
                     continue
+                if envelope.enterprise_id != params.enterprise_id:
+                    if accessible_mcs is None:
+                        accessible_mcs = _get_accessible_mcs(params)
+                    if envelope.enterprise_id not in accessible_mcs:
+                        continue
+                pedm_envelopes[entry.uid] = envelope
             if kwargs.get('unread') and entry.is_read:
                 continue
-            if kwargs.get('pending') and not notification_center.is_actionable(entry):
+            entries.append(entry)
+
+        # EPM approvals show the router's current status, which may differ from the notification status.
+        current = _get_current_pedm_approvals(params, list(pedm_envelopes.values())) if pedm_envelopes else None
+        for entry in entries:
+            n = entry.notification
+            status = notification_center.status_label(entry)
+            actionable = notification_center.is_actionable(entry)
+            envelope = pedm_envelopes.get(entry.uid)
+            if envelope is not None:
+                pedm_status = _pedm_status_name(current, envelope)
+                if pedm_status is not None:
+                    status = pedm_status
+                    actionable = pedm_status in ('pending', 'escalated')
+            if kwargs.get('pending') and not actionable:
                 continue
             table.append([entry.uid, _format_time(entry.timestamp), notification_center.type_name(n.type),
                           notification_center.TYPE_TITLES.get(n.type, ''), notification_center.sender_name(n),
-                          notification_center.get_message(params, entry), entry.is_read,
-                          notification_center.status_label(entry)])
+                          notification_center.get_message(params, entry), entry.is_read, status])
         if fmt != 'json':
             headers = [report_utils.field_to_title(x) for x in headers]
         return report_utils.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'), row_number=True)
@@ -314,12 +333,57 @@ def _get_accessible_mcs(params: KeeperParams) -> Set[int]:
         return set()
 
 
+_PEDM_STATUS_NAMES = {
+    pedm_pb2.AST_UNSPECIFIED: 'pending',
+    pedm_pb2.AST_APPROVED: 'approved',
+    pedm_pb2.AST_DENIED: 'denied',
+    pedm_pb2.AST_EXPIRED: 'expired',
+    pedm_pb2.AST_ESCALATED: 'escalated',
+}
+
+
+def _get_current_pedm_approvals(params: KeeperParams, envelopes: List[pedm_pb2.ApprovalEnvelope]
+                                ) -> Optional[Dict[Tuple[int, bytes], pedm_pb2.ApprovalEnvelope]]:
+    # The current approvals from the router; a notification can be out of date. None if the router call fails.
+    refs = list({(x.enterprise_id, x.approval.approvalUid) for x in envelopes})
+    current = {}   # type: Dict[Tuple[int, bytes], pedm_pb2.ApprovalEnvelope]
+    try:
+        for i in range(0, len(refs), 100):
+            rq = pedm_pb2.GetApprovalsRequest()
+            for enterprise_id, approval_uid in refs[i:i + 100]:
+                ref = rq.approvals.add()
+                ref.enterprise_id = enterprise_id
+                ref.approval_uid = approval_uid
+            rs = api.execute_router(params, 'pedm/get_approvals', rq, rs_type=pedm_pb2.GetApprovalsResponse)
+            if rs is None:
+                return None
+            for x in rs.approvals:
+                current[(x.enterprise_id, x.approval.approvalUid)] = x
+    except Exception as e:
+        logging.debug('Get EPM approvals error: %s', e)
+        return None
+    return current
+
+
+def _pedm_status_name(current: Optional[Dict[Tuple[int, bytes], pedm_pb2.ApprovalEnvelope]],
+                      envelope: pedm_pb2.ApprovalEnvelope) -> Optional[str]:
+    # None if the current status is unknown; "removed" if the router no longer has the approval.
+    if current is None:
+        return None
+    x = current.get((envelope.enterprise_id, envelope.approval.approvalUid))
+    if x is None:
+        return 'removed'
+    return _PEDM_STATUS_NAMES.get(x.status.approvalStatus, str(x.status.approvalStatus))
+
+
 def _get_pedm_approval(params: KeeperParams, n: NotificationCenter_pb2.Notification) -> Tuple[pedm_pb2.ApprovalEnvelope, bytes]:
     envelope = notification_center.get_pedm_approval(n)
     if not envelope:
         raise base.CommandError('EPM approval notification has no approval data')
     from ..pedm import admin_plugin
     plugin = admin_plugin.get_pedm_plugin(params, skip_sync=True)
+    if envelope.enterprise_id == params.enterprise_id:
+        return envelope, plugin.agent_key
     plugin.load_mc_agent_keys(_get_mcs_info(params, [envelope.enterprise_id], True).mcInfo)
     agent_key = plugin.get_mc_agent_key(envelope.enterprise_id)
     if agent_key is None:
@@ -343,6 +407,12 @@ def _get_pedm_approval_details(params: KeeperParams, n: NotificationCenter_pb2.N
         'created': str(_format_time(approval.created // 1000)) if approval.created else '',
         'expire_in': approval.expireIn,
     }   # type: Dict[str, Any]
+    current = _get_current_pedm_approvals(params, [envelope])
+    status = _pedm_status_name(current, envelope)
+    details['status'] = status if status is not None else 'unknown'
+    latest = current.get((envelope.enterprise_id, approval.approvalUid)) if current else None
+    if latest is not None:
+        details['expire_in'] = latest.status.expireIn
     try:
         account_info, application_info, justification = decrypt_approval(approval, agent_key)
         details['account_info'] = account_info
@@ -350,6 +420,14 @@ def _get_pedm_approval_details(params: KeeperParams, n: NotificationCenter_pb2.N
         details['justification'] = justification
     except Exception as e:
         details['data_error'] = f'Cannot decrypt approval data: {e}'
+    # The agent's data, encrypted with the same agent key as the approval.
+    agent_data = next((x.data for x in n.parameters if x.key == 'agentData'), None)
+    if agent_data:
+        try:
+            agent_properties = json.loads(crypto.decrypt_aes_v2(agent_data, agent_key))
+            details['machine_name'] = agent_properties.get('MachineName') or ''
+        except Exception as e:
+            details['agent_data_error'] = f'Cannot decrypt agent data: {e}'
     return details
 
 
@@ -357,6 +435,9 @@ def _act_pedm_approval(params: KeeperParams, n: NotificationCenter_pb2.Notificat
     envelope = notification_center.get_pedm_approval(n)
     if not envelope:
         raise base.CommandError('EPM approval notification has no approval data')
+    status = _pedm_status_name(_get_current_pedm_approvals(params, [envelope]), envelope)
+    if status is not None and status not in ('pending', 'escalated'):
+        raise base.CommandError(f'Request is already {status}')
     rq = pedm_pb2.MspApprovalActionRequest()
     ref = rq.deny.add() if deny else rq.approve.add()
     ref.enterprise_id = envelope.enterprise_id
