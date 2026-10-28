@@ -549,8 +549,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                                     if not isinstance(record.attachments, list):
                                         record.attachments = []
                                     attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
-                                    if not isinstance(record.attachments, list):
-                                        record.attachments = []
                                     record.attachments.append(attachment)
                             else:
                                 status, message = ThycoticAuth.response_error(rs)
@@ -563,8 +561,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     if not isinstance(record.attachments, list):
                         record.attachments = []
                     attachment = ThycoticAttachment(auth, endpoint, file_name)
-                    if not isinstance(record.attachments, list):
-                        record.attachments = []
                     record.attachments.append(attachment)
                     del items[slug]
 
