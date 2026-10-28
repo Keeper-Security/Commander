@@ -129,8 +129,7 @@ class TestLoadExistingKeeperUsers(_QuietTestCase):
             {'username': 'bob@x.com'},
             'junk',
         ]})
-        users, error = self.importer()._load_existing_keeper_users(params)
-        self.assertEqual(error, '')
+        users = self.importer()._load_existing_keeper_users(params)
         self.assertEqual(users, [
             {'email': 'Alice@X.com', 'status': 'invited'},
             {'email': 'bob@x.com', 'status': 'active'},
@@ -140,20 +139,20 @@ class TestLoadExistingKeeperUsers(_QuietTestCase):
     def test_enterprise_is_queried_when_not_loaded(self):
         params = SimpleNamespace(enterprise=None)
         self.query.side_effect = lambda p: setattr(p, 'enterprise', {'users': [{'email': 'a@x.com'}]})
-        users, error = self.importer()._load_existing_keeper_users(params)
-        self.assertEqual((users, error), ([{'email': 'a@x.com', 'status': 'active'}], ''))
+        users = self.importer()._load_existing_keeper_users(params)
+        self.assertEqual(users, [{'email': 'a@x.com', 'status': 'active'}])
 
-    def test_query_failure_returns_error(self):
+    def test_query_failure_returns_empty_and_warns(self):
         self.query.side_effect = RuntimeError('not an admin')
-        users, error = self.importer()._load_existing_keeper_users(SimpleNamespace(enterprise=None))
+        users = self.importer()._load_existing_keeper_users(SimpleNamespace(enterprise=None))
         self.assertEqual(users, [])
-        self.assertTrue(error)
+        self.log.warning.assert_called_once()
 
 
 class TestCreateEnterpriseUsers(_QuietTestCase):
-    def _run(self, users, existing=(), error='', create_result='uid'):
+    def _run(self, users, existing=(), create_result='uid'):
         importer = self.importer()
-        importer._load_existing_keeper_users = mock.MagicMock(return_value=(list(existing), error))
+        importer._load_existing_keeper_users = mock.MagicMock(return_value=list(existing))
         importer._create_keeper_user = mock.MagicMock(return_value=create_result)
         importer._create_enterprise_users(object(), users)
         return importer._create_keeper_user
@@ -197,14 +196,6 @@ class TestCreateEnterpriseUsers(_QuietTestCase):
             create_result=None,
         )
         create.assert_called_once()
-
-    def test_loader_error_still_creates_users(self):
-        create = self._run(
-            [{'username': 'n', 'email': 'n@x.com'}],
-            error='Failed to load existing Keeper users',
-        )
-        create.assert_called_once_with(mock.ANY, 'n@x.com', 'n')
-        self.log.warning.assert_called()
 
 
 class TestCreateKeeperUser(_QuietTestCase):
@@ -252,7 +243,7 @@ class TestDoImportUserGate(_QuietTestCase):
         return migrate, preview
 
     def test_flag_provisions_users_before_secrets(self):
-        migrate, preview = self._run(add_thycotic_users=True)
+        migrate, preview = self._run(add_users=True)
         migrate.assert_called_once()
         preview.assert_not_called()
 
@@ -262,7 +253,7 @@ class TestDoImportUserGate(_QuietTestCase):
         preview.assert_not_called()
 
     def test_dry_run_prints_users_without_creating_them(self):
-        migrate, preview = self._run(add_thycotic_users=True, dry_run=True)
+        migrate, preview = self._run(add_users=True, dry_run=True)
         migrate.assert_not_called()
         preview.assert_called_once()
 
@@ -273,7 +264,7 @@ class TestDoImportUserGate(_QuietTestCase):
         ])
         importer._create_enterprise_users = mock.Mock()
         importer._preview_thycotic_users(mock.Mock())
-        printed = ' '.join(str(call) for call in self._mocks['print'].call_args_list)
+        printed = ' '.join(str(call) for call in self.log.info.call_args_list)
         self.assertIn('Thycotic users available to migrate', printed)
         self.assertIn('a@x.com', printed)
         self.assertIn('Alice', printed)
@@ -283,11 +274,11 @@ class TestDoImportUserGate(_QuietTestCase):
 class TestImportParser(unittest.TestCase):
     def test_flag_defaults_off_and_parses(self):
         off = import_parser.parse_args(['--format', 'thycotic', 'https://secret.example.com'])
-        self.assertFalse(off.add_thycotic_users)
+        self.assertFalse(off.add_users)
         on = import_parser.parse_args([
-            '--format', 'thycotic', '--add-thycotic-users', 'https://secret.example.com',
+            '--format', 'thycotic', '--add-users', 'https://secret.example.com',
         ])
-        self.assertTrue(on.add_thycotic_users)
+        self.assertTrue(on.add_users)
 
 
 if __name__ == '__main__':

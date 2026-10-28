@@ -411,13 +411,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         if not isinstance(user, dict):
             return ''
         for key, value in user.items():
-            if str(key).lower() != 'emailaddress':
-                continue
-            if isinstance(value, str):
-                value = value.strip()
-                if value:
-                    return value
-            return ''
+            if str(key).lower() == 'emailaddress' and isinstance(value, str):
+                    return value.strip()
         return ''
 
     def _prepare_thycotic_users(self, auth):  # type: (ThycoticAuth) -> List[dict]
@@ -466,29 +461,27 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             logging.info('Skipped %d Thycotic application account(s)', skipped_application)
         if skipped_no_email:
             logging.info('Skipped %d Thycotic user(s) with no email address', skipped_no_email)
-        print(f'Found {len(result)} Thycotic user(s) with an email address', flush=True)
+        logging.info(f'Found {len(result)} Thycotic user(s) with an email address')
         return result
 
-    def _load_existing_keeper_users(self, params):  # type: (KeeperParams) -> Tuple[list, str]
-        enterprise_data = getattr(params, 'enterprise', None)
-        if not enterprise_data:
-            try:
+    def _load_existing_keeper_users(self, params):  # type: (KeeperParams) -> list
+        try:
+            if not getattr(params, 'enterprise', None):
                 api.query_enterprise(params)
-            except Exception as e:
-                logging.warning('Error loading existing Keeper users: %s', e)
-                return [], 'Failed to load existing Keeper users'
-        enterprise_data = getattr(params, 'enterprise', None)
-        if not isinstance(enterprise_data, dict):
-            return [], 'Failed to load existing Keeper users'
-        existing_users = []
-        for user in enterprise_data.get('users', []) or []:
-            if isinstance(user, dict):
-                email = self._user_field(user, 'email') or self._user_field(user, 'username')
-                existing_users.append({
-                    'email': email,
+            enterprise_data = getattr(params, 'enterprise', None)
+            if not isinstance(enterprise_data, dict):
+                raise ValueError('enterprise data is unavailable')
+            return [
+                {
+                    'email': self._user_field(user, 'email') or self._user_field(user, 'username'),
                     'status': user.get('status') or 'active',
-                })
-        return existing_users, ''
+                }
+                for user in enterprise_data.get('users') or []
+                if isinstance(user, dict)
+            ]
+        except Exception as e:
+            logging.warning('Failed to load existing Keeper users: %s', e)
+            return []
 
     def _create_keeper_user(self, params, email, name):
         # type: (KeeperParams, str, str) -> Optional[str]
@@ -504,9 +497,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def _create_enterprise_users(self, params, thycotic_users):
         # type: (KeeperParams, List[dict]) -> None
         seen = set()
-        existing_users, error = self._load_existing_keeper_users(params)
-        if error:
-            logging.warning(error)
+        existing_users = self._load_existing_keeper_users(params)
         is_valid_email = re.compile(EMAIL_PATTERN).match
         for user in thycotic_users or []:
             if not isinstance(user, dict):
@@ -531,14 +522,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def _preview_thycotic_users(self, auth):
         # type: (ThycoticAuth) -> None
         """Fetch Delinea users and print them. Does not create Keeper users."""
-        print('Dry run: fetching Thycotic users (no Keeper users will be created)...', flush=True)
+        logging.info('Dry run: fetching Thycotic users (no Keeper users will be created)...')
         try:
             thycotic_users = self._prepare_thycotic_users(auth)
         except Exception as e:
             logging.warning('Failed to fetch Thycotic users: %s', e)
             return
         if not thycotic_users:
-            print('No Thycotic users are available to migrate.', flush=True)
+            logging.info('No Thycotic users are available to migrate.')
             return
         rows = [
             {
@@ -548,8 +539,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             }
             for user in thycotic_users
         ]
-        print(f'Thycotic users available to migrate ({len(rows)}):', flush=True)
-        print(tabulate(rows, headers='keys'), flush=True)
+        logging.info(f'Thycotic users available to migrate ({len(rows)}):')
+        logging.info(tabulate(rows, headers='keys'))
 
     def _migrate_thycotic_users(self, auth, params):
         # type: (ThycoticAuth, KeeperParams) -> None
@@ -557,7 +548,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         A user-fetch failure does not abort secret migration.
         """
-        print('Migrating Thycotic users to Keeper...', flush=True)
+        logging.info('Migrating Thycotic users to Keeper...')
         try:
             thycotic_users = self._prepare_thycotic_users(auth)
         except Exception as e:
@@ -613,7 +604,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         # Pre-activate users before secrets are imported so later migration steps
         # can share data to accounts that already exist.
-        if kwargs.get('add_thycotic_users') is True:
+        if kwargs.get('add_users') is True:
             if kwargs.get('dry_run') is True:
                 self._preview_thycotic_users(auth)
             else:
