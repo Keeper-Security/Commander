@@ -16,6 +16,7 @@ import getpass
 import json
 import logging
 import os
+import sys
 import time
 import warnings
 from contextlib import contextmanager
@@ -179,16 +180,25 @@ class ThycoticMixin:
             while True:
                 print("Enter the folder numbers to import, separated by commas (e.g. 1-4,6,8-10).")
                 print("Press Enter or 'A' to import all.")
-                choice = input('Enter your choice: ').strip()
-                if choice == '' or choice.upper() == 'A':
-                    return folders
-                selected = ThycoticMixin._parse_choice(choice, len(folders))
+                selected = ThycoticMixin._select_folders(folders, input('Enter your choice: '))
                 if selected is None:
                     print('Invalid choice. Enter folder numbers, press Enter, or A to import all.')
                 else:
-                    break
-        except (KeyboardInterrupt, EOFError):
+                    return selected
+        except EOFError:
+            return folders
+        except KeyboardInterrupt:
             raise Exception('Import canceled') from None
+
+    @staticmethod
+    def _select_folders(folders, choice):
+        # type: (List[Dict], str) -> Optional[List[Dict]]
+        choice = choice.strip() if isinstance(choice, str) else ''
+        if choice == '' or choice.upper() == 'A':
+            return folders
+        selected = ThycoticMixin._parse_choice(choice, len(folders))
+        if selected is None:
+            return None
         return [folder for index, folder in enumerate(folders, start=1) if index in selected]
 
     @staticmethod
@@ -459,7 +469,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         folder_rs = auth.thycotic_search('/v1/folders')
         constructed_folders = ThycoticImporter._construct_folders(folder_rs)
         picked_folder_ids = None
-        if not filter_folder:
+        if not filter_folder and sys.stdin and sys.stdin.isatty():
             folder_choices = list(constructed_folders.values())
             picked_folders = ThycoticImporter.interactive_folder_picker(folder_choices)
             if picked_folders is not None and picked_folders is not folder_choices:

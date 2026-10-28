@@ -43,6 +43,25 @@ class ParseChoiceTests(unittest.TestCase):
         self.assertEqual(ThycoticMixin._parse_choice('3-3', 5), {3})
 
 
+class SelectFoldersTests(unittest.TestCase):
+    def setUp(self):
+        self.folders = [_folder(1, 'a'), _folder(2, 'b'), _folder(3, 'c')]
+
+    def test_blank_or_a_returns_all(self):
+        for choice in ('', '   ', 'a', ' A ', None):
+            with self.subTest(choice=choice):
+                self.assertIs(ThycoticMixin._select_folders(self.folders, choice), self.folders)
+
+    def test_valid_choice_filters_in_list_order(self):
+        self.assertEqual(ThycoticMixin._select_folders(self.folders, '3,1'), [self.folders[0], self.folders[2]])
+        self.assertEqual(ThycoticMixin._select_folders(self.folders, '2-3'), self.folders[1:])
+
+    def test_invalid_choice_returns_none(self):
+        for choice in ('0', '4', 'x', '1,,2'):
+            with self.subTest(choice=choice):
+                self.assertIsNone(ThycoticMixin._select_folders(self.folders, choice))
+
+
 class InteractiveFolderPickerTests(unittest.TestCase):
     def setUp(self):
         self.folders = [
@@ -110,13 +129,16 @@ class InteractiveFolderPickerTests(unittest.TestCase):
             for line in printed
         ))
 
-    def test_keyboard_interrupt_and_eof_cancel(self):
-        for error in (KeyboardInterrupt, EOFError):
-            with self.subTest(error=error.__name__):
-                with mock.patch('builtins.input', side_effect=error), mock.patch('builtins.print'):
-                    with self.assertRaises(Exception) as ctx:
-                        ThycoticMixin.interactive_folder_picker([_folder(7, 'Bare')])
-                self.assertEqual(str(ctx.exception), 'Import canceled')
+    def test_keyboard_interrupt_cancels(self):
+        with mock.patch('builtins.input', side_effect=KeyboardInterrupt), mock.patch('builtins.print'):
+            with self.assertRaises(Exception) as ctx:
+                ThycoticMixin.interactive_folder_picker([_folder(7, 'Bare')])
+        self.assertEqual(str(ctx.exception), 'Import canceled')
+
+    def test_eof_imports_all(self):
+        folders = [_folder(7, 'Bare')]
+        with mock.patch('builtins.input', side_effect=EOFError), mock.patch('builtins.print'):
+            self.assertIs(ThycoticMixin.interactive_folder_picker(folders), folders)
 
     def test_none_returns_none(self):
         with mock.patch('builtins.input') as mocked_input:
@@ -344,7 +366,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             _folder(1, 'Personal Folders'),
         ]
 
-    def _import(self, choice, secrets, raw_folders=None, filter_folder=None, input_error=None):
+    def _import(self, choice, secrets, raw_folders=None, filter_folder=None, input_error=None, interactive=True):
         raw_folders = self.raw_folders if raw_folders is None else raw_folders
         secrets_by_id = {secret['id']: secret for secret in secrets}
 
@@ -364,8 +386,10 @@ class ImportFolderSelectionTests(unittest.TestCase):
         with mock.patch('keepercommander.importer.thycotic.thycotic.ThycoticAuth') as auth_cls, \
                 mock.patch('keepercommander.importer.thycotic.thycotic.getpass.getpass', return_value='pw'), \
                 mock.patch('keepercommander.importer.thycotic.thycotic.os.path.isfile', return_value=False), \
+                mock.patch('keepercommander.importer.thycotic.thycotic.sys.stdin') as mocked_stdin, \
                 input_patch as mocked_input, \
                 mock.patch('builtins.print'):
+            mocked_stdin.isatty.return_value = interactive
             auth = auth_cls.return_value
             auth.thycotic_search.side_effect = search
             auth.thycotic_entity.side_effect = entity
@@ -457,13 +481,22 @@ class ImportFolderSelectionTests(unittest.TestCase):
             'secret-503': None,
         })
 
-    def test_keyboard_interrupt_and_eof_cancel_before_secret_lookup(self):
-        for error in (KeyboardInterrupt, EOFError):
-            with self.subTest(error=error.__name__):
-                with self.assertRaises(Exception) as ctx:
-                    self._import(None, [_secret(501, 117)], input_error=error)
-                self.assertEqual(str(ctx.exception), 'Import canceled')
-                self.assertEqual(self.last_endpoints, ['/v1/folders'])
+    def test_keyboard_interrupt_cancels_before_secret_lookup(self):
+        with self.assertRaises(Exception) as ctx:
+            self._import(None, [_secret(501, 117)], input_error=KeyboardInterrupt)
+        self.assertEqual(str(ctx.exception), 'Import canceled')
+        self.assertEqual(self.last_endpoints, ['/v1/folders'])
+
+    def test_eof_imports_all(self):
+        records, auth, _ = self._import(None, [_secret(501, 117)], input_error=EOFError)
+        self.assertEqual(self._endpoints(auth), ['/v1/folders', '/v1/secrets/lookup'])
+        self.assertEqual(len(records), 1)
+
+    def test_non_interactive_imports_all_without_prompting(self):
+        records, auth, mocked_input = self._import('3', [_secret(501, 117), _secret(502, 108)], interactive=False)
+        mocked_input.assert_not_called()
+        self.assertEqual(self._endpoints(auth), ['/v1/folders', '/v1/secrets/lookup'])
+        self.assertEqual(len(records), 2)
 
     def test_filter_folder_not_found_imports_nothing(self):
         records, auth, mocked_input = self._import('', [_secret(501, 117)], filter_folder='Does_Not_Exist')
