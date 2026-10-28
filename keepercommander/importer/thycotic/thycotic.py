@@ -447,10 +447,8 @@ class ThycoticMixin:
         written = 0
         seen = 0
         unmapped = 0
-        print('Loading secret permissions ', flush=True, end='')
+        logging.info('Loading secret permissions for %d secrets', len(lookup))
         for index, row in enumerate(lookup):
-            if index % 10 == 9:
-                print('.', flush=True, end='')
             secret_id = row.get('id') if isinstance(row, dict) else None
             if not secret_id:
                 continue
@@ -487,7 +485,7 @@ class ThycoticMixin:
             record.shares = shares
             written += 1
             yield record
-        print(' Done', flush=True)
+        logging.info('Loaded secret permissions for %d secrets', written)
         if written == 0:
             logging.warning(
                 'No secret permission lists downloaded (%d secrets, %d had permission rows with no email).',
@@ -506,9 +504,9 @@ def parse_thycotic_import_target(filename):
     username, sep, host = filename.partition('@')
     if not sep or not host.strip():
         return None
-    host = host.strip()
-    if not (host.startswith('https://') or host.startswith('http://')):
-        host = 'https://{0}'.format(host)
+    host = ThycoticMixin.url_from_tenant(host.strip())
+    if not host:
+        return None
     return username, host
 
 
@@ -551,17 +549,17 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
     @staticmethod
     def _extract_user_email(user):
-        """Return the user's emailAddress, or an empty string."""
+        """Return the user's emailAddress, or an empty string.
+
+        The list payload uses emailAddress. A lowercased emailaddress is
+        accepted too. An empty value does not hide the other key.
+        """
         if not isinstance(user, dict):
             return ''
-        for key, value in user.items():
-            if str(key).lower() != 'emailaddress':
-                continue
-            if isinstance(value, str):
-                value = value.strip()
-                if value:
-                    return value
-            return ''
+        for key in ('emailAddress', 'emailaddress'):
+            value = user.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return ''
 
     def _prepare_thycotic_users(self, auth):  # type: (ThycoticAuth) -> List[dict]
@@ -584,7 +582,11 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             user_id = user.get('id')
             source = user
             if not email and user_id not in (None, ''):
-                detail = auth.thycotic_entity(f'/v1/users/{user_id}')
+                try:
+                    detail = auth.thycotic_entity('/v1/users/{0}'.format(user_id))
+                except Exception as exc:
+                    logging.warning('Thycotic user %s: %s', user_id, exc)
+                    detail = None
                 if isinstance(detail, dict):
                     if detail.get('isApplicationAccount') is True:
                         skipped_application += 1
@@ -606,7 +608,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             logging.info('Skipped %d Thycotic application account(s)', skipped_application)
         if skipped_no_email:
             logging.info('Skipped %d Thycotic user(s) with no email address', skipped_no_email)
-        print(f'Found {len(result)} Thycotic user(s) with an email address', flush=True)
+        logging.info('Found %d Thycotic user(s) with an email address', len(result))
         return result
 
     def _load_existing_keeper_users(self, params):  # type: (KeeperParams) -> Tuple[list, str]
@@ -657,6 +659,11 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         existing_users, error = self._load_existing_keeper_users(params)
         if error:
             logging.warning(error)
+        existing_by_email = {}
+        for existing in existing_users:
+            key = (existing.get('email') or '').strip().casefold()
+            if key and key not in existing_by_email:
+                existing_by_email[key] = existing
         is_valid_email = re.compile(EMAIL_PATTERN).match
         for user in thycotic_users or []:
             if not isinstance(user, dict):
@@ -665,10 +672,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             email_key = email.casefold()
             if email_key in seen:
                 continue
-            user_exist = next(
-                (u for u in existing_users if (u.get('email') or '').casefold() == email_key),
-                None,
-            )
+            user_exist = existing_by_email.get(email_key)
             if user_exist:
                 seen.add(email_key)
                 status = user_exist.get('status') or 'active'
@@ -692,9 +696,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             flag = str((user or {}).get('flag') or 'skipped')
             if flag in counts:
                 counts[flag] += 1
-        print(
-            'Thycotic users: created {created}, existing {existing}, skipped {skipped}, failed {failed}'.format(**counts),
-            flush=True,
+        logging.info(
+            'Thycotic users: created %d, existing %d, skipped %d, failed %d',
+            counts['created'], counts['existing'], counts['skipped'], counts['failed'],
         )
         for user in users:
             if not isinstance(user, dict):
@@ -704,8 +708,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             detail = user.get('reason') or ''
             if not detail and flag == 'existing' and user.get('status'):
                 detail = str(user.get('status'))
-            suffix = f' ({detail})' if detail else ''
-            print(f'  [{flag}] {label}{suffix}', flush=True)
+            suffix = ' ({0})'.format(detail) if detail else ''
+            logging.info('[%s] %s%s', flag, label, suffix)
 
     def _migrate_thycotic_users(self, auth, params):
         # type: (ThycoticAuth, KeeperParams) -> None
@@ -713,7 +717,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         A user-fetch failure does not abort secret migration.
         """
-        print('Migrating Thycotic users to Keeper...', flush=True)
+        logging.info('Migrating Thycotic users to Keeper')
         try:
             thycotic_users = self._prepare_thycotic_users(auth)
         except Exception as e:

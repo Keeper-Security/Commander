@@ -34,7 +34,7 @@ from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
-from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
+from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, normalize_folder_path, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
@@ -3000,37 +3000,40 @@ def prepare_folder_permission(params, folders, full_sync, unsafe=False):
 
 def locate_secret_share_records(params, records):
     # type: (KeeperParams, List[ImportRecord]) -> List[ImportRecord]
-    """Find Keeper records for secret-level shares by folder path and title."""
-    path_to_uids = {}
-    for folder_uid in list(getattr(params, 'folder_cache', None) or {}):
-        path = (get_folder_path(params, folder_uid) or '').strip().strip(PathDelimiter).casefold()
-        path_to_uids.setdefault(path, []).append(folder_uid)
+    """Find Keeper records for secret-level shares by folder path and title.
 
-    located = []
+    Record JSON is parsed once while the index is built. Each secret then
+    looks up (normalized folder path, title) instead of parsing again.
+    """
     record_cache = getattr(params, 'record_cache', None) or {}
     folder_records = getattr(params, 'subfolder_record_cache', None) or {}
+    record_index = {}
+    for folder_uid, record_uids in folder_records.items():
+        folder_path = normalize_folder_path(get_folder_path(params, folder_uid))
+        for record_uid in record_uids or []:
+            cached = record_cache.get(record_uid)
+            if not isinstance(cached, dict):
+                continue
+            raw = cached.get('data_unencrypted') or '{}'
+            if isinstance(raw, bytes):
+                raw = raw.decode('utf-8', errors='replace')
+            try:
+                title = (json.loads(raw).get('title') or '').strip().casefold()
+            except Exception:
+                continue
+            bucket = record_index.setdefault((folder_path, title), [])
+            if record_uid not in bucket:
+                bucket.append(record_uid)
+
+    located = []
     for rec in records:
         if not getattr(rec, 'shares', None):
             continue
         title = (rec.title or '').strip().casefold()
         folder_path = ''
         if rec.folders:
-            folder_path = (rec.folders[0].path or '').strip().strip(PathDelimiter).casefold()
-        found = []
-        for folder_uid in path_to_uids.get(folder_path, []):
-            for record_uid in folder_records.get(folder_uid) or []:
-                cached = record_cache.get(record_uid)
-                if not isinstance(cached, dict):
-                    continue
-                raw = cached.get('data_unencrypted') or '{}'
-                if isinstance(raw, bytes):
-                    raw = raw.decode('utf-8', errors='replace')
-                try:
-                    data = json.loads(raw)
-                except Exception:
-                    continue
-                if (data.get('title') or '').strip().casefold() == title and record_uid not in found:
-                    found.append(record_uid)
+            folder_path = normalize_folder_path(rec.folders[0].path)
+        found = list(record_index.get((folder_path, title), []))
         if not found:
             logging.warning('No Keeper record for secret "%s" in "%s"', rec.title, folder_path)
             continue

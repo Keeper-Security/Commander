@@ -65,7 +65,7 @@ class TestThycoticImportTarget(TestCase):
         username, host = parse_thycotic_import_target(
             'user@https://metron.secretservercloud.com/')
         self.assertEqual(username, 'user')
-        self.assertEqual(host, 'https://metron.secretservercloud.com/')
+        self.assertEqual(host, 'https://metron.secretservercloud.com')
         auth = thycotic.ThycoticAuth(host)
         self.assertEqual(auth.base_url, 'https://metron.secretservercloud.com/')
         self.assertNotIn('https://https://', auth.base_url + 'oauth2/token')
@@ -73,7 +73,12 @@ class TestThycoticImportTarget(TestCase):
     def test_user_at_bare_host_gets_one_scheme(self):
         username, host = parse_thycotic_import_target('user@metron.secretservercloud.com')
         self.assertEqual(username, 'user')
-        self.assertEqual(host, 'https://metron.secretservercloud.com')
+        self.assertEqual(host, 'https://metron.secretservercloud.com/')
+
+    def test_bare_tenant_keeps_username_and_cloud_host(self):
+        username, host = parse_thycotic_import_target('user@acme')
+        self.assertEqual(username, 'user')
+        self.assertEqual(host, 'https://acme.secretservercloud.com/')
 
     def test_full_url_leaves_username_empty(self):
         username, host = parse_thycotic_import_target('https://metron.secretservercloud.com/')

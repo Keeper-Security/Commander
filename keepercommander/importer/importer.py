@@ -23,6 +23,17 @@ from ..error import CommandError
 from ..params import KeeperParams
 
 PathDelimiter = '\\'
+
+
+def normalize_folder_path(path):
+    # type: (Optional[str]) -> str
+    """Fold a Delinea or Keeper folder path into one comparable key.
+
+    Secret Server paths use a leading backslash. Keeper paths built from
+    folder names do not. Both separators are treated as backslash.
+    """
+    text = (path or '').replace('/', '\\').strip()
+    return text.strip('\\').casefold()
 TWO_FACTOR_CODE = 'TFC:Keeper'
 FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 

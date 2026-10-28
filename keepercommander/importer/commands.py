@@ -19,7 +19,7 @@ from typing import Optional, List, Dict
 
 from . import imp_exp
 from .. import api, record_types
-from .importer import SharedFolder, Team, Permission, Record, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
+from .importer import SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
@@ -583,7 +583,7 @@ class DownloadMembershipCommand(Command):
             path = ''
             if record.folders:
                 path = record.folders[0].path or ''
-            return (path.casefold(), (record.title or '').casefold())
+            return (normalize_folder_path(path), (record.title or '').casefold())
 
         json_importer = KeeperJsonImporter()
         if os.path.exists(file_name):
