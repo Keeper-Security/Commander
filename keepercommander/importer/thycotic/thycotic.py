@@ -932,16 +932,12 @@ class ThycoticAuth:
         if rs is None:
             logging.info('"%s" error: %s (no response)', endpoint, error)
             return
-        body = (getattr(rs, 'text', None) or '').strip().replace('\n', ' ')[:300]
-        message = self._json_message(rs)
         logging.info(
-            '"%s" error: %s (HTTP %s %s, body: %s%s)',
+            '"%s" error: %s (HTTP %s %s)',
             endpoint,
             error,
             getattr(rs, 'status_code', ''),
-            getattr(rs, 'reason', '') or '',
-            message or body or '<empty>',
-            '' if not message or message == body else f' | raw: {body}')
+            getattr(rs, 'reason', '') or '')
 
     @classmethod
     def response_error(cls, rs):  # type: (requests.Response) -> Tuple[Any, str]
