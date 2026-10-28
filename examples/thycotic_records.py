@@ -81,7 +81,7 @@ while True:
         logging.warning(e)
 
 
-thy_folders, _picked_folder = thycotic.ThycoticMixin.get_folders(thy_auth, skip_permissions=True, is_interactive=False)
+thy_folders = thycotic.ThycoticMixin.get_folders(thy_auth, skip_permissions=True)
 logging.info(f'Thycotic: Loaded %d folders', len(thy_folders))
 thy_secrets = thy_auth.thycotic_search('/v2/secrets')
 logging.info(f'Thycotic: Loaded %d secrets', len(thy_secrets))
