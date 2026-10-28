@@ -250,13 +250,19 @@ class ThycoticMixin:
         return folders
 
     @staticmethod
-    def get_folders(auth, skip_permissions=False):
-        # type: (ThycoticAuth, bool) -> Optional[Dict[int, Dict]]
-        logging.debug('Enter get_folders')
+    def _load_folders(auth):
+        # type: (ThycoticAuth) -> Dict[int, Dict]
         folder_rs = auth.thycotic_search('/v1/folders')
         folders = ThycoticMixin._construct_folders(folder_rs)
         logging.debug('Loaded %d folders', len(folders))
         logging.debug('Folder path built')
+        return folders
+
+    @staticmethod
+    def get_folders(auth, skip_permissions=False):
+        # type: (ThycoticAuth, bool) -> Optional[Dict[int, Dict]]
+        logging.debug('Enter get_folders')
+        folders = ThycoticMixin._load_folders(auth)
 
         if 1 in folders:
             del folders[1]
@@ -466,8 +472,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         self._send_keep_alive_if_needed(params)
         filter_folder = kwargs.get('filter_folder')
-        folder_rs = auth.thycotic_search('/v1/folders')
-        constructed_folders = ThycoticImporter._construct_folders(folder_rs)
+        constructed_folders = ThycoticImporter._load_folders(auth)
         picked_folder_ids = None
         if not filter_folder and sys.stdin and sys.stdin.isatty():
             folder_choices = list(constructed_folders.values())
