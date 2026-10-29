@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 import requests
 from tabulate import tabulate
 
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
@@ -36,6 +36,93 @@ from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFold
 from ...constants import EMAIL_PATTERN
 from ...params import KeeperParams
 from ... import record_types, vault, api
+
+# Secret Server leaves restricted secrets out of /v1/secrets/lookup unless
+# filter.includeRestricted=true. The API user needs this Delinea role permission
+# or the lookup still omits them.
+DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
+
+# Sent on GET /v1/secrets/{id} and /v1/secrets/{id}/fields/{slug} only when a
+# plain read fails. For secrets that require checkout or a comment, they check
+# the secret out, read it, check it back in, and supply the comment. Secrets
+# that do not need them are read without a checkout or an audit comment.
+SECRET_ACCESS_PARAMS = (
+    ('autoCheckout', 'true'),
+    ('autoCheckIn', 'true'),
+    ('autoComment', 'Checking out'),
+)
+
+
+SECRET_ACCESS_PARAM_NAMES = frozenset(name for name, _ in SECRET_ACCESS_PARAMS)
+
+# SSH key validation limits (in bytes when decoded)
+SSH_KEY_MIN_LENGTH = 30
+SSH_KEY_MAX_LENGTH = 5000
+
+
+def _replace_query(endpoint, params):
+    # type: (str, List[Tuple[str, str]]) -> str
+    """Replace query string in endpoint with provided params, using proper URL encoding."""
+    parts = urlparse(endpoint)
+    return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
+
+
+def with_secret_access_params(endpoint):
+    # type: (str) -> str
+    """Add checkout and comment parameters to a secret read URL.
+
+    Existing query parameters are kept. Any existing checkout or comment
+    parameter is replaced, not duplicated.
+    """
+    query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
+    params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
+    params.extend(SECRET_ACCESS_PARAMS)
+    return _replace_query(endpoint, params)
+
+
+
+def build_secrets_lookup_query(folder_id=None, include_restricted=True):
+    # type: (Optional[Union[int, str]], bool) -> str
+    """Build the secrets lookup used by import.
+
+    filter.includeRestricted is always on the endpoint and defaults to true.
+    Secret Server treats it as a filter: the lookup still succeeds when the
+    API user cannot see restricted secrets, and those IDs stay out of the list.
+    Seeing them requires the Delinea role permission View Restricted Secret.
+    """
+    restricted = 'true' if include_restricted else 'false'
+    if folder_id is None:
+        return f'/v1/secrets/lookup?filter.includeRestricted={restricted}'
+    return (
+        f'/v1/secrets/lookup?filter.folderId={folder_id}'
+        f'&filter.includeSubFolders=true&filter.includeRestricted={restricted}'
+    )
+
+
+def _ids_from_lookup_response(response):
+    # type: (Any) -> List
+    """Extract secret IDs from lookup response, handling non-list responses safely."""
+    if not isinstance(response, list):
+        return []
+    return [item['id'] for item in response if isinstance(item, dict) and item.get('id') is not None]
+
+
+def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
+    # type: (Callable[[str], Iterable[dict]], Optional[Iterable], bool) -> List
+    """Return secret IDs from a tenant-wide or folder-filtered lookup."""
+    if folder_ids:
+        secret_ids = []
+        for folder_id in dict.fromkeys(folder_ids):  # deduplicate folder IDs
+            if folder_id is None:
+                continue
+            query = build_secrets_lookup_query(folder_id, include_restricted)
+            secret_ids.extend(_ids_from_lookup_response(search(query)))
+        # A secret can be returned by more than one folder lookup: a matched
+        # folder may be a subfolder of another, and includeSubFolders=true
+        # returns its secrets again. Keep the first occurrence of each ID.
+        return list(dict.fromkeys(secret_ids))
+    query = build_secrets_lookup_query(include_restricted=include_restricted)
+    return _ids_from_lookup_response(search(query))
 
 
 class ThycoticMixin:
@@ -235,6 +322,26 @@ class ThycoticMixin:
         return seen
 
     @staticmethod
+    def get_secret_ids(auth, folder_ids, query=None):
+        # type: (ThycoticAuth, Optional[Iterable], Optional[str]) -> List
+        """Bridge function to get secret IDs for selected folders with restricted secret support.
+
+        Args:
+            auth: Thycotic authentication object
+            folder_ids: Folder IDs to query
+            query: Legacy parameter (ignored; use build_secrets_lookup_query instead)
+
+        Returns:
+            List of secret IDs from selected folders with includeRestricted=true
+        """
+        if query is not None:
+            logging.warning('Legacy query parameter provided but is not used; using folder_ids instead')
+        ids = [folder_id for folder_id in (folder_ids or ()) if folder_id is not None]
+        if not ids:
+            return []
+        return lookup_secret_ids(auth.thycotic_search, ids, include_restricted=True)
+
+    @staticmethod
     def _construct_folders(folder_rs):
         # type: (Any) -> Dict[int, Dict]
         if not isinstance(folder_rs, list):
@@ -352,23 +459,12 @@ class ThycoticMixin:
                         folder['inheritPermissions'] = True
         return folders
 
-    @staticmethod
-    def get_secret_ids(auth, folder_ids, query):
-        secret_ids = []
-        for folder_id in folder_ids or ():
-            if folder_id is None:
-                continue
-            params = [('filter.folderId', folder_id)]
-            if query:
-                params.extend(parse_qsl(query))
-            secrets = auth.thycotic_search('/v1/secrets/lookup?' + urlencode(params))
-            if not isinstance(secrets, list):
-                continue
-            secret_ids.extend(secret['id'] for secret in secrets
-                              if isinstance(secret, dict) and secret.get('id') is not None)
-        return list(dict.fromkeys(secret_ids))
+  
 
 class ThycoticImporter(BaseImporter, ThycoticMixin):
+    # Same end-of-import terminal summary CyberArk prints (Import finished, skipped rows).
+    verbose_import_summary = True
+
     def __init__(self):
         super().__init__()
         self._last_keep_alive = int(datetime.datetime.utcnow().timestamp())
@@ -650,32 +746,36 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if picked_folders is not None and picked_folders is not folder_choices:
                 picked_folder_ids = list(dict.fromkeys(folder['id'] for folder in picked_folders))
 
-
+        # Delete the system folder (ID 1)
         if 1 in constructed_folders:
             del constructed_folders[1]
         folders = constructed_folders
-        secrets_ids = []
-        query = 'filter.includeSubFolders=true'
 
-        if filter_folder or picked_folder_ids is not None:
-            if filter_folder:
-                if filter_folder == 'Personal Folders':
-                    matched_folder_ids = [1]
-                else:
-                    matched_folder_ids = [x['id'] for x in folders.values() if x['folderName'].lower() == filter_folder.lower()]
+        # Determine which folders to query
+        matched_folder_ids = None
+        if filter_folder:
+            # Handle --filter-folder argument
+            if filter_folder == 'Personal Folders':
+                matched_folder_ids = [1]
+            else:
+                matched_folder_ids = [x['id'] for x in folders.values() if x['folderName'].lower() == filter_folder.lower()]
                 if len(matched_folder_ids) == 0:
                     logging.warning('Folder \"%s\" not found', filter_folder)
-            else:
-                matched_folder_ids = picked_folder_ids
+                    return  # Fail closed: don't import if filter folder not found
+        elif picked_folder_ids is not None:
+            # Use interactively selected folders
+            matched_folder_ids = picked_folder_ids
+
+        # Query secrets with restricted secret support
+        if matched_folder_ids:
+            # Expand selected folder IDs to include subfolders
             folder_ids = ThycoticImporter.expand_folder_ids(folders, matched_folder_ids)
             folders = {i: x for i, x in folders.items() if i in folder_ids}
-            secrets_ids = ThycoticImporter.get_secret_ids(auth, matched_folder_ids, query)
+            # Use lookup_secret_ids for restricted secret support
+            secrets_ids = lookup_secret_ids(auth.thycotic_search, matched_folder_ids, include_restricted=True)
         else:
-            matched_folder_ids = list(folders.keys())
-            secrets_rs = auth.thycotic_search('/v1/secrets/lookup')
-            secrets_ids = [x['id'] for x in secrets_rs if isinstance(x, dict) and x.get('id') is not None] \
-                if isinstance(secrets_rs, list) else []
-
+            # Tenant-wide lookup with restricted secret support
+            secrets_ids = lookup_secret_ids(auth.thycotic_search, include_restricted=True)
         # secret_ids arg
         debug_ids = kwargs.get('secret_ids')
         if debug_ids is not None:
@@ -703,9 +803,13 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         self._send_keep_alive_if_needed(params)
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
+        skipped_secrets = []
+        skipped_fields = []
         for secret_id in secrets_ids:
-            secret = auth.thycotic_entity(f'/v1/secrets/{secret_id}')
-            if not secret:
+            secret, error = auth.thycotic_secret(f'/v1/secrets/{secret_id}')
+            if secret is None:
+                status, message = error or ('N/A', 'Empty response')
+                skipped_secrets.append({'ID': secret_id, 'Status': status, 'Message': message})
                 continue
             secrets.append(secret)
             if len(secrets) % 10 == 9:
@@ -792,28 +896,32 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
                 endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
                 if slug in ('private-key', 'public-key') and skip_ssh_key is not True:
-                    with auth.thycotic_get(endpoint) as rs:
-                        if rs.status_code == 200:
-                            try:
-                                key_text = rs.content.decode()
-                            except:
-                                key_text = ''
-                            is_key = 30 < len(key_text) < 5000
-                            if is_key:
-                                item['itemValue'] = key_text
+                    try:
+                        with auth.thycotic_secret_get(endpoint) as rs:
+                            if rs.status_code == 200:
+                                try:
+                                    key_text = rs.content.decode()
+                                except:
+                                    key_text = ''
+                                is_key = SSH_KEY_MIN_LENGTH < len(key_text) < SSH_KEY_MAX_LENGTH
+                                if is_key:
+                                    item['itemValue'] = key_text
+                                else:
+                                    if not isinstance(record.attachments, list):
+                                        record.attachments = []
+                                    attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
+                                    record.attachments.append(attachment)
                             else:
-                                if not isinstance(record.attachments, list):
-                                    record.attachments = []
-                                attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
-                                if not isinstance(record.attachments, list):
-                                    record.attachments = []
-                                record.attachments.append(attachment)
+                                status, message = ThycoticAuth.response_error(rs)
+                                skipped_fields.append({'ID': secret_id, 'Secret': record.title, 'Field': slug,
+                                                       'Status': status, 'Message': message})
+                    except requests.exceptions.RequestException as e:
+                        skipped_fields.append({'ID': secret_id, 'Secret': record.title, 'Field': slug,
+                                               'Status': 'N/A', 'Message': str(e)})
                 else:
                     if not isinstance(record.attachments, list):
                         record.attachments = []
                     attachment = ThycoticAttachment(auth, endpoint, file_name)
-                    if not isinstance(record.attachments, list):
-                        record.attachments = []
                     record.attachments.append(attachment)
                     del items[slug]
 
@@ -1039,6 +1147,18 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
             yield record
         print(' Done', flush=True)
+        ThycoticImporter.print_skipped(skipped_secrets, skipped_fields)
+
+
+    @staticmethod
+    def print_skipped(skipped_secrets, skipped_fields):  # type: (List[dict], List[dict]) -> None
+        """Print the secrets and fields that could not be read, like the CyberArk import does."""
+        if skipped_secrets:
+            print(f'\nSkipped {len(skipped_secrets)} Secrets:')
+            print(tabulate(skipped_secrets, headers='keys', maxcolwidths=[None, None, 80]), end='\n\n')
+        if skipped_fields:
+            print(f'\nSkipped {len(skipped_fields)} Fields:')
+            print(tabulate(skipped_fields, headers='keys', maxcolwidths=[None, 40, None, None, 80]), end='\n\n')
 
 
 class ThycoticAuth:
@@ -1067,8 +1187,7 @@ class ThycoticAuth:
                            verify=False, proxies=self.proxy)
         if rs.status_code != 200:
             if rs.status_code == 400:
-                error_rs = rs.json()
-                error = error_rs['error']
+                error = self._json_message(rs, 'error')
                 if 'totp' in error.lower() and callable(on_totp):
                     code = on_totp()
                     if code:
@@ -1082,8 +1201,7 @@ class ThycoticAuth:
             self.refresh_token = auth_rs.get('refresh_token')
             self.last_login = int(datetime.datetime.now().timestamp())
         else:
-            error_rs = rs.json()
-            raise Exception(error_rs['error'])
+            raise Exception(self._error_message(rs, 'error'))
 
     def refresh_auth_token(self):
         if not self.refresh_token:
@@ -1105,8 +1223,7 @@ class ThycoticAuth:
             self.refresh_token = auth_rs.get('refresh_token')
             self.last_login = int(datetime.datetime.now().timestamp())
         else:
-            error_rs = rs.json()
-            raise Exception(error_rs['error'])
+            raise Exception(self._error_message(rs, 'error'))
 
     def ensure_auth_token(self):
         if self.access_token:
@@ -1138,8 +1255,7 @@ class ThycoticAuth:
                 time.sleep(10)
                 rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
             if rs.status_code != 200:
-                error_rs = rs.json()
-                raise Exception(error_rs['message'])
+                raise Exception(self._error_message(rs))
             chunk_rs = rs.json()
             records = chunk_rs.get('records')
             if isinstance(records, list):
@@ -1152,7 +1268,77 @@ class ThycoticAuth:
                 break
         return result
 
+    @staticmethod
+    def _json_message(rs, key='message'):  # type: (Optional[requests.Response], str) -> str
+        """Return the given field of a JSON error body, or '' if there is none."""
+        if rs is None or not (getattr(rs, 'text', None) or '').strip():
+            return ''
+        try:
+            payload = rs.json()
+        except ValueError:
+            return ''
+        if isinstance(payload, dict):
+            return str(payload.get(key) or '')
+        return ''
+
+    @classmethod
+    def _error_message(cls, rs, key='message'):  # type: (requests.Response, str) -> str
+        """Describe an error response, whether or not its body is JSON."""
+        message = cls._json_message(rs, key)
+        if message:
+            return message
+        body = (rs.text or '').strip().replace('\n', ' ')[:300]
+        return f'HTTP {rs.status_code} {rs.reason or ""}: {body or "<empty>"}'
+
+    def _log_thycotic_response(self, endpoint, rs, error):
+        if rs is None:
+            logging.info('"%s" error: %s (no response)', endpoint, error)
+            return
+        logging.info(
+            '"%s" error: %s (HTTP %s %s)',
+            endpoint,
+            error,
+            getattr(rs, 'status_code', ''),
+            getattr(rs, 'reason', '') or '')
+
+    @classmethod
+    def response_error(cls, rs):  # type: (requests.Response) -> Tuple[Any, str]
+        """Return (HTTP status, message) describing a failed response."""
+        message = cls._json_message(rs)
+        if not message:
+            message = (rs.text or '').strip().replace('\n', ' ')[:300] or rs.reason or ''
+        return rs.status_code, message
+
+    def thycotic_secret(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
+        """Read a secret, adding checkout parameters only if the plain read fails.
+
+        Returns (secret, None) on success, or (None, (status, message)) describing
+        the last failed attempt.
+        """
+        secret = None
+        first_error = None
+        try:
+            secret, first_error = self._read_entity(endpoint)
+        except Exception as e:
+            logging.info('"%s" error: %s', endpoint, str(e))
+            first_error = ('N/A', str(e))
+        if secret is not None:
+            return secret, None
+        checkout = with_secret_access_params(endpoint)
+        logging.info('Reading "%s" with checkout parameters', checkout)
+        try:
+            secret, error = self._read_entity(checkout)
+            if secret is not None:
+                return secret, None
+            return None, error or first_error
+        except Exception as e:
+            logging.info('"%s" error: %s', checkout, str(e))
+            return None, ('N/A', str(e))
+
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
+        return self._read_entity(endpoint)[0]
+
+    def _read_entity(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
         self.ensure_auth_token()
         headers = {
             'Accept': 'application/json',
@@ -1168,15 +1354,15 @@ class ThycoticAuth:
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
-                return
+                return None, ('N/A', str(e))
+        if rs.status_code != 200:
+            self._log_thycotic_response(endpoint, rs, f'returned {rs.status_code}')
+            return None, self.response_error(rs)
         try:
-            if rs.status_code == 200:
-                return rs.json()
-            else:
-                error_rs = rs.json()
-                logging.info('"%s" returned %d: %s', endpoint, rs.status_code, error_rs.get('message', ''))
-        except Exception as e:
-            logging.info('"%s" error: %s', endpoint, str(e))
+            return rs.json(), None
+        except ValueError as e:
+            self._log_thycotic_response(endpoint, rs, f'invalid JSON: {e}')
+            return None, (rs.status_code, 'Response is not valid JSON')
 
     def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()
@@ -1193,6 +1379,22 @@ class ThycoticAuth:
                               verify=False, proxies=self.proxy, stream=True)
         return rs
 
+    def thycotic_secret_get(self, endpoint):    # type: (str) -> requests.Response
+        """Read a secret field, adding checkout parameters only if the plain read fails.
+
+        This handles restricted secrets that require checkout parameters.
+        """
+        try:
+            rs = self.thycotic_get(endpoint)
+            if rs.status_code == 200:
+                return rs
+            rs.close()
+        except Exception as e:
+            logging.info('"%s" error: %s', endpoint, str(e))
+        checkout = with_secret_access_params(endpoint)
+        logging.info('Reading "%s" with checkout parameters', checkout)
+        return self.thycotic_get(checkout)
+
 
 class ThycoticAttachment(Attachment):
     def __init__(self, auth, endpoint, name):     # type: (ThycoticAuth, str, str) -> None
@@ -1208,14 +1410,23 @@ class ThycoticAttachment(Attachment):
         self._file_content = b''
 
     def prepare(self):
-        with self.auth.thycotic_get(self.endpoint) as rs:
-            if rs.status_code == 200:
-                length = rs.headers.get('Content-Length', 0)
-                try:
-                    self.size = int(length)
-                except:
-                    pass
-                self._file_content = rs.content
+        # Runs during upload, after the import summary is printed, so failures
+        # are reported here as warnings instead of in the skipped fields table.
+        try:
+            with self.auth.thycotic_secret_get(self.endpoint) as rs:
+                if rs.status_code == 200:
+                    length = rs.headers.get('Content-Length', 0)
+                    try:
+                        self.size = int(length)
+                    except:
+                        pass
+                    self._file_content = rs.content
+                else:
+                    status, message = ThycoticAuth.response_error(rs)
+                    logging.error('Attachment "%s" (%s) was not imported: HTTP %s %s',
+                                  self.name, self.endpoint, status, message)
+        except requests.exceptions.RequestException as e:
+            logging.error('Attachment "%s" (%s) was not imported: %s', self.name, self.endpoint, str(e))
 
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
