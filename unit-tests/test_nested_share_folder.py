@@ -612,6 +612,46 @@ class TestNestedShareFolderFolderCommands(TestCase):
         mock_create.assert_called_once()
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_allows_duplicate_root_name(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+
+        existing_uid, existing = _make_folder(name='Duplicate Root')
+        second_uid, second = _make_folder(name='Duplicate Root')
+        mock_create.return_value = {
+            'folder_uid': utils.generate_uid(), 'status': 'SUCCESS',
+            'message': '', 'success': True,
+        }
+        params = _make_params(
+            nested_share_folders={
+                existing_uid: existing,
+                second_uid: second,
+            })
+
+        NestedShareFolderMkdirCommand().execute(params, folder='Duplicate Root')
+
+        mock_create.assert_called_once()
+        self.assertIsNone(mock_create.call_args.kwargs['parent_uid'])
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_rejects_duplicate_parent_name(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+
+        first_uid, first = _make_folder(name='Duplicate Parent')
+        second_uid, second = _make_folder(name='Duplicate Parent')
+        params = _make_params(
+            user='victim@example.com',
+            nested_share_folders={
+                first_uid: dict(first, owner_username='victim@example.com'),
+                second_uid: dict(second, owner_username='victim@example.com'),
+            },
+        )
+
+        with self.assertRaises(CommandError):
+            NestedShareFolderMkdirCommand().execute(
+                params, folder='Duplicate Parent/Child')
+        mock_create.assert_not_called()
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_resolves_parent_uid_in_path(self, mock_create):
         """Parent path segments that are NSF UIDs resolve to the folder, not a name."""
         parent_uid = 'tY6D-RanxY252zzBY_xU4A'

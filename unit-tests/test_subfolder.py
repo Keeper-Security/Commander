@@ -109,3 +109,25 @@ def test_subfolder_try_resolve_path_rejects_ambiguous_folder_name():
         params, 'Work', find_all_matches=True)
     assert pattern == ''
     assert {folder.uid for folder in folders} == {first_uid, second_uid}
+
+
+def test_subfolder_try_resolve_path_rejects_case_variant_folder_shadowing():
+    first_uid = 'b' * 22
+    second_uid = 'c' * 22
+    first = BFN(type='user_folder', uid=first_uid, parent_uid=None,
+                name='Work', subfolders=[])
+    second = BFN(type='shared_folder', uid=second_uid, parent_uid=None,
+                 name='work', subfolders=[])
+    root = BFN(type='/', uid=None, parent_uid=None, name='root',
+               subfolders=[first_uid, second_uid])
+    params = Mock()
+    params.folder_cache = {
+        first_uid: first,
+        second_uid: second,
+    }
+    params.root_folder = root
+    params.current_folder = ''
+
+    assert subfolder.try_resolve_path(params, 'WORK') is None
+    with pytest.raises(subfolder.FolderPathAmbiguousError):
+        subfolder.try_resolve_path(params, 'WORK', raise_on_ambiguous=True)
