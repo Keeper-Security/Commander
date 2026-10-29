@@ -720,3 +720,115 @@ class TestPermissionEdgeCases(TestCase):
     def test_import_target_without_host_is_rejected(self):
         self.assertIsNone(parse_thycotic_import_target('user@'))
         self.assertIsNone(parse_thycotic_import_target('user@   '))
+
+
+def _share_record(title, *paths):
+    record = Record()
+    record.title = title
+    record.folders = []
+    for path in paths:
+        folder = Folder()
+        folder.path = path
+        record.folders.append(folder)
+    record.shares = [RecordShare('owner@example.com', True, True)]
+    return record
+
+
+class TestShareRecordsWithMultipleFolders(TestCase):
+    def _download(self, downloaded, existing=None, **kwargs):
+        import json as json_module
+        import os
+        import tempfile
+        from types import SimpleNamespace
+        from keepercommander.importer import commands
+        from keepercommander.importer.json.json import KeeperJsonExporter
+
+        directory = tempfile.mkdtemp()
+        file_name = os.path.join(directory, 'membership.json')
+        if existing:
+            KeeperJsonExporter().do_export(file_name, existing)
+        plugin = mock.Mock()
+        plugin.download_membership.return_value = iter(downloaded)
+        module = SimpleNamespace(MembershipDownload=lambda: plugin)
+        with mock.patch.object(commands.importlib, 'import_module', return_value=module):
+            commands.DownloadMembershipCommand().execute(
+                mock.Mock(), source='thycotic', name=file_name, **kwargs)
+        with open(file_name) as handle:
+            return json_module.load(handle).get('records') or []
+
+    def test_folder_prefix_applies_to_every_folder(self):
+        records = self._download([_share_record('prod-db', 'Apps', 'Ops\\Db', '')], folder='Imported')
+        self.assertEqual([folder.get('folder') for folder in records[0]['folders']],
+                         ['Imported\\Apps', 'Imported\\Ops\\Db', 'Imported'])
+
+    def test_empty_folder_path_becomes_prefix(self):
+        records = self._download([_share_record('prod-db', '')], folder='Imported')
+        self.assertEqual(records[0]['folders'], [{'folder': 'Imported'}])
+
+    def test_existing_record_is_replaced_only_when_all_folders_match(self):
+        existing = [
+            _share_record('prod-db', 'Apps'),
+            _share_record('prod-db', 'Apps', 'Ops'),
+        ]
+        records = self._download([_share_record('prod-db', 'Ops', 'apps/')], existing=existing)
+        self.assertEqual(sorted(tuple(folder['folder'] for folder in record['folders']) for record in records),
+                         [('Apps',), ('Ops', 'apps/')])
+
+
+class TestLocateShareRecordsWithMultipleFolders(TestCase):
+    def _params(self, folders):
+        import json as json_module
+        params = mock.Mock()
+        params.record_cache = {}
+        params.subfolder_record_cache = {}
+        for folder_uid, (path, titles) in folders.items():
+            params.subfolder_record_cache[folder_uid] = []
+            for title in titles:
+                record_uid = '{0}-{1}'.format(folder_uid, title)
+                params.record_cache[record_uid] = {'data_unencrypted': json_module.dumps({'title': title})}
+                params.subfolder_record_cache[folder_uid].append(record_uid)
+        paths = {folder_uid: path for folder_uid, (path, _titles) in folders.items()}
+        return params, paths
+
+    def _locate(self, folders, records):
+        params, paths = self._params(folders)
+        with mock.patch.object(imp_exp, 'get_folder_path', side_effect=lambda _params, uid: paths[uid]):
+            return imp_exp.locate_secret_share_records(params, records)
+
+    def test_record_in_second_folder_is_found(self):
+        located = self._locate({'f1': ('Apps', []), 'f2': ('Ops', ['prod-db'])},
+                               [_share_record('prod-db', 'Apps', 'Ops')])
+        self.assertEqual([record.uid for record in located], ['f2-prod-db'])
+
+    def test_record_in_several_listed_folders_is_shared_in_each(self):
+        located = self._locate({'f1': ('Apps', ['prod-db']), 'f2': ('Ops', ['prod-db'])},
+                               [_share_record('prod-db', 'Apps', 'Ops', 'apps')])
+        self.assertEqual(sorted(record.uid for record in located), ['f1-prod-db', 'f2-prod-db'])
+
+    def test_record_in_no_listed_folder_names_every_folder(self):
+        with self.assertLogs(level='WARNING') as logs:
+            located = self._locate({'f1': ('Other', ['prod-db'])},
+                                   [_share_record('prod-db', 'Apps', 'Ops')])
+        self.assertEqual(located, [])
+        self.assertTrue(any('"apps, ops"' in line for line in logs.output))
+
+
+class TestThycoticUserReport(TestCase):
+    def test_report_logs_counts_and_each_user(self):
+        report = {'users': [
+            {'email': 'a@example.com', 'flag': 'created'},
+            {'email': 'b@example.com', 'flag': 'existing', 'status': 'invited'},
+            {'email': 'bad', 'flag': 'skipped', 'reason': 'invalid email'},
+            None,
+        ]}
+        with self.assertLogs(level='INFO') as logs:
+            thycotic.ThycoticImporter()._print_thycotic_user_report(report)
+        output = '\n'.join(logs.output)
+        self.assertIn('created 1, existing 1, skipped 2, failed 0', output)
+        self.assertIn('[existing] b@example.com (invited)', output)
+        self.assertIn('[skipped] bad (invalid email)', output)
+
+    def test_empty_report_logs_zero_counts(self):
+        with self.assertLogs(level='INFO') as logs:
+            thycotic.ThycoticImporter()._print_thycotic_user_report({})
+        self.assertIn('created 0, existing 0, skipped 0, failed 0', '\n'.join(logs.output))

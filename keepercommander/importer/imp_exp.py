@@ -3033,10 +3033,10 @@ def locate_secret_share_records(params, records):
         if not getattr(rec, 'shares', None):
             continue
         title = (rec.title or '').strip().casefold()
-        folder_path = ''
-        if rec.folders:
-            folder_path = normalize_folder_path(rec.folders[0].path)
-        found = list(record_index.get((folder_path, title), []))
+        folder_paths = list(dict.fromkeys(normalize_folder_path(folder.path) for folder in rec.folders or [])) or ['']
+        folder_path = ', '.join(folder_paths)
+        found = list(dict.fromkeys(
+            record_uid for path in folder_paths for record_uid in record_index.get((path, title), [])))
         if not found:
             logging.warning('No Keeper record for secret "%s" in "%s"', rec.title, folder_path)
             continue

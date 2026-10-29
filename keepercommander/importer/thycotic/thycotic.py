@@ -895,18 +895,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 detail = str(user.get('status'))
             suffix = ' ({0})'.format(detail) if detail else ''
             logging.info('[%s] %s%s', flag, label, suffix)
-            user_exist = next(
-                (u for u in existing_users if (u.get('email') or '').casefold() == email_key),
-                None,
-            )
-            if user_exist:
-                seen.add(email_key)
-                continue
-            if not is_valid_email(email):
-                continue
-            seen.add(email_key)
-            name = self._user_field(user, 'name') or self._user_field(user, 'username') or email
-            self._create_keeper_user(params, email, name)
 
     def _preview_thycotic_users(self, auth):
         # type: (ThycoticAuth) -> None

@@ -543,9 +543,9 @@ class DownloadMembershipCommand(Command):
                 if old_domain and new_domain:
                     for share in obj.shares:
                         share.name = replace_email_domain(share.name, old_domain, new_domain)
-                if import_into and obj.folders:
-                    obj.folders[0].path = '{0}{1}{2}'.format(
-                        import_into, PathDelimiter, obj.folders[0].path or '')
+                if import_into:
+                    for folder in obj.folders or []:
+                        folder.path = PathDelimiter.join([import_into, folder.path]) if folder.path else import_into
                 added_records.append(obj)
 
         # process shared sub folders
@@ -577,10 +577,8 @@ class DownloadMembershipCommand(Command):
         existing_records = []  # type: List[Record]
 
         def _record_key(record):
-            path = ''
-            if record.folders:
-                path = record.folders[0].path or ''
-            return (normalize_folder_path(path), (record.title or '').casefold())
+            paths = tuple(sorted({normalize_folder_path(folder.path) for folder in record.folders or []}))
+            return (paths or ('',), (record.title or '').casefold())
 
         json_importer = KeeperJsonImporter()
         if os.path.exists(file_name):
