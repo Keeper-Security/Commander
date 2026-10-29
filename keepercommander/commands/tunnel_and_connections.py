@@ -519,8 +519,8 @@ class PAMTunnelEditCommand(Command):
                                 help='Enable/disable Keeper Proxy, auto-selecting the backend from the record\'s '
                                      'connection protocol: KeeperDB Proxy for database protocols '
                                      '(pamDatabase, or pamMachine set to a database protocol), KeeperRDP Proxy '
-                                     'for RDP (pamMachine). SSH is not yet supported. Records/protocols that '
-                                     'don\'t map to a proxy backend are ignored with a warning (on/off/default)')
+                                     'for RDP (pamMachine), KeeperSSH Proxy for SSH (pamMachine). Records/protocols '
+                                     'that don\'t map to a proxy backend are ignored with a warning (on/off/default)')
 
     def get_parser(self):
         return PAMTunnelEditCommand.pam_cmd_parser
@@ -4142,6 +4142,15 @@ class PAMConnectionAiCommand(Command):
         print(f'{bcolors.OKGREEN}KeeperAI settings saved successfully.{bcolors.ENDC}')
 
 
+# Clipboard data size limits offered by the Vault UI (ClipboardSettings.tsx), name -> bytes
+RBI_CLIPBOARD_BUFFER_SIZES = {
+    '256kb': 256 * 1024,
+    '1mb': 1024 * 1024,
+    '10mb': 10 * 1024 * 1024,
+    '50mb': 50 * 1024 * 1024,
+}
+
+
 class PAMRbiEditCommand(Command):
     choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam rbi edit')
@@ -4180,6 +4189,8 @@ class PAMRbiEditCommand(Command):
     # Autofill Settings
     parser.add_argument('--autofill-credentials', '-a', type=str, required=False, dest='autofill', action='store',
                         help='The record UID or path of the RBI Autofill Credentials record.')
+    parser.add_argument('--allow-supply-user', '-asu', dest='allow_supply_user', choices=choices,
+                        help='Allow the user to supply credentials at launch (on/off/default)')
     parser.add_argument('--autofill-targets', '-at', dest='autofill_targets', action='append',
                         help='Autofill target selectors (can specify multiple times)')
 
@@ -4188,6 +4199,9 @@ class PAMRbiEditCommand(Command):
                         help='Allow copying to clipboard (on/off/default)')
     parser.add_argument('--allow-paste', '-p', dest='allow_paste', choices=choices,
                         help='Allow pasting from clipboard (on/off/default)')
+    parser.add_argument('--clipboard-buffer-size', '-cbs', dest='clipboard_buffer_size', type=str.lower,
+                        choices=['default'] + list(RBI_CLIPBOARD_BUFFER_SIZES),
+                        help='Clipboard data size limit (256kb/1mb/10mb/50mb; default = unset)')
 
     # Audio Settings
     parser.add_argument('--disable-audio', '-da', dest='disable_audio', choices=choices,
@@ -4233,6 +4247,14 @@ class PAMRbiEditCommand(Command):
         autofill_targets = kwargs.get('autofill_targets')  # list or None
         allow_copy = kwargs.get('allow_copy')  # on/off/default/None
         allow_paste = kwargs.get('allow_paste')  # on/off/default/None
+        allow_supply_user = kwargs.get('allow_supply_user')  # on/off/default/None
+        clipboard_buffer_size = kwargs.get('clipboard_buffer_size')  # 256kb/1mb/10mb/50mb/default/None
+        if clipboard_buffer_size is not None:
+            clipboard_buffer_size = str(clipboard_buffer_size).lower()
+            if clipboard_buffer_size != 'default' and clipboard_buffer_size not in RBI_CLIPBOARD_BUFFER_SIZES:
+                allowed = ', '.join(['default'] + list(RBI_CLIPBOARD_BUFFER_SIZES))
+                raise CommandError('pam rbi edit', f'{bcolors.FAIL}Invalid --clipboard-buffer-size '
+                                   f'"{clipboard_buffer_size}". Allowed values: {allowed}{bcolors.ENDC}')
         disable_audio = kwargs.get('disable_audio')  # on/off/default/None
         audio_channels = kwargs.get('audio_channels')  # int or None
         audio_bit_depth = kwargs.get('audio_bit_depth')  # int or None
@@ -4253,6 +4275,8 @@ class PAMRbiEditCommand(Command):
             autofill_targets is not None,
             allow_copy is not None,
             allow_paste is not None,
+            allow_supply_user is not None,
+            clipboard_buffer_size is not None,
             disable_audio is not None,
             audio_channels is not None,
             audio_bit_depth is not None,
@@ -4484,6 +4508,16 @@ class PAMRbiEditCommand(Command):
         # Clipboard Settings - disablePaste (inverted: on -> disablePaste=False, off -> disablePaste=True)
         if allow_paste:
             update_connection_toggle('disablePaste', allow_paste, invert=True)
+
+        # Clipboard Settings - clipboardBufferSize (stored in bytes; default removes the key)
+        if clipboard_buffer_size == 'default':
+            update_connection_choice('clipboardBufferSize', 'default')
+        elif clipboard_buffer_size:
+            update_connection_int('clipboardBufferSize', RBI_CLIPBOARD_BUFFER_SIZES[clipboard_buffer_size])
+
+        # Autofill Settings - allowSupplyUser (on/off/default)
+        if allow_supply_user:
+            update_connection_toggle('allowSupplyUser', allow_supply_user)
 
         # Audio Settings - disableAudio (on -> disableAudio=True, off -> disableAudio=False)
         if disable_audio:

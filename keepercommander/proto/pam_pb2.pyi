@@ -555,7 +555,7 @@ class GitHubConfig(_message.Message):
     def __init__(self, scope: _Optional[_Union[GitHubScope, str]] = ..., owner: _Optional[bytes] = ..., organizationVisibility: _Optional[_Union[GitHubOrganizationVisibility, str]] = ..., repos: _Optional[_Iterable[_Union[GitHubRepository, _Mapping]]] = ...) -> None: ...
 
 class PAMUniversalSyncConfig(_message.Message):
-    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "github")
+    __slots__ = ("networkUid", "enabled", "dryRunEnabled", "folders", "syncIdentity", "vaultName", "github", "objectStorageBucket")
     NETWORKUID_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     DRYRUNENABLED_FIELD_NUMBER: _ClassVar[int]
@@ -563,6 +563,7 @@ class PAMUniversalSyncConfig(_message.Message):
     SYNCIDENTITY_FIELD_NUMBER: _ClassVar[int]
     VAULTNAME_FIELD_NUMBER: _ClassVar[int]
     GITHUB_FIELD_NUMBER: _ClassVar[int]
+    OBJECTSTORAGEBUCKET_FIELD_NUMBER: _ClassVar[int]
     networkUid: bytes
     enabled: bool
     dryRunEnabled: bool
@@ -570,7 +571,8 @@ class PAMUniversalSyncConfig(_message.Message):
     syncIdentity: bytes
     vaultName: bytes
     github: GitHubConfig
-    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: _Optional[bool] = ..., dryRunEnabled: _Optional[bool] = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., github: _Optional[_Union[GitHubConfig, _Mapping]] = ...) -> None: ...
+    objectStorageBucket: bytes
+    def __init__(self, networkUid: _Optional[bytes] = ..., enabled: _Optional[bool] = ..., dryRunEnabled: _Optional[bool] = ..., folders: _Optional[_Iterable[_Union[PAMUniversalSyncFolder, _Mapping]]] = ..., syncIdentity: _Optional[bytes] = ..., vaultName: _Optional[bytes] = ..., github: _Optional[_Union[GitHubConfig, _Mapping]] = ..., objectStorageBucket: _Optional[bytes] = ...) -> None: ...
 
 class NhiMetricsRequest(_message.Message):
     __slots__ = ("startTime", "endTime")

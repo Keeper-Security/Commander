@@ -91,3 +91,29 @@ def test_set_launch_credentials_without_admin_leaves_admin_unset():
         tdag.set_launch_credentials(RESOURCE_UID, launch_uid=SHARED_USER_UID, admin_uid=("" or None))
     assert not captured['rq'].HasField('adminUid')
     assert 'is_admin' not in _written_acl_content(user_vertex)
+
+
+def test_set_launch_credentials_admin_only_sends_admin_with_empty_connect_users():
+    """KC-1525: admin-only (no launch) must still be asserted in one request:
+    adminUid + empty connectUsers, and no local launch ACL write."""
+    tdag, _, user_vertex = _make_stale_tdag()
+    captured = {}
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False),          patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'),          patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=lambda p, rq: captured.setdefault('rq', rq)):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=None, admin_uid=SHARED_USER_UID)
+
+    rq = captured['rq']
+    assert rq.HasField('connectUsers') and len(rq.connectUsers.uids) == 0
+    assert rq.HasField('adminUid')
+    user_vertex.belongs_to.assert_not_called()
+
+
+def test_extend_existing_resources_loop_uses_set_launch_credentials():
+    """The existing-resources loop must not use the legacy launch link (drops is_admin
+    when admin == launch == newly created user)."""
+    import inspect
+    from keepercommander.commands.pam_import import extend
+    src = inspect.getsource(extend.PAMProjectExtendCommand)
+    tail = src.split("for mach in existing_resources:", 1)[1].split("link machine -> pamDirectory", 1)[0]
+    assert "tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))" in tail
+    assert "is_launch_credential=True" not in tail
