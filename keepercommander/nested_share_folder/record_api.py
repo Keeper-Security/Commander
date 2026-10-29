@@ -19,6 +19,10 @@ from .common import (
     get_user_public_key, encrypt_for_recipient, handle_share_invite,
     parse_sharing_status,
 )
+from ..commands.nested_share_folder.helpers import (
+    NSF_RECORD_BATCH_SIZE,
+    NSF_RECORD_PAGE_SIZE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,8 @@ def create_record_data_v3(record_uid, record_key, data,
 # ══════════════════════════════════════════════════════════════════════════
 
 def record_add_v3(params, records, client_time=None, security_data_key_type=None):
-    if not records or len(records) > 1000:
-        raise ValueError("Provide 1..1000 records")
+    if not records or len(records) > NSF_RECORD_BATCH_SIZE:
+        raise ValueError(f"Provide 1..{NSF_RECORD_BATCH_SIZE} records")
     rq = record_endpoints_pb2.RecordsAddRequest()
     rq.records.extend(records)
     if client_time:
@@ -86,8 +90,8 @@ def record_add_v3(params, records, client_time=None, security_data_key_type=None
 
 
 def record_add_pam_configuration_v3(params, records, client_time=None, security_data_key_type=None):
-    if not records or len(records) > 1000:
-        raise ValueError("Provide 1..1000 records")
+    if not records or len(records) > NSF_RECORD_BATCH_SIZE:
+        raise ValueError(f"Provide 1..{NSF_RECORD_BATCH_SIZE} records")
     rq = record_endpoints_pb2.RecordsAddRequest()
     rq.records.extend(records)
     rq.clientTime = client_time if client_time is not None else utils.current_milli_time()
@@ -98,8 +102,8 @@ def record_add_pam_configuration_v3(params, records, client_time=None, security_
 
 
 def record_update_v3(params, records, client_time=None, security_data_key_type=None):
-    if not records or len(records) > 1000:
-        raise ValueError("Provide 1..1000 records")
+    if not records or len(records) > NSF_RECORD_BATCH_SIZE:
+        raise ValueError(f"Provide 1..{NSF_RECORD_BATCH_SIZE} records")
     rq = record_pb2.RecordsUpdateRequest()
     rq.records.extend(records)
     if client_time:
@@ -302,8 +306,8 @@ def update_record_v3(params, record_uid, data=None, title=None,
 
 
 def create_records_batch_v3(params, record_specs):
-    if len(record_specs) > 1000:
-        raise ValueError("Maximum 1000 records at a time")
+    if len(record_specs) > NSF_RECORD_BATCH_SIZE:
+        raise ValueError(f"Maximum {NSF_RECORD_BATCH_SIZE} records at a time")
     adds, uid_map = [], {}
     for idx, spec in enumerate(record_specs):
         uid = utils.generate_uid()
@@ -482,7 +486,7 @@ def get_record_accesses_v3(params, record_uids):
         if use_page:
             page = pagination_pb2.Page()
             page.pageNumber = page_number
-            page.pageSize = 500  # server max
+            page.pageSize = NSF_RECORD_PAGE_SIZE
             if cursor:
                 page.cursorToken = cursor
             rq.page.CopyFrom(page)
