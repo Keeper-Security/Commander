@@ -522,18 +522,27 @@ class ThycoticMixin:
         ]
 
     @staticmethod
-    def folder_permission_rows(auth, folders, folder_id):
-        # type: (ThycoticAuth, Dict, int) -> list
-        """Permission rows for a secret that inherits, walking up to a folder that has them."""
+    def folder_permission_rows(auth, folders, folder_id, cache=None):
+        # type: (ThycoticAuth, Dict, int, Optional[Dict]) -> list
+        """Permission rows for a secret that inherits, walking up to a folder that has them.
+
+        cache maps a folder id to the rows it returned, so secrets in the same
+        folder do not fetch it again. A failed fetch is not cached.
+        """
         seen = set()
         current = folder_id
         while current and current not in seen:
             seen.add(current)
-            try:
-                rows = auth.thycotic_search('/v1/folder-permissions?filter.folderId={0}'.format(current))
-            except Exception as exc:
-                logging.info('folder-permissions %s: %s', current, exc)
-                rows = []
+            if cache is not None and current in cache:
+                rows = cache[current]
+            else:
+                try:
+                    rows = auth.thycotic_search('/v1/folder-permissions?filter.folderId={0}'.format(current))
+                    if cache is not None:
+                        cache[current] = rows
+                except Exception as exc:
+                    logging.info('folder-permissions %s: %s', current, exc)
+                    rows = []
             if isinstance(rows, list) and rows:
                 return rows
             folder = folders.get(current) if isinstance(folders, dict) else None
@@ -544,8 +553,8 @@ class ThycoticMixin:
         return []
 
     @staticmethod
-    def permission_rows_for_secret(auth, folders, secret):
-        # type: (ThycoticAuth, Dict, dict) -> list
+    def permission_rows_for_secret(auth, folders, secret, folder_cache=None):
+        # type: (ThycoticAuth, Dict, dict, Optional[Dict]) -> list
         """Rows that name who can open this secret.
 
         Secret Server often omits inheritPermissions on the secret record.
@@ -569,14 +578,24 @@ class ThycoticMixin:
             return rows if isinstance(rows, list) else []
 
         if inherits:
-            rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id)
+            rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
             if rows:
                 return rows
             return secret_rows()
         rows = secret_rows()
         if rows:
             return rows
-        return ThycoticMixin.folder_permission_rows(auth, folders, folder_id)
+        return ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
+
+    @staticmethod
+    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache):
+        # type: (ThycoticAuth, Dict, Any, Dict) -> Tuple[Optional[dict], list]
+        """Fetch one secret and its permission rows."""
+        secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
+        if not isinstance(secret, dict):
+            return None, []
+        secret['id'] = secret.get('id') or secret_id
+        return secret, ThycoticMixin.permission_rows_for_secret(auth, folders, secret, folder_cache)
 
     @staticmethod
     def iter_secret_shares(auth, folders):
@@ -588,6 +607,8 @@ class ThycoticMixin:
         secret roles when that list is empty. apply-membership grants the
         resulting shares onto the Keeper record. Folder membership is not
         changed.
+
+        A secret whose fetch fails is logged and skipped. The rest still load.
         """
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
@@ -602,18 +623,23 @@ class ThycoticMixin:
         written = 0
         seen = 0
         unmapped = 0
+        failed = 0
+        folder_cache = {}
         logging.info('Loading secret permissions for %d secrets', len(lookup))
-        for index, row in enumerate(lookup):
+        for row in lookup:
             secret_id = row.get('id') if isinstance(row, dict) else None
             if not secret_id:
                 continue
-            secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
-            if not isinstance(secret, dict):
+            try:
+                secret, perm_rows = ThycoticMixin._fetch_secret_permissions(
+                    auth, folders, secret_id, folder_cache)
+            except Exception as exc:
+                logging.warning('Secret %s permissions skipped: %s', secret_id, exc)
+                failed += 1
+                continue
+            if secret is None:
                 continue
             seen += 1
-            secret_id = secret.get('id') or secret_id
-            secret['id'] = secret_id
-            perm_rows = ThycoticMixin.permission_rows_for_secret(auth, folders, secret)
             if groups is None and any(isinstance(item, dict) and item.get('groupId') for item in perm_rows or []):
                 groups = ThycoticMixin.get_group_lookup(auth) or {}
             shares = ThycoticMixin.shares_from_secret_permissions(perm_rows, emails, groups)
@@ -641,6 +667,8 @@ class ThycoticMixin:
             written += 1
             yield record
         logging.info('Loaded secret permissions for %d secrets', written)
+        if failed:
+            logging.warning('%d secret(s) were skipped because their permissions could not be fetched.', failed)
         if written == 0:
             logging.warning(
                 'No secret permission lists downloaded (%d secrets, %d had permission rows with no email).',
