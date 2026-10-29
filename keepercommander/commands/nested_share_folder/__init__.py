@@ -63,6 +63,7 @@ from .display_commands import (                          # noqa: F401
 # Classic-to-Nested Share conversion
 from .conversion_commands import (                       # noqa: F401
     NestedShareConvertCommand,
+    NestedShareFolderConvertCommand,
 )
 
 
@@ -84,7 +85,8 @@ def register_commands(commands):
     commands['nsf-shortcut']                  = NestedShareRecordShortcutCommand()
     commands['nsf-get']                       = NestedShareGetCommand()
     commands['nsf-move']                      = NestedSharedMoveCommander()
-    commands['nsf-convert']                   = NestedShareConvertCommand()
+    commands['nsf-convert-record']                   = NestedShareConvertCommand()
+    commands['nsf-convert-folder']            = NestedShareFolderConvertCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -105,4 +107,5 @@ def register_command_info(aliases, command_info):
     command_info['nsf-shortcut']                  = 'Manage Nested Share Record shortcuts'
     command_info['nsf-get']                       = 'Get details of a Nested Share Record or folder'
     command_info['nsf-move']                      = 'Move a Nested Share Record or folder to a new location'
-    command_info['nsf-convert']                   = 'Convert Classic records to Nested Share Records'
+    command_info['nsf-convert-record']                   = 'Convert Classic records to Nested Share Records'
+    command_info['nsf-convert-folder']            = 'Convert Classic folder trees to Nested Share Folders'
