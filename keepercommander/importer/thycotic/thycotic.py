@@ -25,6 +25,7 @@ import warnings
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from urllib3.exceptions import InsecureRequestWarning
 
 import xml.etree.ElementTree as ET
@@ -1202,11 +1203,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             email = str(user.get('email') or '').strip()
             if isinstance(user_id, int) and user_id > 0 and email:
                 email_by_id[user_id] = email
+        return email_by_id
 
-        lookup = {}  # type: Dict[int, Dict]
+    @staticmethod
+    def _select_thycotic_groups(groups):  # type: (list) -> Tuple[List[dict], int, int]
+        """Keep enabled groups with an int id and a non-blank name, and count the skips."""
+        included = []
         skipped_disabled = 0
         skipped_unnamed = 0
-        for group in group_rs or []:
+        for group in groups or []:
             if not isinstance(group, dict):
                 continue
             if group.get('enabled') is False:
@@ -1217,40 +1222,60 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if not isinstance(group_id, int) or not name:
                 skipped_unnamed += 1
                 continue
-            user_ids = []
-            if (group.get('memberCount') or 0) > 0:
-                try:
-                    member_rs = auth.thycotic_search(f'/v1/groups/{group_id}/users')
-                except Exception as e:
-                    logging.warning('Failed to fetch members of Thycotic group "%s": %s', name, e)
-                    member_rs = []
-                for member in member_rs or []:
-                    if not isinstance(member, dict):
-                        continue
-                    user_ids.append(member.get('userId'))
-            lookup[group_id] = {'name': name, 'users': user_ids}
+            included.append({
+                'id': group_id,
+                'name': name,
+                'member_count': group.get('memberCount'),
+            })
+        return included, skipped_disabled, skipped_unnamed
 
+    @staticmethod
+    def _fetch_thycotic_group_member_ids(auth, group_id, name, member_count):
+        # type: (ThycoticAuth, int, str, Any) -> List
+        """Return direct member user ids. A failed member fetch aborts preparation."""
+        user_ids = []
+        if (member_count or 0) > 0:
+            try:
+                member_rs = auth.thycotic_search(f'/v1/groups/{group_id}/users')
+            except Exception as e:
+                raise Exception(
+                    f'Failed to fetch members of Thycotic group "{name}": {e}'
+                ) from e
+            for member in member_rs or []:
+                if not isinstance(member, dict):
+                    continue
+                user_ids.append(member.get('userId'))
+        return user_ids
+
+    @staticmethod
+    def _map_thycotic_group_member_emails(name, user_ids, email_by_id):
+        # type: (str, list, Dict[int, str]) -> List[str]
+        member_emails = {}
+        unresolved = 0
+        for user_id in user_ids:
+            email = email_by_id.get(user_id) or ''
+            if not email:
+                unresolved += 1
+                continue
+            member_emails.setdefault(email.casefold(), email)
+        if unresolved:
+            logging.info(
+                'Group "%s": %d member(s) have no email address and will not be added',
+                name, unresolved,
+            )
+        return [member_emails[key] for key in sorted(member_emails)]
+
+    def _assemble_thycotic_group_results(self, lookup, email_by_id, skipped_disabled, skipped_unnamed):
+        # type: (Dict[int, Dict], Dict[int, str], int, int) -> List[dict]
         result = []
         for group_id, entry in lookup.items():
-            member_emails = {}
-            unresolved = 0
-            for user_id in entry['users']:
-                email = email_by_id.get(user_id) or ''
-                if not email:
-                    unresolved += 1
-                    continue
-                member_emails.setdefault(email.casefold(), email)
-            if unresolved:
-                logging.info(
-                    'Group "%s": %d member(s) have no email address and will not be added',
-                    entry['name'], unresolved,
-                )
             result.append({
                 'id': group_id,
                 'name': entry['name'],
-                'members': [member_emails[key] for key in sorted(member_emails)],
+                'members': self._map_thycotic_group_member_emails(
+                    entry['name'], entry['users'], email_by_id,
+                ),
             })
-
         if skipped_disabled:
             logging.info('Skipped %d disabled Thycotic group(s)', skipped_disabled)
         if skipped_unnamed:
@@ -1258,9 +1283,29 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         logging.info(f'Found {len(result)} Thycotic group(s)')
         return result
 
+    def _prepare_thycotic_groups(self, auth):  # type: (ThycoticAuth) -> List[dict]
+        """Fetch enabled Delinea groups and their direct user members.
+        Disabled groups are omitted. A failed member fetch aborts preparation
+        so Keeper teams are not created from an incomplete member list.
+        """
+        groups = self._load_thycotic_groups(auth)
+        email_by_id = self._load_thycotic_user_email_lookup(auth)
+        included, skipped_disabled, skipped_unnamed = self._select_thycotic_groups(groups)
+        lookup = {}  # type: Dict[int, Dict]
+        for group in included:
+            lookup[group['id']] = {
+                'name': group['name'],
+                'users': self._fetch_thycotic_group_member_ids(
+                    auth, group['id'], group['name'], group['member_count'],
+                ),
+            }
+        return self._assemble_thycotic_group_results(
+            lookup, email_by_id, skipped_disabled, skipped_unnamed,
+        )
+
     def _load_existing_keeper_teams(self, params):
         # type: (KeeperParams) -> Tuple[Dict[str, dict], Dict[str, set], str]
-        """Return teams keyed by lowercase name, member user ids keyed by team uid, and an error string."""
+        """Return teams keyed by exact stripped name, member user ids keyed by team uid, and an error string."""
         try:
             api.query_enterprise(params)
         except Exception as e:
@@ -1279,7 +1324,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     continue
                 name = str(team.get('name') or '').strip()
                 if name:
-                    teams[name.casefold()] = team
+                    teams[name] = team
 
         members = {}  # type: Dict[str, set]
         for team_user in enterprise_data.get('team_users') or []:
@@ -1315,36 +1360,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def _build_team_add_request(self, params, name, node_id):
         # type: (KeeperParams, str, int) -> Tuple[dict, bytes]
         """Build a team_add request in the same shape as enterprise-team --add."""
-        from ... import crypto, utils
-        tree_key = (getattr(params, 'enterprise', None) or {}).get('unencrypted_tree_key')
-        data_key = getattr(params, 'data_key', None)
-        if not tree_key or not data_key:
-            raise ValueError('Enterprise tree key or data key is not available')
-
-        team_uid = api.generate_record_uid()
-        team_key = api.generate_aes_key()
-        request = {
-            'command': 'team_add',
-            'team_uid': team_uid,
-            'team_name': name,
-            'restrict_edit': False,
-            'restrict_share': False,
-            'restrict_view': False,
-            'node_id': node_id,
-            'team_key': utils.base64_url_encode(crypto.encrypt_aes_v1(team_key, data_key)),
-            'encrypted_team_key': utils.base64_url_encode(crypto.encrypt_aes_v2(team_key, tree_key)),
-            'manage_only': True,
-        }
-        ec_private_key, ec_public_key = crypto.generate_ec_key()
-        request['ecc_private_key'] = utils.base64_url_encode(
-            crypto.encrypt_aes_v2(crypto.unload_ec_private_key(ec_private_key), team_key))
-        request['ecc_public_key'] = utils.base64_url_encode(crypto.unload_ec_public_key(ec_public_key))
-        if not getattr(params, 'forbid_rsa', False):
-            rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
-            request['private_key'] = utils.base64_url_encode(
-                crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(rsa_private_key), team_key))
-            request['public_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_public_key))
-        return request, team_key
+        from ...commands.helpers.team import build_team_add_request
+        return build_team_add_request(params, name, node_id)
 
     def _load_team_key(self, params, team_uid):  # type: (KeeperParams, str) -> Optional[bytes]
         try:
@@ -1356,7 +1373,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         return getattr(keys, 'aes', None) or None
 
     def _add_team_members(self, params, team_uid, team_name, team_key, emails, already_member_ids, is_real_team):
-        # type: (KeeperParams, str, str, Optional[bytes], List[str], set, bool) -> dict
+        # type: (KeeperParams, str, str, Optional[bytes], List[str], set, bool) -> TeamMemberCounts
         """Add Keeper users to a team. Active users of a real team are keyed; everyone else is queued."""
         from ...commands.enterprise import EnterpriseTeamCommand
 
@@ -1420,15 +1437,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         added = 0
         queued = 0
-        if requests:
+        for offset in range(0, len(requests), _TEAM_BATCH_SIZE):
+            chunk = requests[offset:offset + _TEAM_BATCH_SIZE]
             try:
-                responses = api.execute_batch(params, requests) or []
+                responses = api.execute_batch(params, chunk) or []
             except Exception as e:
                 logging.warning('Failed to add members to Keeper team "%s": %s', team_name, e)
-                responses = []
-                failed += len(requests)
-                requests = []
-            for index, request in enumerate(requests):
+                failed += len(chunk)
+                continue
+            for index, request in enumerate(chunk):
                 response = responses[index] if index < len(responses) else None
                 succeeded = isinstance(response, dict) and response.get('result') == 'success'
                 if succeeded:
@@ -1446,17 +1463,18 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     logging.warning('Failed to queue a member on team "%s": %s', team_name, message)
                 else:
                     logging.warning('Failed to add a member to team "%s": %s', team_name, message)
-        return {
-            'added': added,
-            'queued': queued,
-            'already': already_count,
-            'missing': len(missing),
-            'failed': failed,
-        }
+        return TeamMemberCounts(
+            added=added,
+            queued=queued,
+            already=already_count,
+            missing=len(missing),
+            failed=failed,
+        )
 
     def _create_enterprise_teams(self, params, groups):
         # type: (KeeperParams, List[dict]) -> None
         from ...commands.helpers.enterprise import is_valid_name_length
+        from ...commands.helpers.team import MissingTeamEncryptionKey
 
         existing_teams, members_by_team, error = self._load_existing_keeper_teams(params)
         if error:
@@ -1471,15 +1489,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if not isinstance(group, dict):
                 continue
             name = str(group.get('name') or '').strip()
-            name_key = name.casefold()
-            if not name or name_key in seen:
+            # A case-only difference (Test123 vs test123) must still be attempted.
+            if not name or name in seen:
                 continue
-            seen.add(name_key)
+            seen.add(name)
             members = [
                 email.strip() for email in (group.get('members') or [])
                 if isinstance(email, str) and email.strip()
             ]
-            team = existing_teams.get(name_key)
+            team = existing_teams.get(name)
             if team:
                 existing.append((team, members))
                 continue
@@ -1499,33 +1517,34 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 for name, members in pending:
                     try:
                         request, team_key = self._build_team_add_request(params, name, node_id)
+                    except MissingTeamEncryptionKey as e:
+                        # The helper rejects every team when these keys are missing.
+                        logging.warning('%s', e)
+                        batch.clear()
+                        batch_meta.clear()
+                        break
                     except Exception as e:
                         logging.warning('Could not prepare Keeper team "%s": %s', name, e)
                         continue
                     batch.append(request)
                     batch_meta.append((name, request['team_uid'], team_key, members))
-                responses = []
-                if batch:
+                for offset in range(0, len(batch), _TEAM_BATCH_SIZE):
+                    chunk = batch[offset:offset + _TEAM_BATCH_SIZE]
+                    chunk_meta = batch_meta[offset:offset + _TEAM_BATCH_SIZE]
                     try:
-                        responses = api.execute_batch(params, batch) or []
+                        responses = api.execute_batch(params, chunk) or []
                     except Exception as e:
                         logging.warning('Failed to create Keeper teams: %s', e)
-                        logging.warning('Continuing import without creating Keeper teams.')
                         responses = []
-                for index, meta in enumerate(batch_meta):
-                    name, team_uid, team_key, members = meta
-                    response = responses[index] if index < len(responses) else None
-                    if isinstance(response, dict) and response.get('result') == 'success':
-                        created.append(meta)
-                        logging.info('\'%s\' team is created', name)
-                    else:
-                        message = response.get('message') if isinstance(response, dict) else response
-                        logging.warning('\'%s\' team is not created: %s', name, message or 'no response')
-                if created:
-                    try:
-                        api.query_enterprise(params)
-                    except Exception as e:
-                        logging.warning('Could not refresh Keeper teams after creating them: %s', e)
+                    for index, meta in enumerate(chunk_meta):
+                        name, team_uid, team_key, members = meta
+                        response = responses[index] if index < len(responses) else None
+                        if isinstance(response, dict) and response.get('result') == 'success':
+                            created.append(meta)
+                            logging.info('\'%s\' team is created', name)
+                        else:
+                            message = response.get('message') if isinstance(response, dict) else response
+                            logging.warning('\'%s\' team is not created: %s', name, message or 'no response')
 
         rows = []
         for name, team_uid, team_key, members in created:
@@ -1557,14 +1576,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
     @staticmethod
     def _team_result_row(name, result, counts):
+        # type: (str, str, TeamMemberCounts) -> dict
         return {
             'Team': name,
             'Result': result,
-            'Added': counts.get('added', 0),
-            'Queued': counts.get('queued', 0),
-            'Already on team': counts.get('already', 0),
-            'Not in Keeper': counts.get('missing', 0),
-            'Failed': counts.get('failed', 0),
+            'Added': counts.added,
+            'Queued': counts.queued,
+            'Already on team': counts.already,
+            'Not in Keeper': counts.missing,
+            'Failed': counts.failed,
         }
 
     def _preview_thycotic_teams(self, auth):
