@@ -107,7 +107,7 @@ def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
     """Return secret IDs from a tenant-wide or folder-filtered lookup."""
     if folder_ids:
         secret_ids = []
-        for folder_id in folder_ids:
+        for folder_id in dict.fromkeys(folder_ids):  # deduplicate folder IDs
             if folder_id is None:
                 continue
             query = build_secrets_lookup_query(folder_id, include_restricted)
@@ -452,21 +452,7 @@ class ThycoticMixin:
                         folder['inheritPermissions'] = True
         return folders
 
-    @staticmethod
-    def get_secret_ids(auth, folder_ids, query):
-        secret_ids = []
-        for folder_id in folder_ids or ():
-            if folder_id is None:
-                continue
-            params = [('filter.folderId', folder_id)]
-            if query:
-                params.extend(parse_qsl(query))
-            secrets = auth.thycotic_search('/v1/secrets/lookup?' + urlencode(params))
-            if not isinstance(secrets, list):
-                continue
-            secret_ids.extend(secret['id'] for secret in secrets
-                              if isinstance(secret, dict) and secret.get('id') is not None)
-        return list(dict.fromkeys(secret_ids))
+  
 
 class ThycoticImporter(BaseImporter, ThycoticMixin):
     # Same end-of-import terminal summary CyberArk prints (Import finished, skipped rows).

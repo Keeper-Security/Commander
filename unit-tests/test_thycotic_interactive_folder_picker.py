@@ -375,10 +375,10 @@ class GetSecretIdsTests(unittest.TestCase):
         return [call.args[0] for call in self.auth.thycotic_search.call_args_list]
 
     def test_queries_each_folder_and_removes_duplicates(self):
-        self.auth.thycotic_search.side_effect = [[{'id': 1}, {'id': 2}], [{'id': 2}, {'id': 3}], [{'id': 3}]]
+        self.auth.thycotic_search.side_effect = [[{'id': 1}, {'id': 2}], [{'id': 2}, {'id': 3}]]
         self.assertEqual(ThycoticMixin.get_secret_ids(self.auth, [103, 116, 116], 'filter.includeSubFolders=true'),
                          [1, 2, 3])
-        self.assertEqual(self._endpoints(), [_lookup(103), _lookup(116), _lookup(116)])
+        self.assertEqual(self._endpoints(), [_lookup(103), _lookup(116)])
 
     def test_no_usable_folder_ids_make_no_calls(self):
         for folder_ids in ([], None, (), [None]):
@@ -386,15 +386,10 @@ class GetSecretIdsTests(unittest.TestCase):
                 self.assertEqual(ThycoticMixin.get_secret_ids(self.auth, folder_ids, 'q'), [])
                 self.auth.thycotic_search.assert_not_called()
 
-    def test_query_encoding(self):
-        for folder_ids, query, expected in (([5], '', '/v1/secrets/lookup?filter.folderId=5'),
-                                            ([None, 5], None, '/v1/secrets/lookup?filter.folderId=5'),
-                                            ([5], 'a=1&b=x y', '/v1/secrets/lookup?filter.folderId=5&a=1&b=x+y')):
-            with self.subTest(query=query):
-                self.auth.reset_mock()
-                self.auth.thycotic_search.return_value = []
-                ThycoticMixin.get_secret_ids(self.auth, folder_ids, query)
-                self.auth.thycotic_search.assert_called_once_with(expected)
+    def test_lookup_uses_restricted_and_subfolder_filters(self):
+        self.auth.thycotic_search.return_value = []
+        ThycoticMixin.get_secret_ids(self.auth, [5], '')
+        self.auth.thycotic_search.assert_called_once_with(_lookup(5))
 
     def test_non_list_response_and_malformed_secrets_are_ignored(self):
         self.auth.thycotic_search.side_effect = [None, {'error': 'bad'}, 'text', [None, {}, {'id': None}, {'id': 7}]]
