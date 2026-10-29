@@ -34,7 +34,7 @@ from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..proto import folder_pb2
 from ..record import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, \
-    FolderPathAmbiguousError, try_resolve_path, \
+    FolderPathAmbiguousError, contained_folders, lookup_path, path_split, try_resolve_path, \
     find_folders, get_contained_record_uids, get_contained_folder_uids
 
 
@@ -567,16 +567,10 @@ class FolderMakeCommand(Command):
 
         name = kwargs['folder'] if 'folder' in kwargs else None
         if name:
-            try:
-                rs = try_resolve_path(
-                    params, name, raise_on_ambiguous=True)
-            except FolderPathAmbiguousError as e:
-                raise CommandError('mkdir', str(e))
-            if rs is not None:
-                base_folder, name = rs
-                if len(name) == 0:
-                    logging.warning('mkdir: Folder "%s" already exists', kwargs['folder'])
-                    return
+            base_folder, name, already_exists = self._resolve_parent_for_creation(params, name)
+            if already_exists:
+                logging.warning('mkdir: Folder "%s" already exists', kwargs['folder'])
+                return
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None
@@ -681,6 +675,65 @@ class FolderMakeCommand(Command):
         response_data = {'folder_uid': folder_uid, 'name': name, 'path': path}
         logging.info(json.dumps(response_data))
         return folder_uid
+
+    @staticmethod
+    def _resolve_parent_for_creation(params, folder_path):
+        """Resolve only the parent of a new folder path.
+
+        A duplicate name is valid at the root level, so the final component
+        must not be resolved as an existing folder in that case. Every parent
+        component still has to resolve to exactly one folder.
+        """
+        base_folder = (
+            params.folder_cache[params.current_folder]
+            if params.current_folder in params.folder_cache
+            else params.root_folder
+        )
+        base_folder, components = path_split(params, base_folder, folder_path)
+        components = [component for component in components if component != '']
+        if not components:
+            raise CommandError('mkdir', 'Folder name is required')
+
+        leaf = components[-1]
+        parent_components = components[:-1]
+        if parent_components:
+            try:
+                remainder, parents = lookup_path(
+                    params, base_folder, parent_components,
+                    raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mkdir', str(e))
+            if remainder != len(parent_components) or not parents:
+                parent_path = '/'.join(
+                    component.replace('/', '//') for component in parent_components)
+                raise CommandError('mkdir', f'Parent folder "{parent_path}" not found')
+            base_folder = parents[0]
+
+            existing_children = contained_folders(params, [base_folder], leaf)
+            if len(existing_children) > 1:
+                raise CommandError(
+                    'mkdir',
+                    f'Multiple folders match path component "{leaf}". '
+                    'Use a folder UID instead.')
+            if len(existing_children) == 1:
+                return base_folder, leaf, True
+        else:
+            existing_children = contained_folders(params, [base_folder], leaf)
+            if (len(existing_children) > 1
+                    and base_folder.type != BaseFolderNode.RootFolderType):
+                raise CommandError(
+                    'mkdir',
+                    f'Multiple folders match path component "{leaf}". '
+                    'Use a folder UID instead.')
+            if existing_children:
+                # Root-level duplicate names are allowed. A folder-relative
+                # leaf, however, must remain unique under its parent.
+                if base_folder.type != BaseFolderNode.RootFolderType:
+                    return base_folder, leaf, True
+            elif leaf in params.folder_cache:
+                return base_folder, leaf, True
+
+        return base_folder, leaf, False
 
 
 def get_folder_path(params, uid):

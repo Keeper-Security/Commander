@@ -74,7 +74,16 @@ class NestedShareFolderMkdirCommand(Command):
 
         for idx, segment in enumerate(segments):
             is_leaf = (idx == last_idx)
-            existing_uid = self._resolve_segment(params, segment, parent_uid)
+            # Duplicate names are allowed at the NSF root. For child paths,
+            # every parent and existing child must still resolve uniquely.
+            allow_new_root_leaf = (
+                is_leaf and not parent_uid
+                and not is_nested_share_folder(params, segment)
+            )
+            existing_uid = (
+                None if allow_new_root_leaf
+                else self._resolve_segment(params, segment, parent_uid)
+            )
             if existing_uid:
                 if is_leaf:
                     logging.warning('nsf-mkdir: Folder "%s" already exists', segment)

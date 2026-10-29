@@ -113,7 +113,14 @@ def contained_folders(params, folders, component):
     elif component in get_folder_ids():
         result = [get_folder_by_id(component)]
     else:
-        result = [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
+        component_casefold = component.casefold()
+        result = [
+            get_folder_by_id(uid)
+            for f in folders
+            for uid in f.subfolders
+            if (get_folder_by_id(uid) is not None
+                and (get_folder_by_id(uid).name or '').casefold() == component_casefold)
+        ]
     
     return result
 
