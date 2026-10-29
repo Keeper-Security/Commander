@@ -476,6 +476,12 @@ def set_permission(perm, user, permit, restrict, perm_name):
     setattr(perm, perm_name, p)
 
 
+def _share_record_key(record):
+    """Identity of a share record in the membership file: all its folder paths plus title."""
+    paths = tuple(sorted({normalize_folder_path(folder.path) for folder in record.folders or []}))
+    return (paths or ('',), (record.title or '').casefold())
+
+
 class DownloadMembershipCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return download_membership_parser
@@ -589,10 +595,6 @@ class DownloadMembershipCommand(Command):
         teams = {}           # type: Dict[str, Team]
         existing_records = []  # type: List[Record]
 
-        def _record_key(record):
-            paths = tuple(sorted({normalize_folder_path(folder.path) for folder in record.folders or []}))
-            return (paths or ('',), (record.title or '').casefold())
-
         json_importer = KeeperJsonImporter()
         if os.path.exists(file_name):
             try:
@@ -615,8 +617,8 @@ class DownloadMembershipCommand(Command):
             for t in added_teams:
                 if t.uid and t.uid in teams:
                     del teams[t.uid]
-            replaced = {_record_key(record) for record in added_records}
-            existing_records = [record for record in existing_records if _record_key(record) not in replaced]
+            replaced = {_share_record_key(record) for record in added_records}
+            existing_records = [record for record in existing_records if _share_record_key(record) not in replaced]
 
             memberships = []
             memberships.extend(shared_folders.values())

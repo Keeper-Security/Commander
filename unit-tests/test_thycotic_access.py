@@ -478,7 +478,7 @@ class TestExternalCallFailures(TestCase):
 
     def test_folder_permissions_are_fetched_once_per_folder(self):
         auth = _secret_auth([], folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'Edit'}]})
-        cache = {}
+        cache = thycotic.FolderPermissionCache()
         for _ in range(3):
             rows = thycotic.ThycoticMixin.folder_permission_rows(auth, _folder_map(), 10, cache)
             self.assertEqual(len(rows), 1)
@@ -491,7 +491,7 @@ class TestExternalCallFailures(TestCase):
             [{'userId': 5, 'secretAccessRoleName': 'Edit'}],
         ]
         folders = {10: {'id': 10, 'parentFolderId': 0}}
-        cache = {}
+        cache = thycotic.FolderPermissionCache()
         self.assertEqual(thycotic.ThycoticMixin.folder_permission_rows(auth, folders, 10, cache), [])
         self.assertNotIn(10, cache)
         rows = thycotic.ThycoticMixin.folder_permission_rows(auth, folders, 10, cache)
@@ -1279,3 +1279,133 @@ class TestWorkersOption(TestCase):
         with mock.patch.object(commands.importlib, 'import_module', return_value=module):
             commands.DownloadMembershipCommand().execute(mock.Mock(), source='thycotic', name=file_name, workers=2)
         self.assertEqual(plugin.download_membership.call_args.kwargs['workers'], 2)
+
+
+class TestFolderPermissionCache(TestCase):
+    def test_first_write_wins_and_empty_rows_are_cached(self):
+        cache = thycotic.FolderPermissionCache()
+        self.assertIsNone(cache.get(10))
+        self.assertNotIn(10, cache)
+        first = [{'userId': 5}]
+        self.assertIs(cache.put(10, first), first)
+        self.assertIs(cache.put(10, [{'userId': 6}]), first)
+        self.assertIs(cache.get(10), first)
+        self.assertEqual(cache.put(11, []), [])
+        self.assertEqual(cache.get(11), [])
+        self.assertIn(11, cache)
+
+    def test_concurrent_writers_agree_on_one_value(self):
+        import threading as threading_module
+        cache = thycotic.FolderPermissionCache()
+        barrier = threading_module.Barrier(16)
+        seen = []
+        lock = threading_module.Lock()
+
+        def writer(index):
+            barrier.wait()
+            for folder_id in range(200):
+                stored = cache.put(folder_id, [index])
+                with lock:
+                    seen.append((folder_id, id(stored)))
+
+        threads = [threading_module.Thread(target=writer, args=(i,)) for i in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        by_folder = {}
+        for folder_id, stored_id in seen:
+            by_folder.setdefault(folder_id, set()).add(stored_id)
+        self.assertTrue(all(len(ids) == 1 for ids in by_folder.values()))
+        self.assertTrue(all(cache.get(folder_id) is not None for folder_id in range(200)))
+
+    def test_parallel_shares_use_the_locked_cache(self):
+        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritPermissions': True}
+                   for i in range(30)]
+        auth = _secret_auth(secrets, folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'Edit'}]})
+        with mock.patch.object(thycotic, 'FolderPermissionCache', wraps=thycotic.FolderPermissionCache) as cache_class:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map(), workers=4))
+        cache_class.assert_called_once_with()
+        self.assertEqual(len(records), 30)
+
+
+class TestUnnestedHelpers(TestCase):
+    def test_secret_permission_rows_prefers_bulk_result(self):
+        auth = mock.Mock()
+        rows = thycotic.ThycoticMixin._secret_permission_rows(auth, 100, {100: [{'userId': 5}]})
+        self.assertEqual(rows, [{'userId': 5}])
+        self.assertEqual(thycotic.ThycoticMixin._secret_permission_rows(auth, 101, {100: []}), [])
+        auth.thycotic_search.assert_not_called()
+
+    def test_secret_permission_rows_per_secret_and_failures(self):
+        auth = mock.Mock()
+        auth.thycotic_search.return_value = [{'userId': 6}]
+        self.assertEqual(thycotic.ThycoticMixin._secret_permission_rows(auth, 100), [{'userId': 6}])
+        auth.thycotic_search.assert_called_once_with('/v1/secret-permissions?filter.secretId=100')
+        auth.thycotic_search.side_effect = RuntimeError('boom')
+        with self.assertLogs(level='WARNING'):
+            self.assertEqual(thycotic.ThycoticMixin._secret_permission_rows(auth, 100), [])
+        self.assertEqual(thycotic.ThycoticMixin._secret_permission_rows(auth, None), [])
+
+    def test_fetch_secret_entry_never_raises(self):
+        auth = mock.Mock()
+        auth.thycotic_entity.side_effect = RuntimeError('down')
+        secret, rows, error = thycotic.ThycoticMixin._fetch_secret_entry(
+            auth, {}, thycotic.FolderPermissionCache(), None, ({'id': 1}, 1))
+        self.assertIsNone(secret)
+        self.assertEqual(rows, [])
+        self.assertIsInstance(error, RuntimeError)
+
+    def test_user_outcome_row(self):
+        outcome = thycotic.ThycoticImporter._user_outcome
+        self.assertEqual(outcome({'username': 'a', 'email': ' a@x.com '}, 'created'),
+                         {'username': 'a', 'email': 'a@x.com', 'flag': 'created'})
+        self.assertEqual(outcome({'email': 'b@x.com'}, 'existing', status='invited'),
+                         {'username': '', 'email': 'b@x.com', 'flag': 'existing', 'status': 'invited'})
+
+    def test_share_record_key_uses_all_folders(self):
+        from keepercommander.importer import commands
+        key = commands._share_record_key
+        self.assertEqual(key(_share_record('Prod', 'Apps', 'ops/')), key(_share_record('prod', 'ops', '\\Apps')))
+        self.assertNotEqual(key(_share_record('prod', 'Apps')), key(_share_record('prod', 'Apps', 'Ops')))
+        self.assertEqual(key(_share_record('prod')), (('',), 'prod'))
+
+
+class TestLocateLogsSkippedRecords(TestCase):
+    def test_duplicate_record_under_same_path_is_logged_and_matched_once(self):
+        import json as json_module
+        params = mock.Mock()
+        params.record_cache = {'r1': {'data_unencrypted': json_module.dumps({'title': 'prod-db'})}}
+        params.subfolder_record_cache = {'f1': ['r1'], 'f2': ['r1']}
+        with mock.patch.object(imp_exp, 'get_folder_path', return_value='Apps'):
+            with self.assertLogs(level='INFO') as logs:
+                located = imp_exp.locate_secret_share_records(params, [_share_record('prod-db', 'Apps')])
+        self.assertEqual([record.uid for record in located], ['r1'])
+        self.assertTrue(any('Record r1 is listed more than once under "apps"' in line for line in logs.output))
+
+    def test_unreadable_records_are_counted(self):
+        import json as json_module
+        params = mock.Mock()
+        params.record_cache = {
+            'ok': {'data_unencrypted': json_module.dumps({'title': 'prod-db'})},
+            'bad': {'data_unencrypted': b'\xff not json'},
+        }
+        params.subfolder_record_cache = {'f1': ['ok', 'bad', 'missing']}
+        with mock.patch.object(imp_exp, 'get_folder_path', return_value='Apps'):
+            with self.assertLogs(level='WARNING') as logs:
+                located = imp_exp.locate_secret_share_records(params, [_share_record('prod-db', 'Apps')])
+        self.assertEqual([record.uid for record in located], ['ok'])
+        self.assertTrue(any('2 Keeper record(s) could not be read' in line for line in logs.output))
+
+    def test_clean_index_logs_nothing_extra(self):
+        import json as json_module
+        params = mock.Mock()
+        params.record_cache = {'r1': {'data_unencrypted': json_module.dumps({'title': 'prod-db'})}}
+        params.subfolder_record_cache = {'f1': ['r1']}
+        with mock.patch.object(imp_exp, 'get_folder_path', return_value='Apps'), \
+                mock.patch.object(imp_exp.logging, 'warning') as warning, \
+                mock.patch.object(imp_exp.logging, 'info') as info:
+            located = imp_exp.locate_secret_share_records(params, [_share_record('prod-db', 'Apps')])
+        self.assertEqual(len(located), 1)
+        warning.assert_not_called()
+        info.assert_not_called()

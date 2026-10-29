@@ -11,6 +11,7 @@
 import copy
 import csv
 import datetime
+import functools
 import io
 import getpass
 import json
@@ -131,6 +132,30 @@ def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
 
 DEFAULT_SECRET_SHARE_WORKERS = 4
 MAX_SECRET_SHARE_WORKERS = 16
+
+
+class FolderPermissionCache:
+    """Folder id -> folder permission rows, shared by the secret-share worker threads.
+
+    Reads and writes take a lock. The first rows stored for a folder win.
+    Failed fetches are never stored, so they are retried.
+    """
+
+    def __init__(self):
+        self._rows = {}  # type: Dict[Any, list]
+        self._lock = threading.Lock()
+
+    def get(self, folder_id):  # type: (Any) -> Optional[list]
+        with self._lock:
+            return self._rows.get(folder_id)
+
+    def put(self, folder_id, rows):  # type: (Any, list) -> list
+        with self._lock:
+            return self._rows.setdefault(folder_id, rows)
+
+    def __contains__(self, folder_id):  # type: (Any) -> bool
+        with self._lock:
+            return folder_id in self._rows
 
 
 class ThycoticMixin:
@@ -631,26 +656,26 @@ class ThycoticMixin:
 
     @staticmethod
     def folder_permission_rows(auth, folders, folder_id, cache=None):
-        # type: (ThycoticAuth, Dict, int, Optional[Dict]) -> list
+        # type: (ThycoticAuth, Dict, int, Optional[FolderPermissionCache]) -> list
         """Permission rows for a secret that inherits, walking up to a folder that has them.
 
-        cache maps a folder id to the rows it returned, so secrets in the same
+        cache keeps the rows each folder returned, so secrets in the same
         folder do not fetch it again. A failed fetch is not cached.
         """
         seen = set()
         current = folder_id
         while current and current not in seen:
             seen.add(current)
-            if cache is not None and current in cache:
-                rows = cache[current]
-            else:
+            rows = cache.get(current) if cache is not None else None
+            if rows is None:
                 try:
                     rows = auth.thycotic_search('/v1/folder-permissions?filter.folderId={0}'.format(current))
-                    if cache is not None:
-                        cache[current] = rows
                 except Exception as exc:
                     logging.info('folder-permissions %s: %s', current, exc)
                     rows = []
+                else:
+                    if cache is not None and isinstance(rows, list):
+                        rows = cache.put(current, rows)
             if isinstance(rows, list) and rows:
                 return rows
             folder = folders.get(current) if isinstance(folders, dict) else None
@@ -699,28 +724,30 @@ class ThycoticMixin:
         secret_id = secret.get('id') if isinstance(secret, dict) else None
         inherits = isinstance(secret, dict) and secret.get('inheritPermissions') is True
 
-        def secret_rows():
-            if not secret_id:
-                return []
-            if secret_permissions is not None:
-                return list(secret_permissions.get(secret_id) or [])
-            try:
-                rows = auth.thycotic_search(
-                    '/v1/secret-permissions?filter.secretId={0}'.format(secret_id))
-            except Exception as exc:
-                logging.warning('secret-permissions %s: %s', secret_id, exc)
-                return []
-            return rows if isinstance(rows, list) else []
-
         if inherits:
             rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
             if rows:
                 return rows
-            return secret_rows()
-        rows = secret_rows()
+            return ThycoticMixin._secret_permission_rows(auth, secret_id, secret_permissions)
+        rows = ThycoticMixin._secret_permission_rows(auth, secret_id, secret_permissions)
         if rows:
             return rows
         return ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
+
+    @staticmethod
+    def _secret_permission_rows(auth, secret_id, secret_permissions=None):
+        # type: (ThycoticAuth, Any, Optional[Dict[Any, list]]) -> list
+        """Secret-permission rows for one secret, from the bulk result when available."""
+        if not secret_id:
+            return []
+        if secret_permissions is not None:
+            return list(secret_permissions.get(secret_id) or [])
+        try:
+            rows = auth.thycotic_search('/v1/secret-permissions?filter.secretId={0}'.format(secret_id))
+        except Exception as exc:
+            logging.warning('secret-permissions %s: %s', secret_id, exc)
+            return []
+        return rows if isinstance(rows, list) else []
 
     @staticmethod
     def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
@@ -732,6 +759,17 @@ class ThycoticMixin:
         secret['id'] = secret.get('id') or secret_id
         return secret, ThycoticMixin.permission_rows_for_secret(
             auth, folders, secret, folder_cache, secret_permissions)
+
+    @staticmethod
+    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, entry):
+        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], Tuple[dict, Any]) -> Tuple[Optional[dict], list, Optional[Exception]]
+        """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
+        try:
+            secret, rows = ThycoticMixin._fetch_secret_permissions(
+                auth, folders, entry[1], folder_cache, secret_permissions)
+            return secret, rows, None
+        except Exception as exc:
+            return None, [], exc
 
     @staticmethod
     def secret_share_workers(value):
@@ -855,21 +893,12 @@ class ThycoticMixin:
         unmapped = 0
         failed = 0
         custom_role_secrets = 0
-        # Shared by workers. Entries are only added, never removed; two workers can at
-        # worst fetch the same uncached folder once each.
-        folder_cache = {}
+        folder_cache = FolderPermissionCache()
         secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if entries else None
         workers = min(ThycoticMixin.secret_share_workers(workers), max(len(entries), 1))
         logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
 
-        def fetch(entry):
-            try:
-                secret, rows = ThycoticMixin._fetch_secret_permissions(
-                    auth, folders, entry[1], folder_cache, secret_permissions)
-                return secret, rows, None
-            except Exception as exc:
-                return None, [], exc
-
+        fetch = functools.partial(ThycoticMixin._fetch_secret_entry, auth, folders, folder_cache, secret_permissions)
         for (row, secret_id), (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
@@ -1063,17 +1092,19 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             logging.warning('Could not create enterprise user "%s": %s', email, e)
             return None
 
+    @staticmethod
+    def _user_outcome(user, flag, **extra):  # type: (dict, str, ...) -> dict
+        """One line of the user report."""
+        item = {
+            'username': str(user.get('username') or ''),
+            'email': ThycoticImporter._user_field(user, 'email'),
+            'flag': flag,
+        }
+        item.update(extra)
+        return item
+
     def _create_enterprise_users(self, params, thycotic_users):
         # type: (KeeperParams, List[dict]) -> dict
-        def row(user, flag, **extra):
-            item = {
-                'username': str(user.get('username') or ''),
-                'email': self._user_field(user, 'email'),
-                'flag': flag,
-            }
-            item.update(extra)
-            return item
-
         seen = set()
         outcomes = []
         existing_users = self._load_existing_keeper_users(params)
@@ -1094,17 +1125,17 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if user_exist:
                 seen.add(email_key)
                 status = user_exist.get('status') or 'active'
-                outcomes.append(row(user, 'existing', status=status))
+                outcomes.append(self._user_outcome(user, 'existing', status=status))
             elif is_valid_email(email):
                 seen.add(email_key)
                 name = self._user_field(user, 'name') or self._user_field(user, 'username') or email
                 created = self._create_keeper_user(params, email, name)
                 if created:
-                    outcomes.append(row(user, 'created'))
+                    outcomes.append(self._user_outcome(user, 'created'))
                 else:
-                    outcomes.append(row(user, 'failed', reason='user was not created'))
+                    outcomes.append(self._user_outcome(user, 'failed', reason='user was not created'))
             else:
-                outcomes.append(row(user, 'skipped', reason='invalid email'))
+                outcomes.append(self._user_outcome(user, 'skipped', reason='invalid email'))
         return {'users': outcomes}
 
     def _print_thycotic_user_report(self, report):  # type: (dict) -> None

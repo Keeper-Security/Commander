@@ -3011,11 +3011,13 @@ def locate_secret_share_records(params, records):
     record_cache = getattr(params, 'record_cache', None) or {}
     folder_records = getattr(params, 'subfolder_record_cache', None) or {}
     record_index = {}
+    unreadable = 0
     for folder_uid, record_uids in folder_records.items():
         folder_path = normalize_folder_path(get_folder_path(params, folder_uid))
         for record_uid in record_uids or []:
             cached = record_cache.get(record_uid)
             if not isinstance(cached, dict):
+                unreadable += 1
                 continue
             raw = cached.get('data_unencrypted') or '{}'
             if isinstance(raw, bytes):
@@ -3023,10 +3025,16 @@ def locate_secret_share_records(params, records):
             try:
                 title = (json.loads(raw).get('title') or '').strip().casefold()
             except Exception:
+                unreadable += 1
                 continue
             bucket = record_index.setdefault((folder_path, title), [])
-            if record_uid not in bucket:
-                bucket.append(record_uid)
+            if record_uid in bucket:
+                logging.info('Record %s is listed more than once under "%s"; it is matched once',
+                             record_uid, folder_path or '(root)')
+                continue
+            bucket.append(record_uid)
+    if unreadable:
+        logging.warning('%d Keeper record(s) could not be read and were not matched to secrets', unreadable)
 
     located = []
     for rec in records:
