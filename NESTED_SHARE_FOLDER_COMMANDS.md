@@ -9,25 +9,25 @@ To get help on a particular command, run:
 `help <command>`
 
 
-| Command                  | Description                                                         |
-| ------------------------ | ------------------------------------------------------------------- |
-| `[nsf-mkdir]`             | Create a new Nested Share Folder                                     |
+| Command                   | Description                                                         |
+| ------------------------  | ------------------------------------------------------------------- |
+| `[nsf-mkdir]`             | Create a new Nested Share Folder                                    |
 | `[nsf-rndir]`             | Rename a folder or change its color                                 |
-| `[nsf-list]`              | List Nested Share Folders and Nested Share Records                                |
-| `[nsf-rmdir]`             | Remove one or more Nested Share Folders                              |
-| `[nsf-move]`              | Move a Nested Share Record or Nested Share Folder to a new location   |
+| `[nsf-list]`              | List Nested Share Folders and Nested Share Records                  |
+| `[nsf-rmdir]`             | Remove one or more Nested Share Folders                             |
+| `[nsf-move]`              | Move a Nested Share Record or Nested Share Folder to a new location |
 | `[nsf-share-folder]`      | Grant or remove a user's access to a folder                         |
-| `[nsf-record-add]`        | Create a new Nested Share Record                                     |
-| `[nsf-record-update]`     | Update an existing Nested Share Record                               |
-| `[nsf-convert-record]`           | Convert Classic record(s) to Nested Share Record(s)                  |
-| `[nsf-convert-folder]`    | Convert a Classic folder tree to Nested Share Folders and Records    |
-| `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records            |
-| `[nsf-ln]`                | Link a record into a Nested Share Folder                             |
+| `[nsf-record-add]`        | Create a new Nested Share Record                                    |
+| `[nsf-record-update]`     | Update an existing Nested Share Record                              |
+| `[nsf-convert-record]`    | Convert Classic record(s) to Nested Share Record(s)                 |
+| `[nsf-convert-folder]`    | Convert a Classic folder tree to Nested Share Folders and Records   |
+| `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records           |
+| `[nsf-ln]`                | Link a record into a Nested Share Folder                            |
 | `[nsf-shortcut]`          | Manage records that appear in more than one folder                  |
 | `[nsf-share-record]`      | Grant, update, or revoke a user's access to a record                |
 | `[nsf-record-permission]` | Bulk-update sharing permissions across records in a folder          |
 | `[nsf-transfer-record]`   | Transfer record ownership to another user                           |
-| `[nsf-record-details]`    | Get metadata for records                                |
+| `[nsf-record-details]`    | Get metadata for records                                            |
 | `[nsf-get]`               | Show full details for a record or folder                            |
 
 
