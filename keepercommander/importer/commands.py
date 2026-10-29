@@ -64,6 +64,16 @@ def _cyberark_skip_arg(value):
 
 
 
+def _workers_arg(value):
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('must be an integer')
+    if not 1 <= workers <= 16:
+        raise argparse.ArgumentTypeError('--workers must be between 1 and 16')
+    return workers
+
+
 def _positive_int_arg(value):
     try:
         depth = int(value)
@@ -174,6 +184,9 @@ download_membership_parser.add_argument('--sub-folder', '-sf', dest='sub_folder'
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 download_membership_parser.add_argument('--timeout', dest='timeout', action='store', type=int, default=10, help='Timeout in seconds for network requests. Currently, supported for cyberark. Default: 10')
 download_membership_parser.add_argument('--api-page-size-limit', dest='api_page_size_limit', action='store', type=int, default=200, help='Page size limit for API requests. Currently, supported for cyberark. Default: 200')
+download_membership_parser.add_argument('--workers', dest='workers', action='store', type=_workers_arg, default=None,
+                                        help='Parallel requests when loading secret permissions (1-16). '
+                                             'Currently, supported for thycotic. Default: 4')
 download_membership_parser.error = raise_parse_exception
 download_membership_parser.exit = suppress_exit
 
@@ -512,7 +525,7 @@ class DownloadMembershipCommand(Command):
             logging.warning('Error loading membership plugin: %s', source)
             return
 
-        download_membership = plugin.download_membership(params, folders_only=folders_only,timeout=kwargs.get('timeout'), api_page_size_limit=kwargs.get('api_page_size_limit'))
+        download_membership = plugin.download_membership(params, folders_only=folders_only,timeout=kwargs.get('timeout'), api_page_size_limit=kwargs.get('api_page_size_limit'), workers=kwargs.get('workers'))
 
         for obj in download_membership:
             if isinstance(obj, SharedFolder):

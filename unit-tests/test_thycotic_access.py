@@ -224,7 +224,8 @@ class TestThycoticSecretRecordPermissions(TestCase):
             'owner@example.com': (False, False),
             'view@example.com': (True, True),
         })
-        self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
+        self.assertIn('/v1/secret-permissions', calls)
+        self.assertNotIn('/v1/secret-permissions?filter.secretId=100', calls)
 
     def test_edit_without_owner_cannot_share(self):
         records, _calls = self._download(self._secret(False), [
@@ -292,7 +293,8 @@ class TestThycoticSecretRecordPermissions(TestCase):
         self.assertEqual(self._shares(records[0]), {
             'owner@example.com': (True, True),
         })
-        self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
+        self.assertIn('/v1/secret-permissions', calls)
+        self.assertNotIn('/v1/secret-permissions?filter.secretId=100', calls)
 
     def test_absent_inherit_flag_falls_back_to_folder_roles(self):
         calls = []
@@ -347,7 +349,8 @@ class TestThycoticSecretRecordPermissions(TestCase):
         self.assertEqual(self._shares(records[0]), {
             'owner@example.com': (True, False),
         })
-        self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
+        self.assertIn('/v1/secret-permissions', calls)
+        self.assertNotIn('/v1/secret-permissions?filter.secretId=100', calls)
 
 
 class TestSecretSharesRequireExistingUsers(TestCase):
@@ -412,6 +415,8 @@ def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, fail
                 raise RuntimeError('boom')
         if endpoint.startswith('/v1/secrets/lookup'):
             return [{'id': secret['id']} for secret in secrets]
+        if endpoint == '/v1/secret-permissions':
+            return [dict(row, secretId=secret_id) for secret_id, rows in secret_permissions.items() for row in rows]
         if endpoint.startswith('/v1/secret-permissions?filter.secretId='):
             return secret_permissions.get(int(endpoint.rsplit('=', 1)[1]), [])
         if endpoint.startswith('/v1/folder-permissions?filter.folderId='):
@@ -1041,3 +1046,236 @@ class TestSecretShareHelpers(TestCase):
         auth = _secret_auth([secret], secret_permissions={100: [{'groupId': 9, 'secretAccessRoleName': 'Owner'}]})
         list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertFalse(any(call.startswith('/v1/groups') for call in auth.calls))
+
+
+class TestBulkSecretPermissions(TestCase):
+    def _secrets(self, count):
+        return [{'id': 100 + i, 'name': 'secret-{0}'.format(i), 'folderId': 10, 'inheritPermissions': False}
+                for i in range(count)]
+
+    def test_one_bulk_call_replaces_per_secret_calls(self):
+        secrets = self._secrets(5)
+        auth = _secret_auth(secrets, secret_permissions={
+            secret['id']: [{'userId': 5, 'secretAccessRoleName': 'Owner'}] for secret in secrets})
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(len(records), 5)
+        self.assertEqual(auth.calls.count('/v1/secret-permissions'), 1)
+        self.assertFalse(any('filter.secretId' in call for call in auth.calls))
+
+    def test_rows_are_grouped_by_secret_and_rows_without_secret_id_dropped(self):
+        auth = mock.Mock()
+        auth.thycotic_search.return_value = [
+            {'secretId': 1, 'userId': 5}, {'secretId': 2, 'userId': 6}, {'secretId': 1, 'userId': 6},
+            {'userId': 7}, {'secretId': 0, 'userId': 8}, 'junk', None,
+        ]
+        grouped = thycotic.ThycoticMixin.all_secret_permission_rows(auth)
+        self.assertEqual(grouped, {
+            1: [{'secretId': 1, 'userId': 5}, {'secretId': 1, 'userId': 6}],
+            2: [{'secretId': 2, 'userId': 6}],
+        })
+        auth.thycotic_search.assert_called_once_with('/v1/secret-permissions')
+
+    def test_failed_bulk_call_falls_back_to_per_secret(self):
+        auth = mock.Mock()
+        auth.thycotic_search.side_effect = RuntimeError('403 Forbidden')
+        with self.assertLogs(level='WARNING') as logs:
+            self.assertIsNone(thycotic.ThycoticMixin.all_secret_permission_rows(auth))
+        self.assertTrue(any('loading them per secret' in line for line in logs.output))
+
+    def test_empty_bulk_result_falls_back_to_per_secret(self):
+        secret = self._secrets(1)[0]
+        calls = []
+
+        def search(endpoint):
+            calls.append(endpoint)
+            if endpoint == '/v1/secret-permissions':
+                return []
+            if endpoint.startswith('/v1/secret-permissions?filter.secretId=100'):
+                return [{'userId': 5, 'secretId': 100, 'secretAccessRoleName': 'Edit'}]
+            if endpoint.startswith('/v1/secrets/lookup'):
+                return [{'id': 100}]
+            if endpoint.startswith('/v1/users'):
+                return _users()
+            return []
+
+        auth = mock.Mock()
+        auth.thycotic_search.side_effect = search
+        auth.thycotic_entity.return_value = dict(secret)
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual([share.name for share in records[0].shares], ['owner@example.com'])
+        self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
+
+    def test_no_secrets_makes_no_bulk_call(self):
+        auth = _secret_auth([])
+        self.assertEqual(list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map())), [])
+        self.assertNotIn('/v1/secret-permissions', auth.calls)
+
+
+class TestOrderedWorkerPool(TestCase):
+    def test_results_keep_input_order_with_uneven_latency(self):
+        import random
+        import time as time_module
+        rng = random.Random(7)
+        delays = {i: rng.uniform(0, 0.01) for i in range(40)}
+
+        def fetch(item):
+            time_module.sleep(delays[item])
+            return item * 10
+
+        results = list(thycotic.ThycoticMixin._fetch_in_order(fetch, range(40), 4))
+        self.assertEqual(results, [(i, i * 10) for i in range(40)])
+
+    def test_never_more_than_workers_running_or_double_queued(self):
+        import threading as threading_module
+        import time as time_module
+        lock = threading_module.Lock()
+        state = {'running': 0, 'peak': 0, 'started': 0}
+        consumed = []
+
+        def fetch(item):
+            with lock:
+                state['running'] += 1
+                state['started'] += 1
+                state['peak'] = max(state['peak'], state['running'])
+                ahead = state['started'] - len(consumed)
+            self.assertLessEqual(ahead, 3 * 2 + 1)
+            time_module.sleep(0.002)
+            with lock:
+                state['running'] -= 1
+            return item
+
+        for item, _result in thycotic.ThycoticMixin._fetch_in_order(fetch, range(30), 3):
+            consumed.append(item)
+        self.assertEqual(consumed, list(range(30)))
+        self.assertLessEqual(state['peak'], 3)
+        self.assertGreater(state['peak'], 1)
+
+    def test_one_worker_runs_on_calling_thread(self):
+        import threading as threading_module
+        threads = set()
+
+        def fetch(item):
+            threads.add(threading_module.get_ident())
+            return item
+
+        list(thycotic.ThycoticMixin._fetch_in_order(fetch, range(5), 1))
+        self.assertEqual(threads, {threading_module.get_ident()})
+
+    def test_stopping_early_cancels_queued_work(self):
+        import threading as threading_module
+        lock = threading_module.Lock()
+        started = []
+
+        def fetch(item):
+            with lock:
+                started.append(item)
+            return item
+
+        results = thycotic.ThycoticMixin._fetch_in_order(fetch, range(1000), 4)
+        self.assertEqual(next(results), (0, 0))
+        results.close()
+        self.assertLess(len(started), 20)
+
+    def test_worker_count_is_clamped(self):
+        workers = thycotic.ThycoticMixin.secret_share_workers
+        self.assertEqual(workers(None), 4)
+        self.assertEqual(workers(0), 1)
+        self.assertEqual(workers(-3), 1)
+        self.assertEqual(workers(8), 8)
+        self.assertEqual(workers(500), 16)
+        self.assertEqual(workers('x'), 4)
+
+
+class TestParallelSecretShares(TestCase):
+    def _secrets(self, count):
+        return [{'id': 100 + i, 'name': 'secret-{0}'.format(i), 'folderId': 10 + (i % 2),
+                 'inheritPermissions': i % 3 == 0} for i in range(count)]
+
+    def _permissions(self, secrets):
+        return {secret['id']: [{'userId': 5 + (secret['id'] % 2), 'secretAccessRoleName': 'Edit'}]
+                for secret in secrets}
+
+    def _titles_and_shares(self, records):
+        return [(record.title, [(s.name, s.can_edit, s.can_share) for s in record.shares]) for record in records]
+
+    def test_parallel_matches_sequential(self):
+        secrets = self._secrets(25)
+        folder_rows = {10: [{'userId': 5, 'secretAccessRoleName': 'Owner'}], 11: []}
+        sequential = list(thycotic.ThycoticMixin.iter_secret_shares(
+            _secret_auth(secrets, self._permissions(secrets), folder_rows), _folder_map(), workers=1))
+        parallel = list(thycotic.ThycoticMixin.iter_secret_shares(
+            _secret_auth(secrets, self._permissions(secrets), folder_rows), _folder_map(), workers=8))
+        self.assertEqual(len(sequential), 25)
+        self.assertEqual(self._titles_and_shares(parallel), self._titles_and_shares(sequential))
+
+    def test_failed_secret_is_counted_once_in_parallel(self):
+        secrets = self._secrets(10)
+        auth = _secret_auth(secrets, self._permissions(secrets), failing_secrets=(103, 107))
+        with self.assertLogs(level='WARNING') as logs:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map(), workers=4))
+        self.assertEqual(len(records), 8)
+        self.assertNotIn('secret-3', [record.title for record in records])
+        self.assertTrue(any('2 secret(s) were skipped' in line for line in logs.output))
+
+    def test_folder_permissions_fetched_at_most_once_per_worker(self):
+        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritPermissions': True}
+                   for i in range(40)]
+        auth = _secret_auth(secrets, folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'View'}]})
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map(), workers=4))
+        self.assertEqual(len(records), 40)
+        self.assertLessEqual(auth.calls.count('/v1/folder-permissions?filter.folderId=10'), 4)
+
+
+class TestThreadSafeTokenRefresh(TestCase):
+    def test_parallel_requests_refresh_expired_token_once(self):
+        import threading as threading_module
+        import time as time_module
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        auth.access_token = 'old'
+        auth.refresh_token = 'r1'
+        auth.expires_in = 60
+        auth.last_login = 0
+        refreshes = []
+
+        def refresh():
+            refreshes.append(auth.refresh_token)
+            time_module.sleep(0.01)
+            auth.access_token = 'new'
+            auth.refresh_token = 'r2'
+            auth.last_login = int(time_module.time())
+
+        auth.refresh_auth_token = refresh
+        threads = [threading_module.Thread(target=auth.ensure_auth_token) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(refreshes, ['r1'])
+        self.assertEqual(auth.access_token, 'new')
+
+
+class TestWorkersOption(TestCase):
+    def test_parser_accepts_range_and_rejects_others(self):
+        from keepercommander.commands.base import ParseError
+        from keepercommander.importer import commands
+        parser = commands.download_membership_parser
+        self.assertIsNone(parser.parse_args(['--source', 'thycotic']).workers)
+        self.assertEqual(parser.parse_args(['--source', 'thycotic', '--workers', '1']).workers, 1)
+        self.assertEqual(parser.parse_args(['--source', 'thycotic', '--workers', '16']).workers, 16)
+        for bad in ('0', '17', '-1', 'two'):
+            with self.subTest(bad):
+                with self.assertRaises(ParseError):
+                    parser.parse_args(['--source', 'thycotic', '--workers', bad])
+
+    def test_workers_reach_the_plugin(self):
+        import os
+        import tempfile
+        from types import SimpleNamespace
+        from keepercommander.importer import commands
+        plugin = mock.Mock()
+        plugin.download_membership.return_value = iter([])
+        module = SimpleNamespace(MembershipDownload=lambda: plugin)
+        file_name = os.path.join(tempfile.mkdtemp(), 'membership.json')
+        with mock.patch.object(commands.importlib, 'import_module', return_value=module):
+            commands.DownloadMembershipCommand().execute(mock.Mock(), source='thycotic', name=file_name, workers=2)
+        self.assertEqual(plugin.download_membership.call_args.kwargs['workers'], 2)

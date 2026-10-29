@@ -18,8 +18,11 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import warnings
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -124,6 +127,10 @@ def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
         return list(dict.fromkeys(secret_ids))
     query = build_secrets_lookup_query(include_restricted=include_restricted)
     return _ids_from_lookup_response(search(query))
+
+
+DEFAULT_SECRET_SHARE_WORKERS = 4
+MAX_SECRET_SHARE_WORKERS = 16
 
 
 class ThycoticMixin:
@@ -654,14 +661,39 @@ class ThycoticMixin:
         return []
 
     @staticmethod
-    def permission_rows_for_secret(auth, folders, secret, folder_cache=None):
-        # type: (ThycoticAuth, Dict, dict, Optional[Dict]) -> list
+    def all_secret_permission_rows(auth):
+        # type: (ThycoticAuth) -> Optional[Dict[Any, list]]
+        """Every secret-permission row from one paged search, grouped by secretId.
+
+        Returns None when the search fails or returns nothing, so callers fall
+        back to one secret-permissions request per secret.
+        """
+        try:
+            rows = auth.thycotic_search('/v1/secret-permissions')
+        except Exception as exc:
+            logging.warning('Bulk secret-permissions failed, loading them per secret: %s', exc)
+            return None
+        by_secret = {}  # type: Dict[Any, list]
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get('secretId'):
+                by_secret.setdefault(row['secretId'], []).append(row)
+        if not by_secret:
+            logging.info('Bulk secret-permissions returned no rows, loading them per secret')
+            return None
+        return by_secret
+
+    @staticmethod
+    def permission_rows_for_secret(auth, folders, secret, folder_cache=None, secret_permissions=None):
+        # type: (ThycoticAuth, Dict, dict, Optional[Dict], Optional[Dict[Any, list]]) -> list
         """Rows that name who can open this secret.
 
         Secret Server often omits inheritPermissions on the secret record.
         Some secrets then return their users from secret-permissions, and
         others only from the folder. Keep whichever list is non-empty. A
         secret that inherits prefers the folder's secret roles.
+
+        secret_permissions is the result of all_secret_permission_rows. When
+        given, it replaces the per-secret secret-permissions request.
         """
         folder_id = secret.get('folderId') if isinstance(secret, dict) else None
         secret_id = secret.get('id') if isinstance(secret, dict) else None
@@ -670,6 +702,8 @@ class ThycoticMixin:
         def secret_rows():
             if not secret_id:
                 return []
+            if secret_permissions is not None:
+                return list(secret_permissions.get(secret_id) or [])
             try:
                 rows = auth.thycotic_search(
                     '/v1/secret-permissions?filter.secretId={0}'.format(secret_id))
@@ -689,14 +723,60 @@ class ThycoticMixin:
         return ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
 
     @staticmethod
-    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache):
-        # type: (ThycoticAuth, Dict, Any, Dict) -> Tuple[Optional[dict], list]
-        """Fetch one secret and its permission rows."""
+    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
+        # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
+        """Fetch one secret and its permission rows. Runs on a worker thread."""
         secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
         if not isinstance(secret, dict):
             return None, []
         secret['id'] = secret.get('id') or secret_id
-        return secret, ThycoticMixin.permission_rows_for_secret(auth, folders, secret, folder_cache)
+        return secret, ThycoticMixin.permission_rows_for_secret(
+            auth, folders, secret, folder_cache, secret_permissions)
+
+    @staticmethod
+    def secret_share_workers(value):
+        # type: (Any) -> int
+        """Worker count for loading secret permissions: default 4, clamped to 1..16."""
+        if value is None:
+            return DEFAULT_SECRET_SHARE_WORKERS
+        try:
+            return min(max(int(value), 1), MAX_SECRET_SHARE_WORKERS)
+        except (TypeError, ValueError):
+            return DEFAULT_SECRET_SHARE_WORKERS
+
+    @staticmethod
+    def _fetch_in_order(fetch, items, workers):
+        # type: (Callable[[Any], Any], Iterable[Any], int) -> Iterable[Tuple[Any, Any]]
+        """Yield (item, fetch(item)) in input order, with at most `workers` fetches running.
+
+        fetch must not raise. At most workers * 2 fetches are queued, so memory
+        stays bounded. With one worker everything runs on the calling thread.
+        If the caller stops early, queued fetches are cancelled and only the
+        running ones are waited for.
+        """
+        if workers <= 1:
+            for item in items:
+                yield item, fetch(item)
+            return
+        executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='thycotic-shares')
+        items = iter(items)
+        pending = deque()
+        try:
+            for item in items:
+                pending.append((item, executor.submit(fetch, item)))
+                if len(pending) >= workers * 2:
+                    break
+            while pending:
+                item, future = pending.popleft()
+                result = future.result()
+                for next_item in items:
+                    pending.append((next_item, executor.submit(fetch, next_item)))
+                    break
+                yield item, result
+        finally:
+            for _item, future in pending:
+                future.cancel()
+            executor.shutdown(wait=True)
 
     @staticmethod
     def _warn_unmapped_roles(title, secret_id, rows):
@@ -741,8 +821,8 @@ class ThycoticMixin:
         return record
 
     @staticmethod
-    def iter_secret_shares(auth, folders):
-        # type: (ThycoticAuth, Optional[Dict]) -> Iterable[Record]
+    def iter_secret_shares(auth, folders, workers=None):
+        # type: (ThycoticAuth, Optional[Dict], Optional[int]) -> Iterable[Record]
         """Yield one record per secret with the users who can open it.
 
         A secret that inherits uses its folder's secret roles. Any other
@@ -750,6 +830,12 @@ class ThycoticMixin:
         secret roles when that list is empty. apply-membership grants the
         resulting shares onto the Keeper record. Folder membership is not
         changed.
+
+        Secret permissions come from one bulk search when the server allows
+        it, otherwise one request per secret. Secret reads run on a small
+        worker pool (`workers`, default 4, 1 = sequential); records are
+        yielded in lookup order. Group lookup and record building stay on the
+        calling thread.
 
         A secret whose fetch fails is logged and skipped. The rest still load.
         """
@@ -763,22 +849,30 @@ class ThycoticMixin:
         if not isinstance(lookup, list):
             lookup = []
         folders = folders or {}
+        entries = [(row, row.get('id')) for row in lookup if isinstance(row, dict) and row.get('id')]
         written = 0
         seen = 0
         unmapped = 0
         failed = 0
         custom_role_secrets = 0
+        # Shared by workers. Entries are only added, never removed; two workers can at
+        # worst fetch the same uncached folder once each.
         folder_cache = {}
-        logging.info('Loading secret permissions for %d secrets', len(lookup))
-        for row in lookup:
-            secret_id = row.get('id') if isinstance(row, dict) else None
-            if not secret_id:
-                continue
+        secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if entries else None
+        workers = min(ThycoticMixin.secret_share_workers(workers), max(len(entries), 1))
+        logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
+
+        def fetch(entry):
             try:
-                secret, perm_rows = ThycoticMixin._fetch_secret_permissions(
-                    auth, folders, secret_id, folder_cache)
+                secret, rows = ThycoticMixin._fetch_secret_permissions(
+                    auth, folders, entry[1], folder_cache, secret_permissions)
+                return secret, rows, None
             except Exception as exc:
-                logging.warning('Secret %s permissions skipped: %s', secret_id, exc)
+                return None, [], exc
+
+        for (row, secret_id), (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+            if error is not None:
+                logging.warning('Secret %s permissions skipped: %s', secret_id, error)
                 failed += 1
                 continue
             if secret is None:
@@ -1587,6 +1681,7 @@ class ThycoticAuth:
         self.refresh_token = ''
         self.last_login = 0
         self.proxy = None
+        self._token_lock = threading.Lock()
         warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
@@ -1647,11 +1742,13 @@ class ThycoticAuth:
             raise Exception(self._error_message(rs, 'error'))
 
     def ensure_auth_token(self):
-        if self.access_token:
-            now = int(datetime.datetime.now().timestamp())
-            now -= 10
-            if self.last_login + self.expires_in < now:
-                self.refresh_auth_token()
+        # Locked so parallel workers refresh once; a second refresh would reuse a rotated refresh token.
+        with self._token_lock:
+            if self.access_token:
+                now = int(datetime.datetime.now().timestamp())
+                now -= 10
+                if self.last_login + self.expires_in < now:
+                    self.refresh_auth_token()
 
     def _throttle_wait(self, rs, attempt):  # type: (requests.Response, int) -> int
         """Seconds to wait before retry `attempt`: the larger of Retry-After (capped) and exponential backoff."""
@@ -1958,7 +2055,7 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
 
                     yield team
 
-        yield from ThycoticMembershipDownload.iter_secret_shares(auth, folders)
+        yield from ThycoticMembershipDownload.iter_secret_shares(auth, folders, kwargs.get('workers'))
 
 
 class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
