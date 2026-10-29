@@ -266,6 +266,12 @@ class WorkflowDenyCommand(DashUidArgsMixin, Command):
 
     @staticmethod
     def _encrypt_denial_reason(params, flow_uid_bytes, reason_bytes):
+        """Encrypt the denial reason with the requested record's key.
+
+        Workflow request reasons are encrypted with the resource record key,
+        so denial reasons must use the same encryption contract for the Vault
+        notification to decrypt and display them.
+        """
         try:
             response = _post_request_to_router(
                 params, 'get_approval_requests',
@@ -274,27 +280,24 @@ class WorkflowDenyCommand(DashUidArgsMixin, Command):
             if not response or not response.workflows:
                 return None
 
-            requester_email = None
+            record_uid = None
             for wf in response.workflows:
                 if wf.flowUid == flow_uid_bytes:
-                    requester_email = wf.user or RecordResolver.resolve_user(params, wf.userId)
+                    if wf.resource and wf.resource.value:
+                        record_uid = utils.base64_url_encode(wf.resource.value)
                     break
-            if not requester_email or requester_email.startswith('User ID '):
-                logging.debug('Could not resolve requester email for flow UID')
+
+            if not record_uid:
+                logging.debug('Could not resolve record UID for workflow denial reason')
                 return None
 
-            api.load_user_public_keys(params, [requester_email])
-            public_keys = params.key_cache.get(requester_email)
-            if not public_keys:
-                logging.debug('Public key not available for %s', requester_email)
+            from ...nested_share_folder.common import get_record_key
+            record_key = get_record_key(params, record_uid, raise_on_missing=False)
+            if not record_key:
+                logging.debug('Record key not available for workflow resource %s', record_uid)
                 return None
 
-            if public_keys.ec:
-                ec_key = crypto.load_ec_public_key(public_keys.ec)
-                return crypto.encrypt_ec(reason_bytes, ec_key)
-            elif public_keys.rsa:
-                rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-                return crypto.encrypt_rsa(reason_bytes, rsa_key)
+            return crypto.encrypt_aes_v2(reason_bytes, record_key)
         except Exception:
-            logging.debug('Failed to encrypt denial reason with requester public key', exc_info=True)
+            logging.debug('Failed to encrypt denial reason with record key', exc_info=True)
         return None
