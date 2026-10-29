@@ -466,9 +466,16 @@ class ThycoticMixin:
         # type: (list, Dict, Optional[Dict]) -> List[RecordShare]
         """Map permission rows to record shares for provisioned emails.
 
-        A group row is expanded to the member emails already provisioned.
-        A user who appears twice keeps the higher role. This does not change
-        the shared-folder membership.
+        Group flattening: Keeper record shares are per user, so a group row
+        becomes one direct share per member that has a provisioned email.
+        - The group link is not kept. Users added to the Delinea group after
+          the import get no access, and removing a member does not revoke it.
+        - Only direct members are shared. Nested groups are not expanded.
+        - A user reached through several rows (directly and via groups) gets
+          one share with the highest role: Owner > Edit > View/List.
+
+        Rows with a role outside Owner/Edit/View/List are skipped. This does
+        not change the shared-folder membership.
         """
         if not isinstance(rows, list):
             return []
@@ -599,6 +606,48 @@ class ThycoticMixin:
         return secret, ThycoticMixin.permission_rows_for_secret(auth, folders, secret, folder_cache)
 
     @staticmethod
+    def _warn_unmapped_roles(title, secret_id, rows):
+        # type: (str, Any, list) -> bool
+        """Log the roles on this secret that have no Keeper equivalent. True if any were found."""
+        roles = sorted({
+            (item.get('secretAccessRoleName') or '').strip() or '(unnamed)'
+            for item in rows or []
+            if isinstance(item, dict) and ThycoticMixin._secret_role_flags(item.get('secretAccessRoleName')) is None
+        })
+        if roles:
+            logging.warning(
+                'Secret "%s" (%s): role(s) %s cannot be mapped to Keeper permissions; '
+                'those users and groups were not shared, share them manually',
+                title, secret_id, ', '.join(roles))
+        return bool(roles)
+
+    @staticmethod
+    def _secret_folder_path(folders, folder_id):
+        # type: (Optional[Dict], Any) -> str
+        """Delinea folder path for folder_id, whether the folder map is keyed by int or str."""
+        if not isinstance(folders, dict):
+            return ''
+        folder = folders.get(folder_id)
+        if not isinstance(folder, dict):
+            try:
+                folder = folders.get(int(folder_id))
+            except (TypeError, ValueError):
+                folder = None
+        return (folder.get('folderPath') or '') if isinstance(folder, dict) else ''
+
+    @staticmethod
+    def _secret_share_record(title, folder_path, shares):
+        # type: (str, str, List[RecordShare]) -> Record
+        record = Record()
+        record.title = title
+        if folder_path:
+            record_folder = Folder()
+            record_folder.path = folder_path
+            record.folders = [record_folder]
+        record.shares = shares
+        return record
+
+    @staticmethod
     def iter_secret_shares(auth, folders):
         # type: (ThycoticAuth, Optional[Dict]) -> Iterable[Record]
         """Yield one record per secret with the users who can open it.
@@ -642,17 +691,11 @@ class ThycoticMixin:
             if secret is None:
                 continue
             seen += 1
-            custom_roles = sorted({
-                (item.get('secretAccessRoleName') or '').strip() or '(unnamed)'
-                for item in perm_rows or []
-                if isinstance(item, dict) and ThycoticMixin._secret_role_flags(item.get('secretAccessRoleName')) is None
-            })
-            if custom_roles:
+            title = secret.get('name') or row.get('name') or ''
+            if not title:
+                continue
+            if ThycoticMixin._warn_unmapped_roles(title, secret_id, perm_rows):
                 custom_role_secrets += 1
-                logging.warning(
-                    'Secret "%s" (%s): role(s) %s cannot be mapped to Keeper permissions; '
-                    'those users and groups were not shared, share them manually',
-                    secret.get('name') or row.get('name') or '', secret_id, ', '.join(custom_roles))
             if groups is None and any(isinstance(item, dict) and item.get('groupId') for item in perm_rows or []):
                 groups = ThycoticMixin.get_group_lookup(auth) or {}
             shares = ThycoticMixin.shares_from_secret_permissions(perm_rows, emails, groups)
@@ -660,25 +703,9 @@ class ThycoticMixin:
                 if perm_rows:
                     unmapped += 1
                 continue
-            record = Record()
-            record.title = secret.get('name') or row.get('name') or ''
-            if not record.title:
-                continue
-            folder_id = secret.get('folderId')
-            folder = folders.get(folder_id) if isinstance(folders, dict) else None
-            if not isinstance(folder, dict):
-                try:
-                    folder = folders.get(int(folder_id))
-                except (TypeError, ValueError):
-                    folder = None
-            path = folder.get('folderPath') if isinstance(folder, dict) else ''
-            if path:
-                record_folder = Folder()
-                record_folder.path = path
-                record.folders = [record_folder]
-            record.shares = shares
             written += 1
-            yield record
+            yield ThycoticMixin._secret_share_record(
+                title, ThycoticMixin._secret_folder_path(folders, secret.get('folderId')), shares)
         logging.info('Loaded secret permissions for %d secrets', written)
         if failed:
             logging.warning('%d secret(s) were skipped because their permissions could not be fetched.', failed)
@@ -687,7 +714,8 @@ class ThycoticMixin:
                             custom_role_secrets)
         if written == 0:
             logging.warning(
-                'No secret permission lists downloaded (%d secrets, %d had permission rows with no email).',
+                'No secret permission lists downloaded (%d secrets, %d had permission rows that matched '
+                'no provisioned Keeper user).',
                 seen, unmapped)
 
 
@@ -1425,7 +1453,21 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         print(' Done', flush=True)
 
 
+def _error_message(rs, key='message'):  # type: (requests.Response, str) -> str
+    """Error text from a Secret Server response; the body may not be JSON (proxy or HTML error page)."""
+    try:
+        body = rs.json()
+    except ValueError:
+        body = None
+    message = body.get(key) if isinstance(body, dict) else None
+    return str(message) if message else 'HTTP {0}'.format(rs.status_code)
+
+
 class ThycoticAuth:
+    max_throttle_retries = 3
+    throttle_backoff_seconds = 5
+    max_throttle_wait_seconds = 300
+
     def __init__(self, base_url):    # type: (str) -> None
         if not base_url.endswith('/'):
             base_url += '/'
@@ -1454,9 +1496,8 @@ class ThycoticAuth:
             len(password or ''), 'yes' if self.proxy else 'no')
         rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
                            verify=False, proxies=self.proxy)
-        if rs.status_code != 200 and rs.status_code == 400:
-            error_rs = rs.json()
-            error = str(error_rs.get('error') or '')
+        if rs.status_code == 400:
+            error = _error_message(rs, 'error')
             if 'totp' in error.lower() and callable(on_totp):
                 code = on_totp()
                 if code:
@@ -1470,8 +1511,7 @@ class ThycoticAuth:
             self.refresh_token = auth_rs.get('refresh_token')
             self.last_login = int(datetime.datetime.now().timestamp())
         else:
-            error_rs = rs.json()
-            raise Exception(error_rs.get('error') or 'HTTP {0}'.format(rs.status_code))
+            raise Exception(_error_message(rs, 'error'))
 
 
     def refresh_auth_token(self):
@@ -1494,8 +1534,7 @@ class ThycoticAuth:
             self.refresh_token = auth_rs.get('refresh_token')
             self.last_login = int(datetime.datetime.now().timestamp())
         else:
-            error_rs = rs.json()
-            raise Exception(error_rs['error'])
+            raise Exception(_error_message(rs, 'error'))
 
     def ensure_auth_token(self):
         if self.access_token:
@@ -1503,6 +1542,28 @@ class ThycoticAuth:
             now -= 10
             if self.last_login + self.expires_in < now:
                 self.refresh_auth_token()
+
+    def _throttle_wait(self, rs, attempt):  # type: (requests.Response, int) -> int
+        """Seconds to wait before retry `attempt`: the larger of Retry-After (capped) and exponential backoff."""
+        try:
+            hint = min(max(int(rs.headers.get('Retry-After')), 0), self.max_throttle_wait_seconds)
+        except (TypeError, ValueError):
+            hint = 0
+        return max(hint, self.throttle_backoff_seconds * (2 ** (attempt - 1)))
+
+    def _get(self, url, **kwargs):  # type: (str, ...) -> requests.Response
+        """GET that waits and retries when Secret Server answers 429 Too Many Requests."""
+        attempt = 0
+        while True:
+            rs = requests.get(url, verify=False, proxies=self.proxy, **kwargs)
+            if rs.status_code != 429 or attempt >= self.max_throttle_retries:
+                return rs
+            attempt += 1
+            wait = self._throttle_wait(rs, attempt)
+            rs.close()
+            logging.warning('Secret Server rate limit (attempt %d/%d), retrying in %d seconds',
+                            attempt, self.max_throttle_retries, wait)
+            time.sleep(wait)
 
     def thycotic_search(self, endpoint):  # type: (str) -> list
         self.ensure_auth_token()
@@ -1522,13 +1583,12 @@ class ThycoticAuth:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
             try:
-                rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
+                rs = self._get(url, headers=headers)
             except requests.exceptions.ConnectionError:
                 time.sleep(10)
-                rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
+                rs = self._get(url, headers=headers)
             if rs.status_code != 200:
-                error_rs = rs.json()
-                raise Exception(error_rs['message'])
+                raise Exception(_error_message(rs))
             chunk_rs = rs.json()
             records = chunk_rs.get('records')
             if isinstance(records, list):
@@ -1548,12 +1608,12 @@ class ThycoticAuth:
             'Authorization': f'Bearer {self.access_token}'
         }
         try:
-            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+            rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
         except Exception as e:
             logging.warning('"%s" error: %s', endpoint, str(e))
             time.sleep(10)
             try:
-                rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+                rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
@@ -1562,8 +1622,7 @@ class ThycoticAuth:
             if rs.status_code == 200:
                 return rs.json()
             else:
-                error_rs = rs.json()
-                logging.info('"%s" returned %d: %s', endpoint, rs.status_code, error_rs.get('message', ''))
+                logging.info('"%s" returned %d: %s', endpoint, rs.status_code, _error_message(rs))
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
 
@@ -1574,12 +1633,10 @@ class ThycoticAuth:
         }
 
         try:
-            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers,
-                              verify=False, proxies=self.proxy, stream=True)
+            rs = self._get(self.base_url + 'api' + endpoint, headers=headers, stream=True)
         except requests.exceptions.ConnectionError:
             time.sleep(10)
-            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers,
-                              verify=False, proxies=self.proxy, stream=True)
+            rs = self._get(self.base_url + 'api' + endpoint, headers=headers, stream=True)
         return rs
 
 

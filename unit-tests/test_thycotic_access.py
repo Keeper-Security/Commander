@@ -870,3 +870,166 @@ class TestCustomSecretRoles(TestCase):
             records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertEqual(len(records[0].shares), 2)
         warning.assert_not_called()
+
+
+def _response(status, body=None, text='', headers=None):
+    rs = mock.Mock()
+    rs.status_code = status
+    rs.headers = headers or {}
+    rs.text = text
+    if body is None:
+        rs.json.side_effect = ValueError('Expecting value: line 1 column 1 (char 0)')
+    else:
+        rs.json.return_value = body
+    return rs
+
+
+class TestSecretServerErrorResponses(TestCase):
+    def _auth(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        auth.access_token = 'token'
+        auth.expires_in = 3600
+        auth.last_login = 10 ** 12
+        return auth
+
+    def test_error_message_handles_json_and_non_json_bodies(self):
+        self.assertEqual(thycotic._error_message(_response(403, {'message': 'Access denied'})), 'Access denied')
+        self.assertEqual(thycotic._error_message(_response(400, {'error': 'invalid_grant'}), 'error'), 'invalid_grant')
+        self.assertEqual(thycotic._error_message(_response(502, text='<html>Bad Gateway</html>')), 'HTTP 502')
+        self.assertEqual(thycotic._error_message(_response(500, ['not', 'a', 'dict'])), 'HTTP 500')
+        self.assertEqual(thycotic._error_message(_response(404, {'message': ''})), 'HTTP 404')
+
+    def test_search_raises_readable_error_for_html_page(self):
+        with mock.patch.object(thycotic.requests, 'get', return_value=_response(502, text='<html>')):
+            with self.assertRaises(Exception) as ctx:
+                self._auth().thycotic_search('/v1/users')
+        self.assertEqual(str(ctx.exception), 'HTTP 502')
+
+    def test_entity_returns_none_for_html_error(self):
+        with mock.patch.object(thycotic.requests, 'get', return_value=_response(503, text='<html>')):
+            with self.assertLogs(level='INFO') as logs:
+                self.assertIsNone(self._auth().thycotic_entity('/v1/secrets/1'))
+        self.assertTrue(any('returned 503: HTTP 503' in line for line in logs.output))
+
+    def test_login_with_non_json_400_raises_readable_error(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        on_totp = mock.Mock()
+        with mock.patch.object(thycotic.requests, 'post', return_value=_response(400, text='<html>')):
+            with self.assertRaises(Exception) as ctx:
+                auth.authenticate('user', 'secret', on_totp=on_totp)
+        self.assertEqual(str(ctx.exception), 'HTTP 400')
+        on_totp.assert_not_called()
+
+    def test_login_still_asks_for_totp(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        responses = [
+            _response(400, {'error': 'Login failed: TOTP code required'}),
+            _response(200, {'access_token': 'abc', 'expires_in': 1200, 'refresh_token': 'r'}),
+        ]
+        with mock.patch.object(thycotic.requests, 'post', side_effect=responses) as post:
+            auth.authenticate('user', 'secret', on_totp=lambda: '123456')
+        self.assertEqual(auth.access_token, 'abc')
+        self.assertEqual(post.call_args.kwargs['data']['OTP'], '123456')
+
+    def test_refresh_with_non_json_error_raises_readable_error(self):
+        auth = self._auth()
+        auth.refresh_token = 'r'
+        with mock.patch.object(thycotic.requests, 'post', return_value=_response(500, text='oops')):
+            with self.assertRaises(Exception) as ctx:
+                auth.refresh_auth_token()
+        self.assertEqual(str(ctx.exception), 'HTTP 500')
+
+
+class TestSecretServerRateLimit(TestCase):
+    def _auth(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        auth.access_token = 'token'
+        auth.expires_in = 3600
+        auth.last_login = 10 ** 12
+        return auth
+
+    def _ok(self):
+        return _response(200, {'records': [{'id': 1}], 'hasNext': False})
+
+    def test_429_is_retried_with_retry_after(self):
+        responses = [_response(429, headers={'Retry-After': '12'}), self._ok()]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=responses), \
+                mock.patch.object(thycotic.time, 'sleep') as sleep:
+            with self.assertLogs(level='WARNING') as logs:
+                result = self._auth().thycotic_search('/v1/users')
+        self.assertEqual(result, [{'id': 1}])
+        sleep.assert_called_once_with(12)
+        self.assertTrue(any('rate limit (attempt 1/3), retrying in 12 seconds' in line for line in logs.output))
+
+    def test_backoff_grows_when_no_retry_after(self):
+        responses = [_response(429), _response(429), _response(429), self._ok()]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=responses), \
+                mock.patch.object(thycotic.time, 'sleep') as sleep:
+            with self.assertLogs(level='WARNING'):
+                self._auth().thycotic_search('/v1/users')
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 10, 20])
+
+    def test_backoff_wins_over_small_retry_after_and_large_hint_is_capped(self):
+        auth = self._auth()
+        self.assertEqual(auth._throttle_wait(_response(429, headers={'Retry-After': '1'}), 2), 10)
+        self.assertEqual(auth._throttle_wait(_response(429, headers={'Retry-After': '9999'}), 1), 300)
+        self.assertEqual(auth._throttle_wait(_response(429, headers={'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT'}), 1), 5)
+
+    def test_gives_up_after_max_retries(self):
+        responses = [_response(429, {'message': 'Too many requests'}) for _ in range(4)]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=responses) as get, \
+                mock.patch.object(thycotic.time, 'sleep') as sleep:
+            with self.assertLogs(level='WARNING'):
+                with self.assertRaises(Exception) as ctx:
+                    self._auth().thycotic_search('/v1/users')
+        self.assertEqual(get.call_count, 4)
+        self.assertEqual(sleep.call_count, 3)
+        self.assertEqual(str(ctx.exception), 'Too many requests')
+
+    def test_entity_and_attachment_fetch_also_retry(self):
+        auth = self._auth()
+        with mock.patch.object(thycotic.requests, 'get',
+                               side_effect=[_response(429), _response(200, {'id': 7})]), \
+                mock.patch.object(thycotic.time, 'sleep'):
+            with self.assertLogs(level='WARNING'):
+                self.assertEqual(auth.thycotic_entity('/v1/secrets/7'), {'id': 7})
+        with mock.patch.object(thycotic.requests, 'get',
+                               side_effect=[_response(429), _response(200, {})]) as get, \
+                mock.patch.object(thycotic.time, 'sleep'):
+            with self.assertLogs(level='WARNING'):
+                self.assertEqual(auth.thycotic_get('/v1/secrets/7/fields/file').status_code, 200)
+        self.assertTrue(get.call_args.kwargs['stream'])
+
+    def test_other_errors_are_not_retried(self):
+        with mock.patch.object(thycotic.requests, 'get', return_value=_response(403, {'message': 'denied'})) as get, \
+                mock.patch.object(thycotic.time, 'sleep') as sleep:
+            with self.assertRaises(Exception):
+                self._auth().thycotic_search('/v1/users')
+        get.assert_called_once()
+        sleep.assert_not_called()
+
+
+class TestSecretShareHelpers(TestCase):
+    def test_folder_path_accepts_int_or_str_ids(self):
+        folders = {10: {'folderPath': '\\Apps'}, '11': {'folderPath': '\\Ops'}}
+        path = thycotic.ThycoticMixin._secret_folder_path
+        self.assertEqual(path(folders, 10), '\\Apps')
+        self.assertEqual(path(folders, '10'), '\\Apps')
+        self.assertEqual(path(folders, '11'), '\\Ops')
+        self.assertEqual(path(folders, 404), '')
+        self.assertEqual(path(folders, None), '')
+        self.assertEqual(path(None, 10), '')
+        self.assertEqual(path({10: {'folderPath': None}}, 10), '')
+
+    def test_share_record_without_folder(self):
+        shares = [RecordShare('owner@example.com', True, True)]
+        record = thycotic.ThycoticMixin._secret_share_record('prod-db', '', shares)
+        self.assertEqual(record.title, 'prod-db')
+        self.assertFalse(record.folders)
+        self.assertIs(record.shares, shares)
+
+    def test_unnamed_secret_does_not_load_groups(self):
+        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}
+        auth = _secret_auth([secret], secret_permissions={100: [{'groupId': 9, 'secretAccessRoleName': 'Owner'}]})
+        list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertFalse(any(call.startswith('/v1/groups') for call in auth.calls))
