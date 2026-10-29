@@ -9,7 +9,7 @@ No tenant is contacted.
 from unittest import TestCase, mock
 
 from keepercommander.importer import imp_exp
-from keepercommander.importer.importer import Folder, Record, RecordShare
+from keepercommander.importer.importer import Folder, Record, RecordShare, normalize_folder_path
 from keepercommander.importer.thycotic import thycotic
 from keepercommander.importer.thycotic.thycotic import parse_thycotic_import_target
 
@@ -395,3 +395,329 @@ class TestSecretSharesRequireExistingUsers(TestCase):
             imp_exp.apply_secret_share_records(params, [self._record()])
         sync_down.assert_not_called()
         grant.assert_not_called()
+
+
+def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, failing_secrets=(),
+                 failing_endpoints=()):
+    """Mock auth for iter_secret_shares. failing_* raise instead of returning."""
+    auth = mock.Mock()
+    auth.calls = []
+    secret_permissions = secret_permissions or {}
+    folder_permissions = folder_permissions or {}
+
+    def search(endpoint):
+        auth.calls.append(endpoint)
+        for prefix in failing_endpoints:
+            if endpoint.startswith(prefix):
+                raise RuntimeError('boom')
+        if endpoint.startswith('/v1/secrets/lookup'):
+            return [{'id': secret['id']} for secret in secrets]
+        if endpoint.startswith('/v1/secret-permissions?filter.secretId='):
+            return secret_permissions.get(int(endpoint.rsplit('=', 1)[1]), [])
+        if endpoint.startswith('/v1/folder-permissions?filter.folderId='):
+            return folder_permissions.get(int(endpoint.rsplit('=', 1)[1]), [])
+        if endpoint.startswith('/v1/users'):
+            return _users()
+        if endpoint.startswith('/v1/groups'):
+            return []
+        raise AssertionError(endpoint)
+
+    def entity(endpoint):
+        auth.calls.append(endpoint)
+        secret_id = int(endpoint.rsplit('/', 1)[1])
+        if secret_id in failing_secrets:
+            raise RuntimeError('secret {0} unavailable'.format(secret_id))
+        for secret in secrets:
+            if secret['id'] == secret_id:
+                return dict(secret)
+        return None
+
+    auth.thycotic_search.side_effect = search
+    auth.thycotic_entity.side_effect = entity
+    return auth
+
+
+def _folder_map():
+    return {row['id']: row for row in _folders()}
+
+
+class TestExternalCallFailures(TestCase):
+    def test_failed_secret_fetch_skips_only_that_secret(self):
+        secrets = [
+            {'id': 100, 'name': 'broken', 'folderId': 10, 'inheritPermissions': False},
+            {'id': 101, 'name': 'ok', 'folderId': 10, 'inheritPermissions': False},
+        ]
+        auth = _secret_auth(secrets, secret_permissions={
+            101: [{'userId': 5, 'secretId': 101, 'secretAccessRoleName': 'Owner'}],
+        }, failing_secrets=(100,))
+        with self.assertLogs(level='WARNING') as logs:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual([record.title for record in records], ['ok'])
+        self.assertTrue(any('Secret 100 permissions skipped' in line for line in logs.output))
+        self.assertTrue(any('1 secret(s) were skipped' in line for line in logs.output))
+
+    def test_failed_secret_lookup_yields_nothing(self):
+        auth = _secret_auth([], failing_endpoints=('/v1/secrets/lookup',))
+        with self.assertLogs(level='WARNING'):
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(records, [])
+
+    def test_failed_secret_permissions_falls_back_to_folder(self):
+        secret = {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritPermissions': False}
+        auth = _secret_auth([secret], folder_permissions={
+            10: [{'userId': 6, 'secretAccessRoleName': 'View'}],
+        }, failing_endpoints=('/v1/secret-permissions',))
+        with self.assertLogs(level='WARNING'):
+            rows = thycotic.ThycoticMixin.permission_rows_for_secret(auth, _folder_map(), secret)
+        self.assertEqual(rows, [{'userId': 6, 'secretAccessRoleName': 'View'}])
+
+    def test_folder_permissions_are_fetched_once_per_folder(self):
+        auth = _secret_auth([], folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'Edit'}]})
+        cache = {}
+        for _ in range(3):
+            rows = thycotic.ThycoticMixin.folder_permission_rows(auth, _folder_map(), 10, cache)
+            self.assertEqual(len(rows), 1)
+        self.assertEqual(auth.calls.count('/v1/folder-permissions?filter.folderId=10'), 1)
+
+    def test_failed_folder_fetch_is_not_cached(self):
+        auth = mock.Mock()
+        auth.thycotic_search.side_effect = [
+            RuntimeError('timeout'),
+            [{'userId': 5, 'secretAccessRoleName': 'Edit'}],
+        ]
+        folders = {10: {'id': 10, 'parentFolderId': 0}}
+        cache = {}
+        self.assertEqual(thycotic.ThycoticMixin.folder_permission_rows(auth, folders, 10, cache), [])
+        self.assertNotIn(10, cache)
+        rows = thycotic.ThycoticMixin.folder_permission_rows(auth, folders, 10, cache)
+        self.assertEqual(rows, [{'userId': 5, 'secretAccessRoleName': 'Edit'}])
+        self.assertIn(10, cache)
+
+    def test_failed_user_detail_fetch_skips_user(self):
+        auth = mock.Mock()
+        auth.thycotic_search.return_value = [
+            {'id': 5, 'userName': 'no-email'},
+            {'id': 6, 'userName': 'view', 'emailAddress': 'view@example.com'},
+        ]
+        auth.thycotic_entity.side_effect = RuntimeError('403')
+        with self.assertLogs(level='WARNING'):
+            users = thycotic.ThycoticImporter()._prepare_thycotic_users(auth)
+        self.assertEqual([user['email'] for user in users], ['view@example.com'])
+
+    def test_provisioned_emails_keep_user_list_when_detail_load_fails(self):
+        auth = FakeAuth([('/v1/users', _users())])
+        with mock.patch.object(thycotic.ThycoticImporter, '_prepare_thycotic_users',
+                               side_effect=RuntimeError('offline')):
+            emails = thycotic.ThycoticMixin.provisioned_emails(auth)
+        self.assertEqual(emails[5], 'owner@example.com')
+        self.assertEqual(emails[6], 'view@example.com')
+
+    def test_user_fetch_failure_does_not_create_users(self):
+        importer = thycotic.ThycoticImporter()
+        with mock.patch.object(importer, '_prepare_thycotic_users', side_effect=RuntimeError('offline')), \
+                mock.patch.object(importer, '_create_enterprise_users') as create:
+            with self.assertLogs(level='WARNING'):
+                importer._migrate_thycotic_users(mock.Mock(), mock.Mock())
+        create.assert_not_called()
+
+
+class TestCreateEnterpriseUsers(TestCase):
+    def _run(self, users, existing=(), created=True, load_error=''):
+        importer = thycotic.ThycoticImporter()
+        with mock.patch.object(importer, '_load_existing_keeper_users',
+                               return_value=(list(existing), load_error)), \
+                mock.patch.object(importer, '_create_keeper_user',
+                                  return_value='uid' if created else None) as create:
+            report = importer._create_enterprise_users(mock.Mock(), users)
+        return report, create
+
+    def _flags(self, report):
+        return [(row['email'], row['flag']) for row in report['users']]
+
+    def test_existing_user_matches_case_insensitively(self):
+        report, create = self._run(
+            [{'email': 'Owner@Example.com', 'username': 'owner'}],
+            existing=[{'email': 'owner@example.com', 'status': 'invited'}])
+        self.assertEqual(self._flags(report), [('Owner@Example.com', 'existing')])
+        self.assertEqual(report['users'][0]['status'], 'invited')
+        create.assert_not_called()
+
+    def test_duplicate_emails_are_created_once(self):
+        report, create = self._run([
+            {'email': 'new@example.com', 'name': 'New'},
+            {'email': 'NEW@example.com', 'name': 'New again'},
+        ])
+        self.assertEqual(self._flags(report), [('new@example.com', 'created')])
+        create.assert_called_once()
+
+    def test_invalid_email_is_skipped(self):
+        report, create = self._run([{'email': 'not-an-email', 'username': 'bad'}, {'email': ''}])
+        self.assertEqual([row['flag'] for row in report['users']], ['skipped', 'skipped'])
+        create.assert_not_called()
+
+    def test_failed_create_is_reported(self):
+        report, _create = self._run([{'email': 'new@example.com'}], created=False)
+        self.assertEqual(self._flags(report), [('new@example.com', 'failed')])
+        self.assertEqual(report['users'][0]['reason'], 'user was not created')
+
+    def test_name_falls_back_to_username_then_email(self):
+        _report, create = self._run([
+            {'email': 'a@example.com', 'username': 'alpha'},
+            {'email': 'b@example.com'},
+        ])
+        names = [call.args[2] for call in create.call_args_list]
+        self.assertEqual(names, ['alpha', 'b@example.com'])
+
+    def test_non_dict_entries_are_ignored(self):
+        report, create = self._run([None, 'x', 42, {'email': 'ok@example.com'}])
+        self.assertEqual(self._flags(report), [('ok@example.com', 'created')])
+        create.assert_called_once()
+
+    def test_failed_keeper_user_load_still_creates(self):
+        importer = thycotic.ThycoticImporter()
+        params = mock.Mock()
+        params.enterprise = None
+        with mock.patch.object(thycotic.api, 'query_enterprise', side_effect=RuntimeError('offline')), \
+                mock.patch.object(importer, '_create_keeper_user', return_value='uid') as create:
+            with self.assertLogs(level='WARNING'):
+                report = importer._create_enterprise_users(params, [{'email': 'new@example.com'}])
+        self.assertEqual(report['error'], 'Failed to load existing Keeper users')
+        self.assertEqual(self._flags(report), [('new@example.com', 'created')])
+        create.assert_called_once()
+
+    def test_create_keeper_user_swallows_command_errors(self):
+        with mock.patch('keepercommander.commands.enterprise_create_user.CreateEnterpriseUserCommand') as command:
+            command.return_value.execute.side_effect = RuntimeError('license full')
+            with self.assertLogs(level='WARNING'):
+                result = thycotic.ThycoticImporter()._create_keeper_user(mock.Mock(), 'a@example.com', 'A')
+        self.assertIsNone(result)
+
+
+class TestInvalidPermissionData(TestCase):
+    emails = {5: 'owner@example.com', 6: 'view@example.com'}
+
+    def _shares(self, rows, groups=None):
+        shares = thycotic.ThycoticMixin.shares_from_secret_permissions(rows, self.emails, groups)
+        return {share.name: (share.can_edit, share.can_share) for share in shares}
+
+    def test_non_list_rows_give_no_shares(self):
+        for rows in (None, {}, 'rows', 5):
+            self.assertEqual(self._shares(rows), {})
+
+    def test_non_dict_rows_and_unknown_roles_are_skipped(self):
+        self.assertEqual(self._shares([
+            None, 'row', 7,
+            {'userId': 5, 'secretAccessRoleName': 'Approver'},
+            {'userId': 5, 'secretAccessRoleName': None},
+            {'userId': 6, 'secretAccessRoleName': ' view '},
+        ]), {'view@example.com': (False, False)})
+
+    def test_user_listed_twice_keeps_higher_role(self):
+        self.assertEqual(self._shares([
+            {'userId': 5, 'secretAccessRoleName': 'View'},
+            {'userId': 5, 'secretAccessRoleName': 'Owner'},
+            {'userId': 5, 'secretAccessRoleName': 'Edit'},
+        ]), {'owner@example.com': (True, True)})
+
+    def test_unknown_user_is_dropped(self):
+        self.assertEqual(self._shares([{'userId': 99, 'secretAccessRoleName': 'Owner'}]), {})
+
+    def test_string_user_id_matches(self):
+        self.assertEqual(self._shares([{'userId': '6', 'secretAccessRoleName': 'Edit'}]),
+                         {'view@example.com': (True, False)})
+
+    def test_row_without_user_id_uses_email_in_row(self):
+        self.assertEqual(self._shares([
+            {'userId': 0, 'userName': ' ext@example.com ', 'secretAccessRoleName': 'Edit'},
+        ]), {'ext@example.com': (True, False)})
+
+    def test_group_row_expands_to_members(self):
+        groups = {9: {'name': 'Ops', 'users': [5, 6, 99]}}
+        self.assertEqual(self._shares([{'groupId': '9', 'secretAccessRoleName': 'View'}], groups), {
+            'owner@example.com': (False, False),
+            'view@example.com': (False, False),
+        })
+
+    def test_group_row_without_lookup_is_dropped(self):
+        self.assertEqual(self._shares([{'groupId': 9, 'secretAccessRoleName': 'Owner'}]), {})
+
+    def test_extract_user_email_edge_cases(self):
+        extract = thycotic.ThycoticImporter._extract_user_email
+        self.assertEqual(extract(None), '')
+        self.assertEqual(extract(['a@example.com']), '')
+        self.assertEqual(extract({'emailAddress': '  ', 'emailaddress': 'b@example.com'}), 'b@example.com')
+        self.assertEqual(extract({'emailAddress': 5}), '')
+        self.assertEqual(extract({'emailAddress': ' a@example.com '}), 'a@example.com')
+
+    def test_application_accounts_are_skipped(self):
+        auth = mock.Mock()
+        auth.thycotic_search.return_value = [
+            {'id': 5, 'emailAddress': 'app@example.com', 'isApplicationAccount': True},
+            None,
+            {'id': 6, 'userName': 'detail'},
+        ]
+        auth.thycotic_entity.return_value = {'isApplicationAccount': True, 'emailAddress': 'x@example.com'}
+        self.assertEqual(thycotic.ThycoticImporter()._prepare_thycotic_users(auth), [])
+
+
+class TestPermissionEdgeCases(TestCase):
+    def test_folder_walk_stops_on_parent_cycle(self):
+        auth = mock.Mock()
+        auth.thycotic_search.return_value = []
+        folders = {10: {'id': 10, 'parentFolderId': 11}, 11: {'id': 11, 'parentFolderId': 10}}
+        self.assertEqual(thycotic.ThycoticMixin.folder_permission_rows(auth, folders, 10), [])
+        self.assertEqual(auth.thycotic_search.call_count, 2)
+
+    def test_folder_walk_uses_nearest_parent_with_rows(self):
+        auth = _secret_auth([], folder_permissions={1: [{'userId': 5, 'secretAccessRoleName': 'Owner'}]})
+        rows = thycotic.ThycoticMixin.folder_permission_rows(auth, _folder_map(), 11)
+        self.assertEqual(rows, [{'userId': 5, 'secretAccessRoleName': 'Owner'}])
+
+    def test_secret_without_folder_or_id_gives_no_rows(self):
+        auth = _secret_auth([])
+        self.assertEqual(thycotic.ThycoticMixin.permission_rows_for_secret(auth, {}, {}), [])
+        self.assertEqual(thycotic.ThycoticMixin.permission_rows_for_secret(auth, {}, None), [])
+        self.assertEqual(auth.calls, [])
+
+    def test_secret_returned_as_non_dict_is_ignored(self):
+        auth = _secret_auth([{'id': 100, 'name': 'x', 'folderId': 10}])
+        auth.thycotic_entity.side_effect = None
+        auth.thycotic_entity.return_value = ['not', 'a', 'secret']
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(records, [])
+
+    def test_secret_without_name_is_not_yielded(self):
+        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}
+        auth = _secret_auth([secret], secret_permissions={
+            100: [{'userId': 5, 'secretAccessRoleName': 'Owner'}],
+        })
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(records, [])
+
+    def test_secret_in_unknown_folder_has_no_folder_path(self):
+        secret = {'id': 100, 'name': 'loose', 'folderId': 404, 'inheritPermissions': False}
+        auth = _secret_auth([secret], secret_permissions={
+            100: [{'userId': 5, 'secretAccessRoleName': 'Edit'}],
+        })
+        records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(len(records), 1)
+        self.assertFalse(records[0].folders)
+
+    def test_folder_paths_match_across_separators(self):
+        normalize = normalize_folder_path
+        self.assertEqual(normalize('\\Apps\\Child'), normalize('Apps/Child/'))
+        self.assertEqual(normalize(' /APPS/child '), 'apps\\child')
+        self.assertEqual(normalize(None), '')
+        self.assertEqual(normalize('\\'), '')
+
+    def test_url_from_tenant_edge_cases(self):
+        url = thycotic.ThycoticMixin.url_from_tenant
+        self.assertEqual(url(None), '')
+        self.assertEqual(url('   '), '')
+        self.assertEqual(url('acme/'), 'https://acme.secretservercloud.com/')
+        self.assertEqual(url('https://ss.example.com/'), 'https://ss.example.com')
+        self.assertEqual(url('ss.example.com'), 'https://ss.example.com/')
+
+    def test_import_target_without_host_is_rejected(self):
+        self.assertIsNone(parse_thycotic_import_target('user@'))
+        self.assertIsNone(parse_thycotic_import_target('user@   '))
