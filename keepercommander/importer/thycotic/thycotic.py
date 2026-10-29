@@ -55,9 +55,14 @@ SECRET_ACCESS_PARAMS = (
 
 SECRET_ACCESS_PARAM_NAMES = frozenset(name for name, _ in SECRET_ACCESS_PARAMS)
 
+# SSH key validation limits (in bytes when decoded)
+SSH_KEY_MIN_LENGTH = 30
+SSH_KEY_MAX_LENGTH = 5000
+
 
 def _replace_query(endpoint, params):
     # type: (str, List[Tuple[str, str]]) -> str
+    """Replace query string in endpoint with provided params, using proper URL encoding."""
     parts = urlparse(endpoint)
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
@@ -898,7 +903,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                                     key_text = rs.content.decode()
                                 except:
                                     key_text = ''
-                                is_key = 30 < len(key_text) < 5000
+                                is_key = SSH_KEY_MIN_LENGTH < len(key_text) < SSH_KEY_MAX_LENGTH
                                 if is_key:
                                     item['itemValue'] = key_text
                                 else:
