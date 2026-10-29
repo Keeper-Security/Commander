@@ -2022,6 +2022,9 @@ def _nsf_folder_share_data(params, folder_uid, *, include_uids=False):
         abbrev = _nsf_role_abbrev(a)
         auid = a.get('accessor_uid') or ''
 
+        if a.get('denied_access'):
+            continue
+
         if at == 'AT_OWNER':
             if not owner:
                 email = _resolve_nsf_user_email(params, a)

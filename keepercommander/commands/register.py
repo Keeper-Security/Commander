@@ -1509,6 +1509,8 @@ class ShareReportCommand(Command):
                 if not folder_result.get('success'):
                     continue
                 for accessor in folder_result.get('accessors', []):
+                    if accessor.get('denied_access'):
+                        continue
                     if ShareReportCommand._is_nested_folder_owner(folder_info, accessor):
                         continue
                     permissions = ShareReportCommand._get_nested_folder_permission_label(accessor)

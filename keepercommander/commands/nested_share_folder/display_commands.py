@@ -460,7 +460,10 @@ class NestedShareGetCommand(Command):
             for fr in result.get('results', []):
                 if not fr.get('success'):
                     continue
-                accessors = fr.get('accessors', [])
+                accessors = [
+                    a for a in fr.get('accessors', [])
+                    if not a.get('denied_access')
+                ]
                 if not accessors:
                     continue
                 user_perms = []
@@ -541,7 +544,10 @@ class NestedShareGetCommand(Command):
                     logging.warning("  Access error: %s — %s",
                                     err.get('status'), err.get('message'))
                     continue
-                accessors = fr.get('accessors', [])
+                accessors = [
+                    a for a in fr.get('accessors', [])
+                    if not a.get('denied_access')
+                ]
                 if not accessors:
                     continue
 
