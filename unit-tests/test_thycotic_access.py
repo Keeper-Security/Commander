@@ -522,10 +522,10 @@ class TestExternalCallFailures(TestCase):
 
 
 class TestCreateEnterpriseUsers(TestCase):
-    def _run(self, users, existing=(), created=True, load_error=''):
+    def _run(self, users, existing=(), created=True):
         importer = thycotic.ThycoticImporter()
         with mock.patch.object(importer, '_load_existing_keeper_users',
-                               return_value=(list(existing), load_error)), \
+                               return_value=list(existing)), \
                 mock.patch.object(importer, '_create_keeper_user',
                                   return_value='uid' if created else None) as create:
             report = importer._create_enterprise_users(mock.Mock(), users)
@@ -581,7 +581,6 @@ class TestCreateEnterpriseUsers(TestCase):
                 mock.patch.object(importer, '_create_keeper_user', return_value='uid') as create:
             with self.assertLogs(level='WARNING'):
                 report = importer._create_enterprise_users(params, [{'email': 'new@example.com'}])
-        self.assertEqual(report['error'], 'Failed to load existing Keeper users')
         self.assertEqual(self._flags(report), [('new@example.com', 'created')])
         create.assert_called_once()
 
