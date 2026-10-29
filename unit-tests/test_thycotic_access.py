@@ -832,3 +832,41 @@ class TestThycoticUserReport(TestCase):
         with self.assertLogs(level='INFO') as logs:
             thycotic.ThycoticImporter()._print_thycotic_user_report({})
         self.assertIn('created 0, existing 0, skipped 0, failed 0', '\n'.join(logs.output))
+
+
+class TestCustomSecretRoles(TestCase):
+    def _secret(self):
+        return {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritPermissions': False}
+
+    def test_custom_role_is_warned_and_known_roles_still_shared(self):
+        auth = _secret_auth([self._secret()], secret_permissions={100: [
+            {'userId': 5, 'secretAccessRoleName': 'Owner'},
+            {'userId': 6, 'secretAccessRoleName': 'Auditor'},
+            {'groupId': 9, 'secretAccessRoleName': 'Rotator'},
+        ]})
+        with self.assertLogs(level='WARNING') as logs:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual([share.name for share in records[0].shares], ['owner@example.com'])
+        output = '\n'.join(logs.output)
+        self.assertIn('Secret "prod-db" (100): role(s) Auditor, Rotator cannot be mapped', output)
+        self.assertIn('1 secret(s) have custom roles that were not shared', output)
+
+    def test_secret_with_only_custom_roles_is_warned_and_not_yielded(self):
+        auth = _secret_auth([self._secret()], secret_permissions={100: [
+            {'userId': 5, 'secretAccessRoleName': 'Auditor'},
+            {'userId': 6},
+        ]})
+        with self.assertLogs(level='WARNING') as logs:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(records, [])
+        self.assertIn('role(s) (unnamed), Auditor cannot be mapped', '\n'.join(logs.output))
+
+    def test_standard_roles_log_no_custom_role_warning(self):
+        auth = _secret_auth([self._secret()], secret_permissions={100: [
+            {'userId': 5, 'secretAccessRoleName': 'Owner'},
+            {'userId': 6, 'secretAccessRoleName': 'list'},
+        ]})
+        with mock.patch.object(thycotic.logging, 'warning') as warning:
+            records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        self.assertEqual(len(records[0].shares), 2)
+        warning.assert_not_called()

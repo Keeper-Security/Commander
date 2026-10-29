@@ -625,6 +625,7 @@ class ThycoticMixin:
         seen = 0
         unmapped = 0
         failed = 0
+        custom_role_secrets = 0
         folder_cache = {}
         logging.info('Loading secret permissions for %d secrets', len(lookup))
         for row in lookup:
@@ -641,6 +642,17 @@ class ThycoticMixin:
             if secret is None:
                 continue
             seen += 1
+            custom_roles = sorted({
+                (item.get('secretAccessRoleName') or '').strip() or '(unnamed)'
+                for item in perm_rows or []
+                if isinstance(item, dict) and ThycoticMixin._secret_role_flags(item.get('secretAccessRoleName')) is None
+            })
+            if custom_roles:
+                custom_role_secrets += 1
+                logging.warning(
+                    'Secret "%s" (%s): role(s) %s cannot be mapped to Keeper permissions; '
+                    'those users and groups were not shared, share them manually',
+                    secret.get('name') or row.get('name') or '', secret_id, ', '.join(custom_roles))
             if groups is None and any(isinstance(item, dict) and item.get('groupId') for item in perm_rows or []):
                 groups = ThycoticMixin.get_group_lookup(auth) or {}
             shares = ThycoticMixin.shares_from_secret_permissions(perm_rows, emails, groups)
@@ -670,6 +682,9 @@ class ThycoticMixin:
         logging.info('Loaded secret permissions for %d secrets', written)
         if failed:
             logging.warning('%d secret(s) were skipped because their permissions could not be fetched.', failed)
+        if custom_role_secrets:
+            logging.warning('%d secret(s) have custom roles that were not shared; see the warnings above.',
+                            custom_role_secrets)
         if written == 0:
             logging.warning(
                 'No secret permission lists downloaded (%d secrets, %d had permission rows with no email).',
