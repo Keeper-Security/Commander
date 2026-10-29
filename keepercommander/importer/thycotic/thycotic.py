@@ -329,6 +329,8 @@ class ThycoticMixin:
         Returns:
             List of secret IDs from selected folders with includeRestricted=true
         """
+        if query is not None:
+            logging.warning('Legacy query parameter provided but is not used; using folder_ids instead')
         ids = [folder_id for folder_id in (folder_ids or ()) if folder_id is not None]
         if not ids:
             return []
@@ -800,7 +802,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         skipped_fields = []
         for secret_id in secrets_ids:
             secret, error = auth.thycotic_secret(f'/v1/secrets/{secret_id}')
-            if not secret:
+            if secret is None:
                 status, message = error or ('N/A', 'Empty response')
                 skipped_secrets.append({'ID': secret_id, 'Status': status, 'Message': message})
                 continue
@@ -1142,6 +1144,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         print(' Done', flush=True)
         ThycoticImporter.print_skipped(skipped_secrets, skipped_fields)
 
+
     @staticmethod
     def print_skipped(skipped_secrets, skipped_fields):  # type: (List[dict], List[dict]) -> None
         """Print the secrets and fields that could not be read, like the CyberArk import does."""
@@ -1307,17 +1310,22 @@ class ThycoticAuth:
         Returns (secret, None) on success, or (None, (status, message)) describing
         the last failed attempt.
         """
+        secret = None
+        first_error = None
         try:
-            secret, error = self._read_entity(endpoint)
+            secret, first_error = self._read_entity(endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
-            secret = None
+            first_error = ('N/A', str(e))
         if secret is not None:
             return secret, None
         checkout = with_secret_access_params(endpoint)
         logging.info('Reading "%s" with checkout parameters', checkout)
         try:
-            return self._read_entity(checkout)
+            secret, error = self._read_entity(checkout)
+            if secret is not None:
+                return secret, None
+            return None, error or first_error
         except Exception as e:
             logging.info('"%s" error: %s', checkout, str(e))
             return None, ('N/A', str(e))
@@ -1367,7 +1375,10 @@ class ThycoticAuth:
         return rs
 
     def thycotic_secret_get(self, endpoint):    # type: (str) -> requests.Response
-        """Read a secret field, adding checkout parameters only if the plain read fails."""
+        """Read a secret field, adding checkout parameters only if the plain read fails.
+
+        This handles restricted secrets that require checkout parameters.
+        """
         try:
             rs = self.thycotic_get(endpoint)
             if rs.status_code == 200:
@@ -1407,10 +1418,10 @@ class ThycoticAttachment(Attachment):
                     self._file_content = rs.content
                 else:
                     status, message = ThycoticAuth.response_error(rs)
-                    logging.warning('Attachment "%s" (%s) was not imported: HTTP %s %s',
-                                    self.name, self.endpoint, status, message)
+                    logging.error('Attachment "%s" (%s) was not imported: HTTP %s %s',
+                                  self.name, self.endpoint, status, message)
         except requests.exceptions.RequestException as e:
-            logging.warning('Attachment "%s" (%s) was not imported: %s', self.name, self.endpoint, str(e))
+            logging.error('Attachment "%s" (%s) was not imported: %s', self.name, self.endpoint, str(e))
 
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
