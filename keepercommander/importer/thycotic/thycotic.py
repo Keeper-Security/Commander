@@ -317,6 +317,24 @@ class ThycoticMixin:
         return seen
 
     @staticmethod
+    def get_secret_ids(auth, folder_ids, query=None):
+        # type: (ThycoticAuth, Optional[Iterable], Optional[str]) -> List
+        """Bridge function to get secret IDs for selected folders with restricted secret support.
+
+        Args:
+            auth: Thycotic authentication object
+            folder_ids: Folder IDs to query
+            query: Legacy parameter (ignored; use build_secrets_lookup_query instead)
+
+        Returns:
+            List of secret IDs from selected folders with includeRestricted=true
+        """
+        ids = [folder_id for folder_id in (folder_ids or ()) if folder_id is not None]
+        if not ids:
+            return []
+        return lookup_secret_ids(auth.thycotic_search, ids, include_restricted=True)
+
+    @staticmethod
     def _construct_folders(folder_rs):
         # type: (Any) -> Dict[int, Dict]
         if not isinstance(folder_rs, list):
@@ -750,6 +768,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 matched_folder_ids = [x['id'] for x in folders.values() if x['folderName'].lower() == filter_folder.lower()]
                 if len(matched_folder_ids) == 0:
                     logging.warning('Folder \"%s\" not found', filter_folder)
+                    return  # Fail closed: don't import if filter folder not found
         elif picked_folder_ids is not None:
             # Use interactively selected folders
             matched_folder_ids = picked_folder_ids
