@@ -33,6 +33,21 @@ from ...utils import parse_totp_uri
 
 _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
 
+def parse_auth(kdbx_password,kdbx_key_file): # type: (None / str),(None / str) -> (None / str),(None / str)
+    # Returns None for no auth, string for auth       
+    if kdbx_password is None:
+        kdbx_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
+    elif kdbx_password == 'none':
+        kdbx_password = None
+        
+    if kdbx_key_file is None:
+        kdbx_key_file = input('...' + 'Path to Key file'.rjust(20) + ': ')
+    elif kdbx_key_file == 'none':
+        kdbx_key_file = None
+    if kdbx_key_file:
+        kdbx_key_file = os.path.expanduser(kdbx_key_file.strip(" \"'")) or None
+    return kdbx_password, kdbx_key_file
+
 
 class XmlUtils(object):
     @staticmethod
@@ -50,7 +65,6 @@ class XmlUtils(object):
         if not value:
             return ''
         return ''.join((char for char in value if XmlUtils.is_valid_xml_char(char)))
-
 
 class KeepassImporter(BaseFileImporter):
 
@@ -73,13 +87,8 @@ class KeepassImporter(BaseFileImporter):
         return path
 
     def do_import(self, filename, **kwargs):
-        password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
-        print('Press Enter if your Keepass file is not protected with a key file')
-        keyfile = input('...' + 'Path to Key file'.rjust(20) + ': ')
-        if keyfile:
-            keyfile = os.path.expanduser(keyfile.strip("\"'"))
-        else:
-            keyfile = None
+        password,keyfile = parse_auth(kwargs.get('kdbx_password'), kwargs.get('kdbx_key_file'))
+        
         try:
             with PyKeePass(filename, password=password, keyfile=keyfile) as kdb:
                 root = kdb.root_group
@@ -303,14 +312,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
         return entry
 
     def do_export(self, filename, records, file_password=None, kbdx_key_file=None, **kwargs):
-        password = file_password or getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
-        if not kbdx_key_file:
-            print('Press Enter if your Keepass file is not protected with a key file')
-        keyfile = kbdx_key_file or input('...' + 'Path to Key file'.rjust(20) + ': ') or None
-        if keyfile:
-            keyfile = os.path.expanduser(keyfile.strip("\"'"))
-        else:
-            keyfile = None
+        password, keyfile = parse_auth(file_password, kbdx_key_file)
 
         sfs = []  # type: list[SharedFolder]
         rs = []   # type: list[Record]
