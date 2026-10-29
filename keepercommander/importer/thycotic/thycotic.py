@@ -934,6 +934,17 @@ def parse_thycotic_import_target(filename):
         return None
     return username, host
 
+# Team create and member-add requests carry encrypted keys, so each execute payload stays small.
+_TEAM_BATCH_SIZE = 25
+
+@dataclass
+class TeamMemberCounts:
+    """Import summary of how members were applied to one Keeper team."""
+    added: int = 0
+    queued: int = 0
+    already: int = 0
+    missing: int = 0
+    failed: int = 0
 
 class ThycoticImporter(BaseImporter, ThycoticMixin):
     # Same end-of-import terminal summary CyberArk prints (Import finished, skipped rows).
