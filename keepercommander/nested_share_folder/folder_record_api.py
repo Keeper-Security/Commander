@@ -13,7 +13,10 @@ from .common import (
     encrypt_record_key_for_folder,
 )
 from .folder_api import resolve_folder_identifier
-from ..commands.nested_share_folder.helpers import normalize_nsf_user_message
+from ..commands.nested_share_folder.helpers import (
+    NSF_FOLDER_RECORD_BATCH_SIZE,
+    normalize_nsf_user_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +29,9 @@ def folder_record_update_v3(params, folder_uid, add_records=None,
                              update_records=None, remove_records=None):
     for label, lst in [('add', add_records), ('update', update_records),
                        ('remove', remove_records)]:
-        if lst and len(lst) > 500:
-            raise ValueError(f"Maximum 500 records to {label}")
+        if lst and len(lst) > NSF_FOLDER_RECORD_BATCH_SIZE:
+            raise ValueError(
+                f"Maximum {NSF_FOLDER_RECORD_BATCH_SIZE} records to {label}")
     if not any([add_records, update_records, remove_records]):
         raise ValueError("At least one operation required")
     rq = folder_pb2.FolderRecordUpdateRequest()
