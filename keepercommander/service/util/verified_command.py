@@ -137,16 +137,18 @@ class Verifycommand:
 
     @staticmethod
     def validate_nsf_convert_command(command_tokens, request_temp_dir=None):
-        """Require explicit force acknowledgement for permanent conversion in Service Mode."""
-        if not command_tokens or command_tokens[0].lower() != 'nsf-convert':
+        """Require force acknowledgement for permanent NSF conversions in Service Mode."""
+        if not command_tokens or command_tokens[0].lower() not in (
+                'nsf-convert-record', 'nsf-convert-folder'):
             return None
 
+        command_name = command_tokens[0].lower()
         for token in command_tokens[1:]:
             if token == '--':
                 break
             if token in ('-f', '--force'):
                 return None
-        return 'nsf-convert requires -f/--force through Service Mode'
+        return f'{command_name} requires -f/--force through Service Mode'
 
     @staticmethod
     def _record_reference_candidates(tok):

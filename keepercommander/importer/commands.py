@@ -24,6 +24,7 @@ from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
 from ..error import CommandError
+from ..commands.nested_share_folder.helpers import MAX_NESTED_SHARE_FOLDER_DEPTH
 from ..params import KeeperParams
 from ..proto import record_pb2
 
@@ -94,7 +95,8 @@ import_parser.add_argument('--nsf', dest='use_nsf', action='store_true',
                            help='import folders and records into Nested Share Folders '
                                 '(json, csv, keepass, cyberark, cyberark_portal, …)')
 import_parser.add_argument('--folder-depth', dest='folder_depth', action='store', type=_positive_int_arg,
-                           help='NSF only: maximum resulting folder depth (default 5); folders beyond this depth '
+                           help=f'NSF only: maximum resulting folder depth '
+                                f'(default {MAX_NESTED_SHARE_FOLDER_DEPTH}); folders beyond this depth '
                                 'are attached directly at the deepest allowed level, keeping their own name and '
                                 'records - names are never merged or renamed')
 import_parser.add_argument('--output', dest='output', action='store',

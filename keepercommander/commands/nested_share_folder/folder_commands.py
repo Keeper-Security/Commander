@@ -23,6 +23,7 @@ from ...error import CommandError
 from ... import nested_share_folder as _nsf
 from ... import vault_extensions
 from .helpers import (
+    NSF_FOLDER_REMOVE_BATCH_SIZE,
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
     validate_rotate_on_expiration,
@@ -572,8 +573,10 @@ class NestedShareFolderRemoveCommand(Command):
             check_folder_delete_permission(params, folder_uid, 'nsf-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
-        if len(removals) > 100:
-            raise CommandError('nsf-rmdir', 'Maximum 100 folders per invocation')
+        if len(removals) > NSF_FOLDER_REMOVE_BATCH_SIZE:
+            raise CommandError(
+                'nsf-rmdir',
+                f'Maximum {NSF_FOLDER_REMOVE_BATCH_SIZE} folders per invocation')
 
         if operation == 'delete-permanent' and not force and not dry_run:
             print(

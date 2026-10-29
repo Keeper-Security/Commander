@@ -27,6 +27,7 @@ from ...enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ...error import CommandError
 from ... import nested_share_folder as _nsf, vault, vault_extensions
 from .helpers import (
+    NSF_RECORD_REMOVE_BATCH_SIZE,
     resolve_folder_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
     ensure_nested_share_record, ensure_nested_share_folder,
@@ -644,8 +645,10 @@ class NestedShareRecordRemoveCommand(Command):
                                        identifier=folder_arg)
 
         removals = self._build_removals(params, record_args, folder_uid, operation)
-        if len(removals) > 500:
-            raise CommandError('nsf-rm', 'Maximum 500 records per invocation')
+        if len(removals) > NSF_RECORD_REMOVE_BATCH_SIZE:
+            raise CommandError(
+                'nsf-rm',
+                f'Maximum {NSF_RECORD_REMOVE_BATCH_SIZE} records per invocation')
 
         with command_error_handler('nsf-rm'):
             self._preview_and_confirm(params, removals, operation, force, dry_run)

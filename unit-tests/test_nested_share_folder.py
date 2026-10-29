@@ -2614,6 +2614,7 @@ class TestCommandRegistration(TestCase):
             'nsf-list', 'nsf-share-folder', 'nsf-record-details',
             'nsf-share-record', 'nsf-record-permission', 'nsf-transfer-record',
             'nsf-ln', 'nsf-rm', 'nsf-rmdir', 'nsf-shortcut', 'nsf-get',
+            'nsf-convert-record', 'nsf-convert-folder',
         ]
         for name in expected:
             self.assertIn(name, commands)

@@ -61,16 +61,27 @@ class TestServiceModeCommandPolicy(TestCase):
         check = Verifycommand.validate_service_mode_restrictions
         self.assertIn(
             'requires -f/--force',
-            check(_tokens('nsf-convert RECORD_UID')),
+            check(_tokens('nsf-convert-record RECORD_UID')),
         )
-        self.assertIsNone(check(_tokens('nsf-convert RECORD_UID --force')))
-        self.assertIsNone(check(_tokens('nsf-convert RECORD_UID -f')))
-        self.assertIsNotNone(check(_tokens('nsf-convert -- RECORD_UID -f')))
+        self.assertIsNone(check(_tokens('nsf-convert-record RECORD_UID --force')))
+        self.assertIsNone(check(_tokens('nsf-convert-record RECORD_UID -f')))
+        self.assertIsNotNone(check(_tokens('nsf-convert-record -- RECORD_UID -f')))
         self.assertIn(
             'requires -f/--force',
             Verifycommand.validate_nsf_convert_command(
-                _tokens('nsf-convert -- RECORD_UID -f')),
+                _tokens('nsf-convert-record -- RECORD_UID -f')),
         )
+
+    def test_nsf_convert_folder_requires_force_in_service_mode(self):
+        check = Verifycommand.validate_service_mode_restrictions
+        self.assertIn(
+            'requires -f/--force',
+            check(_tokens('nsf-convert-folder "My Folder"')),
+        )
+        self.assertIsNone(
+            check(_tokens('nsf-convert-folder "My Folder" --force')))
+        self.assertIsNone(
+            check(_tokens('nsf-convert-folder "My Folder" -f')))
 
     def test_attachment_commands_blocked_for_remote_api(self):
         check = Verifycommand.validate_service_mode_restrictions

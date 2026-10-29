@@ -16,6 +16,7 @@ from typing import List, Optional
 
 from .record_loader import iter_accessible_record_uids, load_pam_record
 from ... import api, vault
+from ..nested_share_folder.helpers import NSF_FOLDER_BATCH_SIZE
 from ...error import CommandError
 
 
@@ -395,9 +396,6 @@ def create_nsf_subfolder(params, folder_name: str, parent_uid: str = '',
     return folder_uid
 
 
-_NSF_FOLDER_BATCH_LIMIT = 100
-
-
 def create_nsf_folders_batch(params, folder_specs: List[dict], *,
                              sync: bool = True,
                              command: str = 'pam') -> List[dict]:
@@ -414,8 +412,8 @@ def create_nsf_folders_batch(params, folder_specs: List[dict], *,
         return []
 
     results: List[dict] = []
-    for start in range(0, len(folder_specs), _NSF_FOLDER_BATCH_LIMIT):
-        chunk = folder_specs[start:start + _NSF_FOLDER_BATCH_LIMIT]
+    for start in range(0, len(folder_specs), NSF_FOLDER_BATCH_SIZE):
+        chunk = folder_specs[start:start + NSF_FOLDER_BATCH_SIZE]
         try:
             chunk_results = create_folders_batch_v3(params, chunk)
         except Exception as exc:

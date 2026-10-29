@@ -117,7 +117,7 @@ COMMAND_CATEGORIES = {
         'nsf-share-folder', 'nsf-record-details', 'nsf-share-record',
         'nsf-record-permission', 'nsf-transfer-record',
         'nsf-ln', 'nsf-rm', 'nsf-rmdir', 'nsf-shortcut', 'nsf-get', 'nsf-move',
-        'nsf-convert',
+        'nsf-convert-record', 'nsf-convert-folder',
     },
 
     # Legacy Commands

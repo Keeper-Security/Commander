@@ -23,6 +23,12 @@ from .common import (
     resolve_team_identifier, get_team_keys, encrypt_for_team,
     handle_share_invite,
 )
+from ..commands.nested_share_folder.helpers import (
+    NSF_FOLDER_ACCESS_BATCH_SIZE,
+    NSF_FOLDER_ACCESS_PAGE_SIZE,
+    NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE,
+    NSF_FOLDER_BATCH_SIZE,
+)
 from .permissions import (
     FolderUsageType, SetBooleanValue, resolve_role_name, ROLE_NAME_MAP,
     get_folder_permissions_for_role,
@@ -109,8 +115,8 @@ def _prepare_folder_for_creation(params, folder_uid, folder_name, parent_uid,
 # ══════════════════════════════════════════════════════════════════════════
 
 def folder_add_v3(params, folders):
-    if not folders or len(folders) > 100:
-        raise ValueError("Provide 1..100 folders")
+    if not folders or len(folders) > NSF_FOLDER_BATCH_SIZE:
+        raise ValueError(f"Provide 1..{NSF_FOLDER_BATCH_SIZE} folders")
     rq = folder_pb2.FolderAddRequest()
     rq.folderData.extend(folders)
     return api.communicate_rest(params, rq, 'vault/folders/v3/add',
@@ -118,8 +124,8 @@ def folder_add_v3(params, folders):
 
 
 def folder_update_v3(params, folders):
-    if not folders or len(folders) > 100:
-        raise ValueError("Provide 1..100 folders")
+    if not folders or len(folders) > NSF_FOLDER_BATCH_SIZE:
+        raise ValueError(f"Provide 1..{NSF_FOLDER_BATCH_SIZE} folders")
     rq = folder_pb2.FolderUpdateRequest()
     rq.folderData.extend(folders)
     return api.communicate_rest(params, rq, 'vault/folders/v3/update',
@@ -131,8 +137,8 @@ def folder_access_update_v3(params, folder_access_adds=None,
                              folder_access_removes=None):
     for label, lst in [('adds', folder_access_adds), ('updates', folder_access_updates),
                        ('removes', folder_access_removes)]:
-        if lst and len(lst) > 500:
-            raise ValueError(f"Maximum 500 {label}")
+        if lst and len(lst) > NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE:
+            raise ValueError(f"Maximum {NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE} {label}")
     if not any([folder_access_adds, folder_access_updates, folder_access_removes]):
         raise ValueError("At least one access operation required")
     rq = folder_pb2.FolderAccessRequest()
@@ -197,8 +203,8 @@ def create_folder_v3(params, folder_name, parent_uid=None, color=None,
 
 
 def create_folders_batch_v3(params, folder_specs):
-    if len(folder_specs) > 100:
-        raise ValueError("Maximum 100 folders at a time")
+    if len(folder_specs) > NSF_FOLDER_BATCH_SIZE:
+        raise ValueError(f"Maximum {NSF_FOLDER_BATCH_SIZE} folders at a time")
     fd_list, uid_map, key_map = [], {}, {}
     for idx, spec in enumerate(folder_specs):
         uid = utils.generate_uid()
@@ -270,8 +276,8 @@ def update_folder_v3(params, folder_uid, folder_name=None, color=None,
 
 
 def update_folders_batch_v3(params, folder_updates):
-    if len(folder_updates) > 100:
-        raise ValueError("Maximum 100 folders at a time")
+    if len(folder_updates) > NSF_FOLDER_BATCH_SIZE:
+        raise ValueError(f"Maximum {NSF_FOLDER_BATCH_SIZE} folders at a time")
     fd_list = []
     for idx, spec in enumerate(folder_updates):
         fi = spec.get('folder_uid')
@@ -879,9 +885,11 @@ def _batch_accessor_index(params, folder_uids):
     """Map (folder_uid, accessor_uid_b64) -> server accessor rows for a batch."""
     index = {}
     uids = sorted(set(folder_uids))
-    for i in range(0, len(uids), 100):
+    for i in range(0, len(uids), NSF_FOLDER_ACCESS_BATCH_SIZE):
         try:
-            info = get_folder_access_v3(params, uids[i:i + 100], resolve_usernames=False)
+            info = get_folder_access_v3(
+                params, uids[i:i + NSF_FOLDER_ACCESS_BATCH_SIZE],
+                resolve_usernames=False)
         except Exception as exc:
             logger.debug('Batch folder accessor lookup failed: %s', exc)
             continue
@@ -1092,8 +1100,9 @@ def _resolve_uid_to_team_name(params, uid_b64: str) -> Optional[str]:
 
 def get_folder_access_v3(params, folder_uids, continuation_token=None,
                          page_size=None, resolve_usernames=True):
-    if not folder_uids or len(folder_uids) > 100:
-        raise ValueError("Provide 1..100 folder UIDs")
+    if not folder_uids or len(folder_uids) > NSF_FOLDER_ACCESS_BATCH_SIZE:
+        raise ValueError(
+            f"Provide 1..{NSF_FOLDER_ACCESS_BATCH_SIZE} folder UIDs")
     from ..proto import folder_access_pb2
 
     rq = folder_access_pb2.GetFolderAccessRequest()
@@ -1107,8 +1116,8 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None,
         tok.lastModified = continuation_token
         rq.continuationToken.CopyFrom(tok)
     if page_size is not None:
-        if page_size > 1000:
-            raise ValueError("Maximum page size is 1000")
+        if page_size > NSF_FOLDER_ACCESS_PAGE_SIZE:
+            raise ValueError(f"Maximum page size is {NSF_FOLDER_ACCESS_PAGE_SIZE}")
         rq.pageSize = page_size
 
     rs = api.communicate_rest(params, rq, 'vault/folders/v3/access',

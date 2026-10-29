@@ -128,7 +128,7 @@ My Vault
         self.assertNotIn('level', result['data']['tree'])
 
     def test_nsf_convert_permanent_notice_does_not_fail_successful_command(self):
-        command = 'nsf-convert record_uid --force'
+        command = 'nsf-convert-record record_uid --force'
         output = (
             'Warning: Conversion is permanent; Classic folder membership is not retained.\n'
             'Record: Example Login (record_uid)\n'
@@ -147,7 +147,7 @@ My Vault
         )
 
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force', '', log_output=output
+            'nsf-convert-record record_uid --force', '', log_output=output
         )
 
         self.assertEqual(result['status'], 'success')
@@ -156,7 +156,7 @@ My Vault
     def test_nsf_convert_does_not_ignore_errors_in_logs(self):
         output = 'Warning: Conversion is permanent.'
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force',
+            'nsf-convert-record record_uid --force',
             output,
             log_output='Conversion failed: Invalid owner key.',
         )
@@ -166,7 +166,7 @@ My Vault
 
     def test_nsf_convert_success_in_logs_is_http_success(self):
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force',
+            'nsf-convert-record record_uid --force',
             'Warning: Conversion is permanent.\nDestination: Vault (root)',
             log_output=(
                 'Classic record "record_uid" converted to a Nested Share Record.\n'
@@ -179,7 +179,7 @@ My Vault
 
     def test_nsf_convert_backend_failures_keep_failure_status(self):
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force',
+            'nsf-convert-record record_uid --force',
             'Warning: Conversion is permanent.',
             log_output=(
                 'Classic record "record_uid" was not converted: '
@@ -192,7 +192,7 @@ My Vault
 
     def test_nsf_convert_mixed_results_are_partial_success(self):
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid_1 record_uid_2 --force',
+            'nsf-convert-record record_uid_1 record_uid_2 --force',
             'Warning: Conversion is permanent.',
             log_output=(
                 'Classic record "record_uid_1" converted to a Nested Share Record.\n'
@@ -206,7 +206,7 @@ My Vault
 
     def test_nsf_convert_other_warnings_remain_warnings(self):
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force',
+            'nsf-convert-record record_uid --force',
             'Warning: Conversion is permanent.\nWarning: Server reported a partial result.',
         )
 
@@ -215,11 +215,34 @@ My Vault
 
     def test_nsf_convert_errors_are_not_hidden_by_permanent_notice(self):
         result = KeeperResponseParser.parse_response(
-            'nsf-convert record_uid --force',
+            'nsf-convert-record record_uid --force',
             'Warning: Conversion is permanent. Conversion failed: Invalid owner key.',
         )
 
         self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['status_code'], 400)
+
+    def test_nsf_convert_folder_notice_and_deletion_are_successful(self):
+        command = 'nsf-convert-folder "Private" --force'
+        output = (
+            'Warning: Folder conversion is permanent.\n'
+            'Classic-to-NSF folder UID mapping:\n'
+            'Classic source folder tree deleted.'
+        )
+
+        result = KeeperResponseParser.parse_response(command, output)
+
+        self.assertEqual(result['status'], 'success')
+        self.assertNotIn('status_code', result)
+
+    def test_nsf_convert_folder_partial_result_is_not_successful(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert-folder "Private" --force',
+            'Warning: Folder conversion is permanent.\n'
+            'Folder conversion was partial. The Classic source tree was not deleted.',
+        )
+
+        self.assertEqual(result['status'], 'warning')
         self.assertEqual(result['status_code'], 400)
 
     def test_parse_mkdir_command(self):

@@ -126,6 +126,20 @@ ROLE_NAME_MAP: Dict[str, int] = {
 }
 
 
+def classic_perms_to_nsf_role(manage_users=False, manage_records=False,
+                              can_edit=False, can_share=False):
+    """Map Classic folder permission flags to the closest non-owner NSF role."""
+    can_manage_shares = bool(manage_users or can_share)
+    can_manage_content = bool(manage_records or can_edit)
+    if can_manage_shares and can_manage_content:
+        return 'content-share-manager'
+    if can_manage_content:
+        return 'content-manager'
+    if can_manage_shares:
+        return 'share-manager'
+    return 'viewer'
+
+
 def get_folder_permissions_for_role(role_type: int) -> 'folder_pb2.FolderPermissions':
     perms_dict = _FOLDER_ROLE_PERMISSIONS.get(role_type)
     if perms_dict is None:

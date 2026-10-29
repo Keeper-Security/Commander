@@ -1163,8 +1163,18 @@ class KSMCommand(Command):
 
     @staticmethod
     def get_app_info(params, app_uid):   # type: (KeeperParams, str) -> Sequence[APIRequest_pb2.AppInfo]
+        return KSMCommand.get_app_info_batch(params, [app_uid])
+
+    @staticmethod
+    def get_app_info_batch(params, app_uids):  # type: (KeeperParams, List[str]) -> Sequence[APIRequest_pb2.AppInfo]
+        """Get application details for one or more application record UIDs."""
         rq = APIRequest_pb2.GetAppInfoRequest()
-        rq.appRecordUid.append(utils.base64_url_decode(app_uid))
+        rq.appRecordUid.extend(
+            utils.base64_url_decode(uid) for uid in dict.fromkeys(app_uids or [])
+            if uid
+        )
+        if not rq.appRecordUid:
+            return []
         rs = api.communicate_rest(params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
         return rs.appInfo
 
@@ -1602,7 +1612,7 @@ class KSMCommand(Command):
         return None
 
     @staticmethod
-    def _normalize_nsf_app_record(params, record_uid):
+    def _normalize_nsf_app_record(params, record_uid, require_key=True):
         nsf_rec = getattr(params, 'nested_share_records', {}).get(record_uid)
         if not nsf_rec:
             return None
@@ -1615,7 +1625,7 @@ class KSMCommand(Command):
         record_key = nsf_rec.get('record_key_unencrypted')
         if not record_key:
             record_key = get_record_key(params, record_uid, raise_on_missing=False)
-        if not record_key:
+        if require_key and not record_key:
             return None
 
         return {

@@ -19,7 +19,8 @@ To get help on a particular command, run:
 | `[nsf-share-folder]`      | Grant or remove a user's access to a folder                         |
 | `[nsf-record-add]`        | Create a new Nested Share Record                                     |
 | `[nsf-record-update]`     | Update an existing Nested Share Record                               |
-| `[nsf-convert]`           | Convert Classic record(s) to Nested Share Record(s)                  |
+| `[nsf-convert-record]`           | Convert Classic record(s) to Nested Share Record(s)                  |
+| `[nsf-convert-folder]`    | Convert a Classic folder tree to Nested Share Folders and Records    |
 | `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records            |
 | `[nsf-ln]`                | Link a record into a Nested Share Folder                             |
 | `[nsf-shortcut]`          | Manage records that appear in more than one folder                  |
@@ -293,9 +294,9 @@ nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 
 ---
 
-### nsf-convert command:
+### nsf-convert-record command:
 
-**Command:** `nsf-convert`
+**Command:** `nsf-convert-record`
 
 **Detail:** Permanently convert up to 100 Classic records per request to Nested Share Records. Results are reported per record. Records already known to be Nested Share Records are skipped.
 
@@ -314,14 +315,65 @@ One or more Classic record UIDs, titles, or paths
 **Examples:**
 
 ```
-nsf-convert abc123recorduid
-nsf-convert abc123recorduid def456recorduid --folder "Projects/Archive"
-nsf-convert abc123recorduid --folder "Projects/Archive" --force
+nsf-convert-record abc123recorduid
+nsf-convert-record abc123recorduid def456recorduid --folder "Projects/Archive"
+nsf-convert-record abc123recorduid --folder "Projects/Archive" --force
 ```
 
 1. Convert one Classic record to `Vault (root)`; review the warning and confirm when prompted.
 2. Convert two Classic records to the `Projects/Archive` Nested Share Folder.
 3. Convert one Classic record to `Projects/Archive` without a confirmation prompt.
+
+---
+
+### nsf-convert-folder command:
+
+**Command:** `nsf-convert-folder`
+
+**Detail:** Convert a Classic folder and its descendants into a Nested Share Folder tree, converting contained Classic records while retaining their record UIDs. Classic Shared Folder user/team permissions are mapped to NSF roles. Folder and record application shares are migrated where present.
+
+Classic member permissions map as follows:
+
+| Classic `manage_users` | Classic `manage_records` | NSF role |
+| ---------------------- | ----------------------- | -------- |
+| Off                    | Off                     | `viewer` |
+| On                     | Off                     | `share-manager` |
+| Off                    | On                      | `content-manager` |
+| On                     | On                      | `content-share-manager` |
+
+Existing user/team access expirations retain their absolute expiry time; already-expired grants are not recreated.
+
+**Parameters:**
+
+Classic folder UID, title, or path
+
+**Switches:**
+
+`--folder <DESTINATION>` Existing Nested Share Folder UID, name, or path. Omit to create the converted tree at `Vault (root)`.
+
+`--dry-run` Preview the source tree, record count, destination, and depth flattening without changing the vault.
+
+`-f`, `--force` Skip conversion and post-success Classic-deletion prompts. The Classic source is still retained if any conversion step fails.
+
+**Depth handling:** Folders within the allowed depth keep their hierarchy. Each folder beyond the limit is promoted to the deepest allowed level as its own folder; its records remain associated with that folder. Duplicate folder names are allowed and handled using source-to-target folder UID mappings. The depth limit is the current NSF limit.
+
+**Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Use `--force` to skip that prompt and delete after success. Partial conversions never delete the Classic source.
+
+**Important:** A record that also appears outside the selected Classic subtree prevents conversion. Convert the enclosing tree or resolve the extra placement first so the command does not silently lose that placement.
+
+**Examples:**
+
+```
+nsf-convert-folder "Client Files"
+nsf-convert-folder abc123folderuid --folder "Archive"
+nsf-convert-folder "Client Files" --dry-run
+nsf-convert-folder "Client Files" --force
+```
+
+1. Convert the selected folder tree to the Nested Share Folder root and choose whether to remove the Classic source.
+2. Convert a Classic subtree under the existing `Archive` NSF folder.
+3. Review the mapping and depth handling without changing the vault.
+4. Convert and delete the Classic source tree after full success without prompts.
 
 ---
 
@@ -687,7 +739,7 @@ nsf-get rec123abc --format json --verbose
 | ------------------ | ----------------------------------------------- |
 | `nsf-record-add`    | Create a record                                 |
 | `nsf-record-update` | Update a record                                 |
-| `nsf-convert`       | Convert Classic record(s) to Nested Share Record(s) |
+| `nsf-convert-record`       | Convert Classic record(s) to Nested Share Record(s) |
 | `nsf-move`          | Move a Nested Share Record or folder            |
 | `nsf-rm`            | Remove / trash / unlink a record                |
 | `nsf-ln`            | Link a record into a folder                     |
@@ -786,10 +838,10 @@ nsf-move "Old Projects" root
 
 ```bash
 # Convert one record to Vault (root)
-nsf-convert abc123recorduid
+nsf-convert-record abc123recorduid
 
 # Convert multiple records into an existing Nested Share Folder
-nsf-convert abc123recorduid def456recorduid --folder "Projects/Archive"
+nsf-convert-record abc123recorduid def456recorduid --folder "Projects/Archive"
 ```
 
 Review the permanent-conversion warning and record list, then confirm when prompted. Use `--force` to skip the prompt.

@@ -91,7 +91,7 @@ class KeeperResponseParser:
             if pattern in command:
                 return method_name
 
-        if command.split(maxsplit=1)[:1] == ['nsf-convert']:
+        if command.split(maxsplit=1)[:1] in (['nsf-convert-record'], ['nsf-convert-folder']):
             return '_parse_nsf_convert_command'
         
         # Check for exact command start matches
@@ -1356,7 +1356,7 @@ class KeeperResponseParser:
                 combined_response = '\n'.join(filter(None, (combined_response, cleaned_logs)))
 
         classification_response = re.sub(
-            r'(?im)^([ \t]*)warning:([ \t]*conversion is permanent)',
+            r'(?im)^([ \t]*)warning:([ \t]*(?:folder )?conversion is permanent)',
             r'\1Notice:\2',
             combined_response,
         )
@@ -1369,9 +1369,19 @@ class KeeperResponseParser:
                 'no conversion results were returned',
                 'conversion result for classic record',
                 'conversion endpoint returned',
+                'folder conversion was partial',
+                'could not preserve record placement',
+                'could not preserve application record share',
             )
         )
-        has_conversion_success = 'converted to a nested share record' in lowered_response
+        has_conversion_success = any(
+            phrase in lowered_response
+            for phrase in (
+                'converted to a nested share record',
+                'classic source tree retained',
+                'classic source folder tree deleted',
+            )
+        )
         if has_conversion_failure:
             return {
                 'status': 'partial_success' if has_conversion_success else 'warning',

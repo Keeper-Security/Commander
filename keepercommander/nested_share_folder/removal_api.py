@@ -9,6 +9,10 @@ from typing import Optional, List, Dict, Any
 
 from .. import utils, api
 from ..proto import remove_pb2
+from ..commands.nested_share_folder.helpers import (
+    NSF_FOLDER_REMOVE_BATCH_SIZE,
+    NSF_RECORD_REMOVE_BATCH_SIZE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +170,9 @@ def resolve_nested_share_folder_uid(params, identifier):
 def remove_record_v3(params, removals, dry_run=False):
     if not removals:
         raise ValueError("At least one record required")
-    if len(removals) > 500:
-        raise ValueError("Maximum 500 records per request")
+    if len(removals) > NSF_RECORD_REMOVE_BATCH_SIZE:
+        raise ValueError(
+            f"Maximum {NSF_RECORD_REMOVE_BATCH_SIZE} records per request")
 
     preview_rq = remove_pb2.RemoveRecordRequest()
     preview_rq.action = remove_pb2.REMOVE_ACTION_PREVIEW
@@ -211,8 +216,9 @@ def remove_record_v3(params, removals, dry_run=False):
 def remove_folder_v3(params, removals, dry_run=False):
     if not removals:
         raise ValueError("At least one folder required")
-    if len(removals) > 100:
-        raise ValueError("Maximum 100 folders per request")
+    if len(removals) > NSF_FOLDER_REMOVE_BATCH_SIZE:
+        raise ValueError(
+            f"Maximum {NSF_FOLDER_REMOVE_BATCH_SIZE} folders per request")
 
     preview_rq = remove_pb2.RemoveFolderRequest()
     preview_rq.action = remove_pb2.REMOVE_ACTION_PREVIEW

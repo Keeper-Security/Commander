@@ -40,6 +40,21 @@ logger = logging.getLogger(__name__)
 ROOT_FOLDER_UID = 'AAAAAAAAAAAAAAAAAPmtNA'
 """Sentinel UID the server uses for the Nested Share Folder root folder."""
 
+MAX_NESTED_SHARE_FOLDER_DEPTH = 5
+NSF_FOLDER_BATCH_SIZE = 100
+NSF_FOLDER_ACCESS_BATCH_SIZE = 100
+NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE = 500
+NSF_FOLDER_RECORD_BATCH_SIZE = 500
+NSF_FOLDER_REMOVE_BATCH_SIZE = 100
+NSF_RECORD_BATCH_SIZE = 1000
+NSF_RECORD_REMOVE_BATCH_SIZE = 500
+NSF_RECORD_PAGE_SIZE = 500
+NSF_FOLDER_ACCESS_PAGE_SIZE = 1000
+NSF_APP_INFO_BATCH_SIZE = 100
+NSF_IMPORT_THROTTLE_BASE_WAIT = 10.0
+NSF_IMPORT_THROTTLE_BACKOFF_MULTIPLIER = 1.5
+NSF_IMPORT_THROTTLE_MAX_RETRIES = 5
+
 RECORD_PERM_LABELS = [
     ('can_view_title',       'View Title'),
     ('can_view',             'View Content'),
@@ -402,10 +417,6 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 # ═══════════════════════════════════════════════════════════════════════════
 # Move
 # ═══════════════════════════════════════════════════════════════════════════
-
-MAX_NESTED_SHARE_FOLDER_DEPTH = 5
-"""Maximum number of folder levels below the Nested Share Folder root."""
-
 
 def _folder_depth(params, folder_uid):
     """Return the nesting depth of *folder_uid* (root's direct children = 1)."""
