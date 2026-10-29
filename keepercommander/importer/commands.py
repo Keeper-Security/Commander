@@ -19,7 +19,7 @@ from typing import Optional, List, Dict
 
 from . import imp_exp
 from .. import api, record_types
-from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
+from .importer import SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
@@ -62,6 +62,16 @@ def _cyberark_skip_arg(value):
             skip_targets.append(target)
     return ",".join(skip_targets)
 
+
+
+def _workers_arg(value):
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('must be an integer')
+    if not 1 <= workers <= 16:
+        raise argparse.ArgumentTypeError('--workers must be between 1 and 16')
+    return workers
 
 
 def _positive_int_arg(value):
@@ -174,6 +184,9 @@ download_membership_parser.add_argument('--sub-folder', '-sf', dest='sub_folder'
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 download_membership_parser.add_argument('--timeout', dest='timeout', action='store', type=int, default=10, help='Timeout in seconds for network requests. Currently, supported for cyberark. Default: 10')
 download_membership_parser.add_argument('--api-page-size-limit', dest='api_page_size_limit', action='store', type=int, default=200, help='Page size limit for API requests. Currently, supported for cyberark. Default: 200')
+download_membership_parser.add_argument('--workers', dest='workers', action='store', type=_workers_arg, default=None,
+                                        help='Parallel requests when loading secret permissions (1-16). '
+                                             'Currently, supported for thycotic. Default: 4')
 download_membership_parser.error = raise_parse_exception
 download_membership_parser.exit = suppress_exit
 
@@ -463,6 +476,12 @@ def set_permission(perm, user, permit, restrict, perm_name):
     setattr(perm, perm_name, p)
 
 
+def _share_record_key(record):
+    """Identity of a share record in the membership file: all its folder paths plus title."""
+    paths = tuple(sorted({normalize_folder_path(folder.path) for folder in record.folders or []}))
+    return (paths or ('',), (record.title or '').casefold())
+
+
 class DownloadMembershipCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return download_membership_parser
@@ -498,6 +517,7 @@ class DownloadMembershipCommand(Command):
 
         added_folders = []  # type: List[SharedFolder]
         added_teams = []    # type: List[Team]
+        added_records = []  # type: List[Record]
 
         try:
             full_name = f'keepercommander.importer.{"json" if source == "keeper" else source}'
@@ -511,7 +531,7 @@ class DownloadMembershipCommand(Command):
             logging.warning('Error loading membership plugin: %s', source)
             return
 
-        download_membership = plugin.download_membership(params, folders_only=folders_only,timeout=kwargs.get('timeout'), api_page_size_limit=kwargs.get('api_page_size_limit'))
+        download_membership = plugin.download_membership(params, folders_only=folders_only,timeout=kwargs.get('timeout'), api_page_size_limit=kwargs.get('api_page_size_limit'), workers=kwargs.get('workers'))
 
         for obj in download_membership:
             if isinstance(obj, SharedFolder):
@@ -538,6 +558,14 @@ class DownloadMembershipCommand(Command):
                     obj.members = [replace_email_domain(x, old_domain, new_domain) for x in obj.members]
                 if obj.name:
                     added_teams.append(obj)
+            elif isinstance(obj, Record) and obj.shares:
+                if old_domain and new_domain:
+                    for share in obj.shares:
+                        share.name = replace_email_domain(share.name, old_domain, new_domain)
+                if import_into:
+                    for folder in obj.folders or []:
+                        folder.path = PathDelimiter.join([import_into, folder.path]) if folder.path else import_into
+                added_records.append(obj)
 
         # process shared sub folders
         sub_folder_action = kwargs.get('sub_folder') or 'ignore'
@@ -565,6 +593,7 @@ class DownloadMembershipCommand(Command):
 
         shared_folders = {}  # type: Dict[str, SharedFolder]
         teams = {}           # type: Dict[str, Team]
+        existing_records = []  # type: List[Record]
 
         json_importer = KeeperJsonImporter()
         if os.path.exists(file_name):
@@ -576,28 +605,36 @@ class DownloadMembershipCommand(Command):
                     elif isinstance(obj, Team):
                         if obj.uid:
                             teams[obj.uid] = obj
+                    elif isinstance(obj, Record) and obj.shares:
+                        existing_records.append(obj)
             except:
                 pass
 
-        if added_folders or added_teams:
+        if added_folders or added_teams or added_records:
             for sf in added_folders:
                 if sf.uid and sf.uid in shared_folders:
                     del shared_folders[sf.uid]
             for t in added_teams:
                 if t.uid and t.uid in teams:
                     del teams[t.uid]
+            replaced = {_share_record_key(record) for record in added_records}
+            existing_records = [record for record in existing_records if _share_record_key(record) not in replaced]
 
             memberships = []
             memberships.extend(shared_folders.values())
             memberships.extend(teams.values())
+            memberships.extend(existing_records)
             memberships.extend(added_folders)
             memberships.extend(added_teams)
+            memberships.extend(added_records)
             json_exporter = KeeperJsonExporter()
             json_exporter.do_export(file_name, memberships)
             if len(added_folders) > 0:
                 logging.info('%d shared folder memberships added.', len(added_folders))
             if len(added_teams) > 0:
                 logging.info('%d team memberships added.', len(added_teams))
+            if len(added_records) > 0:
+                logging.info('%d secret permission lists added.', len(added_records))
         else:
             logging.info('No folder memberships downloaded.')
 
@@ -614,6 +651,7 @@ class ApplyMembershipCommand(Command):
 
         shared_folders = []  # type: List[SharedFolder]
         teams = []     # type: List[Team]
+        secret_records = []  # type: List[Record]
 
         json_importer = KeeperJsonImporter()
         for obj in json_importer.do_import(file_name, users_only=True):
@@ -621,6 +659,8 @@ class ApplyMembershipCommand(Command):
                 shared_folders.append(obj)
             if isinstance(obj, Team):
                 teams.append(obj)
+            if isinstance(obj, Record) and obj.shares:
+                secret_records.append(obj)
 
         full_sync = kwargs.get('full_sync') is True
         unsafe = kwargs.get('unsafe') is True
@@ -629,6 +669,9 @@ class ApplyMembershipCommand(Command):
 
         if len(teams) > 0:
             imp_exp.import_teams(params, teams, full_sync)
+
+        if len(secret_records) > 0:
+            imp_exp.apply_secret_share_records(params, secret_records)
 
 
 class DownloadRecordTypeCommand(EnterpriseCommand):
