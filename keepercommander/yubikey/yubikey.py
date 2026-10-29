@@ -140,10 +140,10 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationRes
         return
 
     options = request['publicKeyCredentialRequestOptions'].copy()
-    origin = ''
+    appid = ''
     if 'extensions' in options:
         extensions = options['extensions']
-        origin = extensions.get('appid') or ''
+        appid = extensions.get('appid') or ''
         if 'largeBlob' not in options['extensions']:
             options['extensions']['largeBlob'] = {'read': None}
 
@@ -155,6 +155,9 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationRes
     challenge = options['challenge']
     if isinstance(challenge, str):
         options['challenge'] = utils.base64_url_decode(challenge)
+
+    # The server omits the appid extension when its host is local; the origin is then the RP ID's.
+    origin = appid or (f'https://{options["rpId"]}' if options.get('rpId') else '')
 
     client = None   # type: Optional[WebAuthnClient]
     data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
@@ -195,7 +198,7 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationRes
                           'https://docs.keeper.io/enterprise-guide/two-factor-authentication#security-keys-fido-webauthn\n'
                           'Commander will use the fallback security key authentication method.\n\n'
                           'To use your Yubikey with Commander, please touch the flashing Security key one more time.\n')
-                    options['rpId'] = origin
+                    options['rpId'] = appid
                     rq_options = PublicKeyCredentialRequestOptions.from_dict(options)
                     rs = client.get_assertion(rq_options, event=evt)
                     return rs.get_response(0)
