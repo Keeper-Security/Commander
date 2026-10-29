@@ -16,6 +16,7 @@ import getpass
 import json
 import logging
 import os
+import sys
 import time
 import warnings
 from contextlib import contextmanager
@@ -173,17 +174,172 @@ class ThycoticMixin:
             pass
 
     @staticmethod
-    def get_folders(auth, skip_permissions=False):       # type: (ThycoticAuth, bool) -> Optional[Dict[int, Dict]]
-        logging.debug('Enter get_folders')
+    def _parse_choice(choice, count):
+        if not isinstance(choice, str):
+            return None
+        choice = choice.strip()
+        if not choice or any(c not in '0123456789,- ' for c in choice):
+            return None
+        selected = set()
+        for part in choice.split(','):
+            part = part.strip()
+            if not part:
+                return None
+            if '-' in part:
+                bounds = part.split('-')
+                if len(bounds) != 2 or not all(b.strip().isdigit() for b in bounds):
+                    return None
+                start, end = int(bounds[0]), int(bounds[1])
+                if start < 1 or end > count or start > end:
+                    return None
+                selected.update(range(start, end + 1))
+            elif part.isdigit():
+                number = int(part)
+                if number < 1 or number > count:
+                    return None
+                selected.add(number)
+            else:
+                return None
+        return selected or None
+
+    @staticmethod
+    def _compose_folder_path(folder, folders):
+        # type: (Dict, Dict[int, Dict]) -> str
+        folder_path = folder.get('folderName') or ''
+        parent = folder
+        seen = {folder.get('id')}
+        while parent:
+            parent_id = parent.get('parentFolderId')
+            if isinstance(parent_id, int) and parent_id > 1 and parent_id in folders and parent_id not in seen:
+                seen.add(parent_id)
+                parent = folders[parent_id]
+                folder_path = (parent.get('folderName') or '') + '\\' + folder_path
+            else:
+                parent = None
+        return folder_path
+
+    @staticmethod
+    def _apply_folder_paths(folders):
+        # type: (Dict[int, Dict]) -> None
+        for folder in folders.values():
+            folder['folderPath'] = ThycoticMixin._compose_folder_path(folder, folders)
+
+    @staticmethod
+    def interactive_folder_picker(folders):
+        if not isinstance(folders, list):
+            return None
+        if not folders:
+            return folders
+        indexed = {}
+        for folder in folders:
+            if isinstance(folder, dict) and folder.get('id') is not None and 'folderName' in folder:
+                indexed.setdefault(folder['id'], folder)
+        if indexed:
+            ThycoticMixin._apply_folder_paths(indexed)
+        print('\nFolders Found:')
+        print('─' * 50)
+        for i, folder in enumerate(folders, start=1):
+            if not isinstance(folder, dict):
+                folder = {}
+            name = folder.get('folderName') or ''
+            folder_path = folder.get('folderPath')
+            if isinstance(folder_path, str) and folder_path:
+                path = folder_path.strip('\\').replace('\\', ' / ')
+            else:
+                path = name
+            print(f"  [{i}] {name} - Path -> {path}")
+        print()
+        try:
+            while True:
+                print("Enter the folder numbers to import, separated by commas (e.g. 1-4,6,8-10).")
+                print("Press Enter or 'A' to import all.")
+                selected = ThycoticMixin._select_folders(folders, input('Enter your choice: '))
+                if selected is None:
+                    print('Invalid choice. Enter folder numbers, press Enter, or A to import all.')
+                else:
+                    return selected
+        except EOFError:
+            return folders
+        except KeyboardInterrupt:
+            raise Exception('Import canceled') from None
+
+    @staticmethod
+    def _select_folders(folders, choice):
+        # type: (List[Dict], str) -> Optional[List[Dict]]
+        choice = choice.strip() if isinstance(choice, str) else ''
+        if choice == '' or choice.upper() == 'A':
+            return folders
+        selected = ThycoticMixin._parse_choice(choice, len(folders))
+        if selected is None:
+            return None
+        return [folder for index, folder in enumerate(folders, start=1) if index in selected]
+
+    @staticmethod
+    def expand_folder_ids(folders, root_ids):
+        # type: (Union[Dict[int, Dict], Iterable[Dict]], Iterable) -> set
+        if not folders or not root_ids:
+            return set()
+        if isinstance(folders, dict):
+            values = folders.values()
+        else:
+            values = folders
+        children_by_parent = {}
+        for folder in values:
+            if not isinstance(folder, dict) or folder.get('id') is None:
+                continue
+            children_by_parent.setdefault(folder.get('parentFolderId'), []).append(folder.get('id'))
+        seen = set()
+        pending = []
+        for root_id in root_ids:
+            if root_id is not None and root_id not in seen:
+                seen.add(root_id)
+                pending.append(root_id)
+        pos = 0
+        while pos < len(pending):
+            folder_id = pending[pos]
+            pos += 1
+            for child_id in children_by_parent.get(folder_id, ()):
+                if child_id not in seen:
+                    seen.add(child_id)
+                    pending.append(child_id)
+        return seen
+
+    @staticmethod
+    def _construct_folders(folder_rs):
+        # type: (Any) -> Dict[int, Dict]
+        if not isinstance(folder_rs, list):
+            return {}
+        folders = {}   # type: Dict[int, Dict[str, Any]]
+        for x in folder_rs:
+            if not isinstance(x, dict) or x.get('id') is None or x['id'] in folders:
+                continue
+            folders[x['id']] = {
+                'id': x['id'],
+                'folderName': x.get('folderName') or '',
+                'inheritPermissions': x.get('inheritPermissions', True),
+                'parentFolderId': x.get('parentFolderId'),
+            }
+        ThycoticMixin._apply_folder_paths(folders)
+        return folders
+
+    @staticmethod
+    def _load_folders(auth):
+        # type: (ThycoticAuth) -> Dict[int, Dict]
         folder_rs = auth.thycotic_search('/v1/folders')
-        folders = {x['id']: {
-            'id': x['id'],
-            'folderName': x['folderName'],
-            'folderPath': x['folderPath'],
-            'inheritPermissions': x['inheritPermissions'],
-            'parentFolderId': x['parentFolderId'],
-        } for x in folder_rs}   # type: Dict[int, Dict[str, Any]]
+        folders = ThycoticMixin._construct_folders(folder_rs)
         logging.debug('Loaded %d folders', len(folders))
+        logging.debug('Folder path built')
+        return folders
+
+    @staticmethod
+    def get_folders(auth, skip_permissions=False):
+        # type: (ThycoticAuth, bool) -> Optional[Dict[int, Dict]]
+        logging.debug('Enter get_folders')
+        folders = ThycoticMixin._load_folders(auth)
+
+        if 1 in folders:
+            del folders[1]
+
 
         if not skip_permissions:        # load permissions for shared folders
             folder_ids = [x['id'] for x in folders.values() if (x.get('inheritPermissions') is False) and x['id'] != 1]
@@ -264,25 +420,23 @@ class ThycoticMixin:
                     if are_same:
                         del folder['permissions']
                         folder['inheritPermissions'] = True
-
-        # build folder path
-        for folder in folders.values():
-            folder_path = folder['folderName']
-            parent = folder
-            while parent:
-                parent_id = parent.get('parentFolderId') or -1
-                if parent_id > 1 and parent_id in folders:
-                    parent = folders[parent_id]
-                    folder_path = parent['folderName'] + '\\' + folder_path
-                else:
-                    parent = None
-            folder['folderPath'] = folder_path
-        logging.debug('Folder path built')
-
-        if 1 in folders:
-            del folders[1]
         return folders
 
+    @staticmethod
+    def get_secret_ids(auth, folder_ids, query):
+        secret_ids = []
+        for folder_id in folder_ids or ():
+            if folder_id is None:
+                continue
+            params = [('filter.folderId', folder_id)]
+            if query:
+                params.extend(parse_qsl(query))
+            secrets = auth.thycotic_search('/v1/secrets/lookup?' + urlencode(params))
+            if not isinstance(secrets, list):
+                continue
+            secret_ids.extend(secret['id'] for secret in secrets
+                              if isinstance(secret, dict) and secret.get('id') is not None)
+        return list(dict.fromkeys(secret_ids))
 
 class ThycoticImporter(BaseImporter, ThycoticMixin):
     # Same end-of-import terminal summary CyberArk prints (Import finished, skipped rows).
@@ -393,28 +547,44 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
         self._send_keep_alive_if_needed(params)
-        folders = ThycoticImporter.get_folders(auth, skip_permissions=True)
         filter_folder = kwargs.get('filter_folder')
+        constructed_folders = ThycoticImporter._load_folders(auth)
+        picked_folder_ids = None
+        if not filter_folder and sys.stdin and sys.stdin.isatty():
+            folder_choices = list(constructed_folders.values())
+            picked_folders = ThycoticImporter.interactive_folder_picker(folder_choices)
+            if picked_folders is not None and picked_folders is not folder_choices:
+                picked_folder_ids = list(dict.fromkeys(folder['id'] for folder in picked_folders))
+
+        # Delete the system folder (ID 1)
+        if 1 in constructed_folders:
+            del constructed_folders[1]
+        folders = constructed_folders
+
+        # Determine which folders to query
+        matched_folder_ids = None
         if filter_folder:
+            # Handle --filter-folder argument
             if filter_folder == 'Personal Folders':
                 matched_folder_ids = [1]
             else:
                 matched_folder_ids = [x['id'] for x in folders.values() if x['folderName'].lower() == filter_folder.lower()]
-            if len(matched_folder_ids) == 0:
-                logging.warning('Folder \"%s\" not found', filter_folder)
-            folder_ids = list(matched_folder_ids)
-            pos = 0
-            while pos < len(folder_ids):
-                folder_id = folder_ids[pos]
-                pos += 1
-                folder_ids.extend((x['id'] for x in folders.values() if x['parentFolderId'] == folder_id))
-            folder_ids = set(folder_ids)
-            folders = {i: x for i, x in folders.items() if i in folder_ids}
+                if len(matched_folder_ids) == 0:
+                    logging.warning('Folder \"%s\" not found', filter_folder)
+        elif picked_folder_ids is not None:
+            # Use interactively selected folders
+            matched_folder_ids = picked_folder_ids
 
-            secrets_ids = lookup_secret_ids(auth.thycotic_search, matched_folder_ids)
+        # Query secrets with restricted secret support
+        if matched_folder_ids:
+            # Expand selected folder IDs to include subfolders
+            folder_ids = ThycoticImporter.expand_folder_ids(folders, matched_folder_ids)
+            folders = {i: x for i, x in folders.items() if i in folder_ids}
+            # Use lookup_secret_ids for restricted secret support
+            secrets_ids = lookup_secret_ids(auth.thycotic_search, matched_folder_ids, include_restricted=True)
         else:
-            secrets_ids = lookup_secret_ids(auth.thycotic_search)
-            
+            # Tenant-wide lookup with restricted secret support
+            secrets_ids = lookup_secret_ids(auth.thycotic_search, include_restricted=True)
         # secret_ids arg
         debug_ids = kwargs.get('secret_ids')
         if debug_ids is not None:
