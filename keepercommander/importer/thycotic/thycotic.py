@@ -92,20 +92,30 @@ def build_secrets_lookup_query(folder_id=None, include_restricted=True):
     )
 
 
+def _ids_from_lookup_response(response):
+    # type: (Any) -> List
+    """Extract secret IDs from lookup response, handling non-list responses safely."""
+    if not isinstance(response, list):
+        return []
+    return [item['id'] for item in response if isinstance(item, dict) and item.get('id') is not None]
+
+
 def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
     # type: (Callable[[str], Iterable[dict]], Optional[Iterable], bool) -> List
     """Return secret IDs from a tenant-wide or folder-filtered lookup."""
     if folder_ids:
         secret_ids = []
         for folder_id in folder_ids:
+            if folder_id is None:
+                continue
             query = build_secrets_lookup_query(folder_id, include_restricted)
-            secret_ids.extend(item['id'] for item in search(query))
+            secret_ids.extend(_ids_from_lookup_response(search(query)))
         # A secret can be returned by more than one folder lookup: a matched
         # folder may be a subfolder of another, and includeSubFolders=true
         # returns its secrets again. Keep the first occurrence of each ID.
         return list(dict.fromkeys(secret_ids))
     query = build_secrets_lookup_query(include_restricted=include_restricted)
-    return [item['id'] for item in search(query)]
+    return _ids_from_lookup_response(search(query))
 
 
 class ThycoticMixin:

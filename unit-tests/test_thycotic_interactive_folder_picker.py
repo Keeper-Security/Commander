@@ -18,7 +18,10 @@ def _secret(secret_id, folder_id):
 
 
 def _lookup(folder_id):
-    return f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true'
+    return f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true&filter.includeRestricted=true'
+
+
+TENANT_LOOKUP = '/v1/secrets/lookup?filter.includeRestricted=true'
 
 
 class ParseChoiceTests(unittest.TestCase):
@@ -325,7 +328,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             with self.subTest(label):
                 records, mocked_input = self._import(secrets=secrets, **kwargs)
                 self.assertEqual(mocked_input.called, prompted)
-                self.assertEqual(self.last_endpoints, ['/v1/folders', '/v1/secrets/lookup'])
+                self.assertEqual(self.last_endpoints, ['/v1/folders', TENANT_LOOKUP])
                 self.assertEqual(self._paths(records), expected)
 
     def test_no_folders_imports_all_without_prompting(self):
@@ -334,7 +337,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
                 records, mocked_input = self._import('1', [_secret(501, 117)],
                                                      raw_folders=raw_folders if raw_folders is not None else [])
                 mocked_input.assert_not_called()
-                self.assertEqual(self.last_endpoints, ['/v1/folders', '/v1/secrets/lookup'])
+                self.assertEqual(self.last_endpoints, ['/v1/folders', TENANT_LOOKUP])
                 self.assertEqual(self._paths(records), {'secret-501': None})
 
     def test_non_list_secret_lookup_imports_nothing(self):
