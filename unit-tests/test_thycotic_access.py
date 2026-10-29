@@ -872,11 +872,13 @@ class TestCustomSecretRoles(TestCase):
         warning.assert_not_called()
 
 
-def _response(status, body=None, text='', headers=None):
+def _response(status, body=None, text='', headers=None, reason=''):
+    import json as json_module
     rs = mock.Mock()
     rs.status_code = status
+    rs.reason = reason
     rs.headers = headers or {}
-    rs.text = text
+    rs.text = text or ('' if body is None else json_module.dumps(body))
     if body is None:
         rs.json.side_effect = ValueError('Expecting value: line 1 column 1 (char 0)')
     else:
@@ -893,31 +895,36 @@ class TestSecretServerErrorResponses(TestCase):
         return auth
 
     def test_error_message_handles_json_and_non_json_bodies(self):
-        self.assertEqual(thycotic._error_message(_response(403, {'message': 'Access denied'})), 'Access denied')
-        self.assertEqual(thycotic._error_message(_response(400, {'error': 'invalid_grant'}), 'error'), 'invalid_grant')
-        self.assertEqual(thycotic._error_message(_response(502, text='<html>Bad Gateway</html>')), 'HTTP 502')
-        self.assertEqual(thycotic._error_message(_response(500, ['not', 'a', 'dict'])), 'HTTP 500')
-        self.assertEqual(thycotic._error_message(_response(404, {'message': ''})), 'HTTP 404')
+        message = thycotic.ThycoticAuth._error_message
+        self.assertEqual(message(_response(403, {'message': 'Access denied'})), 'Access denied')
+        self.assertEqual(message(_response(400, {'error': 'invalid_grant'}), 'error'), 'invalid_grant')
+        self.assertEqual(message(_response(502, text='<html>Bad Gateway</html>', reason='Bad Gateway')),
+                         'HTTP 502 Bad Gateway: <html>Bad Gateway</html>')
+        self.assertEqual(message(_response(500, ['x'], reason='Internal Server Error')),
+                         'HTTP 500 Internal Server Error: ["x"]')
+        self.assertEqual(message(_response(504, reason='Gateway Timeout')), 'HTTP 504 Gateway Timeout: <empty>')
 
     def test_search_raises_readable_error_for_html_page(self):
-        with mock.patch.object(thycotic.requests, 'get', return_value=_response(502, text='<html>')):
+        with mock.patch.object(thycotic.requests, 'get',
+                               return_value=_response(502, text='<html>', reason='Bad Gateway')):
             with self.assertRaises(Exception) as ctx:
                 self._auth().thycotic_search('/v1/users')
-        self.assertEqual(str(ctx.exception), 'HTTP 502')
+        self.assertEqual(str(ctx.exception), 'HTTP 502 Bad Gateway: <html>')
 
     def test_entity_returns_none_for_html_error(self):
         with mock.patch.object(thycotic.requests, 'get', return_value=_response(503, text='<html>')):
             with self.assertLogs(level='INFO') as logs:
                 self.assertIsNone(self._auth().thycotic_entity('/v1/secrets/1'))
-        self.assertTrue(any('returned 503: HTTP 503' in line for line in logs.output))
+        self.assertTrue(any('returned 503' in line for line in logs.output))
 
     def test_login_with_non_json_400_raises_readable_error(self):
         auth = thycotic.ThycoticAuth('https://ss.example.com')
         on_totp = mock.Mock()
-        with mock.patch.object(thycotic.requests, 'post', return_value=_response(400, text='<html>')):
+        with mock.patch.object(thycotic.requests, 'post',
+                               return_value=_response(400, text='<html>', reason='Bad Request')):
             with self.assertRaises(Exception) as ctx:
                 auth.authenticate('user', 'secret', on_totp=on_totp)
-        self.assertEqual(str(ctx.exception), 'HTTP 400')
+        self.assertEqual(str(ctx.exception), 'HTTP 400 Bad Request: <html>')
         on_totp.assert_not_called()
 
     def test_login_still_asks_for_totp(self):
@@ -934,10 +941,11 @@ class TestSecretServerErrorResponses(TestCase):
     def test_refresh_with_non_json_error_raises_readable_error(self):
         auth = self._auth()
         auth.refresh_token = 'r'
-        with mock.patch.object(thycotic.requests, 'post', return_value=_response(500, text='oops')):
+        with mock.patch.object(thycotic.requests, 'post',
+                               return_value=_response(500, text='oops', reason='Internal Server Error')):
             with self.assertRaises(Exception) as ctx:
                 auth.refresh_auth_token()
-        self.assertEqual(str(ctx.exception), 'HTTP 500')
+        self.assertEqual(str(ctx.exception), 'HTTP 500 Internal Server Error: oops')
 
 
 class TestSecretServerRateLimit(TestCase):
