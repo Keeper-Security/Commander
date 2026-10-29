@@ -381,20 +381,26 @@ KEEPER_SERVERS = {
 
 def resolve_server(server_input):
     """
-    Resolve a server input to a valid Keeper host.
+    Resolve a server input to a Keeper host.
+
+    Accepts a known Keeper cloud region code or hostname, or an arbitrary
+    hostname/address (e.g. ``localhost``, ``localhost:8080``,
+    ``keeper.internal.company.com``) for connecting to a self-hosted /
+    on-premise Keeper backend.
 
     Args:
-        server_input: Can be a region code (US, EU, GOV_DEV, etc.) or a full hostname
+        server_input: A region code (US, EU, GOV_DEV, etc.), a known Keeper
+            hostname, or a custom server address.
 
     Returns:
-        The resolved hostname if valid, None if invalid
+        The resolved server address, or None if server_input is empty.
 
     Examples:
         resolve_server('US') -> 'keepersecurity.com'
         resolve_server('us') -> 'keepersecurity.com'
         resolve_server('GOV_DEV') -> 'govcloud.dev.keepersecurity.us'
         resolve_server('keepersecurity.eu') -> 'keepersecurity.eu'
-        resolve_server('foo.com') -> None
+        resolve_server('localhost:8080') -> 'localhost:8080'
     """
     if not server_input:
         return None
@@ -411,8 +417,9 @@ def resolve_server(server_input):
     if server_lower in KEEPER_SERVERS.values():
         return server_lower
 
-    # Not a valid server
-    return None
+    # Not a known Keeper cloud region/hostname - treat as a custom,
+    # self-hosted server address and use it as-is.
+    return server_input
 
 
 def get_valid_server_codes():

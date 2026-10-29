@@ -1705,21 +1705,18 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        from ..constants import KEEPER_SERVERS, get_abbrev_by_host
+        from ..constants import KEEPER_SERVERS, get_abbrev_by_host, resolve_server
 
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        # Handle --server option to change data center
+        # Handle --server option to change data center (or point at a
+        # custom/self-hosted Keeper server address).
         server = kwargs.get('server')
         if server:
-            server_upper = server.upper().replace('-', '_')
-            if server_upper in KEEPER_SERVERS:
-                params.server = KEEPER_SERVERS[server_upper]
-                logging.info(f'Data center set to {server_upper}')
-            else:
-                logging.warning(f'Unknown server region: {server}. Using default.')
+            params.server = resolve_server(server)
+            logging.info(f'Keeper server set to {params.server}')
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
@@ -1966,7 +1963,7 @@ class LogoutCommand(Command):
                 api_rq = APIRequest_pb2.ApiRequest()
                 api_rq.locale = params.rest_context.locale or 'en_US'
 
-                server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+                server_public_key = rest_api.get_server_public_key(params.rest_context)
                 if isinstance(server_public_key, rsa.RSAPublicKey):
                     api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, server_public_key)
                 elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
