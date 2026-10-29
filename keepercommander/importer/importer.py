@@ -325,6 +325,12 @@ class BaseImporter(abc.ABC):
     def support_folder_filter(self):
         return False
 
+    def support_add_users(self):
+        """
+        Indicates if this importer can provision source users as Keeper Enterprise users
+        """
+        return False
+
     @staticmethod
     def import_field(field_type, field_value):  # type: (str, str) -> any
         if not field_value:

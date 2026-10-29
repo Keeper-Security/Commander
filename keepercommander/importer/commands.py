@@ -63,6 +63,7 @@ def _cyberark_skip_arg(value):
     return ",".join(skip_targets)
 
 
+
 def _positive_int_arg(value):
     try:
         depth = int(value)
@@ -123,6 +124,8 @@ import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_
                            help='display skipped records (always enabled for CyberArk imports)')
 import_parser.add_argument('--secret-ids', dest='secret_ids', action='store',
                            help='Comma separated list of secret IDs to fetch (Thycotic)')
+import_parser.add_argument('--add-users', dest='add_users', action='store_true',
+                           help='provision source users as pre-activated Keeper enterprise users')
 import_parser.add_argument('--target-node', '--node', dest='target_node', action='store',
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument('--skip', dest='skip', action='store', type=_cyberark_skip_arg,
