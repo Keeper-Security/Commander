@@ -1583,9 +1583,11 @@ class PAMProjectExtendCommand(Command):
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
+            # Launch only (no admin-only re-assert): an empty connectUsers would clear
+            # launch credentials already set on this existing resource.
             launch_uid = get_launch_credential(mach, True)
             if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
+                tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
         # RBI has rbi_settings only (no pam_settings.jit_settings)
