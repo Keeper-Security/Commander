@@ -106,3 +106,14 @@ def test_set_launch_credentials_admin_only_sends_admin_with_empty_connect_users(
     assert rq.HasField('connectUsers') and len(rq.connectUsers.uids) == 0
     assert rq.HasField('adminUid')
     user_vertex.belongs_to.assert_not_called()
+
+
+def test_extend_existing_resources_loop_uses_set_launch_credentials():
+    """The existing-resources loop must not use the legacy launch link (drops is_admin
+    when admin == launch == newly created user)."""
+    import inspect
+    from keepercommander.commands.pam_import import extend
+    src = inspect.getsource(extend.PAMProjectExtendCommand)
+    tail = src.split("for mach in existing_resources:", 1)[1].split("link machine -> pamDirectory", 1)[0]
+    assert "tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))" in tail
+    assert "is_launch_credential=True" not in tail
