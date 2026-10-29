@@ -29,7 +29,7 @@ from typing import Iterable, List, Optional, Sequence, Set
 
 from .. import api
 
-_FOLDER_BATCH = 100
+_FOLDER_BATCH = 20
 _RECORD_BATCH = 10
 _RECORD_BATCH_MIN = 1
 
