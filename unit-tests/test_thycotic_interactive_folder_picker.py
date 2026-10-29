@@ -18,7 +18,10 @@ def _secret(secret_id, folder_id):
 
 
 def _lookup(folder_id):
-    return f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true'
+    return f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true&filter.includeRestricted=true'
+
+
+TENANT_LOOKUP = '/v1/secrets/lookup?filter.includeRestricted=true'
 
 
 class ParseChoiceTests(unittest.TestCase):
@@ -267,6 +270,10 @@ class ImportFolderSelectionTests(unittest.TestCase):
         def entity(endpoint):
             return secrets_by_id[int(endpoint.rstrip('/').rsplit('/', 1)[-1])]
 
+        def secret(endpoint):
+            secret_data = entity(endpoint)
+            return (secret_data, None) if secret_data else (None, ('N/A', 'Not found'))
+
         input_patch = mock.patch('builtins.input', side_effect=input_error,
                                  return_value=None if input_error is not None else choice)
         with mock.patch('keepercommander.importer.thycotic.thycotic.ThycoticAuth') as auth_cls, \
@@ -278,6 +285,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             auth = auth_cls.return_value
             auth.thycotic_search.side_effect = search
             auth.thycotic_entity.side_effect = entity
+            auth.thycotic_secret.side_effect = secret
             kwargs = {} if filter_folder is None else {'filter_folder': filter_folder}
             try:
                 records = list(ThycoticImporter().do_import('user@thycotic.example', **kwargs))
@@ -320,7 +328,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             with self.subTest(label):
                 records, mocked_input = self._import(secrets=secrets, **kwargs)
                 self.assertEqual(mocked_input.called, prompted)
-                self.assertEqual(self.last_endpoints, ['/v1/folders', '/v1/secrets/lookup'])
+                self.assertEqual(self.last_endpoints, ['/v1/folders', TENANT_LOOKUP])
                 self.assertEqual(self._paths(records), expected)
 
     def test_no_folders_imports_all_without_prompting(self):
@@ -329,7 +337,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
                 records, mocked_input = self._import('1', [_secret(501, 117)],
                                                      raw_folders=raw_folders if raw_folders is not None else [])
                 mocked_input.assert_not_called()
-                self.assertEqual(self.last_endpoints, ['/v1/folders', '/v1/secrets/lookup'])
+                self.assertEqual(self.last_endpoints, ['/v1/folders', TENANT_LOOKUP])
                 self.assertEqual(self._paths(records), {'secret-501': None})
 
     def test_non_list_secret_lookup_imports_nothing(self):
@@ -367,10 +375,10 @@ class GetSecretIdsTests(unittest.TestCase):
         return [call.args[0] for call in self.auth.thycotic_search.call_args_list]
 
     def test_queries_each_folder_and_removes_duplicates(self):
-        self.auth.thycotic_search.side_effect = [[{'id': 1}, {'id': 2}], [{'id': 2}, {'id': 3}], [{'id': 3}]]
+        self.auth.thycotic_search.side_effect = [[{'id': 1}, {'id': 2}], [{'id': 2}, {'id': 3}]]
         self.assertEqual(ThycoticMixin.get_secret_ids(self.auth, [103, 116, 116], 'filter.includeSubFolders=true'),
                          [1, 2, 3])
-        self.assertEqual(self._endpoints(), [_lookup(103), _lookup(116), _lookup(116)])
+        self.assertEqual(self._endpoints(), [_lookup(103), _lookup(116)])
 
     def test_no_usable_folder_ids_make_no_calls(self):
         for folder_ids in ([], None, (), [None]):
@@ -378,15 +386,10 @@ class GetSecretIdsTests(unittest.TestCase):
                 self.assertEqual(ThycoticMixin.get_secret_ids(self.auth, folder_ids, 'q'), [])
                 self.auth.thycotic_search.assert_not_called()
 
-    def test_query_encoding(self):
-        for folder_ids, query, expected in (([5], '', '/v1/secrets/lookup?filter.folderId=5'),
-                                            ([None, 5], None, '/v1/secrets/lookup?filter.folderId=5'),
-                                            ([5], 'a=1&b=x y', '/v1/secrets/lookup?filter.folderId=5&a=1&b=x+y')):
-            with self.subTest(query=query):
-                self.auth.reset_mock()
-                self.auth.thycotic_search.return_value = []
-                ThycoticMixin.get_secret_ids(self.auth, folder_ids, query)
-                self.auth.thycotic_search.assert_called_once_with(expected)
+    def test_lookup_uses_restricted_and_subfolder_filters(self):
+        self.auth.thycotic_search.return_value = []
+        ThycoticMixin.get_secret_ids(self.auth, [5], '')
+        self.auth.thycotic_search.assert_called_once_with(_lookup(5))
 
     def test_non_list_response_and_malformed_secrets_are_ignored(self):
         self.auth.thycotic_search.side_effect = [None, {'error': 'bad'}, 'text', [None, {}, {'id': None}, {'id': 7}]]
