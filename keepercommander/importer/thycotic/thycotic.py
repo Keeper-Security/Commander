@@ -16,6 +16,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import sys
 import time
 import warnings
@@ -25,12 +26,14 @@ from urllib3.exceptions import InsecureRequestWarning
 import xml.etree.ElementTree as ET
 
 import requests
+from tabulate import tabulate
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
                         RecordField, BytesAttachment, Team, BaseDownloadRecordType, RecordType, RecordTypeField)
+from ...constants import EMAIL_PATTERN
 from ...params import KeeperParams
 from ... import record_types, vault, api
 
@@ -373,7 +376,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
     def support_folder_filter(self):
         return True
-
+    
+    def support_add_users(self):
+        return True
+    
     @staticmethod
     def pop_field(fields, key):  # type: (Dict[str, Dict[str, str]], str) -> Tuple[str, Optional[Dict[str, str]]]
         field = fields.pop(key, None)
@@ -397,6 +403,162 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     api.send_keepalive(params)
                 except:
                     pass
+
+    @staticmethod
+    def _user_field(user, key):  # type: (dict, str) -> str
+        return str(user.get(key) or '').strip()
+
+    @staticmethod
+    def _extract_user_email(user):
+        """Return the user's emailAddress, or an empty string."""
+        if not isinstance(user, dict):
+            return ''
+        for key, value in user.items():
+            if str(key).lower() == 'emailaddress' and isinstance(value, str):
+                    return value.strip()
+        return ''
+
+    def _prepare_thycotic_users(self, auth):  # type: (ThycoticAuth) -> List[dict]
+        """Fetch Delinea users that have an email address, including inactive users.
+
+        Application accounts are omitted.
+        When the user list has no email, the user detail endpoint is tried once.
+        """
+        all_users = auth.thycotic_search('/v1/users?filter.includeInactive=true')
+        result = []
+        skipped_application = 0
+        skipped_no_email = 0
+        for user in all_users or []:
+            if not isinstance(user, dict):
+                continue
+            if user.get('isApplicationAccount') is True:
+                skipped_application += 1
+                continue
+            email = self._extract_user_email(user)
+            user_id = user.get('id')
+            source = user
+            if not email and user_id not in (None, ''):
+                try:
+                    detail = auth.thycotic_entity(f'/v1/users/{user_id}')
+                except Exception as e:
+                    logging.warning('Failed to fetch Thycotic user %s: %s', user_id, e)
+                    detail = None
+                if isinstance(detail, dict):
+                    if detail.get('isApplicationAccount') is True:
+                        skipped_application += 1
+                        continue
+                    email = self._extract_user_email(detail)
+                    source = detail
+            if not email:
+                skipped_no_email += 1
+                continue
+            username = str(source.get('userName') or user.get('userName') or '').strip()
+            display = str(source.get('displayName') or user.get('displayName') or '').strip()
+            result.append({
+                'id': user_id,
+                'username': username,
+                'name': display or username or email,
+                'email': email,
+            })
+        if skipped_application:
+            logging.info('Skipped %d Thycotic application account(s)', skipped_application)
+        if skipped_no_email:
+            logging.info('Skipped %d Thycotic user(s) with no email address', skipped_no_email)
+        logging.info(f'Found {len(result)} Thycotic user(s) with an email address')
+        return result
+
+    def _load_existing_keeper_users(self, params):  # type: (KeeperParams) -> list
+        try:
+            if not getattr(params, 'enterprise', None):
+                api.query_enterprise(params)
+            enterprise_data = getattr(params, 'enterprise', None)
+            if not isinstance(enterprise_data, dict):
+                raise ValueError('enterprise data is unavailable')
+            return [
+                {
+                    'email': self._user_field(user, 'email') or self._user_field(user, 'username'),
+                    'status': user.get('status') or 'active',
+                }
+                for user in enterprise_data.get('users') or []
+                if isinstance(user, dict)
+            ]
+        except Exception as e:
+            logging.warning('Failed to load existing Keeper users: %s', e)
+            return []
+
+    def _create_keeper_user(self, params, email, name):
+        # type: (KeeperParams, str, str) -> Optional[str]
+        """Pre-activate one Keeper user."""
+        from ...commands.enterprise_create_user import CreateEnterpriseUserCommand
+        try:
+            creator = CreateEnterpriseUserCommand()
+            return creator.execute(params, email=email, name=name)
+        except Exception as e:
+            logging.warning('Could not create enterprise user "%s": %s', email, e)
+            return None
+
+    def _create_enterprise_users(self, params, thycotic_users):
+        # type: (KeeperParams, List[dict]) -> None
+        seen = set()
+        existing_users = self._load_existing_keeper_users(params)
+        is_valid_email = re.compile(EMAIL_PATTERN).match
+        for user in thycotic_users or []:
+            if not isinstance(user, dict):
+                continue
+            email = self._user_field(user, 'email')
+            email_key = email.casefold()
+            if email_key in seen:
+                continue
+            user_exist = next(
+                (u for u in existing_users if (u.get('email') or '').casefold() == email_key),
+                None,
+            )
+            if user_exist:
+                seen.add(email_key)
+                continue
+            if not is_valid_email(email):
+                continue
+            seen.add(email_key)
+            name = self._user_field(user, 'name') or self._user_field(user, 'username') or email
+            self._create_keeper_user(params, email, name)
+
+    def _preview_thycotic_users(self, auth):
+        # type: (ThycoticAuth) -> None
+        """Fetch Delinea users and print them. Does not create Keeper users."""
+        logging.info('Dry run: fetching Thycotic users (no Keeper users will be created)...')
+        try:
+            thycotic_users = self._prepare_thycotic_users(auth)
+        except Exception as e:
+            logging.warning('Failed to fetch Thycotic users: %s', e)
+            return
+        if not thycotic_users:
+            logging.info('No Thycotic users are available to migrate.')
+            return
+        rows = [
+            {
+                'Username': user.get('username') or '',
+                'Email': user.get('email') or '',
+                'Name': user.get('name') or '',
+            }
+            for user in thycotic_users
+        ]
+        logging.info(f'Thycotic users available to migrate ({len(rows)}):')
+        logging.info(tabulate(rows, headers='keys'))
+
+    def _migrate_thycotic_users(self, auth, params):
+        # type: (ThycoticAuth, KeeperParams) -> None
+        """Provision Delinea users as pre-activated Keeper users, then continue the import.
+
+        A user-fetch failure does not abort secret migration.
+        """
+        logging.info('Migrating Thycotic users to Keeper...')
+        try:
+            thycotic_users = self._prepare_thycotic_users(auth)
+        except Exception as e:
+            logging.warning('Failed to fetch Thycotic users: %s', e)
+            logging.warning('Continuing import without creating Keeper users.')
+            return
+        self._create_enterprise_users(params, thycotic_users)
 
     def do_import(self, filename, **kwargs):
         # type: (ThycoticImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
@@ -442,6 +604,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         auth = ThycoticAuth(host)
         auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
+
+        # Pre-activate users before secrets are imported so later migration steps
+        # can share data to accounts that already exist.
+        if kwargs.get('add_users') is True:
+            if kwargs.get('dry_run') is True:
+                self._preview_thycotic_users(auth)
+            else:
+                self._migrate_thycotic_users(auth, params)
 
         totp_codes = {}
         csv_file = 'secrets-export.csv'
