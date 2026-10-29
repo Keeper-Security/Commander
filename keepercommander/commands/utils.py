@@ -1913,9 +1913,9 @@ class AcceptTransferCommand(Command):
                     del params.settings['must_perform_account_share_by']
                 if 'share_account_to' in params.settings:
                     del params.settings['share_account_to']
-                logging.info('Account transfer accepted.')
+                logging.info('Account Transfer policy accepted.')
             else:
-                logging.info('Account transfer canceled.')
+                logging.info('Account Transfer policy acceptance canceled.')
         else:
             logging.info('There is no account transfer to accept.')
 
