@@ -39,13 +39,16 @@ Notes:
 
 
 Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
-`pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--dry-run]`
+`pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--resources-folder=<uid_or_path>] [--users-folder=<uid_or_path>] [--dry-run]`
 
 - `--config`, `-c` → PAM Configuration record UID or title.
 - `--filename`, `-f` → JSON file to load import data from.
+- `--resources-folder` → Existing folder (UID or folder path) for new resources. Overrides `folder_path` of resources in the JSON (a warning is printed).
+- `--users-folder` → Existing folder (UID or folder path) for new users, incl. users nested in resources. Overrides `folder_path` of users in the JSON (a warning is printed).
 - `--dry-run`, `-d` → Test import without modifying vault.
 
 > **Notes:**
+- Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
 - Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault.
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
