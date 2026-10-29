@@ -852,6 +852,7 @@ def _import(params, file_format, filename, **kwargs):
     skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
     skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
     add_users = kwargs.get('add_users') is True
+    add_teams = kwargs.get('add_teams') is True
 
     import_into_raw = kwargs.get('import_into') or ''
     import_into = import_into_raw
@@ -864,6 +865,9 @@ def _import(params, file_format, filename, **kwargs):
     if add_users and not importer.support_add_users():
         logging.warning('--add-users is not supported for --format=%s; ignoring', file_format)
         add_users = False
+    if add_teams and not importer.support_add_teams():
+        logging.warning('--add-teams is not supported for --format=%s; ignoring', file_format)
+        add_teams = False
     verbose_import_summary = importer.verbose_import_summary
     show_skipped = show_skipped or verbose_import_summary
 
@@ -884,7 +888,8 @@ def _import(params, file_format, filename, **kwargs):
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
                               skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
-                              add_users=add_users):
+                              add_users=add_users,
+                              add_teams=add_teams):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
