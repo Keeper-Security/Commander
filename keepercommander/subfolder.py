@@ -14,6 +14,15 @@ from typing import Optional, Tuple, Dict, Iterable, List, Set, Union
 from .params import KeeperParams
 
 
+class FolderPathAmbiguousError(ValueError):
+    """Raised when a path component resolves to more than one folder."""
+
+    def __init__(self, component):
+        super().__init__(
+            f"Multiple folders match path component '{component}'. "
+            "Use a folder UID instead.")
+
+
 def get_folder_path(params, folder_uid, delimiter='/'):
     uid = folder_uid
     path = ''
@@ -104,12 +113,29 @@ def contained_folders(params, folders, component):
     elif component in get_folder_ids():
         result = [get_folder_by_id(component)]
     else:
-        result = [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
+        children = [
+            get_folder_by_id(uid)
+            for f in folders
+            for uid in f.subfolders
+            if (get_folder_by_id(uid) is not None
+                and (get_folder_by_id(uid).name or '') == component)
+        ]
+        if not children:
+            component_casefold = component.casefold()
+            children = [
+                get_folder_by_id(uid)
+                for f in folders
+                for uid in f.subfolders
+                if (get_folder_by_id(uid) is not None
+                    and (get_folder_by_id(uid).name or '').casefold() == component_casefold)
+            ]
+        result = children
     
     return result
 
 
-def lookup_path(params, folder, components):
+def lookup_path(params, folder, components, find_all_matches=False,
+                raise_on_ambiguous=False):
     # type: (KeeperParams, BaseFolderNode, List[Optional[str]]) -> Tuple[int, List[Optional[BaseFolderNode]]]
     """
     Lookup path of components within the folder cache.
@@ -123,6 +149,11 @@ def lookup_path(params, folder, components):
         child_folders = contained_folders(params, folders, component)
         if not child_folders:
             break
+        if len(child_folders) > 1:
+            if raise_on_ambiguous:
+                raise FolderPathAmbiguousError(component)
+            if not find_all_matches:
+                return remainder, None
         folders = child_folders
         remainder = index + 1
     return remainder, folders
@@ -143,7 +174,8 @@ def path_split(params, folder, path_string):
     return folder, components
 
 
-def try_resolve_path(params, path, find_all_matches=False):
+def try_resolve_path(params, path, find_all_matches=False,
+                     raise_on_ambiguous=False):
     # type: (KeeperParams, str, bool) -> Tuple[Union[List[BaseFolderNode], BaseFolderNode, None], Optional[str]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
@@ -164,7 +196,12 @@ def try_resolve_path(params, path, find_all_matches=False):
 
     folder, components = path_split(params, folder, path)
 
-    remainder, folders = lookup_path(params, folder, components)
+    remainder, folders = lookup_path(
+        params, folder, components,
+        find_all_matches=find_all_matches,
+        raise_on_ambiguous=raise_on_ambiguous)
+    if folders is None:
+        return None
 
     tail = components[remainder:]
 

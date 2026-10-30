@@ -131,48 +131,22 @@ class NestedShareGetCommand(Command):
                                      show_inherited=show_inherited, show_denied=show_denied)
             return
 
-        raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
+        raise CommandError(
+            'nsf-get',
+            f'Cannot resolve "{uid}" by name. Use the object UID; run nsf-list '
+            'to find folder UIDs. Shared-in and ambiguous folder names require UID lookup.')
 
     # ── Resolution ────────────────────────────────────────────────────
 
     @staticmethod
     def _resolve_as_folder(params, uid):
-        nsf_folders = getattr(params, 'nested_share_folders', {})
-        if uid in nsf_folders:
-            return uid
-        lower = uid.lower()
-        matches = [f for f, o in nsf_folders.items() if o.get('name', '').lower() == lower]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            from keepercommander.display import dump_report_data
-            rows = [[f, nsf_folders[f].get('name', '')] for f in matches]
-            dump_report_data(rows, ['Folder UID', 'Name'],
-                             title='Multiple folders match the name', row_number=True)
-        return None
+        resolved = _nsf.resolve_folder_identifier(params, uid)
+        return resolved if resolved in getattr(params, 'nested_share_folders', {}) else None
 
     @staticmethod
     def _resolve_as_record(params, uid):
-        nsf_records = getattr(params, 'nested_share_records', {})
-        if uid in nsf_records:
-            return uid
-        lower = uid.lower()
-        nsf_data = getattr(params, 'nested_share_record_data', {})
-        matches = []
-        for ruid in nsf_records:
-            if ruid in nsf_data and 'data_json' in nsf_data[ruid]:
-                title = nsf_data[ruid]['data_json'].get('title', '')
-                if title and lower in title.lower():
-                    matches.append((ruid, title))
-        if len(matches) == 1:
-            return matches[0][0]
-        if len(matches) > 1:
-            from keepercommander.display import dump_report_data
-            dump_report_data(
-                sorted(matches, key=lambda x: x[1]),
-                ['Record UID', 'Title'],
-                title='Multiple records match the title', row_number=True)
-        return None
+        resolved = _nsf.resolve_nested_share_record_uid(params, uid)
+        return resolved if resolved in getattr(params, 'nested_share_records', {}) else None
 
     # ── Record display ────────────────────────────────────────────────
 

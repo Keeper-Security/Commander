@@ -33,7 +33,8 @@ from ..params import KeeperParams
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..proto import folder_pb2
 from ..record import Record
-from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, try_resolve_path, \
+from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, \
+    FolderPathAmbiguousError, contained_folders, lookup_path, path_split, try_resolve_path, \
     find_folders, get_contained_record_uids, get_contained_folder_uids
 
 
@@ -259,7 +260,11 @@ class FolderListCommand(Command, RecordMixin):
         folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         if pattern:
-            rs = try_resolve_path(params, kwargs['pattern'])
+            try:
+                rs = try_resolve_path(
+                    params, kwargs['pattern'], raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('ls', str(e))
             if rs is not None:
                 folder, pattern = rs
 
@@ -408,13 +413,19 @@ class FolderCdCommand(Command):
             if folder_name in params.folder_cache or folder_name in params.nested_share_folders:
                 params.current_folder = folder_name
             else:
-                rs = try_resolve_path(params, folder_name)
+                try:
+                    rs = try_resolve_path(
+                        params, folder_name, raise_on_ambiguous=True)
+                except FolderPathAmbiguousError as e:
+                    raise CommandError('cd', str(e))
                 if rs is not None:
                     folder, pattern = rs
                     if len(pattern) == 0:
                         params.current_folder = folder.uid
                     else:
                         raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
+                else:
+                    raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -438,7 +449,12 @@ class FolderTreeCommand(Command):
                 params, folder, verbose=verbose, show_records=records, shares=shares,
                 nsf_shares=nsf_shares, hide_shares_key=hide_key, title=title, fmt=fmt))
         else:
-            folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
+            try:
+                folders, pattern = try_resolve_path(
+                    params, folder_name, find_all_matches=True,
+                    raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('tree', str(e))
             if not pattern:
                 for idx, folder in enumerate(folders):
                     trees.append(formatted_tree(
@@ -483,7 +499,11 @@ class FolderRenameCommand(Command):
         if folder_name in params.folder_cache:
             folder_uid = folder_name
         else:
-            rs = try_resolve_path(params, folder_name)
+            try:
+                rs = try_resolve_path(
+                    params, folder_name, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('rndir', str(e))
             if rs is not None:
                 folder, pattern = rs
                 if len(pattern) == 0:
@@ -555,12 +575,10 @@ class FolderMakeCommand(Command):
 
         name = kwargs['folder'] if 'folder' in kwargs else None
         if name:
-            rs = try_resolve_path(params, name)
-            if rs is not None:
-                base_folder, name = rs
-                if len(name) == 0:
-                    logging.warning('mkdir: Folder "%s" already exists', kwargs['folder'])
-                    return
+            base_folder, name, already_exists = self._resolve_parent_for_creation(params, name)
+            if already_exists:
+                logging.warning('mkdir: Folder "%s" already exists', kwargs['folder'])
+                return
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None
@@ -666,6 +684,96 @@ class FolderMakeCommand(Command):
         logging.info(json.dumps(response_data))
         return folder_uid
 
+    @staticmethod
+    def _resolve_parent_for_creation(params, folder_path):
+        """Resolve only the parent of a new folder path.
+
+        A duplicate name is valid at the root level, so the final component
+        must not be resolved as an existing folder in that case. Every parent
+        component still has to resolve to exactly one folder.
+        """
+        base_folder = (
+            params.folder_cache[params.current_folder]
+            if params.current_folder in params.folder_cache
+            else params.root_folder
+        )
+        base_folder, components = path_split(params, base_folder, folder_path)
+        components = [component for component in components if component != '']
+        if not components:
+            raise CommandError('mkdir', 'Folder name is required')
+
+        leaf = components[-1]
+        parent_components = components[:-1]
+        if parent_components:
+            try:
+                remainder, parents = lookup_path(
+                    params, base_folder, parent_components,
+                    raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mkdir', str(e))
+            if remainder != len(parent_components) or not parents:
+                parent_path = '/'.join(
+                    component.replace('/', '//') for component in parent_components)
+                raise CommandError('mkdir', f'Parent folder "{parent_path}" not found')
+            base_folder = parents[0]
+
+            existing_children = contained_folders(params, [base_folder], leaf)
+            if len(existing_children) > 1:
+                raise CommandError(
+                    'mkdir',
+                    f'Multiple folders match path component "{leaf}". '
+                    'Use a folder UID instead.')
+            if len(existing_children) == 1:
+                return base_folder, leaf, True
+        else:
+            existing_children = contained_folders(params, [base_folder], leaf)
+            if leaf in params.folder_cache:
+                return base_folder, leaf, True
+            if (len(existing_children) > 1
+                    and base_folder.type != BaseFolderNode.RootFolderType):
+                raise CommandError(
+                    'mkdir',
+                    f'Multiple folders match path component "{leaf}". '
+                    'Use a folder UID instead.')
+            if existing_children:
+                # Root-level duplicate names are allowed. A folder-relative
+                # leaf, however, must remain unique under its parent.
+                if base_folder.type != BaseFolderNode.RootFolderType:
+                    return base_folder, leaf, True
+                if any(FolderMakeCommand._is_owned_root_folder(params, f)
+                       for f in existing_children):
+                    return base_folder, leaf, True
+
+        return base_folder, leaf, False
+
+    @staticmethod
+    def _is_owned_root_folder(params, folder):
+        """Return whether a root folder belongs to the current account."""
+        if folder.type == BaseFolderNode.UserFolderType:
+            return True
+        if folder.type != BaseFolderNode.SharedFolderType:
+            return False
+
+        shared_folder = getattr(params, 'shared_folder_cache', {}).get(folder.uid, {})
+        owner_username = shared_folder.get('owner_username')
+        current_username = getattr(params, 'user', None)
+        if (isinstance(owner_username, str) and owner_username and
+                isinstance(current_username, str) and current_username and
+                owner_username.casefold() == current_username.casefold()):
+            return True
+
+        owner_uid = shared_folder.get('owner_account_uid')
+        account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+        if owner_uid and account_uid_bytes:
+            return owner_uid == utils.base64_url_encode(account_uid_bytes)
+
+        return any(
+            user.get('owner') is True
+            and (user.get('username') or '').casefold()
+                == (current_username or '').casefold()
+            for user in shared_folder.get('users', [])
+        )
+
 
 def get_folder_path(params, uid):
     path = ''
@@ -700,7 +808,10 @@ class FolderRemoveCommand(Command):
         folders = []
         pattern_list = kwargs.get('pattern', [])
         for pattern in pattern_list:
-            rs = try_resolve_path(params, pattern)
+            try:
+                rs = try_resolve_path(params, pattern, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('rmdir', str(e))
             if rs is None:
                 regex_pattern = pattern
             else:
@@ -833,7 +944,11 @@ class FolderMoveCommand(Command):
         if dst_path in params.folder_cache:
             dst_folder = params.folder_cache[dst_path]
         else:
-            dst = try_resolve_path(params, dst_path)
+            try:
+                dst = try_resolve_path(
+                    params, dst_path, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mv', str(e))
             if dst is None:
                 raise CommandError('mv', 'Destination path should be existing folder')
             dst_folder, name = dst
@@ -867,7 +982,11 @@ class FolderMoveCommand(Command):
                 raise CommandError('mv', 'Source and Destination folders are the same')
             source.append((src_folder, None))
         else:
-            src = try_resolve_path(params, src_path)
+            try:
+                src = try_resolve_path(
+                    params, src_path, raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('mv', str(e))
             if src is None:
                 raise CommandError('mv', 'Source path should be existing record or folder')
 

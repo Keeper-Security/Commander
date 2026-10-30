@@ -376,12 +376,25 @@ class NestedShareRecordPermissionCommand(Command):
                 # friendly cross-type message instead of "not found".
                 ensure_nested_share_folder(params, resolved, 'nsf-record-permission',
                                            identifier=folder_name)
+            # The ownership-aware resolver deliberately returns None for an
+            # ambiguous or unowned name. Do not fall back to a first-match
+            # scan, which would reintroduce the shadowing bug.
+            raise CommandError('nsf-record-permission',
+                               f'Folder "{folder_name}" not found or is ambiguous')
+
         if folder_name in nsf_folders:
             return folder_name, nsf_folders[folder_name].get('name', folder_name)
-        lower = folder_name.lower()
-        for fuid, fobj in nsf_folders.items():
-            if fobj.get('name', '').lower() == lower:
-                return fuid, fobj.get('name', fuid)
+        matches = [
+            (fuid, fobj.get('name', fuid))
+            for fuid, fobj in nsf_folders.items()
+            if fobj.get('name', '').casefold() == folder_name.casefold()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise CommandError('nsf-record-permission',
+                               f'Multiple Nested Share Folders match "{folder_name}". '
+                               'Use a folder UID.')
         raise CommandError('nsf-record-permission', f'Folder "{folder_name}" not found')
 
     @staticmethod
