@@ -2891,6 +2891,17 @@ class TestNestedShareFolderDisplayCommands(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, uid=legacy_uid)
 
+    def test_get_unresolved_name_explains_uid_lookup(self):
+        from keepercommander.commands.nested_share_folder.display_commands import NestedShareGetCommand
+
+        params = _make_params(user='victim@example.com')
+        cmd = NestedShareGetCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, uid='Clients//Acme1')
+        self.assertIn('Shared-in and ambiguous folder names require UID lookup',
+                      str(ctx.exception))
+
     @patch('keepercommander.nested_share_folder.get_folder_access_v3')
     def test_folder_json_uses_team_name_in_team_permissions(self, mock_access):
         """nsf-get JSON should show team names, not team UIDs, in team_permissions."""

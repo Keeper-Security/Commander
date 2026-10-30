@@ -131,7 +131,9 @@ class NestedShareGetCommand(Command):
                                      show_inherited=show_inherited, show_denied=show_denied)
             return
 
-        raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
+        raise CommandError(
+            'nsf-get',
+            f'Cannot resolve "{uid}" by name. Use the object UID.')
 
     # ── Resolution ────────────────────────────────────────────────────
 
