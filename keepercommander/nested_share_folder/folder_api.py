@@ -150,6 +150,9 @@ def folder_access_update_v3(params, folder_access_adds=None,
 # Resolution
 # ══════════════════════════════════════════════════════════════════════════
 
+_AMBIGUOUS_RESOLUTION = object()
+
+
 def resolve_folder_identifier(params, folder_identifier):
     if not isinstance(folder_identifier, str):
         return None
@@ -158,8 +161,8 @@ def resolve_folder_identifier(params, folder_identifier):
     subfolder_cache = getattr(params, 'subfolder_cache', {})
     folder_cache = getattr(params, 'folder_cache', {})
 
-    # UIDs are unambiguous and are the supported way to select a shared-in
-    # folder whose name is not owned by the current account.
+    # UIDs are always unambiguous and remain the preferred way to select a
+    # shared-in folder when names collide.
     if folder_identifier in nsf_folders:
         return folder_identifier
     if folder_identifier in subfolder_cache:
@@ -172,7 +175,9 @@ def resolve_folder_identifier(params, folder_identifier):
     # folder named "Clients/Acme" from shadowing the user's own Clients/Acme
     # hierarchy.
     if '/' in folder_identifier or '\\' in folder_identifier:
-        nsf_uid = _resolve_owned_nsf_path(params, folder_identifier)
+        nsf_uid = _resolve_nsf_path(params, folder_identifier)
+        if nsf_uid is _AMBIGUOUS_RESOLUTION:
+            return None
         if nsf_uid:
             return nsf_uid
 
@@ -181,31 +186,24 @@ def resolve_folder_identifier(params, folder_identifier):
             rs = try_resolve_path(params, folder_identifier.replace('\\', '/'))
             if rs is not None:
                 folder, pattern = rs
-                if (folder and not pattern and
-                        _is_safe_path_folder(params, folder)):
+                if folder and not pattern:
                     return folder.uid
         return None
 
-    # Flat-name matching is intentionally limited to folders owned by the
-    # current account. Shared-in folders can still be selected by UID.
-    matching = [
-        uid for uid, obj in nsf_folders.items()
-        if obj.get('name', '').casefold() == folder_identifier.casefold()
-        and _is_current_account_folder_owner(params, obj)
-    ]
-    if len(matching) == 1:
-        return matching[0]
-    if len(matching) > 1:
+    matching = _matching_nsf_folder_uids(nsf_folders, folder_identifier)
+    selected = _select_nsf_folder_uid(params, nsf_folders, matching)
+    if selected is _AMBIGUOUS_RESOLUTION:
         logging.warning("Multiple folders match '%s'. Use UID instead.", folder_identifier)
         return None
+    if selected:
+        return selected
 
     folder_cache = getattr(params, 'folder_cache', {})
     if isinstance(folder_cache, dict) and folder_cache:
         rs = try_resolve_path(params, folder_identifier)
         if rs is not None:
             folder, pattern = rs
-            if (folder and not pattern and
-                    _is_safe_path_folder(params, folder)):
+            if folder and not pattern:
                 return folder.uid
     return None
 
@@ -213,9 +211,9 @@ def resolve_folder_identifier(params, folder_identifier):
 def _is_current_account_folder_owner(params, folder_obj):
     """Return whether *folder_obj* is owned by the current account.
 
-    Missing ownership metadata is treated as unknown, not as ownership. This
-    is important because shared-in folders are present in the same local cache
-    as folders owned by the current account.
+    Missing ownership metadata is treated as unknown, not as ownership. A
+    unique unknown/shared-in folder can still be selected by name; ownership
+    only decides which candidate wins when names collide.
     """
     owner_username = folder_obj.get('owner_username')
     current_username = getattr(params, 'user', None)
@@ -234,8 +232,38 @@ def _is_current_account_folder_owner(params, folder_obj):
     return False
 
 
-def _resolve_owned_nsf_path(params, folder_identifier):
-    """Resolve a path through current-account-owned NSF folders.
+def _matching_nsf_folder_uids(nsf_folders, folder_name):
+    """Return exact-case matches, or case-insensitive matches when exact is absent."""
+    exact = [
+        uid for uid, folder_obj in nsf_folders.items()
+        if folder_obj.get('name', '') == folder_name
+    ]
+    if exact:
+        return exact
+    folded = folder_name.casefold()
+    return [
+        uid for uid, folder_obj in nsf_folders.items()
+        if folder_obj.get('name', '').casefold() == folded
+    ]
+
+
+def _select_nsf_folder_uid(params, nsf_folders, matching):
+    """Prefer one owned match; otherwise allow one shared-in match."""
+    if not matching:
+        return None
+    owned = [
+        uid for uid in matching
+        if _is_current_account_folder_owner(params, nsf_folders[uid])
+    ]
+    if len(owned) == 1:
+        return owned[0]
+    if len(owned) > 1:
+        return _AMBIGUOUS_RESOLUTION
+    return matching[0] if len(matching) == 1 else _AMBIGUOUS_RESOLUTION
+
+
+def _resolve_nsf_path(params, folder_identifier):
+    """Resolve an NSF path with exact-case and ownership-aware matching.
 
     NSF folder names may contain a literal slash, represented by ``//`` in a
     path. The parser mirrors ``NestedShareFolderMkdirCommand._parse_path`` but
@@ -263,53 +291,32 @@ def _resolve_owned_nsf_path(params, folder_identifier):
             current = candidate
 
     for component in components:
-        matches = []
+        candidates = []
         for uid, folder_obj in nsf_folders.items():
-            if not _is_current_account_folder_owner(params, folder_obj):
-                continue
-            if folder_obj.get('name', '').casefold() != component.casefold():
-                continue
-
             parent_uid = folder_obj.get('parent_uid') or ''
             if current:
                 if parent_uid == current:
-                    matches.append(uid)
+                    candidates.append(uid)
             else:
                 # Missing parents and server root sentinels represent the
                 # Nested Share Folder root.
                 if not parent_uid or parent_uid not in nsf_folders:
-                    matches.append(uid)
+                    candidates.append(uid)
 
-        if len(matches) != 1:
+        candidate_folders = {uid: nsf_folders[uid] for uid in candidates}
+        matching = _matching_nsf_folder_uids(candidate_folders, component)
+        selected = _select_nsf_folder_uid(params, nsf_folders, matching)
+        if selected is _AMBIGUOUS_RESOLUTION:
+            return _AMBIGUOUS_RESOLUTION
+        if not selected:
             return None
-        current = matches[0]
+        current = selected
 
     return current
 
 
 def _is_safe_path_folder(params, folder):
-    """Return whether a legacy path result contains no unowned NSF folder."""
-    nsf_folders = getattr(params, 'nested_share_folders', {})
-    folder_cache = getattr(params, 'folder_cache', {})
-    visited = set()
-    current = folder
-
-    while current is not None:
-        folder_uid = getattr(current, 'uid', None)
-        if not folder_uid or folder_uid in visited:
-            break
-        visited.add(folder_uid)
-
-        if (folder_uid in nsf_folders and
-                not _is_current_account_folder_owner(
-                    params, nsf_folders[folder_uid])):
-            return False
-
-        parent_uid = getattr(current, 'parent_uid', None)
-        if not parent_uid or not isinstance(folder_cache, dict):
-            break
-        current = folder_cache.get(parent_uid)
-
+    """Retained for callers that need a path-safety predicate."""
     return True
 
 

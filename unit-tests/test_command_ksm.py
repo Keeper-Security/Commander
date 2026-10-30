@@ -200,6 +200,55 @@ class TestKSMAppRecordResolution(unittest.TestCase):
 
         self.assertIsNone(KSMCommand.get_app_record(params, 'Duplicate App'))
 
+    def test_get_app_record_ignores_non_app_title_collisions(self):
+        params = self._make_params()
+        app_uid = 'appUid00000000000001'
+        login_uid = 'loginUid0000000000001'
+        params.record_cache = {
+            app_uid: {
+                'record_uid': app_uid,
+                'version': 5,
+                'data_unencrypted': b'{"type":"app","title":"Prod App"}',
+                'record_key_unencrypted': b'app_key',
+            },
+            login_uid: {
+                'record_uid': login_uid,
+                'version': 3,
+                'data_unencrypted': b'{"type":"login","title":"Prod App"}',
+            },
+        }
+
+        result = KSMCommand.get_app_record(params, 'Prod App')
+        self.assertIsNotNone(result)
+        self.assertEqual(result['record_uid'], app_uid)
+
+    def test_get_app_record_allows_unique_shared_app_title(self):
+        params = self._make_params()
+        app_uid = 'appUid00000000000001'
+        login_uid = 'loginUid0000000000001'
+        params.user = 'victim@example.com'
+        params.record_cache = {
+            app_uid: {
+                'record_uid': app_uid,
+                'version': 5,
+                'data_unencrypted': b'{"type":"app","title":"Prod App"}',
+                'record_key_unencrypted': b'app_key',
+            },
+            login_uid: {
+                'record_uid': login_uid,
+                'version': 3,
+                'data_unencrypted': b'{"type":"login","title":"Prod App"}',
+            },
+        }
+        params.meta_data_cache = {
+            app_uid: {'owner_username': 'attacker@example.com'},
+            login_uid: {'owner_username': 'victim@example.com'},
+        }
+
+        result = KSMCommand.get_app_record(params, 'Prod App')
+        self.assertIsNotNone(result)
+        self.assertEqual(result['record_uid'], app_uid)
+
     def test_get_ksm_app_display_info_from_nsf_metadata(self):
         params = self._make_params()
         app_uid = 'appUid00000000000001'

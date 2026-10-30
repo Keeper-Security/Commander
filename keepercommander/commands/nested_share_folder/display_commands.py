@@ -133,7 +133,8 @@ class NestedShareGetCommand(Command):
 
         raise CommandError(
             'nsf-get',
-            f'Cannot resolve "{uid}" by name. Use the object UID.')
+            f'Cannot resolve "{uid}" by name. Use the object UID; run nsf-list '
+            'to find folder UIDs. Shared-in and ambiguous folder names require UID lookup.')
 
     # ── Resolution ────────────────────────────────────────────────────
 

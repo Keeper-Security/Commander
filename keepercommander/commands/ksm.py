@@ -34,7 +34,8 @@ from ..nested_share_folder.common import get_folder_key, get_record_key
 from .nested_share_folder.helpers import (
     is_nested_share_folder, is_nested_share_record, load_record_metadata, resolve_folder_uid)
 from ..nested_share_folder.removal_api import (
-    resolve_nested_share_folder_uid, resolve_nested_share_record_uid)
+    resolve_nested_share_folder_uid, resolve_nested_share_record_uid,
+    _is_current_account_record_owner)
 from .. import api, utils, crypto, vault
 from ..params import KeeperParams
 from ..display import bcolors
@@ -1628,6 +1629,50 @@ class KSMCommand(Command):
         }
 
     @staticmethod
+    def _app_title(data):
+        return data.get('title', '') if isinstance(data, dict) else ''
+
+    @staticmethod
+    def _app_record_candidates(params, title):
+        """Return only app records matching *title*, before ownership ranking."""
+        candidates = []
+        seen = set()
+        title_cf = title.casefold()
+
+        for uid, rec in getattr(params, 'record_cache', {}).items():
+            app = KSMCommand._app_record_from_cache_entry(rec)
+            if not app or uid in seen:
+                continue
+            try:
+                raw_data = rec.get('data_unencrypted', b'')
+                if isinstance(raw_data, bytes):
+                    raw_data = raw_data.decode('utf-8')
+                data = json.loads(raw_data)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if KSMCommand._app_title(data).casefold() == title_cf:
+                candidates.append((uid, app, rec, None))
+                seen.add(uid)
+
+        for uid in getattr(params, 'nested_share_records', {}):
+            if uid in seen:
+                continue
+            app = KSMCommand._normalize_nsf_app_record(params, uid)
+            if not app:
+                continue
+            data = getattr(params, 'nested_share_record_data', {}).get(uid, {}).get(
+                'data_json', {})
+            if KSMCommand._app_title(data).casefold() == title_cf:
+                candidates.append((
+                    uid, app,
+                    getattr(params, 'nested_share_record_data', {}).get(uid, {}),
+                    getattr(params, 'record_cache', {}).get(uid, {}),
+                ))
+                seen.add(uid)
+
+        return candidates
+
+    @staticmethod
     def get_app_record(params, app_name_or_uid):
         if not app_name_or_uid:
             return None
@@ -1640,6 +1685,27 @@ class KSMCommand(Command):
         nsf_rec = KSMCommand._normalize_nsf_app_record(params, app_name_or_uid)
         if nsf_rec:
             return nsf_rec
+
+        app_candidates = KSMCommand._app_record_candidates(params, app_name_or_uid)
+        if app_candidates:
+            owned = [
+                candidate for candidate in app_candidates
+                if _is_current_account_record_owner(
+                    params, candidate[0], candidate[2], candidate[3])
+            ]
+            if len(owned) == 1:
+                return owned[0][1]
+            if len(owned) > 1:
+                logging.warning(
+                    "Multiple owned Secrets Manager applications match '%s'. "
+                    "Use the application UID instead.", app_name_or_uid)
+                return None
+            if len(app_candidates) == 1:
+                return app_candidates[0][1]
+            logging.warning(
+                "Multiple Secrets Manager applications match '%s'. "
+                "Use the application UID instead.", app_name_or_uid)
+            return None
 
         resolved_uid = resolve_nested_share_record_uid(params, app_name_or_uid)
         if resolved_uid:

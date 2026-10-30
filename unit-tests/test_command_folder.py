@@ -59,6 +59,24 @@ class TestFolder(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, folder='Invalid')
 
+    def test_tree_surfaces_ambiguous_folder_path(self):
+        from keepercommander.subfolder import UserFolderNode
+
+        params = get_synced_params()
+        first = UserFolderNode()
+        first.uid = 'e' * 22
+        first.name = 'Ambiguous Tree'
+        second = UserFolderNode()
+        second.uid = 'f' * 22
+        second.name = 'Ambiguous Tree'
+        params.folder_cache[first.uid] = first
+        params.folder_cache[second.uid] = second
+        params.root_folder.subfolders.extend([first.uid, second.uid])
+
+        with self.assertRaises(CommandError) as ctx:
+            folder.FolderTreeCommand().execute(params, folder='Ambiguous Tree')
+        self.assertIn('Multiple folders match', str(ctx.exception))
+
     def test_make_folder(self):
         params = get_synced_params()
         cmd = folder.FolderMakeCommand()
@@ -100,10 +118,8 @@ class TestFolder(TestCase):
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
-        with mock.patch('keepercommander.commands.folder.user_choice', return_value='n'):
-            KeeperApiHelper.communicate_expect([is_user_folder])
+        with self.assertLogs(level=logging.WARNING):
             cmd.execute(params, folder=shared_folder.name)
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         params.current_folder = shared_folder.uid
         KeeperApiHelper.communicate_expect([is_shared_folder_folder])
@@ -111,15 +127,15 @@ class TestFolder(TestCase):
         self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_make_folder_allows_duplicate_root_name(self):
-        from keepercommander.subfolder import UserFolderNode
+        from keepercommander.subfolder import SharedFolderNode
 
         params = get_synced_params()
-        existing = UserFolderNode()
+        existing = SharedFolderNode()
         existing.uid = 'c' * 22
         existing.name = 'Duplicate Root'
         existing.parent_uid = None
         existing.subfolders = []
-        second = UserFolderNode()
+        second = SharedFolderNode()
         second.uid = 'h' * 22
         second.name = 'Duplicate Root'
         second.parent_uid = None
@@ -214,6 +230,24 @@ class TestFolder(TestCase):
                 return_value=True):
             with self.assertRaises(CommandError) as ctx:
                 cmd.execute(params, pattern=['Ambiguous'], force=True, quiet=True)
+        self.assertIn('Multiple folders match', str(ctx.exception))
+
+    def test_list_surfaces_ambiguous_folder_path(self):
+        from keepercommander.subfolder import UserFolderNode
+
+        params = get_synced_params()
+        first = UserFolderNode()
+        first.uid = 'c' * 22
+        first.name = 'Ambiguous List'
+        second = UserFolderNode()
+        second.uid = 'd' * 22
+        second.name = 'Ambiguous List'
+        params.folder_cache[first.uid] = first
+        params.folder_cache[second.uid] = second
+        params.root_folder.subfolders.extend([first.uid, second.uid])
+
+        with self.assertRaises(CommandError) as ctx:
+            folder.FolderListCommand().execute(params, pattern='Ambiguous List')
         self.assertIn('Multiple folders match', str(ctx.exception))
 
     def test_delete_folders(self):

@@ -260,7 +260,11 @@ class FolderListCommand(Command, RecordMixin):
         folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         if pattern:
-            rs = try_resolve_path(params, kwargs['pattern'])
+            try:
+                rs = try_resolve_path(
+                    params, kwargs['pattern'], raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('ls', str(e))
             if rs is not None:
                 folder, pattern = rs
 
@@ -421,8 +425,7 @@ class FolderCdCommand(Command):
                     else:
                         raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
                 else:
-                    raise CommandError(
-                        'cd', 'Folder {0} not found or is ambiguous'.format(folder_name))
+                    raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -446,7 +449,12 @@ class FolderTreeCommand(Command):
                 params, folder, verbose=verbose, show_records=records, shares=shares,
                 nsf_shares=nsf_shares, hide_shares_key=hide_key, title=title, fmt=fmt))
         else:
-            folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
+            try:
+                folders, pattern = try_resolve_path(
+                    params, folder_name, find_all_matches=True,
+                    raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('tree', str(e))
             if not pattern:
                 for idx, folder in enumerate(folders):
                     trees.append(formatted_tree(
@@ -719,6 +727,8 @@ class FolderMakeCommand(Command):
                 return base_folder, leaf, True
         else:
             existing_children = contained_folders(params, [base_folder], leaf)
+            if leaf in params.folder_cache:
+                return base_folder, leaf, True
             if (len(existing_children) > 1
                     and base_folder.type != BaseFolderNode.RootFolderType):
                 raise CommandError(
@@ -730,10 +740,39 @@ class FolderMakeCommand(Command):
                 # leaf, however, must remain unique under its parent.
                 if base_folder.type != BaseFolderNode.RootFolderType:
                     return base_folder, leaf, True
-            elif leaf in params.folder_cache:
-                return base_folder, leaf, True
+                if any(FolderMakeCommand._is_owned_root_folder(params, f)
+                       for f in existing_children):
+                    return base_folder, leaf, True
 
         return base_folder, leaf, False
+
+    @staticmethod
+    def _is_owned_root_folder(params, folder):
+        """Return whether a root folder belongs to the current account."""
+        if folder.type == BaseFolderNode.UserFolderType:
+            return True
+        if folder.type != BaseFolderNode.SharedFolderType:
+            return False
+
+        shared_folder = getattr(params, 'shared_folder_cache', {}).get(folder.uid, {})
+        owner_username = shared_folder.get('owner_username')
+        current_username = getattr(params, 'user', None)
+        if (isinstance(owner_username, str) and owner_username and
+                isinstance(current_username, str) and current_username and
+                owner_username.casefold() == current_username.casefold()):
+            return True
+
+        owner_uid = shared_folder.get('owner_account_uid')
+        account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+        if owner_uid and account_uid_bytes:
+            return owner_uid == utils.base64_url_encode(account_uid_bytes)
+
+        return any(
+            user.get('owner') is True
+            and (user.get('username') or '').casefold()
+                == (current_username or '').casefold()
+            for user in shared_folder.get('users', [])
+        )
 
 
 def get_folder_path(params, uid):

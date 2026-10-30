@@ -182,8 +182,22 @@ def _is_current_account_record_owner(params, record_uid, nsf_data, record_obj):
         except Exception:
             pass
 
-    for obj in (nsf_data or {}, record_obj or {},
-                getattr(params, 'meta_data_cache', {}).get(record_uid, {})):
+    # The cache entries passed by callers are normally dictionaries, but some
+    # sync paths expose a collection of metadata entries.  Normalize both
+    # forms before looking up ownership so a malformed/legacy cache cannot
+    # turn title resolution into an AttributeError.
+    metadata_cache = getattr(params, 'meta_data_cache', {})
+    metadata_entry = (metadata_cache.get(record_uid, {})
+                      if isinstance(metadata_cache, dict) else {})
+
+    objects = []
+    for value in (nsf_data, record_obj, metadata_entry):
+        if isinstance(value, dict):
+            objects.append(value)
+        elif isinstance(value, (list, tuple, set)):
+            objects.extend(item for item in value if isinstance(item, dict))
+
+    for obj in objects:
         owner_username = obj.get('user_username') or obj.get('owner_username')
         if (isinstance(owner_username, str) and owner_username and
                 isinstance(current_username, str) and current_username and

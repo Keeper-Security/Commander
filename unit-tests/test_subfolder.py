@@ -128,6 +128,12 @@ def test_subfolder_try_resolve_path_rejects_case_variant_folder_shadowing():
     params.root_folder = root
     params.current_folder = ''
 
+    exact_folder, exact_tail = subfolder.try_resolve_path(params, 'Work')
+    assert exact_folder is first
+    assert exact_tail == ''
+    lower_folder, lower_tail = subfolder.try_resolve_path(params, 'work')
+    assert lower_folder is second
+    assert lower_tail == ''
     assert subfolder.try_resolve_path(params, 'WORK') is None
     with pytest.raises(subfolder.FolderPathAmbiguousError):
         subfolder.try_resolve_path(params, 'WORK', raise_on_ambiguous=True)

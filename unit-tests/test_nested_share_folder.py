@@ -136,7 +136,7 @@ class TestCommandHelpers(TestCase):
 
         self.assertIsNone(resolve_folder_identifier(params, 'Clients/Acme'))
 
-    def test_folder_path_does_not_use_unowned_nsf_folder_cache(self):
+    def test_folder_path_allows_unique_shared_in_nsf_folder_cache(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
         from keepercommander.subfolder import (
             NestedShareFolderNode, RootFolderNode,
@@ -173,7 +173,9 @@ class TestCommandHelpers(TestCase):
             },
         )
 
-        self.assertIsNone(resolve_folder_identifier(params, 'Clients/Acme'))
+        self.assertEqual(
+            resolve_folder_identifier(params, 'Clients/Acme'),
+            child_uid)
 
     def test_flat_folder_name_requires_current_account_ownership(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
@@ -188,10 +190,10 @@ class TestCommandHelpers(TestCase):
         )
 
         self.assertEqual(resolve_folder_identifier(params, 'Owned'), owned_uid)
-        self.assertIsNone(resolve_folder_identifier(params, 'Shared'))
+        self.assertEqual(resolve_folder_identifier(params, 'Shared'), shared_uid)
         self.assertEqual(resolve_folder_identifier(params, shared_uid), shared_uid)
 
-    def test_flat_folder_name_does_not_fall_back_to_unowned_nsf_cache(self):
+    def test_flat_folder_name_allows_unique_shared_in_nsf_cache(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
         from keepercommander.subfolder import NestedShareFolderNode, RootFolderNode
 
@@ -213,7 +215,7 @@ class TestCommandHelpers(TestCase):
             folder_cache={shared_uid: shared_node},
         )
 
-        self.assertIsNone(resolve_folder_identifier(params, 'Shared'))
+        self.assertEqual(resolve_folder_identifier(params, 'Shared'), shared_uid)
 
     def test_duplicate_owned_nsf_folder_name_is_ambiguous(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
@@ -248,6 +250,23 @@ class TestCommandHelpers(TestCase):
                 params, 'Work', None),
             owned_uid)
 
+    def test_nsf_mkdir_resolves_unique_shared_in_parent(self):
+        from keepercommander.commands.nested_share_folder.folder_commands import (
+            NestedShareFolderMkdirCommand,
+        )
+
+        shared_uid, shared = _make_folder(name='Team Work')
+        shared['owner_username'] = 'attacker@example.com'
+        params = _make_params(
+            user='victim@example.com',
+            nested_share_folders={shared_uid: shared},
+        )
+
+        self.assertEqual(
+            NestedShareFolderMkdirCommand._find_existing_child(
+                params, 'Team Work', None),
+            shared_uid)
+
     def test_nsf_mkdir_child_resolution_rejects_duplicate_owned_folders(self):
         from keepercommander.commands.nested_share_folder.folder_commands import (
             NestedShareFolderMkdirCommand,
@@ -266,7 +285,7 @@ class TestCommandHelpers(TestCase):
             NestedShareFolderMkdirCommand._find_existing_child(
                 params, 'Work', None)
 
-    def test_record_permission_rejects_unowned_folder_fallback(self):
+    def test_record_permission_resolves_unique_shared_in_folder(self):
         from keepercommander.commands.nested_share_folder.sharing_commands import (
             NestedShareRecordPermissionCommand,
         )
@@ -278,9 +297,10 @@ class TestCommandHelpers(TestCase):
             nested_share_folders={shared_uid: shared},
         )
 
-        with self.assertRaises(CommandError):
+        self.assertEqual(
             NestedShareRecordPermissionCommand._resolve_folder(
-                params.nested_share_folders, 'Shared', params)
+                params.nested_share_folders, 'Shared', params),
+            (shared_uid, 'Shared'))
 
     def test_shortcut_record_resolution_rejects_duplicate_titles(self):
         from keepercommander.commands.nested_share_folder.record_commands import (
@@ -408,6 +428,20 @@ class TestCommandHelpers(TestCase):
 
         self.assertEqual(
             resolve_nested_share_record_uid(params, 'Shared Record'), shared_uid)
+
+    def test_record_owner_check_handles_collection_metadata(self):
+        from keepercommander.nested_share_folder.removal_api import (
+            _is_current_account_record_owner)
+
+        params = _make_params(user='victim@example.com')
+        self.assertTrue(_is_current_account_record_owner(
+            params, 'record-uid',
+            [{'owner_username': 'victim@example.com'}],
+            {'data_unencrypted': b''}))
+        self.assertFalse(_is_current_account_record_owner(
+            params, 'record-uid',
+            ['invalid metadata'],
+            {'data_unencrypted': b''}))
 
     def test_parse_expiration_none(self):
         from keepercommander.commands.nested_share_folder.helpers import parse_expiration
@@ -631,6 +665,22 @@ class TestNestedShareFolderFolderCommands(TestCase):
 
         mock_create.assert_called_once()
         self.assertIsNone(mock_create.call_args.kwargs['parent_uid'])
+
+    @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
+    def test_mkdir_is_idempotent_for_owned_root_name(self, mock_create):
+        from keepercommander.commands.nested_share_folder import NestedShareFolderMkdirCommand
+
+        existing_uid, existing = _make_folder(name='Owned Root')
+        existing['owner_username'] = 'victim@example.com'
+        params = _make_params(
+            user='victim@example.com',
+            nested_share_folders={existing_uid: existing})
+
+        result = NestedShareFolderMkdirCommand().execute(
+            params, folder='Owned Root')
+
+        self.assertEqual(result, existing_uid)
+        mock_create.assert_not_called()
 
     @patch('keepercommander.commands.nested_share_folder.folder_commands._nsf.create_folder_v3')
     def test_mkdir_rejects_duplicate_parent_name(self, mock_create):
