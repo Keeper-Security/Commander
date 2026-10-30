@@ -289,23 +289,69 @@ class TestAddTeamMembers(_QuietTestCase):
         self.assertEqual(batch.call_args[0][1][0]['command'], 'team_queue_user')
         self.assertEqual(counts.queued, 1)
 
-    def test_already_exists_response_counts_as_already_on_team(self):
+    def test_captured_success_counts_as_added_and_duplicate_comes_from_membership(self):
         importer = self.importer()
+        captured = {
+            'result': 'success',
+            'result_code': '',
+            'message': '',
+            'command': 'team_enterprise_user_add',
+            'revision': 4027138144,
+        }
+        queued_success = {
+            'result': 'success',
+            'result_code': '',
+            'message': '',
+            'command': 'team_queue_user',
+            'revision': 4027138145,
+        }
         with mock.patch(
             'keepercommander.commands.enterprise.EnterpriseTeamCommand._create_add_user_request',
             return_value={'command': 'team_enterprise_user_add', 'enterprise_user_id': 1},
         ), mock.patch(
             'keepercommander.importer.thycotic.thycotic.api.execute_batch',
-            return_value=[{
-                'result': 'fail',
-                'message': 'The object you are trying to create already exists.',
-            }],
-        ):
-            counts = importer._add_team_members(
+            side_effect=[
+                [captured],
+                [queued_success],
+                [{
+                    'result': 'fail',
+                    'result_code': 'exists',
+                    'message': 'The object you are trying to create already exists.',
+                }],
+                [{
+                    'result': 'fail',
+                    'message': 'The object you are trying to create already exists.',
+                }],
+            ],
+        ) as batch:
+            added = importer._add_team_members(
                 self._params(), 'uid', 'Ops', b'key', ['a@x.com'], set(), True,
             )
-        self.assertEqual(counts, TeamMemberCounts(added=0, queued=0, already=1, missing=0, failed=0))
-        self.log.warning.assert_not_called()
+            queued = importer._add_team_members(
+                self._params(), 'uid', 'Ops', None, ['b@x.com'], set(), False,
+            )
+            coded_failure = importer._add_team_members(
+                self._params(), 'uid', 'Ops', b'key', ['a@x.com'], set(), True,
+            )
+            message_failure = importer._add_team_members(
+                self._params(), 'uid', 'Ops', b'key', ['a@x.com'], set(), True,
+            )
+            already = importer._add_team_members(
+                self._params(), 'uid', 'Ops', b'key', ['a@x.com'], {1}, True,
+            )
+        self.assertEqual(added, TeamMemberCounts(added=1, queued=0, already=0, missing=0, failed=0))
+        self.assertEqual(queued, TeamMemberCounts(added=0, queued=1, already=0, missing=0, failed=0))
+        self.assertEqual(coded_failure, TeamMemberCounts(added=0, queued=0, already=0, missing=0, failed=1))
+        self.assertEqual(message_failure, TeamMemberCounts(added=0, queued=0, already=0, missing=0, failed=1))
+        self.assertEqual(already, TeamMemberCounts(added=0, queued=0, already=1, missing=0, failed=0))
+        self.assertEqual(batch.call_count, 4)
+        self.assertEqual(
+            [call.args[0] for call in self.log.warning.call_args_list],
+            [
+                'Failed to add a member to team "%s": %s',
+                'Failed to add a member to team "%s": %s',
+            ],
+        )
 
     def test_missing_team_key_counts_as_failed(self):
         importer = self.importer()
@@ -343,8 +389,8 @@ class TestAddTeamMembers(_QuietTestCase):
             chunks.append(list(chunk))
             if len(chunks) == 1:
                 return [
-                    {'result': 'success'},
-                    {'result': 'fail', 'message': 'User is already a member of this team.'},
+                    {'result': 'success', 'result_code': '', 'message': ''},
+                    {'result': 'fail', 'result_code': 'exists', 'message': ''},
                 ]
             if len(chunks) == 2:
                 raise RuntimeError('timeout')
@@ -373,11 +419,11 @@ class TestAddTeamMembers(_QuietTestCase):
             [[11, 12], [13, 14], [21, 22], [23]],
         )
         self.assertTrue(all(len(chunk) <= 2 for chunk in chunks))
-        self.assertEqual(counts, TeamMemberCounts(added=2, queued=1, already=1, missing=0, failed=3))
+        self.assertEqual(counts, TeamMemberCounts(added=2, queued=1, already=0, missing=0, failed=4))
         warnings = [call.args[0] for call in self.log.warning.call_args_list]
         self.assertEqual(warnings.count('Failed to add members to Keeper team "%s": %s'), 1)
+        self.assertEqual(warnings.count('Failed to queue a member on team "%s": %s'), 1)
         self.assertEqual(warnings.count('Failed to add a member to team "%s": %s'), 1)
-        self.assertNotIn('Failed to queue a member on team "%s": %s', warnings)
 
 
 class TestCreateEnterpriseTeams(_QuietTestCase):

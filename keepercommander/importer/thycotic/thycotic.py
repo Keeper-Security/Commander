@@ -1431,8 +1431,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         if missing:
             logging.warning(
-                'Team "%s": skipped %d member(s) who are not Keeper users: %s',
-                team_name, len(missing), ', '.join(missing),
+                'Team "%s": skipped %d member(s) who are not Keeper users',
+                team_name, len(missing),
             )
 
         if active_users and not team_key:
@@ -1469,15 +1469,13 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 continue
             for index, request in enumerate(chunk):
                 response = responses[index] if index < len(responses) else None
+                # result "success" with an empty result_code is a completed add or queue.
                 succeeded = isinstance(response, dict) and response.get('result') == 'success'
                 if succeeded:
                     if request.get('command') == 'team_queue_user':
                         queued += 1
                     else:
                         added += 1
-                    continue
-                if self._is_already_team_member(response):
-                    already_count += 1
                     continue
                 failed += 1
                 message = (response or {}).get('message') if isinstance(response, dict) else response
@@ -1583,18 +1581,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             rows.append(self._team_result_row(team_name, 'already exists', counts))
         if rows:
             logging.info(tabulate(rows, headers='keys'))
-
-    @staticmethod
-    def _is_already_team_member(response):
-        """True when Keeper rejected the add because the user is already on the team."""
-        if isinstance(response, dict):
-            message = str(response.get('message') or '')
-        elif response:
-            message = str(response)
-        else:
-            message = ''
-        message = message.lower()
-        return 'already exists' in message or 'already a member' in message or 'already belongs' in message
 
     @staticmethod
     def _team_result_row(name, result, counts):
