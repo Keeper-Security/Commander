@@ -276,7 +276,8 @@ class TestImportParser(unittest.TestCase):
         off = import_parser.parse_args(['--format', 'thycotic', 'https://secret.example.com'])
         self.assertFalse(off.add_users)
         on = import_parser.parse_args([
-            '--format', 'thycotic', '--add-users', 'https://secret.example.com',
+            '--format', 'thycotic', '--add-users', '--add-teams',
+            'https://secret.example.com',
         ])
         self.assertTrue(on.add_users)
 

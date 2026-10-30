@@ -352,6 +352,12 @@ class BaseImporter(abc.ABC):
         """
         return False
 
+    def support_add_teams(self):
+        """
+        Indicates if this importer can create Keeper teams from source groups
+        """
+        return False
+
     @staticmethod
     def import_field(field_type, field_value):  # type: (str, str) -> any
         if not field_value:
