@@ -907,6 +907,7 @@ def _import(params, file_format, filename, **kwargs):
     skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
     skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
     add_users = kwargs.get('add_users') is True
+    add_teams = kwargs.get('add_teams') is True
     kdbx_password = kwargs.get('kdbx_password')
     kdbx_key_file = kwargs.get('kdbx_key_file')
 
@@ -921,6 +922,9 @@ def _import(params, file_format, filename, **kwargs):
     if add_users and not importer.support_add_users():
         logging.warning('--add-users is not supported for --format=%s; ignoring', file_format)
         add_users = False
+    if add_teams and not importer.support_add_teams():
+        logging.warning('--add-teams is not supported for --format=%s; ignoring', file_format)
+        add_teams = False
     verbose_import_summary = importer.verbose_import_summary
     show_skipped = show_skipped or verbose_import_summary
 
@@ -943,11 +947,10 @@ def _import(params, file_format, filename, **kwargs):
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
                               skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
                               kdbx_password=kdbx_password, kdbx_key_file=kdbx_key_file,
-                              add_users=add_users):
+                              add_users=add_users, add_teams=add_teams):
         if isinstance(x, ImportEmptyFolder) and not include_empty_folders:
             continue
         if isinstance(x, (ImportRecord, ImportEmptyFolder)):
-
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
                     continue
