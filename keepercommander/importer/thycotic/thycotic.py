@@ -162,10 +162,10 @@ class FolderPermissionCache:
 class ThycoticMixin:
     @staticmethod
     def connect_to_server(url=None, username=None, password=None):  # type: (Optional[str], Optional[str], Optional[str]) -> ThycoticAuth
-        url = url or os.getenv('THYCOTIC_URL')
-        username = username or os.getenv('THYCOTIC_USER')
-        password = password or os.getenv('THYCOTIC_PASSWORD')
-
+        url = url or os.getenv('KEEPER_THYCOTIC_URL')
+        username = username or os.getenv('KEEPER_THYCOTIC_USER')
+        password = password or os.getenv('KEEPER_THYCOTIC_PASSWORD')
+        
         if not url:
             url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
             if not url:
@@ -1193,14 +1193,13 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             logging.warning('Failed to fetch Thycotic users: %s', e)
             logging.warning('Continuing import without creating Keeper users.')
             return
-        report = self._create_enterprise_users(params, thycotic_users)
-        self._print_thycotic_user_report(report)
+        self._create_enterprise_users(params, thycotic_users)
 
-    def _prepare_thycotic_groups(self, auth):  # type: (ThycoticAuth) -> List[dict]
-        """Fetch enabled Delinea groups and their direct user members.
-        Disabled groups are omitted.
-        """
-        group_rs = auth.thycotic_search('/v1/groups')
+    def _load_thycotic_groups(self, auth):  # type: (ThycoticAuth) -> list
+        return auth.thycotic_search('/v1/groups')
+
+    def _load_thycotic_user_email_lookup(self, auth):  # type: (ThycoticAuth) -> Dict[int, str]
+        """Map Thycotic user ids to emails. A user-fetch failure continues with no emails."""
         try:
             users = self._prepare_thycotic_users(auth, quiet=True)
         except Exception as e:
