@@ -184,6 +184,7 @@ class ThycoticMixin:
                 logging.warning('Thycotic Host or URL is required')
                 return
 
+        url = ThycoticMixin.url_from_tenant(url)
         if not url.startswith('http'):
             url = f'https://{url}'
 
