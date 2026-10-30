@@ -161,6 +161,18 @@ class FolderPermissionCache:
 
 class ThycoticMixin:
     @staticmethod
+    def url_from_tenant(tenant):  # type: (Optional[str]) -> str
+        """Build a Secret Server base URL from a shell variable. Nothing is printed."""
+        tenant = (tenant or '').strip().rstrip('/')
+        if not tenant:
+            return ''
+        if tenant.startswith('https://') or tenant.startswith('http://'):
+            return tenant
+        if '.' not in tenant:
+            tenant = '{0}.secretservercloud.com'.format(tenant)
+        return 'https://{0}/'.format(tenant)
+
+    @staticmethod
     def connect_to_server(url=None, username=None, password=None):  # type: (Optional[str], Optional[str], Optional[str]) -> ThycoticAuth
         url = url or os.getenv('KEEPER_THYCOTIC_URL')
         username = username or os.getenv('KEEPER_THYCOTIC_USER')
