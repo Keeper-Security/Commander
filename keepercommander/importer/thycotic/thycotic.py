@@ -243,7 +243,8 @@ class ThycoticMixin:
                 lookup[group_id] = g
             return lookup
         except:
-            pass
+            logging.warning("Failed to get group lookup")
+            return {}
 
     @staticmethod
     def _parse_choice(choice, count):
@@ -2515,7 +2516,7 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
                     team.uid = group_id
                     team.name = group['name']
                     user_ids = set(group['users'])
-                    for sub_group_id in group['groups']:
+                    for sub_group_id in group.get('groups', []):
                         if sub_group_id in groups:
                             sub_group = groups[sub_group_id]
                             user_ids.update(sub_group['users'])
