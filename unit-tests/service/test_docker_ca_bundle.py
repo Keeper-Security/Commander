@@ -53,6 +53,10 @@ class TestDockerCaBundle(unittest.TestCase):
                 service['environment']['REQUESTS_CA_BUNDLE'],
                 '/certs/keeper-ca-bundle.pem',
             )
+            self.assertEqual(
+                service['environment']['NODE_EXTRA_CA_CERTS'],
+                '/certs/keeper-ca-bundle.pem',
+            )
 
     def test_prompt_defaults_to_no(self):
         with mock.patch('builtins.input', return_value='') as input_mock:

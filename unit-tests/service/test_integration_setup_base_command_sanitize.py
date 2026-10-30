@@ -91,6 +91,7 @@ class TestIntegrationSetupBaseCommandSanitize(unittest.TestCase):
         self.assertEqual(yaml_content.count(f'source: {ca_path}'), 2)
         self.assertEqual(yaml_content.count('KEEPER_SSL_CERT_FILE: /certs/keeper-ca-bundle.pem'), 2)
         self.assertEqual(yaml_content.count('REQUESTS_CA_BUNDLE: /certs/keeper-ca-bundle.pem'), 2)
+        self.assertEqual(yaml_content.count('NODE_EXTRA_CA_CERTS: /certs/keeper-ca-bundle.pem'), 2)
 
 
 if __name__ == '__main__':

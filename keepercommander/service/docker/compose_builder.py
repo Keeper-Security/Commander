@@ -64,6 +64,9 @@ class DockerComposeBuilder:
         environment['KEEPER_SSL_CERT_FILE'] = self._CA_BUNDLE_CONTAINER_PATH
         # The KSM SDK uses Requests independently of Commander's REST client.
         environment['REQUESTS_CA_BUNDLE'] = self._CA_BUNDLE_CONTAINER_PATH
+        # Node-based integration containers (Teams, Google Chat, and SailPoint)
+        # use Node's CA store instead of Requests or Commander's CA setting.
+        environment['NODE_EXTRA_CA_CERTS'] = self._CA_BUNDLE_CONTAINER_PATH
 
         volumes = list(service.get('volumes', []))
         ca_volume = self._get_ca_bundle_volume(self._ca_bundle_source)
