@@ -52,6 +52,25 @@ class BitwardenImporter(importer.BaseFileImporter):
                 sf.path = domain
                 yield sf
 
+        used_folders = {i.get('folderId') for i in bw_import.get('items') or []}
+        used_collections = {cid for i in bw_import.get('items') or [] for cid in i.get('collectionIds') or []}
+        for fid, name in folders.items():
+            if fid not in used_folders:
+                empty = importer.EmptyFolder()
+                f = importer.Folder()
+                f.path = _to_keeper_path(name)
+                empty.folders.append(f)
+                yield empty
+        for cid, name in shared_folders.items():
+            first, _, rest = name.partition('/')
+            if rest and cid not in used_collections:
+                empty = importer.EmptyFolder()
+                f = importer.Folder()
+                f.domain = first.replace('\\', '\\\\')
+                f.path = _to_keeper_path(rest)
+                empty.folders.append(f)
+                yield empty
+
         for i in bw_import.get('items') or []:
             record = importer.Record()
             item_type = i.get('type', 0)

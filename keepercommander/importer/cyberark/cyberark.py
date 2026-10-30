@@ -27,6 +27,7 @@ from .pam import _esc
 from ..importer import (
     BaseDownloadMembership,
     BaseImporter,
+    EmptyFolder,
     Folder,
     PathDelimiter,
     Permission,
@@ -1374,6 +1375,12 @@ class CyberArkImporter(BaseImporter):
                 nsf_folder = SharedFolder()
                 nsf_folder.path = safe.replace(PathDelimiter, 2 * PathDelimiter)
                 yield nsf_folder
+            elif not accounts:
+                empty = EmptyFolder()
+                empty_folder = Folder()
+                empty_folder.domain = safe.replace(PathDelimiter, 2 * PathDelimiter)
+                empty.folders.append(empty_folder)
+                yield empty
             with _suppress_progressbar_executor_noise(), ProgressBar() as pb:
                 skip_all = {}
                 skipped_accounts = []
