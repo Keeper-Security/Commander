@@ -22,7 +22,7 @@ from contextlib import contextmanager
 
 from .. import imp_exp
 from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences,
-                        Folder, SharedFolder, Permission, Team, Attachment,
+                        Folder, SharedFolder, Permission, Team, Attachment, RecordShare,
                         BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ... import api, utils, record_types
 from ...proto import enterprise_pb2
@@ -132,6 +132,17 @@ class KeeperJsonMixin:
                 folder.can_edit = f.get('can_edit')
                 folder.can_share = f.get('can_share')
                 record.folders.append(folder)
+        shares = j_record.get('shares')
+        if isinstance(shares, list):
+            record.shares = []
+            for share in shares:
+                if not isinstance(share, dict):
+                    continue
+                name = (share.get('name') or '').strip()
+                if not name:
+                    continue
+                record.shares.append(RecordShare(
+                    name, bool(share.get('can_edit')), bool(share.get('can_share'))))
         return record
 
 
@@ -236,9 +247,13 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
                         team.members = [x for x in ms if isinstance(x, str) and len(x) > 3]
                     yield team
 
-        if not users_only and records:
+        if isinstance(records, list):
             for r in records:
+                if users_only and not (isinstance(r, dict) and r.get('shares')):
+                    continue
                 record = KeeperJsonMixin.json_to_record(r)
+                if users_only and not record.shares:
+                    continue
                 if zip_archive and 'attachments' in r:
                     attachments = r['attachments']
                     record.attachments = []
@@ -375,6 +390,13 @@ class KeeperJsonExporter(BaseExporter):
                         refs = []
                         ro['references'][ref_name] = refs
                     refs.extend(ref.uids)
+
+            if r.shares:
+                ro['shares'] = [{
+                    'name': share.name,
+                    'can_edit': bool(share.can_edit),
+                    'can_share': bool(share.can_share),
+                } for share in r.shares if getattr(share, 'name', None)]
 
             if r.folders:
                 ro['folders'] = []

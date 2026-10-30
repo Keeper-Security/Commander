@@ -34,7 +34,7 @@ from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
-from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
+from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, normalize_folder_path, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
@@ -851,6 +851,8 @@ def _import(params, file_format, filename, **kwargs):
     skip_team = kwargs.get('skip_team') is True or 'team' in cyberark_skip
     skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
     skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
+    add_users = kwargs.get('add_users') is True
+    add_teams = kwargs.get('add_teams') is True
 
     import_into_raw = kwargs.get('import_into') or ''
     import_into = import_into_raw
@@ -860,6 +862,12 @@ def _import(params, file_format, filename, **kwargs):
     no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
+    if add_users and not importer.support_add_users():
+        logging.warning('--add-users is not supported for --format=%s; ignoring', file_format)
+        add_users = False
+    if add_teams and not importer.support_add_teams():
+        logging.warning('--add-teams is not supported for --format=%s; ignoring', file_format)
+        add_teams = False
     verbose_import_summary = importer.verbose_import_summary
     show_skipped = show_skipped or verbose_import_summary
 
@@ -879,7 +887,9 @@ def _import(params, file_format, filename, **kwargs):
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
-                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user):
+                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
+                              add_users=add_users,
+                              add_teams=add_teams):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
@@ -1485,6 +1495,7 @@ def _import(params, file_format, filename, **kwargs):
                 sfu_rqs = None
 
         sync_down.sync_down(params)
+        grant_imported_record_shares(params, records)
 
         # upload attachments
         v2_atts = []
@@ -2993,6 +3004,187 @@ def prepare_folder_permission(params, folders, full_sync, unsafe=False):
                 folder_permissions.append(request_v3)
 
     return folder_permissions
+
+
+def locate_secret_share_records(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> List[ImportRecord]
+    """Find Keeper records for secret-level shares by folder path and title.
+
+    Record JSON is parsed once while the index is built. Each secret then
+    looks up (normalized folder path, title) instead of parsing again.
+    """
+    record_cache = getattr(params, 'record_cache', None) or {}
+    folder_records = getattr(params, 'subfolder_record_cache', None) or {}
+    record_index = {}
+    unreadable = 0
+    for folder_uid, record_uids in folder_records.items():
+        folder_path = normalize_folder_path(get_folder_path(params, folder_uid))
+        for record_uid in record_uids or []:
+            cached = record_cache.get(record_uid)
+            if not isinstance(cached, dict):
+                unreadable += 1
+                continue
+            raw = cached.get('data_unencrypted') or '{}'
+            if isinstance(raw, bytes):
+                raw = raw.decode('utf-8', errors='replace')
+            try:
+                title = (json.loads(raw).get('title') or '').strip().casefold()
+            except Exception:
+                unreadable += 1
+                continue
+            bucket = record_index.setdefault((folder_path, title), [])
+            if record_uid in bucket:
+                logging.info('Record %s is listed more than once under "%s"; it is matched once',
+                             record_uid, folder_path or '(root)')
+                continue
+            bucket.append(record_uid)
+    if unreadable:
+        logging.warning('%d Keeper record(s) could not be read and were not matched to secrets', unreadable)
+
+    located = []
+    for rec in records:
+        if not getattr(rec, 'shares', None):
+            continue
+        title = (rec.title or '').strip().casefold()
+        folder_paths = list(dict.fromkeys(normalize_folder_path(folder.path) for folder in rec.folders or [])) or ['']
+        folder_path = ', '.join(folder_paths)
+        found = list(dict.fromkeys(
+            record_uid for path in folder_paths for record_uid in record_index.get((path, title), [])))
+        if not found:
+            logging.warning('No Keeper record for secret "%s" in "%s"', rec.title, folder_path)
+            continue
+        if len(found) > 1:
+            logging.warning(
+                'Secret "%s" matches %d records in "%s"; sharing each of them',
+                rec.title, len(found), folder_path)
+        for record_uid in found:
+            shared = rec if record_uid == found[0] else copy.copy(rec)
+            shared.uid = record_uid
+            located.append(shared)
+    return located
+
+
+def existing_enterprise_emails(params):
+    # type: (KeeperParams) -> Optional[set]
+    """Load Keeper enterprise users before any secret share is granted.
+
+    Returns None when the enterprise user list cannot be loaded. An empty
+    set means the list loaded and no users are present.
+    """
+    try:
+        api.query_enterprise(params)
+    except Exception as exc:
+        logging.warning('Could not load Keeper users before secret shares: %s', exc)
+        return None
+    enterprise_data = getattr(params, 'enterprise', None)
+    if not isinstance(enterprise_data, dict):
+        logging.warning('Could not load Keeper users before secret shares')
+        return None
+    emails = set()
+    for user in enterprise_data.get('users') or []:
+        if not isinstance(user, dict):
+            continue
+        email = (user.get('email') or user.get('username') or '').strip()
+        if email:
+            emails.add(email.casefold())
+    return emails
+
+
+def shares_for_existing_users(records, existing_emails):
+    # type: (List[ImportRecord], set) -> List[ImportRecord]
+    """Keep secret shares whose email is already a Keeper user."""
+    kept = []
+    for rec in records:
+        shares = []
+        for share in rec.shares or []:
+            email = (getattr(share, 'name', None) or '').strip()
+            if email and email.casefold() in existing_emails:
+                shares.append(share)
+            elif email:
+                logging.warning('Secret "%s": %s is not a Keeper user; share skipped', rec.title, email)
+        if not shares:
+            continue
+        scoped = copy.copy(rec)
+        scoped.shares = shares
+        kept.append(scoped)
+    return kept
+
+
+def apply_secret_share_records(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> None
+    """Grant secret-level record shares loaded from a membership file.
+
+    The Keeper enterprise user list is loaded first. A share is granted only
+    for an email that is already in that list.
+    """
+    pending = [rec for rec in records if getattr(rec, 'shares', None)]
+    if not pending:
+        return
+    existing = existing_enterprise_emails(params)
+    if existing is None:
+        return
+    pending = shares_for_existing_users(pending, existing)
+    if not pending:
+        return
+    sync_down.sync_down(params)
+    grant_imported_record_shares(params, locate_secret_share_records(params, pending))
+
+
+def grant_imported_record_shares(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> None
+    """Grant per-user record shares from a secret permission list.
+
+    Each share is an email plus can_edit and can_share, which is the same
+    grant ``share-record`` writes. Folder membership is not changed here.
+    """
+    pending = [rec for rec in records if getattr(rec, 'shares', None) and rec.uid]
+    if not pending:
+        return
+    from ..commands.register import ShareRecordCommand
+    from ..error import CommandError
+
+    owner_email = (getattr(params, 'user', None) or '').strip().casefold()
+
+    def grant_bucket(record, emails, can_edit, can_share):
+        request = ShareRecordCommand.prep_request(params, {
+            'record': record.uid,
+            'email': emails,
+            'action': 'grant',
+            'can_edit': can_edit,
+            'can_share': can_share,
+        })
+        if request is not None:
+            ShareRecordCommand.send_requests(params, [request])
+
+    for rec in pending:
+        buckets = {}
+        for share in rec.shares:
+            email = (getattr(share, 'name', None) or '').strip()
+            if '@' not in email:
+                continue
+            if owner_email and email.casefold() == owner_email:
+                continue
+            key = (bool(share.can_edit), bool(share.can_share))
+            emails = buckets.setdefault(key, [])
+            if email not in emails:
+                emails.append(email)
+        for (can_edit, can_share), emails in buckets.items():
+            try:
+                grant_bucket(rec, emails, can_edit, can_share)
+            except CommandError as exc:
+                if len(emails) == 1:
+                    logging.warning('Secret share for "%s": %s', rec.title, getattr(exc, 'message', exc))
+                    continue
+                for email in emails:
+                    try:
+                        grant_bucket(rec, [email], can_edit, can_share)
+                    except CommandError as one_exc:
+                        logging.warning(
+                            'Secret share for "%s": %s', rec.title, getattr(one_exc, 'message', one_exc))
+                    except Exception as one_exc:
+                        logging.warning('Secret share for "%s": %s', rec.title, one_exc)
+            except Exception as exc:
+                logging.warning('Secret share for "%s": %s', rec.title, exc)
 
 
 def prepare_record_permission(params, records):   # type: (KeeperParams, List[ImportRecord]) -> Dict[str, List[folder_pb2.SharedFolderUpdateRecord]]

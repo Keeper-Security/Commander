@@ -23,6 +23,17 @@ from ..error import CommandError
 from ..params import KeeperParams
 
 PathDelimiter = '\\'
+
+
+def normalize_folder_path(path):
+    # type: (Optional[str]) -> str
+    """Fold a Delinea or Keeper folder path into one comparable key.
+
+    Secret Server paths use a leading backslash. Keeper paths built from
+    folder names do not. Both separators are treated as backslash.
+    """
+    text = (path or '').replace('/', '\\').strip()
+    return text.strip('\\').casefold()
 TWO_FACTOR_CODE = 'TFC:Keeper'
 FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
@@ -120,6 +131,15 @@ class Permission:
         self.manage_users = None
         self.manage_records = None
         self.role = None  # NSF role name: viewer, content-manager, full-manager, …
+
+
+class RecordShare:
+    """Direct record share produced by an importer. name is an email."""
+
+    def __init__(self, name, can_edit, can_share):
+        self.name = name
+        self.can_edit = can_edit
+        self.can_share = can_share
 
 
 class SharedFolder:
@@ -248,6 +268,7 @@ class Record:
         self.last_modified = 0
         self.fields = []         # type: List[RecordField]
         self.folders = None      # type: Optional[List[Folder]]
+        self.shares = None       # type: Optional[List[RecordShare]]
         self.attachments = None  # type: Optional[List[Attachment]]
         self.references = None   # type: Optional[List[RecordReferences]]
         self.schema = None       # type: Optional[List[RecordSchemaField]]
@@ -323,6 +344,18 @@ class BaseImporter(abc.ABC):
         return ''
 
     def support_folder_filter(self):
+        return False
+
+    def support_add_users(self):
+        """
+        Indicates if this importer can provision source users as Keeper Enterprise users
+        """
+        return False
+
+    def support_add_teams(self):
+        """
+        Indicates if this importer can create Keeper teams from source groups
+        """
         return False
 
     @staticmethod
