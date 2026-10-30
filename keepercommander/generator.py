@@ -458,11 +458,13 @@ class KeeperPassphraseGenerator(PasswordGenerator):
 
         cap = capitalize
         if cap is None:
-            cap = DEFAULT_PASSPHRASE_CAPITALIZE
+            cap = (policy.get('passphrase-capitalize', DEFAULT_PASSPHRASE_CAPITALIZE)
+                   if policy else DEFAULT_PASSPHRASE_CAPITALIZE)
 
         num = append_number
         if num is None:
-            num = DEFAULT_PASSPHRASE_NUMBER
+            num = (policy.get('passphrase-number', DEFAULT_PASSPHRASE_NUMBER)
+                   if policy else DEFAULT_PASSPHRASE_NUMBER)
 
         return cls(
             word_count=clamp_passphrase_word_count(wc) if isinstance(wc, int) else wc,

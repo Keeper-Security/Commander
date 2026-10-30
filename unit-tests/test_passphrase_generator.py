@@ -86,13 +86,13 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertTrue(gen.capitalize)
     self.assertTrue(gen.append_number)
 
-  def test_commander_defaults_override_policy_capitalize_and_number(self):
+  def test_policy_capitalize_and_number_override_commander_defaults(self):
     gen = generator.KeeperPassphraseGenerator.create_with_options({
       'passphrase-capitalize': False,
       'passphrase-number': False,
     })
-    self.assertTrue(gen.capitalize)
-    self.assertTrue(gen.append_number)
+    self.assertFalse(gen.capitalize)
+    self.assertFalse(gen.append_number)
 
   def test_policy_separator_uses_vault_order_not_raw_first_char(self):
     gen = generator.KeeperPassphraseGenerator.create_with_options({
@@ -157,7 +157,7 @@ class TestGeneratePasswordPassphrase(TestCase):
       with mock.patch('secrets.randbelow', return_value=4):
         result, error = RecordEditMixin.generate_password(['passphrase'], policy=policy)
     self.assertIsNone(error)
-    self.assertEqual(result, 'Alpha4_Bravo_Charlie_Delta_Echo')
+    self.assertEqual(result, 'Alpha_Bravo_Charlie_Delta_Echo')
 
   def test_record_edit_passphrase_cli_overrides_policy(self):
     from keepercommander.commands.record_edit import RecordEditMixin
@@ -204,6 +204,22 @@ class TestGeneratePasswordPassphrase(TestCase):
     ])
     self.assertEqual(len(cmd.errors), 1)
     self.assertIn('passphrase', cmd.errors[0])
+
+  def test_encrypted_key_pair_validates_passphrase(self):
+    from keepercommander.commands.record_edit import RecordAddCommand, ParsedFieldValue
+    from keepercommander import vault
+    cmd = RecordAddCommand()
+    record = vault.TypedRecord()
+    record.type_name = 'sshKeys'
+    record.fields.append(vault.TypedField.new_field('keyPair', '', ''))
+    with mock.patch.object(cmd, 'generate_password', return_value=('weak', None)), \
+            mock.patch.object(cmd, 'generate_key_pair', return_value={'privateKey': 'key'}), \
+            mock.patch.object(cmd, 'validate_generated_password') as mock_validate:
+      cmd.assign_typed_fields(record, [
+        ParsedFieldValue('', 'keyPair', '', '$GEN:enc'),
+      ])
+      # Verify validate_generated_password was called for the passphrase
+      mock_validate.assert_called_once_with('weak', 'password')
 
   def test_invalid_passphrase_separator_aborts_generation(self):
     from keepercommander.commands.record_edit import RecordEditMixin

@@ -131,15 +131,51 @@ record_type_parser.add_argument('-a', '--action', dest='action', action='store',
 # command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
 
 
-def get_password_from_rules(generate_rules, generate_length):
+def get_password_from_rules(generate_rules, generate_length, policy=None):
     if generate_rules:
         kpg = generator.KeeperPasswordGenerator.create_from_rules(generate_rules, length=generate_length)
         if kpg is None:
             logging.warning('Using default password complexity rules')
-            kpg = generator.KeeperPasswordGenerator(generate_length or DEFAULT_GENERATE_PASSWORD_LENGTH)
+            kpg = (generator.KeeperPasswordGenerator.create_from_policy(
+                policy, length_override=generate_length) if policy else
+                generator.KeeperPasswordGenerator(generate_length or DEFAULT_GENERATE_PASSWORD_LENGTH))
+    elif policy:
+        kpg = generator.KeeperPasswordGenerator.create_from_policy(
+            policy, length_override=generate_length)
     else:
         kpg = generator.KeeperPasswordGenerator(generate_length or DEFAULT_GENERATE_PASSWORD_LENGTH)
     return kpg.generate()
+
+
+def enforce_generated_password_policy(params, data, command, generated, manual_password=None, force=False):
+    # Skip if user explicitly provided a password (overrides generation)
+    if not generated or manual_password:
+        return
+    policy = PasswordComplexityEnforcer.get_generator_policy(params, data)
+    pw_failures = []
+    for password in PasswordComplexityEnforcer.get_password_values(data):
+        pw_failures.extend(PasswordComplexityEnforcer.validate_generated_password_with_policy(
+            password, policy, 'rand'))
+    if pw_failures:
+        for failure in pw_failures:
+            logging.warning(bcolors.WARNING + failure + bcolors.ENDC)
+        if not force:
+            raise CommandError(
+                command,
+                'Password does not meet enterprise complexity policy. '
+                'Pass --force to bypass these warnings.')
+
+
+def enforce_manual_password_policy(params, data, command, passwords, force=False):
+    failures = PasswordComplexityEnforcer.validate_manual_passwords(params, data, passwords)
+    if failures:
+        for failure in failures:
+            logging.warning(bcolors.WARNING + failure + bcolors.ENDC)
+        if not force:
+            raise CommandError(
+                command,
+                'Password does not meet the domain-specific complexity policy. '
+                'Pass --force to bypass this policy.')
 
 
 class RecordAddCommand(Command, recordv2.RecordUtils):
@@ -404,21 +440,21 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
         # For compatibility w/ legacy: --password overrides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
-        password = kwargs.get('password')
+        manual_password = kwargs.get('password')
+        password = manual_password
         if not password and (kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length')):
-            password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
+            policy = PasswordComplexityEnforcer.get_generator_policy(params, data)
+            password = get_password_from_rules(
+                kwargs.get('generate_rules'), kwargs.get('generate_length'), policy)
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        if pw_failures:
-            for f in pw_failures:
-                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
-            if not kwargs.get('force'):
-                raise CommandError(
-                    'add',
-                    'Password does not meet enterprise complexity policy. '
-                    'Pass --force to bypass these warnings.')
+        generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
+        enforce_generated_password_policy(params, data, 'add', generated, manual_password=manual_password, force=kwargs.get('force'))
+        manual_passwords = ([manual_password] if manual_password else
+                            PasswordComplexityEnforcer.get_password_values(data) if not generated else [])
+        enforce_manual_password_policy(
+            params, data, 'add', manual_passwords, force=kwargs.get('force'))
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -653,22 +689,29 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
 
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
-        password = kwargs.get('password')
+        manual_password = kwargs.get('password')
+        password = manual_password
         if not password and generate:
-            password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
+            policy = PasswordComplexityEnforcer.get_generator_policy(params, data)
+            password = get_password_from_rules(
+                kwargs.get('generate_rules'), kwargs.get('generate_length'), policy)
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
-        pw_failures = PasswordComplexityEnforcer.validate_record(params, data)
-        if pw_failures:
-            for f in pw_failures:
-                logging.warning(bcolors.WARNING + f + bcolors.ENDC)
-            if not kwargs.get('force'):
-                raise CommandError(
-                    'edit',
-                    'Password does not meet enterprise complexity policy. '
-                    'Pass --force to bypass these warnings.')
+        generated = bool(kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length'))
+        enforce_generated_password_policy(params, data, 'edit', generated, manual_password=manual_password, force=kwargs.get('force'))
+        if manual_password:
+            manual_passwords = [manual_password]
+        elif not generated:
+            manual_passwords = PasswordComplexityEnforcer.get_password_values(data)
+            for existing_password in PasswordComplexityEnforcer.get_password_values(record_data):
+                if existing_password in manual_passwords:
+                    manual_passwords.remove(existing_password)
+        else:
+            manual_passwords = []
+        enforce_manual_password_policy(
+            params, data, 'edit', manual_passwords, force=kwargs.get('force'))
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict
