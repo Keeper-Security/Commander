@@ -244,6 +244,9 @@ class RecordEditMixin:
         self.warnings = []
         self.errors = []
         self._password_policy = None   # type: Optional[Dict[str, Any]]
+        self._password_params = None
+        self._manual_password_values = []
+        self._generated_password_values = []
 
     def on_warning(self, message):
         if message:
@@ -266,13 +269,75 @@ class RecordEditMixin:
     def on_info(self, message):
         logging.info(message)
 
+    def reset_password_policy(self, params):
+        self._password_params = params
+        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self._manual_password_values = []
+        self._generated_password_values = []
+
+    @staticmethod
+    def _record_has_primary_url(record):
+        if not record:
+            return False
+        if any(getattr(record, attr, None) for attr in ('link', 'login_url', 'url')):
+            return True
+        return any(getattr(field, 'type', None) == 'url'
+                   and bool(getattr(field, 'value', None))
+                   for field in getattr(record, 'fields', None) or [])
+
+    @classmethod
+    def _url_override(cls, fields, record=None):
+        url_fields = [field for field in fields or [] if field.type == 'url']
+        primary_fields = [field for field in url_fields if field.section != 'c']
+        selected_field = primary_fields[-1] if primary_fields else None
+        if selected_field is None and url_fields and not cls._record_has_primary_url(record):
+            selected_field = url_fields[-1]
+        if selected_field:
+            value = selected_field.value
+            if isinstance(value, str) and value.startswith('$JSON:'):
+                try:
+                    value = json.loads(value[6:])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return True, value
+        return False, None
+
+    def _configure_password_policy(self, record, fields):
+        password_params = getattr(self, '_password_params', None)
+        if password_params is None:
+            return
+        has_url_override, url_override = self._url_override(fields, record)
+        kwargs = {'url_override': url_override} if has_url_override else {}
+        self._password_policy = PasswordComplexityEnforcer.get_generator_policy(
+            password_params, record, **kwargs)
+
+    def _remember_manual_password(self, value):
+        values = value if isinstance(value, list) else [value]
+        generated_values = getattr(self, '_generated_password_values', [])
+        manual_values = getattr(self, '_manual_password_values', None)
+        if manual_values is None:
+            self._manual_password_values = manual_values = []
+        for password in values:
+            if isinstance(password, str) and password and password not in generated_values:
+                manual_values.append(password)
+
+    def apply_manual_password_policy_warnings(self, params, source):
+        failures = PasswordComplexityEnforcer.validate_manual_passwords(
+            params, source, getattr(self, '_manual_password_values', []))
+        for failure in failures:
+            self.on_warning(failure)
+
     def validate_generated_password(self, password, algorithm):
         """Validate a generated password with the correct algorithm flag."""
-        if not password or not self._password_policy:
+        generated_values = getattr(self, '_generated_password_values', None)
+        if generated_values is None:
+            self._generated_password_values = generated_values = []
+        generated_values.append(password)
+        password_policy = getattr(self, '_password_policy', None)
+        if not password or not password_policy:
             return
-        allow_passphrase = algorithm == 'passphrase'
-        failures = PasswordComplexityEnforcer.validate_password(
-            password, self._password_policy, allow_passphrase_fallback=allow_passphrase)
+        failures = PasswordComplexityEnforcer.validate_generated_password_with_policy(
+            password, password_policy, algorithm)
         for failure in failures:
             self.on_warning(failure)
 
@@ -331,6 +396,9 @@ class RecordEditMixin:
         if not isinstance(fields, list):
             raise ValueError('Fields parameter: expected array of strings')
 
+        self._configure_password_policy(record, fields)
+        self._manual_password_values = []
+        self._generated_password_values = []
         action_params = []
         for parsed_field in fields:
             if parsed_field.type == 'login':
@@ -348,8 +416,10 @@ class RecordEditMixin:
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
                         record.password = action_params[0]
+                        self._remember_manual_password(action_params[0])
                 else:
                     record.password = parsed_field.value
+                    self._remember_manual_password(parsed_field.value)
             elif parsed_field.type == 'url':
                 record.link = parsed_field.value
             elif parsed_field.type == 'oneTimeCode':
@@ -619,6 +689,9 @@ class RecordEditMixin:
         if not isinstance(fields, list):
             raise ValueError('Fields parameter: expected array of fields')
 
+        self._configure_password_policy(record, fields)
+        self._manual_password_values = []
+        self._generated_password_values = []
         parsed_fields = collections.deque(fields)
         while len(parsed_fields) > 0:
             parsed_field = parsed_fields.popleft()
@@ -678,8 +751,10 @@ class RecordEditMixin:
 
             if parsed_field.value:
                 value = None
+                generated_value = False
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
+                    generated_value = True
                     if record_field.type == 'password':
                         algorithm, _ = generator.resolve_gen_password_algorithm(action_params)
                         value, gen_error = self.generate_password(action_params, policy=self._password_policy)
@@ -694,7 +769,7 @@ class RecordEditMixin:
                         should_encrypt = 'enc' in action_params
                         passphrase = None
                         if should_encrypt:
-                            passphrase, gen_error = self.generate_password()
+                            passphrase, gen_error = self.generate_password(policy=self._password_policy)
                             if gen_error:
                                 self.on_error(gen_error)
                                 continue
@@ -766,6 +841,8 @@ class RecordEditMixin:
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
                 if value is not None:
+                    if record_field.type == 'password' and not generated_value:
+                        self._remember_manual_password(value)
                     if isinstance(value, list):
                         record_field.value.clear()
                         record_field.value.extend(value)
@@ -943,7 +1020,7 @@ class RecordAddCommand(Command, RecordEditMixin):
             raise CommandError('record-add', 'Record type parameter is required.')
 
         RecordTypeEnforcer.enforce(params, record_type, 'record-add')
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         fields = kwargs.get('fields', [])
         # Filter out empty strings that might be introduced by copy-paste or line continuation issues
@@ -991,6 +1068,8 @@ class RecordAddCommand(Command, RecordEditMixin):
 
         if self.abort_if_errors():
             return
+
+        self.apply_manual_password_policy_warnings(params, record)
 
         record_uid = str(kwargs.get('record_uid', ''))
         if RecordV3.is_valid_ref_uid(record_uid):
@@ -1360,7 +1439,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             else:
                 record_fields.append(parsed_field)
 
-        self._password_policy = PasswordComplexityEnforcer.get_policy(params)
+        self.reset_password_policy(params)
 
         if isinstance(record, vault.PasswordRecord):
             raise CommandError('record-update', 'Legacy record type is not supported. Convert the record to login record type.')
@@ -1380,6 +1459,8 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         if self.abort_if_errors():
             return
+
+        self.apply_manual_password_policy_warnings(params, record)
 
         ignore_warnings = kwargs.get('force') is True
         if len(self.warnings) > 0:

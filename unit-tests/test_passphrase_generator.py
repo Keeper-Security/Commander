@@ -86,13 +86,13 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertTrue(gen.capitalize)
     self.assertTrue(gen.append_number)
 
-  def test_commander_defaults_override_policy_capitalize_and_number(self):
+  def test_policy_capitalize_and_number_override_commander_defaults(self):
     gen = generator.KeeperPassphraseGenerator.create_with_options({
       'passphrase-capitalize': False,
       'passphrase-number': False,
     })
-    self.assertTrue(gen.capitalize)
-    self.assertTrue(gen.append_number)
+    self.assertFalse(gen.capitalize)
+    self.assertFalse(gen.append_number)
 
   def test_policy_separator_uses_vault_order_not_raw_first_char(self):
     gen = generator.KeeperPassphraseGenerator.create_with_options({
@@ -157,7 +157,7 @@ class TestGeneratePasswordPassphrase(TestCase):
       with mock.patch('secrets.randbelow', return_value=4):
         result, error = RecordEditMixin.generate_password(['passphrase'], policy=policy)
     self.assertIsNone(error)
-    self.assertEqual(result, 'Alpha4_Bravo_Charlie_Delta_Echo')
+    self.assertEqual(result, 'Alpha_Bravo_Charlie_Delta_Echo')
 
   def test_record_edit_passphrase_cli_overrides_policy(self):
     from keepercommander.commands.record_edit import RecordEditMixin
