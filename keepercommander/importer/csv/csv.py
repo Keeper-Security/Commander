@@ -13,7 +13,7 @@ import csv
 
 import sys
 
-from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, RecordField, TWO_FACTOR_CODE,
+from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, EmptyFolder, RecordField, TWO_FACTOR_CODE,
                         FIELD_TYPE_ONE_TIME_CODE)
 from ...recordv3 import RecordV3
 from ... import record_types
@@ -28,6 +28,9 @@ from ... import record_types
 6 - shared folder
 7 + custom fields
 '''
+
+
+EMPTY_FOLDER_MARKER = '$empty_folder'
 
 
 class KeeperCsvImporter(BaseFileImporter):
@@ -60,6 +63,13 @@ class KeeperCsvImporter(BaseFileImporter):
                                     folder.domain = folder.domain[:-len(suffix)]
                         folder.path = (row[0] or '').strip()
                         record.folders = [folder]
+
+                    if EMPTY_FOLDER_MARKER in row[7::2]:
+                        if record.folders:
+                            empty = EmptyFolder()
+                            empty.folders = record.folders
+                            yield empty
+                        continue
 
                     if len(row) > 7:
                         for i in range(7, len(row)-1, 2):
@@ -104,7 +114,12 @@ class KeeperCsvExporter(BaseExporter):
         csvfile = open(filename, 'w', encoding='utf-8', newline='') if filename else sys.stdout
         writer = csv.writer(csvfile)
         for r in records:
-            if type(r) == Record:
+            if isinstance(r, EmptyFolder):
+                for folder in r.folders:
+                    if folder.domain or folder.path:
+                        writer.writerow([folder.path or '', '', '', '', '', '', folder.domain or '',
+                                         EMPTY_FOLDER_MARKER, 'true'])
+            elif type(r) == Record:
                 domain = ''
                 path = ''
                 if r.folders:
@@ -151,6 +166,9 @@ class KeeperCsvExporter(BaseExporter):
 
     def extension(self):
         return 'csv'
+
+    def has_empty_folders(self):
+        return True
 
     def supports_stdout(self):
         return True

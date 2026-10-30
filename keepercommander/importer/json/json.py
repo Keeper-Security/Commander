@@ -22,7 +22,7 @@ from contextlib import contextmanager
 
 from .. import imp_exp
 from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences,
-                        Folder, SharedFolder, Permission, Team, Attachment,
+                        Folder, SharedFolder, EmptyFolder, Permission, Team, Attachment,
                         BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ... import api, utils, record_types
 from ...proto import enterprise_pb2
@@ -185,6 +185,7 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
 
         records = None
         folders = None
+        empty_folders = None
         teams = None
         if type(export) == list:
             records = export
@@ -192,6 +193,7 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
         elif type(export) == dict:
             records = export.get('records')
             folders = export.get('shared_folders')
+            empty_folders = export.get('empty_folders')
             teams = export.get('teams') if users_only else None
 
         if folders:
@@ -224,6 +226,18 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
                                 fol.permissions.append(p)
 
                 yield fol
+
+        if isinstance(empty_folders, list) and not users_only:
+            for ef in empty_folders:
+                if not isinstance(ef, dict):
+                    continue
+                folder = Folder()
+                folder.domain = ef.get('shared_folder')
+                folder.path = ef.get('folder')
+                if folder.domain or folder.path:
+                    empty = EmptyFolder()
+                    empty.folders.append(folder)
+                    yield empty
 
         if isinstance(teams, list):
             for t in teams:
@@ -260,6 +274,7 @@ class KeeperJsonExporter(BaseExporter):
         shared_folders = []     # type: List[SharedFolder]
         records = []            # type: List[Record]
         teams = []              # type: List[Team]
+        empty_folders = []      # type: List[EmptyFolder]
 
         if zip_archive is True and not filename:
             raise ValueError('Please provide zip archive file name')
@@ -271,6 +286,8 @@ class KeeperJsonExporter(BaseExporter):
                 shared_folders.append(item)
             elif isinstance(item, Team):
                 teams.append(item)
+            elif isinstance(item, EmptyFolder):
+                empty_folders.append(item)
 
         ts = []
         for t in teams:
@@ -311,6 +328,17 @@ class KeeperJsonExporter(BaseExporter):
                         po['uid'] = perm.uid
                     sfo['permissions'].append(po)
             sfs.append(sfo)
+
+        efs = []
+        for ef in empty_folders:
+            for folder in ef.folders:
+                if folder.domain or folder.path:
+                    efo = {}
+                    if folder.domain:
+                        efo['shared_folder'] = folder.domain
+                    if folder.path:
+                        efo['folder'] = folder.path
+                    efs.append(efo)
 
         rs = []
         atta = {}
@@ -411,6 +439,8 @@ class KeeperJsonExporter(BaseExporter):
             jo['teams'] = ts
         if sfs:
             jo['shared_folders'] = sfs
+        if efs:
+            jo['empty_folders'] = efs
         if rs:
             jo['records'] = rs
 
@@ -438,6 +468,9 @@ class KeeperJsonExporter(BaseExporter):
             print('')
 
     def has_shared_folders(self):
+        return True
+
+    def has_empty_folders(self):
         return True
 
     def has_attachments(self):

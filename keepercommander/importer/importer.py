@@ -193,6 +193,12 @@ class Folder:
         return path
 
 
+class EmptyFolder:
+    """A folder that holds no records. Carried so that an export/import round trip keeps the folder structure."""
+    def __init__(self):
+        self.folders = []   # type: List[Folder]
+
+
 class RecordField:
     def __init__(self, type=None, label=None, value=None):
         self.type = type    # type: Optional[str]
@@ -494,6 +500,9 @@ class BaseExporter(abc.ABC):
         pass
 
     def has_shared_folders(self):
+        return False
+
+    def has_empty_folders(self):
         return False
 
     def has_attachments(self):

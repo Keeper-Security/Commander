@@ -29,6 +29,13 @@ class NordpassCsvImporter(importer.BaseFileImporter):
             for row in reader:
                 record_type = row.get('type') or ''
                 if record_type == 'folder':
+                    folder_name = row.get('folder') or row.get('name') or ''
+                    if folder_name:
+                        empty = importer.EmptyFolder()
+                        f = importer.Folder()
+                        f.path = folder_name
+                        empty.folders.append(f)
+                        yield empty
                     continue
 
                 record = importer.Record()
