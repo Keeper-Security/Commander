@@ -39,6 +39,7 @@ from .pam.vault_target import update_pam_record, reload_pam_record_if_nsf_update
 from .pam_import.keeper_ai_settings import get_resource_jit_settings
 from .pam_import.nsf_helpers import sync_down_preserving_nsf_keys
 from .pam_launch.terminal_connection import _extract_user_record_credentials
+from .pam_launch.launch import EXIT_CODE_AI_TERMINATED
 from .tunnel_registry import (
     PARENT_GRACE_SECONDS,
     is_pid_alive,
@@ -67,6 +68,11 @@ _LEASE_EXPIRY_TIMERS_BY_RECORD: Dict[str, threading.Timer] = {}
 # read by the lease-expiry callback. Default interactive mode does NOT register
 # (it has no blocking wait to interrupt; user SSH session continues naturally).
 _LEASE_SHUTDOWN_EVENTS_BY_RECORD: Dict[str, threading.Event] = {}
+# Maps record_uid -> exit code set by tunnel_helpers' channel_closed handler when
+# the Gateway/Rust reports an AIClosed close reason. Read by the --foreground
+# block below after fg_shutdown wakes, so the process exits with the same code
+# `pam launch` uses for the same condition.
+_AI_CLOSED_EXIT_CODE_BY_RECORD: Dict[str, int] = {}
 
 
 def _coerce_settings_subdicts(entry, *keys):
@@ -1699,11 +1705,13 @@ class PAMTunnelStartCommand(Command):
                         print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
                               f"WebRTC cleanup is best-effort.{bcolors.ENDC}\n")
 
+                    ai_exit_code = None
                     try:
                         fg_shutdown.wait()
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        ai_exit_code = _AI_CLOSED_EXIT_CODE_BY_RECORD.pop(record_uid, None)
                         _LEASE_SHUTDOWN_EVENTS_BY_RECORD.pop(record_uid, None)
                         unregister_tunnel()
                         signal.signal(signal.SIGTERM, prev_sigterm)
@@ -1727,6 +1735,14 @@ class PAMTunnelStartCommand(Command):
                                     os.remove(pid_file)
                                 except OSError:
                                     pass
+                    # Mirror `pam launch`'s exit code for the same condition, but only
+                    # in batch / scripted mode. In the interactive shell a SystemExit
+                    # would tear down the whole shell (and its other sessions); the
+                    # user should land back at the Keeper> prompt. The banner itself
+                    # is printed from tunnel_helpers' close_reason handling as soon as
+                    # the signal arrives, not here.
+                    if ai_exit_code is not None and getattr(params, 'batch_mode', False):
+                        raise SystemExit(ai_exit_code)
         else:
             # Print failure message
             error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"

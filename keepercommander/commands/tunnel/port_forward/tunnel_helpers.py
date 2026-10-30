@@ -167,6 +167,21 @@ def print_above_keeper_prompt(msg):
             pass
 
 
+def _print_ai_closed_banner():
+    """User-facing notice for a tunnel closed with the AIClosed reason.
+
+    Wording matches `pam_launch.launch`'s `_print_close_reason_notice` for the
+    same condition — duplicated rather than shared across the two commands,
+    per this codebase's preference for small per-command copies over a
+    premature cross-module helper.
+    """
+    print_above_keeper_prompt(
+        f"\n{bcolors.FAIL}Session terminated by KeeperAI.{bcolors.ENDC}\n"
+        "Critical activity was detected during this session.\n"
+        "Contact your administrator to unlock this record."
+    )
+
+
 # Constants
 NONCE_LENGTH = 12
 MAIN_NONCE_LENGTH = 16
@@ -2027,6 +2042,27 @@ class TunnelSignalHandler:
 
                 elif close_reason.is_retryable():
                     logging.debug(f"{bcolors.WARNING}Tunnel closed with retryable error - '{tube_id}': {close_reason.name}{bcolors.ENDC}")
+
+                elif close_reason.code == CloseConnectionReasons.AIClosed:
+                    # Explicit branch (rather than relying on the generic `else`
+                    # below, where this currently lands) so the user actually
+                    # sees why their session ended — mirrors `pam launch`'s
+                    # handling of the same close reason.
+                    logging.debug(f"{bcolors.OKBLUE}Tunnel '{tube_id}' closed by KeeperAI{bcolors.ENDC}")
+                    _print_ai_closed_banner()
+                    if self.record_uid:
+                        try:
+                            from ...tunnel_and_connections import (
+                                _AI_CLOSED_EXIT_CODE_BY_RECORD,
+                                _LEASE_SHUTDOWN_EVENTS_BY_RECORD,
+                                EXIT_CODE_AI_TERMINATED,
+                            )
+                            _AI_CLOSED_EXIT_CODE_BY_RECORD[self.record_uid] = EXIT_CODE_AI_TERMINATED
+                            shutdown_event = _LEASE_SHUTDOWN_EVENTS_BY_RECORD.get(self.record_uid)
+                            if shutdown_event is not None:
+                                shutdown_event.set()
+                        except Exception:
+                            logging.debug("Could not wake --foreground wait for AI-closed tunnel", exc_info=True)
 
                 else:
                     logging.debug(f"{bcolors.OKBLUE}Tunnel '{tube_id}' closed with reason: {close_reason.name}{bcolors.ENDC}")
