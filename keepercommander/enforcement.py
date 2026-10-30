@@ -484,11 +484,17 @@ class PasswordComplexityEnforcer:
             value = getattr(source, attr, None)
             if value:
                 urls.append(value)
+        if urls:
+            return urls
 
         if hasattr(source, 'fields') or hasattr(source, 'custom'):
-            for field in itertools.chain(
-                    getattr(source, 'fields', None) or [],
-                    getattr(source, 'custom', None) or []):
+            for field in getattr(source, 'fields', None) or []:
+                if getattr(field, 'type', None) == 'url':
+                    value = getattr(field, 'value', None)
+                    urls.extend(value if isinstance(value, list) else [value])
+            if urls:
+                return urls
+            for field in getattr(source, 'custom', None) or []:
                 if getattr(field, 'type', None) == 'url':
                     value = getattr(field, 'value', None)
                     urls.extend(value if isinstance(value, list) else [value])
@@ -504,7 +510,15 @@ class PasswordComplexityEnforcer:
             for key in ('url', 'link', 'login_url'):
                 if data.get(key):
                     urls.append(data[key])
-            for field in itertools.chain(data.get('fields') or [], data.get('custom') or []):
+            if urls:
+                return urls
+            for field in data.get('fields') or []:
+                if isinstance(field, dict) and field.get('type') == 'url':
+                    value = field.get('value')
+                    urls.extend(value if isinstance(value, list) else [value])
+            if urls:
+                return urls
+            for field in data.get('custom') or []:
                 if isinstance(field, dict) and field.get('type') == 'url':
                     value = field.get('value')
                     urls.extend(value if isinstance(value, list) else [value])
@@ -588,15 +602,22 @@ class PasswordComplexityEnforcer:
     @classmethod
     def validate_manual_passwords(cls, params, source, passwords=None):
         # type: (KeeperParams, Any, Optional[List[str]]) -> List[str]
-        """Validate explicitly entered password values against matching domain rules only."""
+        """Validate manual values against domain password rules or explicitly allowed passphrases."""
         policy = cls.get_domain_specific_policy(params, source)
         if not policy:
             return []
         values = passwords if passwords is not None else cls._extract_passwords(source)
         failures = []
         for password in values:
-            failures.extend(cls.validate_password(
-                password, policy, allow_passphrase_fallback=False))
+            password_failures = cls.validate_password(
+                password, policy, allow_passphrase_fallback=False)
+            if not password_failures:
+                continue
+            if policy.get('passphrase-allow') is True:
+                passphrase_failures = cls.validate_passphrase(password, policy)
+                if not passphrase_failures:
+                    continue
+            failures.extend(password_failures)
         return failures
 
     @staticmethod

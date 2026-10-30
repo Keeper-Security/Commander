@@ -292,6 +292,7 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                             record_type, rt_fields, record_fields)
                         if self.abort_if_errors():
                             continue
+                        self.apply_manual_password_policy_warnings(params, record)
                         if self.warnings:
                             for w in self.warnings:
                                 logging.warning(w)

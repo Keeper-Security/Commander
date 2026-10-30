@@ -276,12 +276,25 @@ class RecordEditMixin:
         self._generated_password_values = []
 
     @staticmethod
-    def _url_override(fields):
-        for parsed_field in reversed(fields or []):
-            if parsed_field.type != 'url':
-                continue
-            value = parsed_field.value
-            if value.startswith('$JSON:'):
+    def _record_has_primary_url(record):
+        if not record:
+            return False
+        if any(getattr(record, attr, None) for attr in ('link', 'login_url', 'url')):
+            return True
+        return any(getattr(field, 'type', None) == 'url'
+                   and bool(getattr(field, 'value', None))
+                   for field in getattr(record, 'fields', None) or [])
+
+    @classmethod
+    def _url_override(cls, fields, record=None):
+        url_fields = [field for field in fields or [] if field.type == 'url']
+        primary_fields = [field for field in url_fields if field.section != 'c']
+        selected_field = primary_fields[-1] if primary_fields else None
+        if selected_field is None and url_fields and not cls._record_has_primary_url(record):
+            selected_field = url_fields[-1]
+        if selected_field:
+            value = selected_field.value
+            if isinstance(value, str) and value.startswith('$JSON:'):
                 try:
                     value = json.loads(value[6:])
                 except (json.JSONDecodeError, TypeError):
@@ -293,7 +306,7 @@ class RecordEditMixin:
         password_params = getattr(self, '_password_params', None)
         if password_params is None:
             return
-        has_url_override, url_override = self._url_override(fields)
+        has_url_override, url_override = self._url_override(fields, record)
         kwargs = {'url_override': url_override} if has_url_override else {}
         self._password_policy = PasswordComplexityEnforcer.get_generator_policy(
             password_params, record, **kwargs)

@@ -33,7 +33,9 @@ add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
-add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
+add_parser.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='do not prompt for omitted fields and bypass password policy warnings')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('title', type=str, action='store', help='record title')
 add_parser.error = raise_parse_exception
@@ -47,6 +49,9 @@ edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
 edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
+edit_parser.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='bypass password policy warnings')
 edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 edit_parser.error = raise_parse_exception
 edit_parser.exit = suppress_exit
@@ -91,8 +96,7 @@ def _enforce_password_policy(params, source, password, generated, command, force
         for failure in failures:
             logging.warning(failure)
         if not force:
-            if command == 'add':
-                message += ' Pass --force to bypass this policy.'
+            message += ' Pass --force to bypass this policy.'
             raise CommandError(command, message)
 
 
@@ -359,10 +363,12 @@ class RecordEditCommand(Command, RecordUtils):
 
         if kwargs.get('password') is not None:
             _enforce_password_policy(
-                params, record, kwargs.get('password'), False, 'edit')
+                params, record, kwargs.get('password'), False, 'edit',
+                force=kwargs.get('force') is True)
         elif kwargs.get('generate'):
             _enforce_password_policy(
-                params, record, record.password, True, 'edit')
+                params, record, record.password, True, 'edit',
+                force=kwargs.get('force') is True)
 
         if changed:
             api.update_record(params, record)
