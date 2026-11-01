@@ -179,9 +179,8 @@ def create_command_blueprint():
                     }), 404
                 else:
                     return jsonify({
-                        "status": "error",
+                        "status": status_info["status"],
                         "error": "Error: Request not completed yet",
-                        "status": status_info["status"]
                     }), 202  # 202 Accepted (still processing)
             
             result, status_code = result_data
