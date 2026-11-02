@@ -15,8 +15,10 @@ import logging
 import getpass
 import re
 import threading
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List, Dict, Any, Set
+from urllib.parse import urlsplit
 
 from . import api, utils, crypto
 from .proto import APIRequest_pb2, record_pb2
@@ -65,6 +67,9 @@ def _coerce_int(value):
             except ValueError:
                 return None
     return None
+
+
+_DOMAIN_URL_UNSET = object()
 
 
 class MasterPasswordReentryEnforcer:
@@ -412,22 +417,214 @@ class PasswordComplexityEnforcer:
     )
 
     @classmethod
-    def get_policy(cls, params):   # type: (KeeperParams) -> Optional[Dict[str, Any]]
+    def get_policies(cls, params):   # type: (KeeperParams) -> List[Dict[str, Any]]
         if not params or not params.enforcements:
-            return None
+            return []
         raw = _find_enforcement_value(params.enforcements, cls._POLICY_KEY)
         if raw is None:
-            return None
+            return []
         try:
             rules = json.loads(raw) if isinstance(raw, str) else raw
         except (json.JSONDecodeError, TypeError):
             logging.debug('Failed to parse %s enforcement', cls._POLICY_KEY)
-            return None
-        if isinstance(rules, list) and rules and isinstance(rules[0], dict):
-            return rules[0]
+            return []
+        if isinstance(rules, list):
+            return [x for x in rules if isinstance(x, dict)]
         if isinstance(rules, dict):
-            return rules
+            return [rules]
+        return []
+
+    @classmethod
+    def _default_policy(cls, policies):   # type: (List[Dict[str, Any]]) -> Optional[Dict[str, Any]]
+        if not policies:
+            return None
+        for policy in policies:
+            domains = policy.get('domains')
+            if isinstance(domains, list) and any(
+                    isinstance(x, str) and x.strip().lower() == '_default_' for x in domains):
+                return policy
+        for policy in policies:
+            if not isinstance(policy.get('domains'), list):
+                return policy
         return None
+
+    @classmethod
+    def get_policy(cls, params):   # type: (KeeperParams) -> Optional[Dict[str, Any]]
+        """Return the default password-generator policy."""
+        return cls._default_policy(cls.get_policies(params))
+
+    @classmethod
+    def _normalize_domain(cls, value):   # type: (Any) -> Optional[str]
+        if not isinstance(value, str):
+            return None
+        value = value.strip().lower().rstrip('.')
+        if not value or value == '_default_':
+            return None
+        if value.startswith('*.'):
+            value = value[2:]
+        try:
+            candidate = value if '://' in value else '//' + value
+            host = urlsplit(candidate).hostname
+        except ValueError:
+            return None
+        if not host:
+            return None
+        try:
+            return host.encode('idna').decode('ascii').lower().rstrip('.')
+        except (UnicodeError, ValueError):
+            return None
+
+    @classmethod
+    def _url_values(cls, source):   # type: (Any) -> List[Any]
+        urls = []
+        if source is None:
+            return urls
+
+        for attr in ('link', 'login_url', 'url'):
+            value = getattr(source, attr, None)
+            if value:
+                urls.append(value)
+        if urls:
+            return urls
+
+        if hasattr(source, 'fields') or hasattr(source, 'custom'):
+            for field in getattr(source, 'fields', None) or []:
+                if getattr(field, 'type', None) == 'url':
+                    value = getattr(field, 'value', None)
+                    urls.extend(value if isinstance(value, list) else [value])
+            if urls:
+                return urls
+            for field in getattr(source, 'custom', None) or []:
+                if getattr(field, 'type', None) == 'url':
+                    value = getattr(field, 'value', None)
+                    urls.extend(value if isinstance(value, list) else [value])
+            return urls
+
+        data = source
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                return urls
+        if isinstance(data, dict):
+            for key in ('url', 'link', 'login_url'):
+                if data.get(key):
+                    urls.append(data[key])
+            if urls:
+                return urls
+            for field in data.get('fields') or []:
+                if isinstance(field, dict) and field.get('type') == 'url':
+                    value = field.get('value')
+                    urls.extend(value if isinstance(value, list) else [value])
+            if urls:
+                return urls
+            for field in data.get('custom') or []:
+                if isinstance(field, dict) and field.get('type') == 'url':
+                    value = field.get('value')
+                    urls.extend(value if isinstance(value, list) else [value])
+        return urls
+
+    @classmethod
+    def _source_domains(cls, source, url_override=_DOMAIN_URL_UNSET):   # type: (Any, Any) -> Set[str]
+        urls = cls._url_values(source)
+        if url_override is not _DOMAIN_URL_UNSET:
+            urls = [url_override] if url_override else []
+        domains = set()
+        for value in urls:
+            if isinstance(value, dict):
+                value = value.get('url') or value.get('hostName')
+            domain = cls._normalize_domain(value)
+            if domain:
+                domains.add(domain)
+        return domains
+
+    @classmethod
+    def _domain_policy_for_source(cls, policies, source, url_override=_DOMAIN_URL_UNSET):
+        # type: (List[Dict[str, Any]], Any, Any) -> Optional[Dict[str, Any]]
+        source_domains = cls._source_domains(source, url_override)
+        if not source_domains:
+            return None
+
+        matches = []
+        for policy in policies or []:
+            domains = policy.get('domains')
+            if not isinstance(domains, list):
+                continue
+            normalized_domains = [
+                cls._normalize_domain(domain)
+                for domain in domains
+                if isinstance(domain, str) and domain.strip().lower() != '_default_'
+            ]
+            normalized_domains = [x for x in normalized_domains if x]
+            matched_domains = [
+                configured for configured in normalized_domains
+                if any(host == configured or host.endswith('.' + configured)
+                       for host in source_domains)
+            ]
+            if matched_domains:
+                matches.append((max(len(x) for x in matched_domains), policy))
+        if not matches:
+            return None
+        return max(matches, key=lambda x: x[0])[1]
+
+    @classmethod
+    def get_generator_policy(cls, params, source=None, url_override=_DOMAIN_URL_UNSET):
+        # type: (KeeperParams, Any, Any) -> Optional[Dict[str, Any]]
+        policies = cls.get_policies(params)
+        default_policy = cls._default_policy(policies)
+        domain_policy = cls._domain_policy_for_source(policies, source, url_override)
+        if not domain_policy:
+            return default_policy
+        merged = dict(default_policy or {})
+        merged.update(domain_policy)
+        return merged
+
+    @classmethod
+    def get_domain_specific_policy(cls, params, source, url_override=_DOMAIN_URL_UNSET):
+        # type: (KeeperParams, Any, Any) -> Optional[Dict[str, Any]]
+        """Return a matching explicit domain policy, excluding the generator default."""
+        return cls._domain_policy_for_source(
+            cls.get_policies(params), source, url_override)
+
+    @classmethod
+    def get_password_values(cls, source):   # type: (Any) -> List[str]
+        return cls._extract_passwords(source)
+
+    @classmethod
+    def validate_generated_password_with_policy(cls, password, policy, algorithm):
+        # type: (str, Optional[Dict[str, Any]], str) -> List[str]
+        if not policy or not password:
+            return []
+        if algorithm == 'passphrase' and policy.get('passphrase-allow') is not False:
+            return cls.validate_passphrase(password, policy)
+        return cls.validate_password(password, policy, allow_passphrase_fallback=False)
+
+    @classmethod
+    def validate_manual_passwords(cls, params, source, passwords=None):
+        # type: (KeeperParams, Any, Optional[List[str]]) -> List[str]
+        """Validate manual values against domain password rules or explicitly allowed passphrases."""
+        policy = cls.get_domain_specific_policy(params, source)
+        if not policy:
+            return []
+        values = passwords if passwords is not None else cls._extract_passwords(source)
+        failures = []
+        for password in values:
+            password_failures = cls.validate_password(
+                password, policy, allow_passphrase_fallback=False)
+            if not password_failures:
+                continue
+            if policy.get('passphrase-allow') is True:
+                passphrase_failures = cls.validate_passphrase(password, policy)
+                if not passphrase_failures:
+                    continue
+            failures.extend(password_failures)
+        return failures
+
+    @staticmethod
+    def _passphrase_word_letters(word):
+        # type: (str) -> Optional[str]
+        word = unicodedata.normalize('NFC', word)
+        return word if len(word) >= 3 and word.isalpha() else None
 
     @classmethod
     def _normalize_passphrase_separators(cls, policy):   # type: (Dict[str, Any]) -> Optional[str]
@@ -477,22 +674,25 @@ class PasswordComplexityEnforcer:
         capitalize = bool(policy.get('passphrase-capitalize', DEFAULT_PASSPHRASE_CAPITALIZE))
         append_number = bool(policy.get('passphrase-number', DEFAULT_PASSPHRASE_NUMBER))
 
-        if capitalize:
-            word_re = re.compile(r'^[A-Z][a-z]{2,}$')
-            if append_number:
-                first_re = re.compile(r'^[A-Z][a-z]{2,}[0-9]$')
-            else:
-                first_re = re.compile(r'^[A-Z][a-z]{2,}[0-9]?$')
-        else:
-            word_re = re.compile(r'^[A-Za-z]{3,}$')
-            if append_number:
-                first_re = re.compile(r'^[A-Za-z]{3,}[0-9]$')
-            else:
-                first_re = re.compile(r'^[A-Za-z]{3,}[0-9]?$')
-
         for index, word in enumerate(words):
-            pattern = first_re if index == 0 else word_re
-            if not pattern.match(word):
+            normalized_word = unicodedata.normalize('NFC', word)
+            is_first = index == 0
+            has_number = bool(normalized_word and normalized_word[-1] in '0123456789')
+            if is_first and append_number:
+                if not has_number:
+                    failures.append('First passphrase word must end with a digit (0-9).')
+                    break
+                normalized_word = normalized_word[:-1]
+            elif is_first and has_number:
+                normalized_word = normalized_word[:-1]
+
+            letters = cls._passphrase_word_letters(normalized_word)
+            correctly_capitalized = (
+                not capitalize or
+                (bool(letters) and letters[0].isupper()
+                 and all(char.islower() for char in letters[1:]))
+            )
+            if not letters or not correctly_capitalized:
                 if index == 0 and append_number:
                     failures.append('First passphrase word must end with a digit (0-9).')
                 elif capitalize:
@@ -505,7 +705,7 @@ class PasswordComplexityEnforcer:
         return failures
 
     @classmethod
-    def validate_password(cls, password, policy):   # type: (str, Dict[str, Any]) -> List[str]
+    def validate_password(cls, password, policy, allow_passphrase_fallback=True):   # type: (str, Dict[str, Any], bool) -> List[str]
         failures = []   # type: List[str]
         if not policy or not isinstance(password, str) or not password:
             return failures
@@ -540,7 +740,7 @@ class PasswordComplexityEnforcer:
             return []
 
         # Vault re-validates as a passphrase when random password rules fail.
-        if policy.get('passphrase-allow') is False:
+        if not allow_passphrase_fallback or policy.get('passphrase-allow') is False:
             return failures
 
         passphrase_failures = cls.validate_passphrase(password, policy)
@@ -550,7 +750,7 @@ class PasswordComplexityEnforcer:
         return passphrase_failures
 
     @classmethod
-    def validate_record(cls, params, source):   # type: (KeeperParams, Any) -> List[str]
+    def validate_record(cls, params, source, allow_passphrase_fallback=True):   # type: (KeeperParams, Any, bool) -> List[str]
         """Return policy violations across all password fields in `source`.
 
         `source` may be a vault.TypedRecord, a v3 record-data dict, or a JSON
@@ -562,7 +762,7 @@ class PasswordComplexityEnforcer:
             return []
         failures = []   # type: List[str]
         for pw in cls._extract_passwords(source):
-            failures.extend(cls.validate_password(pw, policy))
+            failures.extend(cls.validate_password(pw, policy, allow_passphrase_fallback))
         return failures
 
     @staticmethod
