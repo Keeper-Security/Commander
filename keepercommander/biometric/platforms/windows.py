@@ -20,16 +20,10 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 
 from .base import StorageHandler
 from ..utils.constants import (
-    ERROR_MESSAGES,
     WINDOWS_REGISTRY_PATH
 )
 from ..utils.error_handler import BiometricErrorHandler
 from .base import BasePlatformHandler
-import asyncio
-from winrt.windows.security.credentials.ui import (
-    UserConsentVerifier,
-    UserConsentVerifierAvailability,
-)
 
 
 class WindowsStorageHandler(StorageHandler):
@@ -129,7 +123,7 @@ class WindowsHandler(BasePlatformHandler):
         return WindowsStorageHandler()
 
     def _get_platform_name(self) -> str:
-        return "Windows Hello"
+        return "Windows WebAuthn"
 
     def _get_current_user_sid(self) -> Optional[str]:
         """Get current user SID using PowerShell and WMI"""
@@ -156,6 +150,9 @@ class WindowsHandler(BasePlatformHandler):
     async def _check_biometrics(self) -> bool:
         """Check if biometrics (face/fingerprint) are enrolled using Windows Runtime API"""
         try:
+            from winrt.windows.security.credentials.ui import (
+                UserConsentVerifier, UserConsentVerifierAvailability,
+            )
             availability = await UserConsentVerifier.check_availability_async()
 
             if availability == UserConsentVerifierAvailability.AVAILABLE:
@@ -198,22 +195,19 @@ class WindowsHandler(BasePlatformHandler):
     #         return False
 
     def detect_capabilities(self) -> Tuple[bool, str]:
-        """Detect Windows Hello capabilities"""
+        """Detect native WebAuthn, which supports Hello and roaming keys."""
         if os.name != 'nt':
             return False, "Not running on Windows"
 
         try:
-            # Run the async biometrics check
-            has_biometrics = asyncio.run(self._check_biometrics())
-            
-            if has_biometrics:
-                return True, "Windows Hello available: Biometrics"
-            else:
-                return False, ERROR_MESSAGES['windows_hello_not_setup']
+            from fido2.client.windows import WindowsClient
+            if WindowsClient.is_available():
+                return True, "Windows WebAuthn available: Windows Hello and security keys"
+            return False, "Windows WebAuthn is not available"
 
         except Exception as e:
-            logging.warning("Error detecting Windows Hello: %s", str(e))
-            return False, f"Error detecting Windows Hello: {str(e)}"
+            logging.warning("Error detecting Windows WebAuthn: %s", str(e))
+            return False, f"Error detecting Windows WebAuthn: {str(e)}"
 
     def create_webauthn_client(self, data_collector):
         """Create Windows WebAuthn client"""
@@ -243,4 +237,4 @@ class WindowsHandler(BasePlatformHandler):
         try:
             return client.make_credential(options)
         except Exception as e:
-            raise self._handle_credential_creation_error(e, self._get_platform_name()) 
+            raise self._handle_credential_creation_error(e, self._get_platform_name())

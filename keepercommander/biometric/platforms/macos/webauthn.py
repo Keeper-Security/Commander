@@ -10,6 +10,7 @@
 #
 
 import json
+import time
 from typing import Dict, Any, Tuple
 
 from .... import utils, crypto
@@ -133,28 +134,39 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         except Exception as e:
             raise Exception(str(e))
 
-    def get_assertion(self, options):
+    def get_assertion(self, options, event=None, on_verified=None):
         """Get WebAuthn assertion using Touch ID"""
         try:
             self._validate_dependencies(['LocalAuthentication'])
             
             timeout_ms = getattr(options, 'timeout', None)
             timeout_seconds = (timeout_ms / 1000.0) if timeout_ms else DEFAULT_BIOMETRIC_TIMEOUT
+            deadline = time.monotonic() + timeout_seconds
             
             challenge = options.challenge
             rp_id = options.rp_id
             if not rp_id:
                 raise Exception("No RP ID found in options - server configuration error")
-            private_key, credential_id_b64, credential_id_bytes = self._find_credential(options, rp_id, timeout_seconds)
-            
             context = self._create_auth_context()
             self._check_biometric_availability(context)
             
             reason = AUTH_REASONS['login'].format(rp_id=rp_id)
-            success = self._authenticate_with_touchid(context, reason, timeout_seconds)
+            success = self._authenticate_with_touchid(context, reason, timeout_seconds, event)
             
             if not success:
                 raise Exception(ERROR_MESSAGES['authentication_failed'])
+
+            # Claim the platform path only after biometric verification. Losing
+            # attempts must not read the keychain or produce an assertion.
+            if on_verified:
+                on_verified()
+            if event is not None and event.is_set():
+                raise Exception('Touch ID authentication cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Touch ID authentication timed out')
+            private_key, credential_id_b64, credential_id_bytes = self._find_credential(
+                options, rp_id, remaining, event)
 
             return self._create_assertion_response(
                 challenge, rp_id, credential_id_b64, credential_id_bytes, private_key
@@ -181,7 +193,8 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         if not can_evaluate:
             raise Exception(ERROR_MESSAGES['touchid_not_available'])
 
-    def _authenticate_with_touchid(self, context, reason: str, timeout_seconds: float = 30) -> bool:
+    def _authenticate_with_touchid(self, context, reason: str, timeout_seconds: float = 30,
+                                  cancellation_event=None) -> bool:
         """Perform Touch ID authentication with proper synchronization"""
         import LocalAuthentication  # pylint: disable=import-error
         import threading
@@ -194,30 +207,46 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             result['error'] = error
             event.set()
         
-        context.evaluatePolicy_localizedReason_reply_(
-            LocalAuthentication.LAPolicyDeviceOwnerAuthenticationWithBiometrics,  # pylint: disable=no-member
-            reason,
-            auth_callback
-        )
-        
-        # Wait for result with synchronization
-        if event.wait(timeout=timeout_seconds):
-            if result['error']:
-                from ...utils.error_handler import BiometricErrorHandler
-                raise BiometricErrorHandler.handle_authentication_error(
-                    Exception(str(result['error'])), "Touch ID"
-                )
-            return result['success']
-        else:
-            raise TimeoutError("Touch ID authentication timed out")
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            if cancellation_event is not None and cancellation_event.is_set():
+                raise Exception('Touch ID authentication cancelled')
+            context.evaluatePolicy_localizedReason_reply_(
+                LocalAuthentication.LAPolicyDeviceOwnerAuthenticationWithBiometrics,  # pylint: disable=no-member
+                reason,
+                auth_callback
+            )
+            while True:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    raise Exception('Touch ID authentication cancelled')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('Touch ID authentication timed out')
+                if event.wait(timeout=min(remaining, 0.05)):
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        raise Exception('Touch ID authentication cancelled')
+                    if result['error']:
+                        raise BiometricErrorHandler.handle_authentication_error(
+                            Exception(str(result['error'])), 'Touch ID')
+                    return result['success']
+        finally:
+            # Dismiss the native dialog on cancellation, timeout, or completion.
+            context.invalidate()
 
-    def _find_credential(self, options, rp_id: str, timeout_seconds: float) -> Tuple[Any, str, bytes]:
+    def _find_credential(self, options, rp_id: str, timeout_seconds: float,
+                         event=None) -> Tuple[Any, str, bytes]:
         """Find credential using keychain manager"""
         allowed_credentials = options.allow_credentials or []
         if not allowed_credentials:
             raise Exception("No allowed credentials found")
+        deadline = time.monotonic() + timeout_seconds
 
         for cred in allowed_credentials:
+            if event is not None and event.is_set():
+                raise Exception('Touch ID authentication cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Touch ID authentication timed out')
             cred_id = cred.id
             if isinstance(cred_id, str):
                 test_id_b64 = cred_id
@@ -226,8 +255,10 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                 test_id_bytes = cred_id
                 test_id_b64 = utils.base64_url_encode(cred_id)
 
-            test_key = self.keychain_manager.load_credential(test_id_b64, rp_id, timeout_seconds)
+            test_key = self.keychain_manager.load_credential(test_id_b64, rp_id, remaining)
             if test_key:
+                if event is not None and event.is_set():
+                    raise Exception('Touch ID authentication cancelled')
                 return test_key, test_id_b64, test_id_bytes
 
         from ...utils.error_handler import BiometricErrorHandler
@@ -365,4 +396,4 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             client_data_json,
             authenticator_data,
             signature
-        ) 
+        )

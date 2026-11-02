@@ -17,15 +17,13 @@ from typing import Dict, Any, Tuple, Optional
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
-from .... import utils
 from ..base import BasePlatformHandler, StorageHandler
 from .keychain import MacOSKeychainManager
-from .webauthn import MacOSTouchIDWebAuthnClient
+from .passkey import MacOSPasskeyWebAuthnClient
+from ..security_key import get_security_key_devices
 from ...utils.constants import (
     MACOS_PREFS_PATH,
-    ERROR_MESSAGES,
     PLATFORM_DARWIN,
-    DEFAULT_BIOMETRIC_TIMEOUT
 )
 from ...utils.error_handler import BiometricErrorHandler
 
@@ -136,9 +134,21 @@ class MacOSHandler(BasePlatformHandler):
         return MacOSStorageHandler()
 
     def _get_platform_name(self) -> str:
-        return "Touch ID"
+        return "Passkey"
 
     def detect_capabilities(self) -> Tuple[bool, str]:
+        """Either Touch ID or an attached USB key can provide passkey login."""
+        if platform.system() != PLATFORM_DARWIN:
+            return False, "Not running on macOS"
+        try:
+            with get_security_key_devices() as devices:
+                if devices:
+                    return True, "USB FIDO2 security key is available"
+        except Exception as e:
+            logging.debug("Security key detection failed: %s", e)
+        return self.detect_touch_id_capabilities()
+
+    def detect_touch_id_capabilities(self) -> Tuple[bool, str]:
         """Detect Touch ID availability on macOS"""
         if platform.system() != PLATFORM_DARWIN:
             return False, "Not running on macOS"
@@ -215,9 +225,10 @@ class MacOSHandler(BasePlatformHandler):
         return False
 
     def create_webauthn_client(self, data_collector):
-        """Create macOS Touch ID WebAuthn client"""
+        """Create macOS Touch ID / USB security-key WebAuthn client."""
         try:
-            return MacOSTouchIDWebAuthnClient(data_collector, self.keychain_manager)
+            return MacOSPasskeyWebAuthnClient(
+                data_collector, self.keychain_manager, self.detect_touch_id_capabilities)
         except ImportError:
             raise Exception('macOS Touch ID client dependencies not available')
 
@@ -227,18 +238,8 @@ class MacOSHandler(BasePlatformHandler):
         if not rp_id:
             raise Exception("No RP ID found in creation options - server configuration error")
             
-        # Check for existing credentials before processing
-        if 'excludeCredentials' in creation_options and creation_options['excludeCredentials']:
-            for excluded_cred in creation_options['excludeCredentials']:
-                cred_id = excluded_cred.get('id')
-                if isinstance(cred_id, str):
-                    cred_id_b64 = cred_id
-                else:
-                    cred_id_b64 = utils.base64_url_encode(cred_id)
-                
-                if self.keychain_manager.credential_exists(cred_id_b64, rp_id, DEFAULT_BIOMETRIC_TIMEOUT):
-                    raise Exception(ERROR_MESSAGES['credential_exists'])
-
+        # Each authenticator checks excludeCredentials itself. A local Touch ID
+        # credential must not prevent registering a different security key.
         return self._prepare_credential_creation_options(creation_options)
 
     def handle_authentication_options(self, pk_options: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,4 +258,4 @@ class MacOSHandler(BasePlatformHandler):
         try:
             return client.make_credential(options)
         except Exception as e:
-            raise self._handle_credential_creation_error(e, self._get_platform_name()) 
+            raise self._handle_credential_creation_error(e, self._get_platform_name())
