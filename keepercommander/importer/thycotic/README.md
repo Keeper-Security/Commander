@@ -289,9 +289,11 @@ Tested with Delinea Secret Server 10.x and later versions.
 
 ## Limitations
 
-- **Secrets Requiring Approval**: Secrets with approval policies cannot be imported. Request approval in Thycotic Secret Server first.
+- **Secrets with Approval or Double Lock Policies**: Secrets requiring approval or protected by double lock policies cannot be imported. Request approval in Thycotic Secret Server or disable the double lock policy before importing.
 
-- **Secrets with Double Lock Policy**: Secrets protected by double lock cannot be imported. Disable the policy in Thycotic before importing.
+- **Custom Secret Roles**: Custom Thycotic roles cannot be auto-mapped to Keeper permissions. Only standard roles are supported.
+
+- **User and Team Creation with Reserved Domain**: Users and teams can only be created with email addresses from a reserved domain configured in Keeper. Emails with other domains will be skipped during `--add-users` or `--add-teams` operations.
 
 ## API Endpoints Used
 
