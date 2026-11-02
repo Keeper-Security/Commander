@@ -86,6 +86,18 @@ class KeepassImporter(BaseFileImporter):
             g = g.group
         return path
 
+    @staticmethod
+    def in_recycle_bin(kdb, group):     # type: (PyKeePass, Group) -> bool
+        bin_group = getattr(kdb, 'recyclebin_group', None)
+        if bin_group is None:
+            return False
+        g = group
+        while isinstance(g, Group):
+            if g.uuid == bin_group.uuid:
+                return True
+            g = g.group
+        return False
+
     def do_import(self, filename, **kwargs):
         password,keyfile = parse_auth(kwargs.get('kdbx_password'), kwargs.get('kdbx_key_file'))
         
@@ -105,7 +117,7 @@ class KeepassImporter(BaseFileImporter):
                 empty_folders = []
                 for group in groups:
                     entries = group.entries
-                    if not entries and not group.subgroups and group is not root:
+                    if not entries and not group.subgroups and group is not root and not KeepassImporter.in_recycle_bin(kdb, group):
                         empty = EmptyFolder()
                         fol = Folder()
                         fol.path = KeepassImporter.get_folder(group)

@@ -381,11 +381,13 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         self._send_keep_alive_if_needed(params)
         parent_ids = {x.get('parentFolderId') for x in folders.values()}
-        for folder_id, folder in folders.items():
+        secret_folder_ids = {s.get('folderId') for s in secrets}
+        # With --secret-ids only some secrets are loaded, so a folder cannot be judged empty from them.
+        for folder_id, folder in ({} if debug_ids else folders).items():
             # leaf folders only: parents are re-created from the path
             if folder_id in parent_ids:
                 continue
-            if any(s.get('folderId') == folder_id for s in secrets):
+            if folder_id in secret_folder_ids:
                 continue
             if folder.get('folderPath'):
                 empty = EmptyFolder()

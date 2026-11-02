@@ -426,7 +426,7 @@ class RecordExportCommand(ImporterCommand):
                 raise CommandError(
                     'export',
                     'Service Mode permits only JSON export to the API response. '
-                    'Use export --format=json with optional --folder and --owned-only; '
+                    'Use export --format=json with optional --folder, --owned-only and --include-empty-folders; '
                     'do not specify an output filename or other options.',
                 )
             kwargs['_service_mode_record_limit'] = imp_exp.SERVICE_MODE_EXPORT_MAX_RECORDS

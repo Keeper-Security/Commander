@@ -299,6 +299,47 @@ def _byte_length(value):
     return 0
 
 
+def find_empty_folders(params, exported_folder_uids, folder_filter=None, include_shared=False):
+    # type: (KeeperParams, Set[str], Optional[Set[str]], bool) -> List[str]
+    """Return uids of the folders that need an explicit entry in an export.
+
+    A folder qualifies when none of the exported records is in it and no folder below it is already exported
+    (a folder's parents are re-created from its path on import). It is judged by the records actually exported,
+    not by the folder's content, so folders whose records were filtered out (--owned-only) or skipped qualify.
+    Shared folders are included only when *include_shared* is set, i.e. the format has no shared folder section.
+    """
+    types = {BaseFolderNode.UserFolderType, BaseFolderNode.SharedFolderFolderType,
+             BaseFolderNode.NestedShareFolderType}
+    if include_shared:
+        types.add(BaseFolderNode.SharedFolderType)
+
+    def ancestors(uid):
+        seen = set()
+        folder = params.folder_cache.get(uid)
+        while folder is not None and folder.parent_uid and folder.parent_uid not in seen:
+            seen.add(folder.parent_uid)
+            folder = params.folder_cache.get(folder.parent_uid)
+        return seen
+
+    def depth(uid):
+        return len(ancestors(uid))
+
+    covered = set()     # type: Set[str]
+    for uid in exported_folder_uids:
+        covered.update(ancestors(uid))
+
+    candidates = [uid for uid, f in params.folder_cache.items()
+                  if f.type in types and uid not in exported_folder_uids
+                  and (not folder_filter or uid in folder_filter)]
+    result = []
+    for uid in sorted(candidates, key=depth, reverse=True):     # deepest first, so a leaf covers its parents
+        if uid in covered:
+            continue
+        result.append(uid)
+        covered.update(ancestors(uid))
+    return result
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
@@ -402,6 +443,7 @@ def export(params, file_format, filename, **kwargs):
         record_list = params.record_cache
     service_mode_record_count = 0
     service_mode_input_bytes = 0
+    exported_folder_uids = set()    # type: Set[str]
     for record_uid in record_list:
         if record_filter or folder_path:
             if record_uid not in record_filter:
@@ -503,6 +545,7 @@ def export(params, file_format, filename, **kwargs):
                     if rec.folders is None:
                         rec.folders = []
                     rec.folders.append(export_folder)
+                    exported_folder_uids.add(folder_uid)
 
             to_export.append(rec)
         # elif record_version == 4:
@@ -518,21 +561,16 @@ def export(params, file_format, filename, **kwargs):
 
     rec_count = len(to_export) - sf_count
 
-    if kwargs.get('include_empty_folders') and exporter.has_empty_folders():
-        # Folders without records never show up through the records above; export them explicitly.
-        # Only leaf folders are needed, their parents are re-created implicitly on import.
-        parent_uids = {f.parent_uid for f in params.folder_cache.values() if f.parent_uid}
-        for folder_uid, f in params.folder_cache.items():
-            if f.type not in (BaseFolderNode.UserFolderType, BaseFolderNode.SharedFolderFolderType,
-                              BaseFolderNode.NestedShareFolderType):
-                continue
-            if folder_uid in parent_uids or params.subfolder_record_cache.get(folder_uid):
-                continue
-            if folder_filter and folder_uid not in folder_filter:
-                continue
-            empty = ImportEmptyFolder()
-            empty.folders.append(get_import_folder(params, folder_uid, None))
-            to_export.append(empty)
+    if kwargs.get('include_empty_folders'):
+        if exporter.has_empty_folders():
+            for folder_uid in find_empty_folders(params, exported_folder_uids, folder_filter,
+                                                 include_shared=not exporter.has_shared_folders()):
+                empty = ImportEmptyFolder()
+                empty.folders.append(get_import_folder(params, folder_uid, None))
+                to_export.append(empty)
+        else:
+            logging.warning('Export to %s format does not support --include-empty-folders. Empty folders are '
+                            'not exported.', file_format)
 
     args = {}
     file_password = kwargs.get('file_password')

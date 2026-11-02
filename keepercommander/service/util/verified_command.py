@@ -64,7 +64,7 @@ class Verifycommand:
     _EXPORT_SERVICE_MODE_MSG = (
         'Local filesystem access is not permitted through Service Mode. '
         "Only JSON export to the API response is allowed; use 'export --format=json' "
-        '(optional: --folder <vault-folder>, --owned-only). '
+        '(optional: --folder <vault-folder>, --owned-only, --include-empty-folders). '
         'Do not specify an output filename or any other export options.'
     )
     _PAM_DEBUG_DUMP_SERVICE_MODE_MSG = (
@@ -347,6 +347,7 @@ class Verifycommand:
         parser.add_argument('--format', choices=('json',), required=True)
         parser.add_argument('--folder')
         parser.add_argument('--owned-only', action='store_true')
+        parser.add_argument('--include-empty-folders', action='store_true')
 
         try:
             with contextlib.redirect_stderr(io.StringIO()):
@@ -365,7 +366,7 @@ class Verifycommand:
         while i < len(command_tokens):
             token = command_tokens[i]
             option = token.partition('=')[0]
-            if option not in {'--format', '--folder', '--owned-only'}:
+            if option not in {'--format', '--folder', '--owned-only', '--include-empty-folders'}:
                 return Verifycommand._EXPORT_SERVICE_MODE_MSG
             if option in seen_options:
                 return Verifycommand._EXPORT_SERVICE_MODE_MSG
