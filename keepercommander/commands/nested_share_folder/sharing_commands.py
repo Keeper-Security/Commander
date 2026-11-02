@@ -27,6 +27,7 @@ from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
 from ... import vault_extensions
+from ...subfolder import ambiguous_identifier_message
 from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
 from .helpers import (
     parse_expiration, get_access_role_label,
@@ -405,8 +406,7 @@ class NestedShareRecordPermissionCommand(Command):
         if len(matches) > 1:
             raise CommandError(
                 'nsf-record-permission',
-                f'Multiple folders match "{folder_name}". '
-                'Use a folder UID instead.')
+                ambiguous_identifier_message(folder_name))
         raise CommandError('nsf-record-permission', f'Folder "{folder_name}" not found')
 
     @staticmethod

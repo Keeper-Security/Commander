@@ -14,7 +14,10 @@ from .. import utils, crypto, api
 from ..params import KeeperParams
 from ..proto import folder_pb2, tla_pb2
 from ..error import KeeperApiError
-from ..subfolder import try_resolve_path, FolderPathAmbiguousError
+from ..subfolder import (
+    try_resolve_path, FolderPathAmbiguousError,
+    ambiguous_identifier_message,
+)
 
 from .common import (
     get_folder_key, get_user_public_key, resolve_user_uid_bytes,
@@ -157,8 +160,7 @@ class FolderIdentifierAmbiguousError(ValueError):
     """Raised when a folder name/path identifies multiple folders."""
 
     def __init__(self, identifier):
-        super().__init__(
-            f'Multiple folders match "{identifier}". Use a folder UID instead.')
+        super().__init__(ambiguous_identifier_message(identifier))
 
 
 def resolve_folder_identifier(params, folder_identifier, raise_on_ambiguous=False):

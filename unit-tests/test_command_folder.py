@@ -75,7 +75,7 @@ class TestFolder(TestCase):
 
         with self.assertRaises(CommandError) as ctx:
             folder.FolderTreeCommand().execute(params, folder='Ambiguous Tree')
-        self.assertIn('Multiple folders match', str(ctx.exception))
+        self.assertIn('Cannot resolve', str(ctx.exception))
 
     def test_make_folder(self):
         params = get_synced_params()
@@ -254,7 +254,7 @@ class TestFolder(TestCase):
                 return_value=True):
             with self.assertRaises(CommandError) as ctx:
                 cmd.execute(params, pattern=['Ambiguous'], force=True, quiet=True)
-        self.assertIn('Multiple folders match', str(ctx.exception))
+        self.assertIn('Cannot resolve', str(ctx.exception))
 
     def test_list_surfaces_ambiguous_folder_path(self):
         from keepercommander.subfolder import UserFolderNode
@@ -272,7 +272,7 @@ class TestFolder(TestCase):
 
         with self.assertRaises(CommandError) as ctx:
             folder.FolderListCommand().execute(params, pattern='Ambiguous List')
-        self.assertIn('Multiple folders match', str(ctx.exception))
+        self.assertIn('Cannot resolve', str(ctx.exception))
 
     def test_delete_folders(self):
         params = get_synced_params()

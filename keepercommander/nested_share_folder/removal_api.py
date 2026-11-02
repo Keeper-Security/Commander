@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 
 from .. import utils, api
 from ..proto import remove_pb2
+from ..subfolder import ambiguous_identifier_message
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,7 @@ class RecordIdentifierAmbiguousError(ValueError):
     """Raised when a record title identifies multiple records."""
 
     def __init__(self, identifier):
-        super().__init__(
-            f'Cannot resolve "{identifier}" by name. Use the object UID; '
-            'run nsf-list to find record UIDs. Shared-in and ambiguous '
-            'record names require UID lookup.')
+        super().__init__(ambiguous_identifier_message(identifier))
 
 
 # ══════════════════════════════════════════════════════════════════════════

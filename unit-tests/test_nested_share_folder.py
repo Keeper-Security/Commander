@@ -259,8 +259,8 @@ class TestCommandHelpers(TestCase):
 
         with self.assertRaises(CommandError) as ctx:
             resolve_folder_uid(params, 'Work', 'nsf-record-add')
-        self.assertIn('Multiple folders match "Work"', str(ctx.exception))
-        self.assertIn('Use a folder UID', str(ctx.exception))
+        self.assertIn('Cannot resolve "Work" by name', str(ctx.exception))
+        self.assertIn('Use the object UID', str(ctx.exception))
 
     def test_nsf_mkdir_child_resolution_ignores_shared_in_folder(self):
         from keepercommander.commands.nested_share_folder.folder_commands import (
@@ -486,8 +486,8 @@ class TestCommandHelpers(TestCase):
         self.assertEqual(
             messages[0],
             'Cannot resolve "Standard Duplicate" by name. Use the object UID; '
-            'run nsf-list to find record UIDs. Shared-in and ambiguous record '
-            'names require UID lookup.')
+            'run nsf-list to find object UIDs. Shared-in and ambiguous names '
+            'require UID lookup.')
 
     def test_record_title_allows_single_shared_record(self):
         from keepercommander.nested_share_folder.removal_api import (

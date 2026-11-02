@@ -22,6 +22,7 @@ from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
 from ... import utils, vault_extensions
+from ...subfolder import ambiguous_identifier_message
 from .helpers import (
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
@@ -210,9 +211,7 @@ class NestedShareFolderMkdirCommand(Command):
         matches = owned_matches if owned_matches else matching_uids
         if len(matches) > 1:
             raise CommandError(
-                'nsf-mkdir',
-                f'Multiple folders match "{folder_name}". '
-                'Use a folder UID instead.')
+                'nsf-mkdir', ambiguous_identifier_message(folder_name))
         if matches:
             return matches[0]
         return None

@@ -35,7 +35,8 @@ from ..proto import folder_pb2
 from ..record import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, \
     FolderPathAmbiguousError, contained_folders, lookup_path, path_split, try_resolve_path, \
-    find_folders, get_contained_record_uids, get_contained_folder_uids
+    find_folders, get_contained_record_uids, get_contained_folder_uids, \
+    ambiguous_identifier_message
 
 
 def register_commands(commands):
@@ -719,9 +720,7 @@ class FolderMakeCommand(Command):
             existing_children = contained_folders(params, [base_folder], leaf)
             if len(existing_children) > 1:
                 raise CommandError(
-                    'mkdir',
-                    f'Multiple folders match "{leaf}". '
-                    'Use a folder UID instead.')
+                    'mkdir', ambiguous_identifier_message(leaf))
             if len(existing_children) == 1:
                 return base_folder, leaf, True
         else:
@@ -731,9 +730,7 @@ class FolderMakeCommand(Command):
             if (len(existing_children) > 1
                     and base_folder.type != BaseFolderNode.RootFolderType):
                 raise CommandError(
-                    'mkdir',
-                    f'Multiple folders match "{leaf}". '
-                    'Use a folder UID instead.')
+                    'mkdir', ambiguous_identifier_message(leaf))
             if existing_children:
                 # Root-level duplicate names are valid, including when an
                 # existing folder belongs to the current account. Child

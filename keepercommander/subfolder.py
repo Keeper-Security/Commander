@@ -18,9 +18,15 @@ class FolderPathAmbiguousError(ValueError):
     """Raised when a path component resolves to more than one folder."""
 
     def __init__(self, component):
-        super().__init__(
-            f'Multiple folders match "{component}". '
-            'Use a folder UID instead.')
+        super().__init__(ambiguous_identifier_message(component))
+
+
+def ambiguous_identifier_message(identifier):
+    """Return the standard message for any ambiguous vault identifier."""
+    return (
+        f'Cannot resolve "{identifier}" by name. Use the object UID; '
+        'run nsf-list to find object UIDs. Shared-in and ambiguous names '
+        'require UID lookup.')
 
 
 def get_folder_path(params, folder_uid, delimiter='/'):
