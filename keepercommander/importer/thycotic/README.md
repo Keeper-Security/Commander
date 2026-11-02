@@ -40,11 +40,10 @@ These are already included in the base `requirements.txt` for Commander.
 Import all secrets from Thycotic Secret Server:
 
 ```bash
-keeper> import --format=thycotic --file=/path/to/output.json
+keeper> import --format=thycotic https://thycotic.example.com
 ```
 
 This will prompt for:
-- **Thycotic Host/URL**: The URL of your Thycotic Secret Server instance
 - **Username**: Your Thycotic username
 - **Password**: Your Thycotic password
 - **2FA Code**: TOTP code if two-factor authentication is enabled
@@ -54,7 +53,7 @@ This will prompt for:
 Import secrets from specific folders only:
 
 ```bash
-keeper> import --format=thycotic --filter-folder=finance,hr --file=/path/to/output.json
+keeper> import --format=thycotic --filter-folder=finance,hr https://thycotic.example.com
 ```
 
 ### Interactive Folder Selection
@@ -62,7 +61,7 @@ keeper> import --format=thycotic --filter-folder=finance,hr --file=/path/to/outp
 Browse and select folders interactively:
 
 ```bash
-keeper> import --format=thycotic --file=/path/to/output.json
+keeper> import --format=thycotic https://thycotic.example.com
 # Then choose folders from the interactive menu
 ```
 
@@ -71,13 +70,13 @@ keeper> import --format=thycotic --file=/path/to/output.json
 Provision Thycotic users as Keeper enterprise users before importing secrets:
 
 ```bash
-keeper> import --format=thycotic --add-users --file=/path/to/output.json
+keeper> import --format=thycotic --add-users https://thycotic.example.com
 ```
 
 **Dry Run Mode**: Preview users to be created without actually creating them:
 
 ```bash
-keeper> import --format=thycotic --add-users --dry-run --file=/path/to/output.json
+keeper> import --format=thycotic --add-users --dry-run https://thycotic.example.com
 ```
 
 ### Import with Team Creation
@@ -85,13 +84,13 @@ keeper> import --format=thycotic --add-users --dry-run --file=/path/to/output.js
 Create Keeper teams based on Thycotic groups and assign users:
 
 ```bash
-keeper> import --format=thycotic --add-users --add-teams --file=/path/to/output.json
+keeper> import --format=thycotic --add-users --add-teams https://thycotic.example.com
 ```
 
 **Dry Run Mode**: Preview teams and user assignments without creating them:
 
 ```bash
-keeper> import --format=thycotic --add-users --add-teams --dry-run --file=/path/to/output.json
+keeper> import --format=thycotic --add-users --add-teams --dry-run https://thycotic.example.com
 ```
 
 ### Import with Secret-Level Permissions
@@ -99,15 +98,16 @@ keeper> import --format=thycotic --add-users --add-teams --dry-run --file=/path/
 Import secret permissions as Keeper shared records:
 
 ```bash
-keeper> import --format=thycotic --add-users --file=/path/to/output.json
-keeper> apply-membership --source=thycotic shared_folder_membership.json
+keeper> import --format=thycotic --add-users https://thycotic.example.com
+keeper> download-membership --source=thycotic shared_folder_membership.json
+keeper> apply-membership shared_folder_membership.json
 ```
 
-Or download membership and apply permissions separately:
+Or download membership and apply permissions separately with worker pool:
 
 ```bash
-keeper> download-membership --source=thycotic --workers=4 memberships.json
-keeper> apply-membership --full-sync memberships.json
+keeper> download-membership --source=thycotic --workers=4 shared_folder_membership.json
+keeper> apply-membership --full-sync shared_folder_membership.json
 ```
 
 ### Advanced Options
@@ -290,9 +290,7 @@ Tested with Delinea Secret Server 10.x and later versions.
 ## Limitations
 
 - Web-based folder browsing: Use `--filter-folder` or interactive picker for folder selection
-- Custom field types: Custom Thycotic field types may be imported as generic fields
 - Audit comments: The auto-comment "Checking out" is added only for restricted secrets requiring checkout
-- Custom roles: Custom Thycotic Secret Server roles cannot be automatically mapped to Keeper permissions
 
 ## API Endpoints Used
 
