@@ -332,6 +332,8 @@ nsf-convert-record abc123recorduid --folder "Projects/Archive" --force
 
 **Detail:** Convert a Classic folder and its descendants into a Nested Share Folder tree, converting contained Classic records while retaining their record UIDs. Classic Shared Folder user/team permissions are mapped to NSF roles. Folder and record application shares are migrated where present.
 
+When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
+
 Classic member permissions map as follows:
 
 | Classic `manage_users` | Classic `manage_records` | NSF role |
@@ -371,7 +373,7 @@ nsf-convert-folder "Client Files" --force
 ```
 
 1. Convert the selected folder tree to the Nested Share Folder root and choose whether to remove the Classic source.
-2. Convert a Classic subtree under the existing `Archive` NSF folder.
+2. Convert a Classic subtree under the existing `Archive` NSF folder. Verify the converted root inherits `Archive` access and that a shared Classic root also retains its mapped Classic grants.
 3. Review the mapping and depth handling without changing the vault.
 4. Convert and delete the Classic source tree after full success without prompts.
 
