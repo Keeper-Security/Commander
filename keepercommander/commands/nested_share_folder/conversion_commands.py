@@ -854,8 +854,11 @@ class NestedShareFolderConvertCommand(Command):
                     )
                     parent_scope = (
                         scope_by_folder.get(parent_source_uid) if parent_source_uid else None)
-                    inherit_permissions = bool(parent_source_uid and
-                                               parent_scope == scope_by_folder.get(source_uid))
+                    inherit_permissions = bool(
+                        parent_uid and (
+                            parent_source_uid is None or
+                            parent_scope == scope_by_folder.get(source_uid)
+                        ))
                     specs.append({
                         'name': source_node.name,
                         'parent_uid': parent_uid,
