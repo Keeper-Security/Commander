@@ -59,7 +59,6 @@ API_RESPONSE_MESSAGES = {
 }
 
 AUTHENTICATOR_SELECTION = {
-    'authenticatorAttachment': 'platform',
     'userVerification': 'required'
 }
 
@@ -96,6 +95,7 @@ ERROR_MESSAGES = {
     'verification_failed': 'Biometric verification failed',
     'credential_exists': 'A biometric credential for this account already exists. Use "biometric unregister" first.',
     'credential_already_registered': 'A biometric credential for this account already exists. Use "biometric unregister" first.',
+    'security_key_already_registered': 'This security key already has a passkey registered for this Keeper account. Use "biometric verify" to test it, or register a different security key.',
     'keychain_store_failed': 'Failed to store credential in keychain',
     'touchid_not_available': 'Touch ID is not available or configured',
     'windows_hello_not_setup': 'Windows Hello is available but not yet set up. Please complete the setup in Windows Settings > Accounts > Sign-In options, then try running this command again.',
@@ -118,4 +118,4 @@ AUTH_REASONS = {
     'register': "Register biometric authentication for {rp_id}",
     'login': "Authenticate with Keeper for {rp_id}",
     'verification': "Verify biometric authentication for {rp_id}"
-} 
+}

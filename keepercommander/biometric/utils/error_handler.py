@@ -59,7 +59,12 @@ class BiometricErrorHandler:
         error_msg = str(error).lower()
         error_str = str(error)
         
-        if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
+        if "credential_excluded" in error_msg:
+            # CTAP CREDENTIAL_EXCLUDED is raised after the authenticator checks
+            # the server's excludeCredentials. Do not treat DEVICE_INELIGIBLE
+            # alone as a duplicate: that client code has other possible causes.
+            return Exception(ERROR_MESSAGES['security_key_already_registered'])
+        elif any(keyword in error_msg for keyword in ["cancelled", "denied"]):
             return Exception(f"{platform_name} registration cancelled")
         elif ("object already exists" in error_msg or 
             ("oserror" in error_msg and "22" in error_msg and "object already exists" in error_msg)):
@@ -128,4 +133,4 @@ class BiometricErrorHandler:
         except KeyboardInterrupt:
             BiometricErrorHandler.handle_keyboard_interrupt(command_name, operation)
         except Exception as e:
-            BiometricErrorHandler.handle_command_error(command_name, operation, e) 
+            BiometricErrorHandler.handle_command_error(command_name, operation, e)

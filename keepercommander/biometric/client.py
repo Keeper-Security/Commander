@@ -45,7 +45,7 @@ class BiometricClient:
         """Generate registration options from Keeper API"""
         try:
             rq = APIRequest_pb2.PasskeyRegistrationRequest()
-            rq.authenticatorAttachment = APIRequest_pb2.AuthenticatorAttachment.PLATFORM
+            rq.authenticatorAttachment = APIRequest_pb2.AuthenticatorAttachment.ALL_SUPPORTED
 
             rs = api.communicate_rest(
                 params,
@@ -139,7 +139,7 @@ class BiometricClient:
         """Generate authentication options"""
         try:
             rq = APIRequest_pb2.PasskeyAuthenticationRequest()
-            rq.authenticatorAttachment = APIRequest_pb2.AuthenticatorAttachment.PLATFORM
+            rq.authenticatorAttachment = APIRequest_pb2.AuthenticatorAttachment.ALL_SUPPORTED
             rq.clientVersion = rest_api.CLIENT_VERSION
             rq.username = params.user
             rq.passkeyPurpose = (APIRequest_pb2.PasskeyPurpose.PK_REAUTH
@@ -253,4 +253,4 @@ class BiometricClient:
             elif 'server_error' in error_msg or 'unexpected' in error_msg:
                 return {'status': STATUS_ERROR, 'message': API_RESPONSE_MESSAGES['server_exception']}
             else:
-                raise Exception(str(e)) 
+                raise Exception(str(e))
