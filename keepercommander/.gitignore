@@ -1,3 +1,4 @@
 *.json
+!resources/passkey_aaguid_names.json
 __pycache__
 *.pyc

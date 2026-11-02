@@ -180,7 +180,7 @@ class MacOSKeychainManager:
             return False
 
     def credential_exists(self, credential_id: str, rp_id: Optional[str] = None, timeout_seconds: Optional[float] = None) -> bool:
-        """Check if credential exists in macOS keychain"""
+        """Check keychain metadata without reading a private key or prompting."""
         try:
             timeout = timeout_seconds or DEFAULT_BIOMETRIC_TIMEOUT
             account_name = f"webauthn-{credential_id}"
@@ -193,8 +193,7 @@ class MacOSKeychainManager:
                     result = subprocess.run([
                         'security', 'find-internet-password',
                         '-s', service_name,
-                        '-a', account_name,
-                        '-w'
+                        '-a', account_name
                     ], capture_output=True, text=True, timeout=timeout)
                     
                     if result.returncode == 0:
@@ -206,4 +205,4 @@ class MacOSKeychainManager:
             return False
             
         except Exception:
-            return False 
+            return False
