@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip('fido2')  # fido2 is only installed on Python >= 3.10
+
 from fido2.webauthn import PublicKeyCredentialRequestOptions
 
 from keepercommander.biometric.platforms.macos.keychain import MacOSKeychainManager
