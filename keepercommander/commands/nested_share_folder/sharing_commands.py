@@ -27,10 +27,12 @@ from ..base import Command
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
 from ... import vault_extensions
+from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
 from .helpers import (
     parse_expiration, get_access_role_label,
     validate_rotate_on_expiration,
     command_error_handler, check_result,
+    resolve_record_uid,
     check_record_share_permission,
     collect_records_in_folder,
     ensure_nested_share_folder, ensure_nested_share_record,
@@ -239,9 +241,10 @@ class NestedShareRecordShareCommand(Command):
             return [record_arg]
 
         try:
-            folder_uid = _nsf.resolve_folder_identifier(params, record_arg)
-        except Exception:
-            folder_uid = None
+            folder_uid = _nsf.resolve_folder_identifier(
+                params, record_arg, raise_on_ambiguous=True)
+        except FolderIdentifierAmbiguousError as e:
+            raise CommandError('nsf-share-record', str(e)) from e
         if folder_uid:
             # Reject legacy folders up-front with a friendly message rather
             # than letting them slip through as a "no records found" error.
@@ -253,7 +256,8 @@ class NestedShareRecordShareCommand(Command):
                 raise CommandError('nsf-share-record', 'No records found in the specified folder')
             return record_uids
 
-        resolved_uid = _nsf.resolve_nested_share_record_uid(params, record_arg)
+        resolved_uid = resolve_record_uid(
+            params, record_arg, 'nsf-share-record')
         if not resolved_uid:
             raise CommandError('nsf-share-record',
                                f"Record '{record_arg}' not found")
@@ -368,7 +372,11 @@ class NestedShareRecordPermissionCommand(Command):
         if not folder_name:
             return None, 'root'
         if params is not None:
-            resolved = _nsf.resolve_folder_identifier(params, folder_name)
+            try:
+                resolved = _nsf.resolve_folder_identifier(
+                    params, folder_name, raise_on_ambiguous=True)
+            except FolderIdentifierAmbiguousError as e:
+                raise CommandError('nsf-record-permission', str(e)) from e
             if resolved and resolved in nsf_folders:
                 return resolved, nsf_folders[resolved].get('name', resolved)
             if resolved:
@@ -379,8 +387,11 @@ class NestedShareRecordPermissionCommand(Command):
             # The ownership-aware resolver deliberately returns None for an
             # ambiguous or unowned name. Do not fall back to a first-match
             # scan, which would reintroduce the shadowing bug.
-            raise CommandError('nsf-record-permission',
-                               f'Folder "{folder_name}" not found or is ambiguous')
+            raise CommandError(
+                'nsf-record-permission',
+                f'Cannot resolve "{folder_name}" by name. Use the object UID; '
+                'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                'folder names require UID lookup.')
 
         if folder_name in nsf_folders:
             return folder_name, nsf_folders[folder_name].get('name', folder_name)
@@ -392,9 +403,10 @@ class NestedShareRecordPermissionCommand(Command):
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            raise CommandError('nsf-record-permission',
-                               f'Multiple Nested Share Folders match "{folder_name}". '
-                               'Use a folder UID.')
+            raise CommandError(
+                'nsf-record-permission',
+                f'Multiple folders match "{folder_name}". '
+                'Use a folder UID instead.')
         raise CommandError('nsf-record-permission', f'Folder "{folder_name}" not found')
 
     @staticmethod
@@ -663,7 +675,8 @@ class NestedShareRecordTransferCommand(Command):
 
         with command_error_handler('nsf-transfer-record'):
             for identifier in identifiers:
-                record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+                record_uid = resolve_record_uid(
+                    params, identifier, 'nsf-record-permission')
                 if not record_uid:
                     raise CommandError('nsf-transfer-record',
                                        f"Record '{identifier}' not found")

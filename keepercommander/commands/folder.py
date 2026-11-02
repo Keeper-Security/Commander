@@ -259,7 +259,11 @@ class FolderListCommand(Command, RecordMixin):
         folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         if pattern:
-            rs = try_resolve_path(params, kwargs['pattern'])
+            try:
+                rs = try_resolve_path(
+                    params, kwargs['pattern'], raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('ls', str(e))
             if rs is not None:
                 folder, pattern = rs
 
@@ -420,8 +424,7 @@ class FolderCdCommand(Command):
                     else:
                         raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
                 else:
-                    raise CommandError(
-                        'cd', 'Folder {0} not found or is ambiguous'.format(folder_name))
+                    raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -445,7 +448,12 @@ class FolderTreeCommand(Command):
                 params, folder, verbose=verbose, show_records=records, shares=shares,
                 nsf_shares=nsf_shares, hide_shares_key=hide_key, title=title, fmt=fmt))
         else:
-            folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
+            try:
+                folders, pattern = try_resolve_path(
+                    params, folder_name, find_all_matches=True,
+                    raise_on_ambiguous=True)
+            except FolderPathAmbiguousError as e:
+                raise CommandError('tree', str(e))
             if not pattern:
                 for idx, folder in enumerate(folders):
                     trees.append(formatted_tree(
@@ -712,25 +720,26 @@ class FolderMakeCommand(Command):
             if len(existing_children) > 1:
                 raise CommandError(
                     'mkdir',
-                    f'Multiple folders match path component "{leaf}". '
+                    f'Multiple folders match "{leaf}". '
                     'Use a folder UID instead.')
             if len(existing_children) == 1:
                 return base_folder, leaf, True
         else:
             existing_children = contained_folders(params, [base_folder], leaf)
+            if leaf in params.folder_cache:
+                return base_folder, leaf, True
             if (len(existing_children) > 1
                     and base_folder.type != BaseFolderNode.RootFolderType):
                 raise CommandError(
                     'mkdir',
-                    f'Multiple folders match path component "{leaf}". '
+                    f'Multiple folders match "{leaf}". '
                     'Use a folder UID instead.')
             if existing_children:
-                # Root-level duplicate names are allowed. A folder-relative
-                # leaf, however, must remain unique under its parent.
+                # Root-level duplicate names are valid, including when an
+                # existing folder belongs to the current account. Child
+                # folder names remain unique under their parent.
                 if base_folder.type != BaseFolderNode.RootFolderType:
                     return base_folder, leaf, True
-            elif leaf in params.folder_cache:
-                return base_folder, leaf, True
 
         return base_folder, leaf, False
 

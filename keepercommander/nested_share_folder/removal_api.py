@@ -29,6 +29,16 @@ _FOLDER_OP_MAP = {
 }
 
 
+class RecordIdentifierAmbiguousError(ValueError):
+    """Raised when a record title identifies multiple records."""
+
+    def __init__(self, identifier):
+        super().__init__(
+            f'Cannot resolve "{identifier}" by name. Use the object UID; '
+            'run nsf-list to find record UIDs. Shared-in and ambiguous '
+            'record names require UID lookup.')
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Shared preview/confirm engine  (DRY — used by both record & folder)
 # ══════════════════════════════════════════════════════════════════════════
@@ -93,7 +103,7 @@ def find_nested_share_folders_for_record(params, record_uid):
     return folders
 
 
-def resolve_nested_share_record_uid(params, identifier):
+def resolve_nested_share_record_uid(params, identifier, raise_on_ambiguous=False):
     """Resolve a record identifier (UID, title, or name) to a record UID.
 
     Lookup order:
@@ -161,12 +171,16 @@ def resolve_nested_share_record_uid(params, identifier):
     if len(owned_matches) == 1:
         return owned_matches[0]
     if len(owned_matches) > 1:
-        logging.warning("Multiple owned records match '%s'. Use UID instead.", identifier)
+        if raise_on_ambiguous:
+            raise RecordIdentifierAmbiguousError(identifier)
+        logging.warning(str(RecordIdentifierAmbiguousError(identifier)))
         return None
     if len(matches) == 1:
         return matches[0]
 
-    logging.warning("Multiple records match '%s'. Use UID instead.", identifier)
+    if raise_on_ambiguous:
+        raise RecordIdentifierAmbiguousError(identifier)
+    logging.warning(str(RecordIdentifierAmbiguousError(identifier)))
     return None
 
 
@@ -182,8 +196,22 @@ def _is_current_account_record_owner(params, record_uid, nsf_data, record_obj):
         except Exception:
             pass
 
-    for obj in (nsf_data or {}, record_obj or {},
-                getattr(params, 'meta_data_cache', {}).get(record_uid, {})):
+    # The cache entries passed by callers are normally dictionaries, but some
+    # sync paths expose a collection of metadata entries.  Normalize both
+    # forms before looking up ownership so a malformed/legacy cache cannot
+    # turn title resolution into an AttributeError.
+    metadata_cache = getattr(params, 'meta_data_cache', {})
+    metadata_entry = (metadata_cache.get(record_uid, {})
+                      if isinstance(metadata_cache, dict) else {})
+
+    objects = []
+    for value in (nsf_data, record_obj, metadata_entry):
+        if isinstance(value, dict):
+            objects.append(value)
+        elif isinstance(value, (list, tuple, set)):
+            objects.extend(item for item in value if isinstance(item, dict))
+
+    for obj in objects:
         owner_username = obj.get('user_username') or obj.get('owner_username')
         if (isinstance(owner_username, str) and owner_username and
                 isinstance(current_username, str) and current_username and

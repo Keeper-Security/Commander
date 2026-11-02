@@ -81,7 +81,8 @@ class NestedShareFolderMkdirCommand(Command):
                 and not is_nested_share_folder(params, segment)
             )
             existing_uid = (
-                None if allow_new_root_leaf
+                None
+                if allow_new_root_leaf
                 else self._resolve_segment(params, segment, parent_uid)
             )
             if existing_uid:
@@ -173,15 +174,10 @@ class NestedShareFolderMkdirCommand(Command):
         """Find an existing NSF folder named *folder_name* whose parent matches
         *parent_uid*. ``parent_uid=None`` means "root level".
         """
-
         nsf_folders = getattr(params, 'nested_share_folders', {})
-        name_lower = folder_name.lower()
         looking_for_root = not parent_uid
-        owned_matches = []
-        unknown_matches = []
+        candidate_uids = []
         for fuid, fobj in nsf_folders.items():
-            if fobj.get('name', '').lower() != name_lower:
-                continue
             raw_parent = fobj.get('parent_uid') or ''
             normalized = normalize_parent_uid(raw_parent)
             is_root_child = (
@@ -189,25 +185,37 @@ class NestedShareFolderMkdirCommand(Command):
                 or (raw_parent and raw_parent not in nsf_folders)
             )
             parent_matches = is_root_child if looking_for_root else raw_parent == parent_uid
-            if not parent_matches:
-                continue
+            if parent_matches:
+                candidate_uids.append(fuid)
 
+        exact_uids = [
+            fuid for fuid in candidate_uids
+            if nsf_folders[fuid].get('name', '') == folder_name
+        ]
+        matching_uids = exact_uids or [
+            fuid for fuid in candidate_uids
+            if nsf_folders[fuid].get('name', '').casefold()
+            == folder_name.casefold()
+        ]
+
+        owned_matches = []
+        for fuid in matching_uids:
+            fobj = nsf_folders[fuid]
             if _is_current_account_folder_owner(params, fobj):
                 owned_matches.append(fuid)
-            elif not (fobj.get('owner_username') or fobj.get('owner_account_uid')):
-                
-                unknown_matches.append(fuid)
 
-        matches = owned_matches or unknown_matches
+        # A unique shared-in folder is a valid parent for team workflows.
+        # When names collide, prefer the current account's folder and fail
+        # closed if ownership cannot disambiguate the candidates.
+        matches = owned_matches if owned_matches else matching_uids
         if len(matches) > 1:
             raise CommandError(
                 'nsf-mkdir',
-                f'Multiple Nested Share Folders match "{folder_name}". '
-                'Use a folder UID or a more specific path.')
+                f'Multiple folders match "{folder_name}". '
+                'Use a folder UID instead.')
         if matches:
             return matches[0]
         return None
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # nsf-rndir
@@ -235,11 +243,16 @@ class NestedShareFolderUpdateCommand(Command):
         if new_name is None and color is None:
             raise CommandError('nsf-rndir', 'New folder name and/or color parameters are required.')
 
-        folder_uid = resolve_folder_uid(params, folder_arg)
-        if folder_uid:
-            ensure_nested_share_folder(params, folder_uid, 'nsf-rndir',
-                                       identifier=folder_arg)
-            check_folder_edit_permission(params, folder_uid, 'nsf-rndir')
+        folder_uid = resolve_folder_uid(params, folder_arg, 'nsf-rndir')
+        if not folder_uid:
+            raise CommandError(
+                'nsf-rndir',
+                f'Cannot resolve "{folder_arg}" by name. Use the object UID; '
+                'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                'folder names require UID lookup.')
+        ensure_nested_share_folder(params, folder_uid, 'nsf-rndir',
+                                   identifier=folder_arg)
+        check_folder_edit_permission(params, folder_uid, 'nsf-rndir')
 
         with command_error_handler('nsf-rndir'):
             result = _nsf.update_folder_v3(
@@ -409,9 +422,13 @@ class NestedShareFolderShareCommand(Command):
             validate_rotate_on_expiration('nsf-share-folder', action, expiration)
 
         for folder_arg in folder_args:
-            folder_uid = resolve_folder_uid(params, folder_arg)
+            folder_uid = resolve_folder_uid(params, folder_arg, 'nsf-share-folder')
             if not folder_uid:
-                raise CommandError('nsf-share-folder', f'No such folder: {folder_arg!r}')
+                raise CommandError(
+                    'nsf-share-folder',
+                    f'Cannot resolve "{folder_arg}" by name. Use the object UID; '
+                    'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                    'folder names require UID lookup.')
             ensure_nested_share_folder(params, folder_uid, 'nsf-share-folder',
                                        identifier=folder_arg)
             check_folder_share_permission(params, folder_uid, 'nsf-share-folder')
@@ -597,9 +614,13 @@ class NestedShareFolderRemoveCommand(Command):
 
         removals = []
         for identifier in folder_args:
-            folder_uid = _nsf.resolve_nested_share_folder_uid(params, identifier)
+            folder_uid = resolve_folder_uid(params, identifier, 'nsf-rmdir')
             if not folder_uid:
-                raise CommandError('nsf-rmdir', f"Folder '{identifier}' not found")
+                raise CommandError(
+                    'nsf-rmdir',
+                    f'Cannot resolve "{identifier}" by name. Use the object UID; '
+                    'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                    'folder names require UID lookup.')
             ensure_nested_share_folder(params, folder_uid, 'nsf-rmdir',
                                        identifier=identifier)
             check_folder_delete_permission(params, folder_uid, 'nsf-rmdir')

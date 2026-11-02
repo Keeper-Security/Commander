@@ -19,8 +19,8 @@ class FolderPathAmbiguousError(ValueError):
 
     def __init__(self, component):
         super().__init__(
-            f"Multiple folders match path component '{component}'. "
-            "Use a folder UID instead.")
+            f'Multiple folders match "{component}". '
+            'Use a folder UID instead.')
 
 
 def get_folder_path(params, folder_uid, delimiter='/'):
@@ -113,14 +113,23 @@ def contained_folders(params, folders, component):
     elif component in get_folder_ids():
         result = [get_folder_by_id(component)]
     else:
-        component_casefold = component.casefold()
-        result = [
+        children = [
             get_folder_by_id(uid)
             for f in folders
             for uid in f.subfolders
             if (get_folder_by_id(uid) is not None
-                and (get_folder_by_id(uid).name or '').casefold() == component_casefold)
+                and (get_folder_by_id(uid).name or '') == component)
         ]
+        if not children:
+            component_casefold = component.casefold()
+            children = [
+                get_folder_by_id(uid)
+                for f in folders
+                for uid in f.subfolders
+                if (get_folder_by_id(uid) is not None
+                    and (get_folder_by_id(uid).name or '').casefold() == component_casefold)
+            ]
+        result = children
     
     return result
 
