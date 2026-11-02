@@ -2,6 +2,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip('fido2')  # fido2 is only installed on Python >= 3.10
+
 from keepercommander.biometric.client import BiometricClient
 from keepercommander.biometric.commands.list import BiometricListCommand
 from keepercommander.biometric.utils.aaguid import get_provider_name_from_aaguid
