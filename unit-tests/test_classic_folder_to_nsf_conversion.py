@@ -302,6 +302,86 @@ class TestClassicFolderConversionApplicationReads(TestCase):
 
 class TestClassicFolderConversionTargetCreation(TestCase):
 
+    def test_source_root_inherits_destination_permissions_but_vault_root_does_not(self):
+        scenarios = (
+            ('private destination root', UserFolderNode(), _uid(), True),
+            ('shared destination root', SharedFolderNode(), _uid(), True),
+            ('private vault root', UserFolderNode(), None, False),
+        )
+
+        for name, node, destination_uid, expected_inheritance in scenarios:
+            with self.subTest(name=name):
+                source_uid = _uid()
+                node.uid, node.name = source_uid, name
+                params = SimpleNamespace(nested_share_folders={})
+                captured_specs = []
+
+                def create_batch(_params, specs):
+                    captured_specs.extend(specs)
+                    return [{
+                        'folder_uid': _uid(),
+                        'folder_key_unencrypted': utils.generate_aes_key(),
+                        'name': spec['name'],
+                        'parent_uid': spec['parent_uid'],
+                        'success': True,
+                    } for spec in specs]
+
+                with patch(
+                        'keepercommander.commands.nested_share_folder.'
+                        'conversion_commands._nsf.create_folders_batch_v3',
+                        side_effect=create_batch):
+                    NestedShareFolderConvertCommand._create_target_tree(
+                        params,
+                        {source_uid: node},
+                        {source_uid: 1},
+                        {source_uid: None},
+                        {source_uid: source_uid if isinstance(node, SharedFolderNode) else None},
+                        destination_uid=destination_uid,
+                        show_progress=False,
+                    )
+
+                self.assertEqual(len(captured_specs), 1)
+                self.assertEqual(
+                    captured_specs[0]['inherit_permissions'], expected_inheritance)
+                self.assertEqual(captured_specs[0]['parent_uid'], destination_uid)
+
+    def test_classic_shared_boundary_does_not_inherit_from_generated_private_parent(self):
+        private_uid, shared_uid = _uid(), _uid()
+        private = UserFolderNode()
+        private.uid, private.name = private_uid, 'Private'
+        shared = SharedFolderNode()
+        shared.uid, shared.name = shared_uid, 'Shared'
+        params = SimpleNamespace(nested_share_folders={})
+        captured_specs = []
+
+        def create_batch(_params, specs):
+            captured_specs.extend(specs)
+            return [{
+                'folder_uid': _uid(),
+                'folder_key_unencrypted': utils.generate_aes_key(),
+                'name': spec['name'],
+                'parent_uid': spec['parent_uid'],
+                'success': True,
+            } for spec in specs]
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.'
+                'conversion_commands._nsf.create_folders_batch_v3',
+                side_effect=create_batch):
+            NestedShareFolderConvertCommand._create_target_tree(
+                params,
+                {private_uid: private, shared_uid: shared},
+                {private_uid: 1, shared_uid: 2},
+                {private_uid: None, shared_uid: private_uid},
+                {private_uid: None, shared_uid: shared_uid},
+                destination_uid=_uid(),
+                show_progress=False,
+            )
+
+        self.assertEqual(
+            [spec['inherit_permissions'] for spec in captured_specs],
+            [True, False])
+
     def test_duplicate_names_get_distinct_generated_folder_uids(self):
         first_uid, second_uid = _uid(), _uid()
         first = UserFolderNode()
