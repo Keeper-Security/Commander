@@ -14,7 +14,10 @@ from .. import utils, crypto, api
 from ..params import KeeperParams
 from ..proto import folder_pb2, tla_pb2
 from ..error import KeeperApiError
-from ..subfolder import try_resolve_path
+from ..subfolder import (
+    try_resolve_path, FolderPathAmbiguousError,
+    ambiguous_identifier_message, BaseFolderNode,
+)
 
 from .common import (
     get_folder_key, get_user_public_key, resolve_user_uid_bytes,
@@ -150,28 +153,223 @@ def folder_access_update_v3(params, folder_access_adds=None,
 # Resolution
 # ══════════════════════════════════════════════════════════════════════════
 
-def resolve_folder_identifier(params, folder_identifier):
-    if folder_identifier in getattr(params, 'nested_share_folders', {}):
-        return folder_identifier
-    if folder_identifier in getattr(params, 'subfolder_cache', {}):
-        return folder_identifier
-    if folder_identifier in getattr(params, 'folder_cache', {}):
-        return folder_identifier
+_AMBIGUOUS_RESOLUTION = object()
 
-    matching = [uid for uid, obj in getattr(params, 'nested_share_folders', {}).items()
-                if obj.get('name', '').lower() == folder_identifier.lower()]
-    if len(matching) == 1:
-        return matching[0]
-    if len(matching) > 1:
-        logging.warning("Multiple folders match '%s'. Use UID instead.", folder_identifier)
+
+class FolderIdentifierAmbiguousError(ValueError):
+    """Raised when a folder name/path identifies multiple folders."""
+
+    def __init__(self, identifier):
+        super().__init__(ambiguous_identifier_message(
+            identifier, namespace='nsf', object_type='folder'))
+
+
+def resolve_folder_identifier(params, folder_identifier, raise_on_ambiguous=False):
+    if not isinstance(folder_identifier, str):
         return None
 
-    rs = try_resolve_path(params, folder_identifier)
-    if rs is not None:
-        folder, pattern = rs
-        if folder and not pattern:
-            return folder.uid
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    subfolder_cache = getattr(params, 'subfolder_cache', {})
+    folder_cache = getattr(params, 'folder_cache', {})
+
+    # UIDs are always unambiguous and remain the preferred way to select a
+    # shared-in folder when names collide.
+    if folder_identifier in nsf_folders:
+        return folder_identifier
+    if folder_identifier in subfolder_cache:
+        return folder_identifier
+    if folder_identifier in folder_cache:
+        return folder_identifier
+
+    # A slash makes the identifier a path, not a folder name. Resolve it as a
+    # path before considering any flat-name match. This prevents a shared-in
+    # folder named "Clients/Acme" from shadowing the user's own Clients/Acme
+    # hierarchy.
+    if '/' in folder_identifier or '\\' in folder_identifier:
+        nsf_uid = _resolve_nsf_path(params, folder_identifier)
+        if nsf_uid is _AMBIGUOUS_RESOLUTION:
+            if raise_on_ambiguous:
+                raise FolderIdentifierAmbiguousError(folder_identifier)
+            return None
+        if nsf_uid:
+            return nsf_uid
+
+        folder_cache = getattr(params, 'folder_cache', {})
+        if isinstance(folder_cache, dict) and folder_cache:
+            try:
+                rs = try_resolve_path(
+                    params, folder_identifier.replace('\\', '/'),
+                    raise_on_ambiguous=raise_on_ambiguous)
+            except FolderPathAmbiguousError as e:
+                raise FolderIdentifierAmbiguousError(folder_identifier) from e
+            if rs is not None:
+                folder, pattern = rs
+                if folder and not pattern:
+                    return folder.uid
+        return None
+
+    # Resolve the classic namespace before matching a flat NSF name.  NSF
+    # nodes may also be mirrored into folder_cache, so exclude those nodes
+    # from this lookup and compare only against classic folders.  This keeps
+    # an attacker-owned NSF folder named "Work" from shadowing a classic
+    # folder named "Work".
+    folder_cache = getattr(params, 'folder_cache', {})
+    if isinstance(folder_cache, dict) and folder_cache:
+        try:
+            rs = try_resolve_path(params, folder_identifier, find_all_matches=True)
+        except FolderPathAmbiguousError as e:
+            if raise_on_ambiguous:
+                raise FolderIdentifierAmbiguousError(folder_identifier) from e
+            logging.warning(str(FolderIdentifierAmbiguousError(folder_identifier)))
+            return None
+        if rs is not None:
+            folders, pattern = rs
+            classic_folders = [
+                folder for folder in folders
+                if getattr(folder, 'type', None) != BaseFolderNode.NestedShareFolderType
+            ]
+            if len(classic_folders) > 1:
+                if raise_on_ambiguous:
+                    raise FolderIdentifierAmbiguousError(folder_identifier)
+                logging.warning(str(FolderIdentifierAmbiguousError(folder_identifier)))
+                return None
+            if classic_folders and not pattern:
+                return classic_folders[0].uid
+
+    matching = _matching_nsf_folder_uids(nsf_folders, folder_identifier)
+    selected = _select_nsf_folder_uid(params, nsf_folders, matching)
+    if selected is _AMBIGUOUS_RESOLUTION:
+        if raise_on_ambiguous:
+            raise FolderIdentifierAmbiguousError(folder_identifier)
+        logging.warning(str(FolderIdentifierAmbiguousError(folder_identifier)))
+        return None
+    if selected:
+        return selected
+
+    if isinstance(folder_cache, dict) and folder_cache:
+        try:
+            rs = try_resolve_path(
+                params, folder_identifier,
+                raise_on_ambiguous=raise_on_ambiguous)
+        except FolderPathAmbiguousError as e:
+            raise FolderIdentifierAmbiguousError(folder_identifier) from e
+        if rs is not None:
+            folder, pattern = rs
+            if folder and not pattern:
+                return folder.uid
     return None
+
+
+def _is_current_account_folder_owner(params, folder_obj):
+    """Return whether *folder_obj* is owned by the current account.
+
+    Missing ownership metadata is treated as unknown, not as ownership. A
+    unique unknown/shared-in folder can still be selected by name; ownership
+    only decides which candidate wins when names collide.
+    """
+    owner_username = folder_obj.get('owner_username')
+    current_username = getattr(params, 'user', None)
+    if (isinstance(owner_username, str) and owner_username and
+            isinstance(current_username, str) and current_username and
+            owner_username.casefold() == current_username.casefold()):
+        return True
+
+    owner_account_uid = folder_obj.get('owner_account_uid')
+    account_uid_bytes = getattr(params, 'account_uid_bytes', None)
+    if owner_account_uid and account_uid_bytes:
+        try:
+            return owner_account_uid == utils.base64_url_encode(account_uid_bytes)
+        except Exception:
+            pass
+    return False
+
+
+def _matching_nsf_folder_uids(nsf_folders, folder_name):
+    """Return exact-case matches, or case-insensitive matches when exact is absent."""
+    exact = [
+        uid for uid, folder_obj in nsf_folders.items()
+        if folder_obj.get('name', '') == folder_name
+    ]
+    if exact:
+        return exact
+    folded = folder_name.casefold()
+    return [
+        uid for uid, folder_obj in nsf_folders.items()
+        if folder_obj.get('name', '').casefold() == folded
+    ]
+
+
+def _select_nsf_folder_uid(params, nsf_folders, matching):
+    """Prefer one owned match; otherwise allow one shared-in match."""
+    if not matching:
+        return None
+    owned = [
+        uid for uid in matching
+        if _is_current_account_folder_owner(params, nsf_folders[uid])
+    ]
+    if len(owned) == 1:
+        return owned[0]
+    if len(owned) > 1:
+        return _AMBIGUOUS_RESOLUTION
+    return matching[0] if len(matching) == 1 else _AMBIGUOUS_RESOLUTION
+
+
+def _resolve_nsf_path(params, folder_identifier):
+    """Resolve an NSF path with exact-case and ownership-aware matching.
+
+    NSF folder names may contain a literal slash, represented by ``//`` in a
+    path. The parser mirrors ``NestedShareFolderMkdirCommand._parse_path`` but
+    is kept here to avoid importing command-layer code into the API module.
+    """
+    nsf_folders = getattr(params, 'nested_share_folders', {})
+    normalized = folder_identifier.replace('\\', '/')
+    absolute = normalized.startswith('/')
+    if absolute:
+        normalized = normalized[1:]
+
+    sentinel = '\x00'
+    components = [
+        part.replace(sentinel, '/').strip()
+        for part in normalized.replace('//', sentinel).split('/')
+        if part.replace(sentinel, '/').strip()
+    ]
+    if not components:
+        return None
+
+    current = None
+    if not absolute:
+        candidate = getattr(params, 'current_folder', None)
+        if candidate in nsf_folders:
+            current = candidate
+
+    for component in components:
+        candidates = []
+        for uid, folder_obj in nsf_folders.items():
+            parent_uid = folder_obj.get('parent_uid') or ''
+            if current:
+                if parent_uid == current:
+                    candidates.append(uid)
+            else:
+                # Missing parents and server root sentinels represent the
+                # Nested Share Folder root.
+                if not parent_uid or parent_uid not in nsf_folders:
+                    candidates.append(uid)
+
+        candidate_folders = {uid: nsf_folders[uid] for uid in candidates}
+        matching = _matching_nsf_folder_uids(candidate_folders, component)
+        selected = _select_nsf_folder_uid(params, nsf_folders, matching)
+        if selected is _AMBIGUOUS_RESOLUTION:
+            return _AMBIGUOUS_RESOLUTION
+        if not selected:
+            return None
+        current = selected
+
+    return current
+
+
+def _is_safe_path_folder(params, folder):
+    """Retained for callers that need a path-safety predicate."""
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════

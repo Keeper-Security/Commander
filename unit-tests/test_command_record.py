@@ -8,7 +8,7 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
-from keepercommander import api, utils, crypto, attachment, vault, vault_extensions
+from keepercommander import api, utils, crypto, attachment, vault, vault_extensions, subfolder
 from keepercommander.commands import record, record_edit
 from keepercommander.error import CommandError
 
@@ -96,6 +96,27 @@ class TestRecord(TestCase):
             field = added_record.get_typed_field('text', 'AAA')
             self.assertIsNotNone(field)
             self.assertEqual(field.get_default_value(str), 'BBB')
+
+    @mock.patch('keepercommander.commands.record_edit.FolderMixin.resolve_folder',
+                return_value=None)
+    @mock.patch('keepercommander.record_management.add_record_to_folder')
+    def test_add_command_rejects_unresolvable_folder(self, mock_add, mock_resolve):
+        params = get_synced_params()
+        cmd = record_edit.RecordAddCommand()
+
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(
+                params,
+                folder='Work',
+                title='Ambiguous Folder POC',
+                record_type='login',
+                fields=[],
+                force=True,
+            )
+
+        self.assertIn('Folder "Work" cannot be found', str(ctx.exception))
+        mock_resolve.assert_called_once_with(params, 'Work')
+        mock_add.assert_not_called()
 
     def _run_add(self, params, **kwargs):
         """Run record-add with the API mocked; return the TypedRecord that would be saved."""
@@ -422,6 +443,65 @@ class TestRecord(TestCase):
         self.assertIn('parent_uid', by_uid)
         self.assertIn('folder', by_uid)
         self.assertIn('records', by_uid)
+
+    def test_get_resolves_classic_folder_and_record_paths(self):
+        """get accepts classic folder and record paths."""
+        params = get_synced_params()
+        cmd = record.RecordGetUidCommand()
+        parent = next(
+            x for x in params.folder_cache.values()
+            if x.type == subfolder.BaseFolderNode.UserFolderType)
+
+        child = subfolder.UserFolderNode()
+        child.uid = 'classic-child-folder'
+        child.parent_uid = parent.uid
+        child.name = 'Nested'
+        parent.subfolders.append(child.uid)
+        params.folder_cache[child.uid] = child
+        params.subfolder_record_cache[child.uid] = set()
+        child_path = record.get_folder_path(params, child.uid)
+
+        captured = []
+        with mock.patch('builtins.print', side_effect=captured.append):
+            cmd.execute(params, uid=child_path, format='json')
+        folder_payload = json.loads(captured[-1])
+        self.assertEqual(folder_payload['folder_uid'], child.uid)
+        self.assertEqual(folder_payload['path'], child_path)
+
+        record_uid = next(
+            uid for uid in params.subfolder_record_cache['']
+            if isinstance(vault.KeeperRecord.load(params, uid), vault.TypedRecord))
+        rec = vault.KeeperRecord.load(params, record_uid)
+        params.subfolder_record_cache[child.uid].add(record_uid)
+        with mock.patch('keepercommander.api.get_record', return_value=rec), \
+                mock.patch('keepercommander.api.get_record_shares'), \
+                mock.patch('keepercommander.api.get_share_admins_for_record', return_value=[]), \
+                mock.patch('builtins.print', side_effect=captured.append):
+            cmd.execute(params, uid=child_path + '/' + rec.title, format='json')
+        record_payload = json.loads(captured[-1])
+        self.assertEqual(record_payload['record_uid'], record_uid)
+
+    def test_get_rejects_ambiguous_classic_folder_path(self):
+        params = get_synced_params()
+        cmd = record.RecordGetUidCommand()
+        parent = next(
+            x for x in params.folder_cache.values()
+            if x.type == subfolder.BaseFolderNode.UserFolderType)
+
+        for uid in ('classic-child-a', 'classic-child-b'):
+            child = subfolder.UserFolderNode()
+            child.uid = uid
+            child.parent_uid = parent.uid
+            child.name = 'Nested'
+            parent.subfolders.append(uid)
+            params.folder_cache[uid] = child
+            params.subfolder_record_cache[uid] = set()
+
+        parent_path = record.get_folder_path(params, parent.uid)
+        with self.assertRaises(CommandError) as context:
+            cmd._resolve_path_target(params, parent_path + '/Nested')
+        self.assertIn(f'Cannot resolve "{parent_path}/Nested" by name',
+                      context.exception.message)
 
     def test_get_team_uid(self):
         params = get_synced_params()

@@ -7,7 +7,8 @@ from ..base import Command, RecordMixin, user_choice
 from ... import nested_share_folder as _nsf
 from ...display import bcolors
 from ...error import CommandError
-from .helpers import ROOT_FOLDER_UID, command_error_handler
+from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
+from .helpers import ROOT_FOLDER_UID, command_error_handler, resolve_record_uid
 from .parsers import nested_share_convert_parser
 
 _STATUS_MESSAGES = {
@@ -45,7 +46,13 @@ def _resolve_record_uid(params, identifier):
         return identifier
 
     record = RecordMixin.resolve_single_record(params, identifier)
-    return record.record_uid if record else None
+    if record:
+        return record.record_uid
+
+    # Preserve current-folder/path selection above, but still distinguish an
+    # ambiguous title from a genuinely missing record.
+    resolve_record_uid(params, identifier, 'nsf-convert')
+    return None
 
 
 def _record_title(params, record_uid):
@@ -70,7 +77,11 @@ def _resolve_target_folder(params, folder_input):
     if not folder_input or folder_input.casefold() in ('root', ROOT_FOLDER_UID.casefold()):
         return None
 
-    folder_uid = _nsf.resolve_folder_identifier(params, folder_input)
+    try:
+        folder_uid = _nsf.resolve_folder_identifier(
+            params, folder_input, raise_on_ambiguous=True)
+    except FolderIdentifierAmbiguousError as e:
+        raise CommandError('nsf-convert', str(e)) from e
     if not folder_uid:
         raise CommandError('nsf-convert', f"Folder '{folder_input}' was not found")
     if folder_uid not in (getattr(params, 'nested_share_folders', {}) or {}):

@@ -156,7 +156,7 @@ def normalize_parent_uid(uid):
 # Resolution helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-def resolve_folder_uid(params, identifier):
+def resolve_folder_uid(params, identifier, command=None):
     """Resolve a folder name, path, or UID to a Nested Share Folder UID.
 
     Delegates to the service layer's ``resolve_folder_identifier``
@@ -165,7 +165,29 @@ def resolve_folder_uid(params, identifier):
     if not identifier:
         return None
     from ... import nested_share_folder as _nsf
-    return _nsf.resolve_folder_identifier(params, identifier)
+    from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
+    try:
+        return _nsf.resolve_folder_identifier(
+            params, identifier, raise_on_ambiguous=bool(command))
+    except FolderIdentifierAmbiguousError as e:
+        if command:
+            raise CommandError(command, str(e)) from e
+        raise
+
+
+def resolve_record_uid(params, identifier, command=None):
+    """Resolve a record title/UID and surface duplicate-title errors."""
+    if not identifier:
+        return None
+    from ... import nested_share_folder as _nsf
+    from ...nested_share_folder.removal_api import RecordIdentifierAmbiguousError
+    try:
+        return _nsf.resolve_nested_share_record_uid(
+            params, identifier, raise_on_ambiguous=bool(command))
+    except RecordIdentifierAmbiguousError as e:
+        if command:
+            raise CommandError(command, str(e)) from e
+        raise
 
 
 
@@ -461,8 +483,14 @@ def resolve_move_destination_folder(params, destination, cmd_name):
         return ROOT_FOLDER_UID
     if destination == ROOT_FOLDER_UID:
         return ROOT_FOLDER_UID
-    resolved = resolve_folder_uid(params, destination)
-    if not resolved or not is_nested_share_folder(params, resolved):
+    resolved = resolve_folder_uid(params, destination, cmd_name)
+    if not resolved:
+        raise CommandError(
+            cmd_name,
+            f'Cannot resolve "{destination}" by name. Use the object UID; '
+            'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+            'folder names require UID lookup.')
+    if not is_nested_share_folder(params, resolved):
         raise CommandError(
             cmd_name,
             f"Destination '{destination}' is not a Nested Share Folder or "
@@ -539,7 +567,7 @@ def move_nested_share_item(params, source, destination):
         _move_nested_share_folder(params, folder_uid, dest_folder_uid, cmd_name)
         return
 
-    record_uid = _removal_api.resolve_nested_share_record_uid(params, source)
+    record_uid = resolve_record_uid(params, source, 'nsf-move')
     if record_uid and is_nested_share_record(params, record_uid):
         _move_nested_share_record(params, record_uid, dest_folder_uid, cmd_name)
         return

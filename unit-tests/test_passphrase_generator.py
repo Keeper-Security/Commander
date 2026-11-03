@@ -123,6 +123,11 @@ class TestKeeperPassphraseGenerator(TestCase):
     self.assertEqual(len(words), 7776)
     self.assertEqual(words[0], 'abacus')
 
+  def test_passphrase_vocabulary_contains_policy_compatible_words(self):
+    gen = generator.KeeperPassphraseGenerator()
+    self.assertTrue(all(word.isascii() and word.isalpha() and len(word) >= 3
+                        for word in gen._vocabulary))
+
   def test_resolve_gen_password_algorithm_rejects_typos(self):
     algorithm, error = generator.resolve_gen_password_algorithm(['passphra'])
     self.assertIsNone(algorithm)
